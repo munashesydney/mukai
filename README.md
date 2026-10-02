@@ -1,90 +1,85 @@
 # Mukai
 
-**Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace for your spaces, pursuits, and bots, built with React and TypeScript.
+**Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace built with React and TypeScript.
 
-This first version is a working UI prototype with a real local Node health service. Atlas, Nova, and Scout are sample personalities; they do not call AI models or run background work.
+Bots and their chats now use a real local Node backend, SQLite, and the Vercel AI SDK. Spaces, Pursuits, and Tools retain their earlier UI prototype behavior; autonomous work and integrations are outside this feature.
 
-## Get started
+## Run
 
-Requires Node.js 22.12+ (Node 24 LTS recommended) and npm.
+Requires **Node.js 24 LTS** and npm. The desktop bundles its own Electron runtime.
 
 ```sh
 npm ci
 npm run dev
 ```
 
-`npm run dev` launches Electron, the React development server, and the local API. The desktop service binds to a random available loopback port and shuts down with the app. Check its connection under **Settings → Node service**.
+The Electron app starts its backend on a random loopback port. Go to **Settings → Providers**, add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the workspace default; Scout uses that default unless you edit its model settings. Connection tests make a small billable request for paid providers.
 
 For browser development, run these in separate terminals:
 
 ```sh
-npm run dev:web
 npm run dev:server
+npm run dev:web
 ```
 
-Open http://127.0.0.1:5173. The Vite proxy maps `/api/health` to the standalone server at http://127.0.0.1:4318/health. Set `PORT` in your shell to choose another standalone API port; update the Vite proxy target to match. `.env.example` documents the default; the server reads process environment variables rather than loading `.env` files.
+Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 4318. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match.
+
+Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:11434/v1` or `http://127.0.0.1:1234/v1`. Install a chat model in your local server first and enter its exact ID. Keys are optional for endpoints without authentication. Remote custom endpoints require HTTPS. Standard text chat and streaming chat-completions compatibility are required.
 
 ## What works
 
-- Bots, Pursuits, Spaces, and Tools navigation, with back/forward history.
-- Spaces and individual bot conversations.
-- Opens directly into a bot conversation. Details panels stay closed until requested; Files and Activity are secondary views.
-- Local message composition, Enter/Shift+Enter, emoji insertion, reactions, and saved messages.
-- Search for spaces, bots, and pursuits (`Ctrl+K` / `Cmd+K`).
-- Create spaces and pursuits; pause and resume pursuits.
-- Files and activity views, a draft preview, and contextual bot, pursuit, and space details.
-- Integration previews with explicit demo states.
-- Native minimize, maximize/restore, close, and draggable title bar.
-- Workspace and Appearance settings, with six color palettes and Light/Dark/System modes.
+- Scout is created once on first setup. Create, edit, and delete additional bots with their own name, description, instructions, provider, model, and identity.
+- Each bot has one continuous chat. SQLite saves user messages, assistant messages, partial responses, and file references. Switching bots does not stop an active stream.
+- Every response includes the bot’s instructions and its latest **10 usable chat messages, including the current user message**. Empty failed assistant records are excluded; older history stays visible.
+- Streaming Markdown, loading states, stop generation, and retry of the latest failed, stopped, or interrupted response. Retries reuse the same user and assistant records. Refreshing during a response interrupts that stream and leaves a retryable saved turn.
+- Provider settings, encrypted keys, connection tests, workspace defaults, and explicit model/image capability settings. Saved key values are never sent back to the UI or written to logs.
+- Persistent image previews, file downloads, and a chat attachments view. Pending uploads are recovered after refresh.
+- Unsent text drafts and their retry IDs survive refresh in device storage; accepted messages remain authoritative in SQLite.
+- Existing themes, navigation, bot search, native window controls, and the current Mukai design.
 
-Workspace messages, spaces, pursuits, bookmarks, and reactions persist in versioned local storage. There is no cloud sync. Attachments show filenames only; file contents are neither saved nor uploaded. Integration selection is session-only. Custom bots and customization currently show preview information.
+## Attachments and limits
 
-Appearance preferences are stored separately under `mukai.appearance.v1`. Themes apply immediately across the shell, conversations, forms, and dialogs; System mode follows device appearance changes. The default remains Mukai in light mode.
+Up to **4 files per message**, **10 MB per file**. Supported images: PNG, JPEG, WebP. Enable image support only for a model that actually supports vision; text-only models reject new image attachments before saving/sending the turn. Older images are described by filename if you later switch that bot to a text-only model.
+
+PDF, DOCX, and common UTF-8 text/code files are extracted to text for chat models. The original files remain downloadable. PDF extraction reads the first 20 pages; scanned PDFs need OCR elsewhere. Document formatting and embedded images are not sent. Extracted text is limited to 24,000 characters per file, with any extraction/truncation notice shown before sending. DOCX archives also have expanded-size and entry-count limits. Legacy `.doc`, spreadsheets, audio/video, executables, and arbitrary binary files are unsupported.
+
+Message text is limited to 16,000 characters; bot instructions to 12,000. Responses are capped at 4,096 output tokens and three minutes, with a 45-second idle stream timeout. Provider context windows, account permissions, quotas, and model availability still apply. Very large attachments/context can exceed a smaller local model’s window. No tools or autonomous model actions are enabled.
+
+## Persistence and security
+
+Desktop data: Electron’s per-user `userData/data` directory (on Windows, normally `%APPDATA%/Mukai/data`). Standalone data: `~/.mukai`. Set **`MUKAI_DATA_DIR`** in both terminals to use the same alternative directory for browser development; you can also set it for Electron. Run one backend per data directory.
+
+The directory holds `mukai.sqlite`, its WAL files, durable `uploads/`, `credentials.key`, and `api.token`. Credentials use AES-256-GCM with a local random encryption key. Files use private permissions where the OS supports them and inherit the current user’s directory permissions on Windows. This is a single-user local app, not a remotely hosted multi-user service. The encryption key lives beside the database; anyone with access to the complete data directory can decrypt saved credentials. Protect that directory and back up the whole directory after shutting down the server.
+
+The backend binds only to `127.0.0.1`, authenticates feature APIs with a local bearer token, checks Host/Origin, rejects credential-bearing custom URLs, and does not follow provider redirects. Electron exposes only a narrow typed preload bridge with context isolation, sandboxing, denied permissions, and CSP. The renderer receives a local API token, never provider credentials. Chat context and supported attachment contents go directly to your selected provider. OpenAI Responses requests explicitly disable response storage; each provider’s own retention policies still apply.
+
+Migrations are append-only, versioned, and transactional in `src/server/database.ts`, tracked in `schema_migrations`. Scout’s one-time seed is tracked separately so deleting it does not recreate it on restart. Startup marks unfinished assistant records interrupted.
 
 ## Structure
 
 ```text
 src/
-  main/                       Electron lifecycle, windows, IPC
-  preload/                    Narrow, typed desktop bridge
-  server/                     Node HTTP service and endpoint tests
-  shared/                     Renderer/main/service contracts
-  renderer/
-    public/                   Brand assets
-    src/
-      app/                    Application composition
-      components/
-        layout/               Title bar, rail, workspace sidebar
-        ui/                   Avatar, brand, modal, buttons, error boundary
-      features/
-        appearance/           Theme palettes, preferences, and provider
-        chat/                 Conversation, messages, cards, composer
-        settings/             Workspace and Appearance settings panels
-        workspace/            Demo data, state, dialogs, search, integrations
-      styles/                 Design tokens and responsive styles
+  main/                       Electron lifecycle and restricted IPC
+  preload/                    Typed desktop bridge
+  shared/                     Public API/chat/provider contracts
+  server/
+    app.ts                    Authenticated HTTP routing and validation
+    database.ts               SQLite migrations and repositories
+    providers.ts              Encrypted credentials and SDK adapters
+    chat.ts                   Context, streaming, idempotency, cancellation
+    attachments.ts            Upload validation, extraction, durable files
+    config.ts                 Local paths and secrets
+    index.ts                  Standalone service lifecycle
+  renderer/src/
+    app/                      Application composition
+    components/               Shared shell and UI components
+    features/ai/              Real bots, streaming chat state, API, files
+    features/settings/        Workspace, Appearance, Providers
+    features/workspace/       Existing prototype areas
+    styles/                   Theme tokens and component styles
 ```
 
-The renderer has no Node access. Electron uses context isolation, a sandboxed preload, restricted IPC, denied permissions, blocked navigation and new windows, and a Content Security Policy. Fonts are bundled for offline use. The API binds only to `127.0.0.1`; there are no remote calls from the UI.
-
-## Health endpoint
-
-```sh
-curl http://127.0.0.1:4318/health
-```
-
-```json
-{
-  "status": "ok",
-  "service": "mukai-api",
-  "version": "0.1.0",
-  "uptime": 42,
-  "timestamp": "2026-10-01T12:00:00.000Z"
-}
-```
-
-Supports GET and HEAD; unsupported methods return 405 and unknown routes return 404. The desktop renderer reads health through IPC rather than receiving the service address or unrestricted network capabilities.
-
-## Checks and builds
+## Verification and builds
 
 ```sh
 npm run typecheck
@@ -95,11 +90,13 @@ npm run build
 npm run preview
 ```
 
-`npm run build` outputs Electron artifacts to `out/` and a standalone Node service to `dist/server/`. `npm run start:server` runs the compiled standalone service. `npm run build:web` produces an optional browser build in `dist/web/`; browser health checks need a host with the same `/api` proxy.
+Integration tests use the actual AI SDK against a **test-only local OpenAI protocol fixture** and disposable SQLite databases. They cover credentials/redaction, context limits, bot-specific instructions/models, restart persistence, streaming stop/retry, attachments, deletion, and API authentication. Production provider adapters always call the selected real endpoint; no fixture or canned reply is connected to the app.
+
+`npm run build` produces Electron output in `out/` and the standalone service in `dist/server/`. Run the compiled service with `npm run start:server`. `/health` remains public and supports GET/HEAD.
 
 ```sh
 npm run package     # Unpacked desktop app in release/
-npm run dist        # Platform installer: NSIS, DMG, or AppImage
+npm run dist        # Platform installer
 ```
 
-Installer configuration and the Mukai logo are included. Public distribution still needs signing/notarization, an update strategy, and release CI. Authentication, AI behavior, real integrations, durable server storage, and encrypted secrets are future work.
+Public distribution still needs signing/notarization, updates, and release CI. No cloud sync, user accounts, OCR, autonomous scheduling, Pursuits backend, or advanced bot tools are included.

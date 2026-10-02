@@ -10,7 +10,7 @@ import {
   Plug,
 } from 'lucide-react';
 import { useState } from 'react';
-import { bots } from '../../features/workspace/data';
+import type { Bot } from '../../../../shared/ai';
 import type { Location, Space, Pursuit, DialogKind } from '../../features/workspace/types';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
@@ -22,6 +22,7 @@ export function WorkspaceSidebar({
   onSelect,
   onDialog,
   collapsed,
+  bots,
 }: {
   location: Location;
   spaces: Space[];
@@ -29,6 +30,7 @@ export function WorkspaceSidebar({
   onSelect: (location: Location) => void;
   onDialog: (dialog: DialogKind) => void;
   collapsed: boolean;
+  bots: Bot[];
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
   const [directOpen, setDirectOpen] = useState(true);
@@ -40,9 +42,8 @@ export function WorkspaceSidebar({
       className={`sidebar-row bot-row ${isSelected(bot.id) ? 'is-selected' : ''}`}
       onClick={() => onSelect({ section: 'bots', item: bot.id })}
     >
-      <Avatar person={bot.id} size="xs" />
+      <Avatar person={bot.avatar} size="xs" />
       <span>{bot.name}</span>
-      <i className="bot-online" />
     </button>
   );
   return (

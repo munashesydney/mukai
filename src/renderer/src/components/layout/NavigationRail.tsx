@@ -45,7 +45,11 @@ export function NavigationRail({
         ))}
       </div>
       <div className="rail-bottom">
-        <button className="rail-add" onClick={onCreate} aria-label="Create a space">
+        <button
+          className="rail-add"
+          onClick={onCreate}
+          aria-label={section === 'bots' ? 'Create a new bot' : 'Create a space'}
+        >
           <Plus size={21} />
         </button>
         <button className="rail-settings" onClick={onSettings} aria-label="Open settings">

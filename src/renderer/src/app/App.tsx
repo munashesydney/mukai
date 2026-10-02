@@ -11,11 +11,18 @@ import { SearchDialog } from '../features/workspace/SearchDialog';
 import { WorkspaceDialogs } from '../features/workspace/WorkspaceDialogs';
 import { ToolsPage } from '../features/workspace/ToolsPage';
 import { useWorkspace } from '../features/workspace/useWorkspace';
-import { bots } from '../features/workspace/data';
+import { useAIWorkspace } from '../features/ai/useAIWorkspace';
+import { BotChat } from '../features/ai/BotChat';
+import { BotEditor } from '../features/ai/BotEditor';
+import { SettingsDialog } from '../features/settings/SettingsDialog';
+import type { Bot } from '../../../shared/ai';
 import type { DialogKind, Location, Section } from '../features/workspace/types';
 
 export function App() {
   const workspace = useWorkspace();
+  const ai = useAIWorkspace();
+  const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
+  const [settingsSection, setSettingsSection] = useState<'workspace' | 'providers'>('workspace');
   const [searchOpen, setSearchOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [tab, setTab] = useState('Messages');
@@ -43,7 +50,14 @@ export function App() {
   );
   const space = workspace.spaces.find((s) => s.id === location.item);
   const pursuit = workspace.pursuits.find((p) => p.id === location.item);
-  const bot = bots.find((a) => a.id === location.item);
+  const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
+  const openDialog = (kind: DialogKind) => {
+    if (kind === 'create-bot') setEditingBot('new');
+    else {
+      if (kind === 'settings') setSettingsSection('workspace');
+      setDialog(kind);
+    }
+  };
   const messages = workspace.messages[location.item] ?? [];
   const openPursuit = () => select({ section: 'pursuits', item: 'grow-mrr' });
   const navigateSection = (section: Section) =>
@@ -55,7 +69,7 @@ export function App() {
           : section === 'pursuits'
             ? workspace.pursuits[0].id
             : section === 'bots'
-              ? 'nova'
+              ? bot?.id || 'scout'
               : 'integrations',
     });
   useEffect(() => {
@@ -89,19 +103,60 @@ export function App() {
         <NavigationRail
           section={location.section}
           onNavigate={navigateSection}
-          onSettings={() => setDialog('settings')}
-          onCreate={() => setDialog('create-space')}
+          onSettings={() => {
+            setSettingsSection('workspace');
+            setDialog('settings');
+          }}
+          onCreate={() =>
+            location.section === 'bots' ? setEditingBot('new') : setDialog('create-space')
+          }
         />
         <WorkspaceSidebar
-          location={location}
+          location={
+            location.section === 'bots' && bot ? { section: 'bots', item: bot.id } : location
+          }
           spaces={workspace.spaces}
           pursuits={workspace.pursuits}
           onSelect={select}
-          onDialog={setDialog}
           collapsed={sidebarCollapsed}
+          bots={ai.bots}
+          onDialog={openDialog}
         />
         {location.section === 'tools' ? (
           <ToolsPage />
+        ) : location.section === 'bots' ? (
+          ai.loading ? (
+            <main className="conversation ai-main-state">
+              <p>Loading your bots…</p>
+            </main>
+          ) : ai.error ? (
+            <main className="conversation ai-main-state">
+              <h2>Couldn’t connect to Mukai</h2>
+              <p role="alert">{ai.error}</p>
+              <button className="button" onClick={() => void ai.refresh()}>
+                Try again
+              </button>
+            </main>
+          ) : bot ? (
+            <BotChat
+              key={bot.id}
+              bot={bot}
+              providers={ai.providers}
+              onEdit={() => setEditingBot(bot)}
+              onProviders={() => {
+                setSettingsSection('providers');
+                setDialog('settings');
+              }}
+            />
+          ) : (
+            <main className="conversation ai-main-state">
+              <h2>Make room for a new bot.</h2>
+              <p>Create a companion with its own instructions and model.</p>
+              <button className="button button--primary" onClick={() => setEditingBot('new')}>
+                Create a bot
+              </button>
+            </main>
+          )
         ) : (
           <div className="conversation-layout">
             <main className="conversation">
@@ -117,14 +172,14 @@ export function App() {
                 }}
                 detailsOpen={detailsOpen}
                 onDetails={() => setDetailsOpen(!detailsOpen)}
-                onDialog={setDialog}
+                onDialog={openDialog}
                 onSaved={() => setSavedOpen(true)}
               />
               {savedOpen ? (
                 <SavedView
                   messages={messages}
                   onClose={() => setSavedOpen(false)}
-                  onDialog={setDialog}
+                  onDialog={openDialog}
                   bookmarks={workspace.bookmarks}
                   onBookmark={workspace.toggleBookmark}
                   reactions={workspace.reactions}
@@ -132,14 +187,14 @@ export function App() {
                   onPursuit={openPursuit}
                 />
               ) : tab === 'Files' ? (
-                <FilesView messages={messages} onDialog={setDialog} />
+                <FilesView messages={messages} onDialog={openDialog} />
               ) : tab === 'Activity' ? (
                 <ActivityView onPursuit={openPursuit} onDraft={() => setDialog('draft')} />
               ) : (
                 <MessageFeed
                   key={`feed-${location.item}`}
                   messages={messages}
-                  onDialog={setDialog}
+                  onDialog={openDialog}
                   onPursuit={openPursuit}
                   bookmarks={workspace.bookmarks}
                   onBookmark={workspace.toggleBookmark}
@@ -151,11 +206,7 @@ export function App() {
                 <Composer
                   key={`composer-${location.item}`}
                   placeholder={
-                    bot
-                      ? `Message ${bot.name}…`
-                      : pursuit
-                        ? 'Talk about this pursuit…'
-                        : `Message ${space?.name ?? 'your bots'}…`
+                    pursuit ? 'Talk about this pursuit…' : `Message ${space?.name ?? 'your bots'}…`
                   }
                   onSend={workspace.sendMessage}
                 />
@@ -174,7 +225,7 @@ export function App() {
                 pursuits={workspace.pursuits}
                 messages={messages}
                 onSelect={select}
-                onDialog={setDialog}
+                onDialog={openDialog}
                 onClose={() => setDetailsOpen(false)}
               />
             )}
@@ -187,17 +238,42 @@ export function App() {
           pursuits={workspace.pursuits}
           onSelect={select}
           onClose={() => setSearchOpen(false)}
+          bots={ai.bots}
         />
       )}
       <WorkspaceDialogs
         key={dialog}
-        kind={dialog}
+        kind={dialog === 'settings' ? null : dialog}
         pursuit={pursuit}
         onClose={() => setDialog(null)}
         onCreateSpace={workspace.createSpace}
         onCreatePursuit={workspace.createPursuit}
         onTogglePaused={workspace.togglePaused}
       />
+      {dialog === 'settings' && (
+        <SettingsDialog
+          initialSection={settingsSection}
+          onClose={() => setDialog(null)}
+          onProvidersChanged={() => void ai.refresh()}
+        />
+      )}
+      {editingBot && (
+        <BotEditor
+          bot={editingBot === 'new' ? undefined : editingBot}
+          providers={ai.providers}
+          onClose={() => setEditingBot(null)}
+          onSaved={(saved) => {
+            setEditingBot(null);
+            void ai.refresh();
+            select({ section: 'bots', item: saved.id });
+          }}
+          onDeleted={() => {
+            setEditingBot(null);
+            void ai.refresh();
+            select({ section: 'bots', item: 'scout' });
+          }}
+        />
+      )}
     </div>
   );
 }
