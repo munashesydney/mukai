@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Target, ArrowRight } from 'lucide-react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
@@ -20,7 +19,7 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [tab, setTab] = useState('Messages');
-  const [detailsOpen, setDetailsOpen] = useState(() => window.innerWidth >= 1400);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth <= 760);
   const [savedOpen, setSavedOpen] = useState(false);
   const { location, navigate } = workspace;
@@ -73,6 +72,7 @@ export function App() {
   useEffect(() => {
     setTab('Messages');
     setSavedOpen(false);
+    setDetailsOpen(false);
   }, [location]);
 
   return (
@@ -106,34 +106,20 @@ export function App() {
           <div className="conversation-layout">
             <main className="conversation">
               <ConversationHeader
+                key={location.item}
                 location={location}
                 space={space}
                 pursuit={pursuit}
                 tab={tab}
-                onTab={setTab}
+                onTab={(next) => {
+                  setTab(next);
+                  setSavedOpen(false);
+                }}
                 detailsOpen={detailsOpen}
                 onDetails={() => setDetailsOpen(!detailsOpen)}
                 onDialog={setDialog}
                 onSaved={() => setSavedOpen(true)}
               />
-              {pursuit && (
-                <button
-                  className={`pursuit-banner ${pursuit.paused ? 'is-paused' : ''}`}
-                  onClick={() => setDialog('details')}
-                >
-                  <Target size={16} />
-                  <span>
-                    {pursuit.paused
-                      ? 'Taking a breather. Ready when you are.'
-                      : 'A little closer, every day.'}
-                  </span>
-                  <div className="banner-progress">
-                    <span style={{ width: `${pursuit.progress}%` }} />
-                  </div>
-                  <strong>{pursuit.progress}%</strong>
-                  <ArrowRight size={15} />
-                </button>
-              )}
               {savedOpen ? (
                 <SavedView
                   messages={messages}
@@ -183,6 +169,10 @@ export function App() {
             {detailsOpen && (
               <ContextPanel
                 location={location}
+                space={space}
+                pursuit={pursuit}
+                pursuits={workspace.pursuits}
+                messages={messages}
                 onSelect={select}
                 onDialog={setDialog}
                 onClose={() => setDetailsOpen(false)}

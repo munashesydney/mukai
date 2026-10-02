@@ -8,7 +8,6 @@ import {
   Sparkles,
   Check,
   Plug,
-  Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
 import { agents } from '../../features/workspace/data';
@@ -39,9 +38,7 @@ export function WorkspaceSidebar({
     <button
       key={agent.id}
       className={`sidebar-row agent-row ${isSelected(agent.id) ? 'is-selected' : ''}`}
-      onClick={() =>
-        onSelect({ section: location.section === 'agents' ? 'agents' : 'spaces', item: agent.id })
-      }
+      onClick={() => onSelect({ section: 'agents', item: agent.id })}
     >
       <Avatar person={agent.id} size="xs" />
       <span>{agent.name}</span>
@@ -119,11 +116,7 @@ export function WorkspaceSidebar({
               <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
                 {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 <span>Your agents</span>
-                <span className="section-count">3</span>
               </button>
-              <IconButton label="Create an agent" onClick={() => onDialog('create-agent')}>
-                <Plus size={15} />
-              </IconButton>
             </div>
             {directOpen && <div className="sidebar-group">{agents.map(agentRow)}</div>}
             <div className="sidebar-section-heading plain-heading">
@@ -131,19 +124,11 @@ export function WorkspaceSidebar({
               <Target size={14} />
             </div>
             <button
-              className="sidebar-pursuit"
+              className="sidebar-row pursuit-row"
               onClick={() => onSelect({ section: 'pursuits', item: 'grow-mrr' })}
             >
-              <div>
-                <span className="tiny-status" />
-                Grow MRR to $2,000
-              </div>
-              <div className="mini-progress">
-                <span style={{ width: '53%' }} />
-              </div>
-              <small>
-                $1,062 <span>of $2,000</span>
-              </small>
+              <Target size={18} />
+              <span>Grow MRR to $2,000</span>
             </button>
           </>
         )}
@@ -155,12 +140,7 @@ export function WorkspaceSidebar({
                 <Plus size={18} />
               </IconButton>
             </div>
-            <p className="sidebar-caption">Good company for your next idea.</p>
             <div className="sidebar-group">{agents.map(agentRow)}</div>
-            <button className="sidebar-row sidebar-add" onClick={() => onDialog('create-agent')}>
-              <Plus size={17} />
-              <span>Create an agent</span>
-            </button>
           </>
         )}
         {location.section === 'pursuits' && (
@@ -171,7 +151,6 @@ export function WorkspaceSidebar({
                 <Plus size={18} />
               </IconButton>
             </div>
-            <p className="sidebar-caption">Big intentions. Small steps.</p>
             <div className="sidebar-group">
               {pursuits
                 .filter((p) => !p.paused)
@@ -210,18 +189,11 @@ export function WorkspaceSidebar({
               <h2>Tools</h2>
               <Plug size={18} />
             </div>
-            <p className="sidebar-caption">Give your ideas a little more reach.</p>
             <button className="sidebar-row is-selected">
               <PuzzleIcon />
               <span>All integrations</span>
               <span className="section-count">6</span>
             </button>
-            <div className="tools-sidebar-note">
-              <Workflow size={22} />
-              <h3>Connect your world.</h3>
-              <p>A home for the tools your agents will work with.</p>
-              <span>Integration preview</span>
-            </div>
           </>
         )}
       </div>
@@ -230,7 +202,6 @@ export function WorkspaceSidebar({
           <Sparkles size={15} />
         </div>
         <div>
-          <strong>Make room for possibility.</strong>
           <span>Mukai means “wake up” in Shona.</span>
         </div>
       </div>

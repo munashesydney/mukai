@@ -28,10 +28,11 @@ Open http://127.0.0.1:5173. The Vite proxy maps `/api/health` to the standalone 
 
 - Agents, Pursuits, Spaces, and Tools navigation, with back/forward history.
 - Spaces and individual agent conversations.
+- Opens directly into an agent conversation. Details panels stay closed until requested; Files and Activity are secondary views.
 - Local message composition, Enter/Shift+Enter, emoji insertion, reactions, and saved messages.
 - Search for spaces, agents, and pursuits (`Ctrl+K` / `Cmd+K`).
 - Create spaces and pursuits; pause and resume pursuits.
-- Files and activity views, a draft preview, and a collapsible details panel.
+- Files and activity views, a draft preview, and contextual agent, pursuit, and space details.
 - Integration previews with explicit demo states.
 - Native minimize, maximize/restore, close, and draggable title bar.
 - Workspace and Appearance settings, with six color palettes and Light/Dark/System modes.

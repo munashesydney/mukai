@@ -78,15 +78,8 @@ export function ToolsPage() {
         </span>
         <span className="preview-label">UI preview</span>
       </div>
-      <h1>
-        A little more connected.
-        <br />
-        <span>A lot more possible.</span>
-      </h1>
-      <p className="tools-intro">
-        The tools you already use, together with the agents
-        <br className="desktop-break" /> helping you move things forward.
-      </p>
+      <h1>Tools for your agents.</h1>
+      <p className="tools-intro">Connect the apps and services your agents can use.</p>
       <div className="tools-filter">
         <span>
           Explore integrations <small>{integrations.length}</small>

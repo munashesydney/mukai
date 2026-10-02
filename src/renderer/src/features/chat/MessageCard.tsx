@@ -3,15 +3,10 @@ import { ArrowUpRight, Target, FileText, ChevronRight } from 'lucide-react';
 export function MessageCard({ kind, onOpen }: { kind: 'pursuit' | 'draft'; onOpen: () => void }) {
   if (kind === 'pursuit')
     return (
-      <button className="message-card pursuit-card" onClick={onOpen}>
-        <span className="card-symbol card-symbol--teal">
-          <Target size={20} />
-        </span>
-        <span className="card-copy">
-          <small>PURSUIT STARTED</small>
-          <strong>Grow MRR to $2,000</strong>
-        </span>
-        <ArrowUpRight size={17} className="card-arrow" />
+      <button className="message-pursuit-link" onClick={onOpen}>
+        <Target size={15} />
+        <span>Grow MRR to $2,000</span>
+        <ArrowUpRight size={13} />
       </button>
     );
   return (

@@ -102,27 +102,21 @@
 }
 .draft-card,
 .message-card,
-.sidebar-pursuit,
 .integration-card {
   background: var(--surface);
   border-color: var(--line);
 }
 .draft-card:hover,
 .message-card:hover,
-.sidebar-pursuit:hover,
 .integration-card:hover {
   background: var(--surface-muted);
   border-color: var(--theme-border);
 }
-.mini-progress,
 .goal-progress,
-.banner-progress,
 .details-progress {
   background: var(--theme-border);
 }
-.mini-progress > span,
 .goal-progress > span,
-.banner-progress > span,
 .details-progress > span {
   background: var(--theme-accent);
 }
@@ -135,8 +129,7 @@
   border-color: var(--theme-accent);
 }
 .context-goal h3,
-.context-goal-top,
-.goal-amount {
+.context-goal-top {
   color: var(--theme-text);
 }
 .card-copy strong,

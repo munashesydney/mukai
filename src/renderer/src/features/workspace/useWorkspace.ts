@@ -77,7 +77,7 @@ export function useWorkspace() {
   const [state, setState] = useState(loadWorkspace);
   const [storageFailed, setStorageFailed] = useState(false);
   const [history, setHistory] = useState<{ entries: Location[]; index: number }>({
-    entries: [{ section: 'spaces', item: 'ai-telegram-copier' }],
+    entries: [{ section: 'agents', item: 'nova' }],
     index: 0,
   });
   const location = history.entries[history.index];

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Plus, Send, Smile, Paperclip, X, LockKeyhole } from 'lucide-react';
+import { Plus, Send, Smile, Paperclip, X } from 'lucide-react';
 import { IconButton } from '../../components/ui/IconButton';
 
 export function Composer({
@@ -57,7 +57,6 @@ export function Composer({
             >
               <Plus size={18} />
             </IconButton>
-            <span className="composer-tool-divider" />
             <IconButton
               label="Add an emoji"
               onClick={() => setEmojiOpen(!emojiOpen)}
@@ -65,10 +64,6 @@ export function Composer({
             >
               <Smile size={18} />
             </IconButton>
-            <IconButton label="Attach a file" onClick={() => file.current?.click()}>
-              <Paperclip size={18} />
-            </IconButton>
-            <span className="composer-context">Your agents are here to help.</span>
           </div>
           <button
             className="send-button"
@@ -111,9 +106,6 @@ export function Composer({
       <div className="composer-hint">
         <span>
           <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for a new line
-        </span>
-        <span>
-          Just you and your agents <LockKeyhole size={9} className="hint-lock" />
         </span>
       </div>
     </div>
