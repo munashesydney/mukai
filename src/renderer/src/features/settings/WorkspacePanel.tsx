@@ -3,8 +3,15 @@ import { Cpu, HardDrive, RefreshCw, ShieldCheck, Terminal } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import type { HealthResponse } from '../../../../shared/contracts';
 import { getHealth } from '../../services/healthService';
+import type { Workspace } from '../../../../shared/ai';
 
-export function WorkspacePanel() {
+export function WorkspacePanel({
+  workspace,
+  onConnectFolder,
+}: {
+  workspace?: Workspace;
+  onConnectFolder?: () => void;
+}) {
   const [health, setHealth] = useState<HealthResponse>();
   const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [refresh, setRefresh] = useState(0);
@@ -35,11 +42,22 @@ export function WorkspacePanel() {
       <div className="settings-account-card">
         <Avatar person="munashe" size="md" />
         <div>
-          <strong>Munashe’s workspace</strong>
+          <strong>{workspace?.name || 'Munashe’s workspace'}</strong>
           <span>Personal · Local to this device</span>
         </div>
-        <span className="settings-account-badge">M</span>
+        <span className="settings-account-badge">{workspace?.name[0]?.toUpperCase() || 'M'}</span>
       </div>
+      {workspace && (
+        <section className="settings-card workspace-folder-card">
+          <h4>Workspace folder</h4>
+          <p>{workspace.folder || 'Connect a folder to let your bots work with local files.'}</p>
+          {!workspace.folder && onConnectFolder && (
+            <button className="button" onClick={onConnectFolder}>
+              Connect folder
+            </button>
+          )}
+        </section>
+      )}
       <section className="settings-card">
         <div className="settings-card-heading">
           <span className="settings-card-icon">

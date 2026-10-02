@@ -1,19 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 import { startApiServer } from './app';
-import type { Bot, ChatEvent, ChatMessage, ProviderSettings, Attachment } from '../shared/ai';
+import type {
+  Bot,
+  ChatEvent,
+  ChatMessage,
+  ProviderSettings,
+  Attachment,
+  Workspace,
+  FileArtifact,
+  ToolInfo,
+} from '../shared/ai';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
 let fixture: Server, api: Awaited<ReturnType<typeof startApiServer>>, dir: string;
 let calls: { model: string; messages: { role: string; content: unknown }[] }[];
-let mode: 'normal' | 'fail' | 'slow' = 'normal';
+let mode: 'normal' | 'fail' | 'slow' | 'tools' = 'normal';
 let endpoint = '';
+let project = '';
 async function close(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -116,6 +126,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mukai-test-'));
   calls = [];
   mode = 'normal';
+  project = '';
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -143,6 +154,47 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'tools') {
+      const completed = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const actions = [
+        { action: 'list', path: '.' },
+        { action: 'read_file', path: 'notes.txt' },
+        { action: 'write_file', path: 'draft.md', content: '# A useful draft\nFirst version.' },
+        {
+          action: 'patch',
+          path: 'draft.md',
+          oldText: 'First version.',
+          newText: 'A clearer second version.',
+        },
+        { action: 'search_files', query: 'clearer' },
+      ];
+      const send = (delta: unknown, finish: string | null = null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'tools', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
+        );
+      if (completed < actions.length) {
+        if (!completed)
+          send({
+            reasoning_content: 'I will review the notes, create a draft, and check the result.',
+          });
+        send({
+          tool_calls: [
+            {
+              index: 0,
+              id: `file-call-${completed}`,
+              type: 'function',
+              function: { name: 'file_operations', arguments: JSON.stringify(actions[completed]) },
+            },
+          ],
+        });
+        send({}, 'tool_calls');
+      } else
+        send({ content: 'I created draft.md and refined it using the workspace notes.' }, 'stop');
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     const chunk = (text: string, finish: string | null = null) =>
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] })}\n\n`,
@@ -172,9 +224,121 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 10));
   expect(dir.startsWith(join(tmpdir(), 'mukai-test-'))).toBe(true);
   rmSync(dir, { recursive: true, force: true });
+  if (project) {
+    expect(project.startsWith(join(tmpdir(), 'mukai-project-'))).toBe(true);
+    rmSync(project, { recursive: true, force: true });
+  }
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('creates folder-backed workspaces with independent Scout bots and persistent chats', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const created = await request<Workspace>('/workspaces', 'POST', {
+      name: 'My project',
+      folder: project,
+    });
+    expect(created.response.status).toBe(201);
+    expect(created.data.folder).toBe(project);
+    const workspaceId = created.data.id;
+    const bots = (await request<Bot[]>(`/bots?workspaceId=${workspaceId}`)).data;
+    expect(bots).toHaveLength(1);
+    expect(bots[0].name).toBe('Scout');
+    expect(bots[0].id).not.toBe('scout');
+    expect(bots[0].workspaceId).toBe(workspaceId);
+    await chat('Only this workspace', randomUUID(), bots[0].id);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(0);
+    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.id)).toEqual(['scout']);
+    expect(
+      (await request('/workspaces', 'POST', { name: 'Duplicate', folder: project })).response
+        .status,
+    ).toBe(409);
+    expect(
+      (await request('/workspaces', 'POST', { name: 'Private', folder: dir })).response.status,
+    ).toBe(400);
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect((await request<Workspace[]>('/workspaces')).data).toHaveLength(2);
+    expect((await request<Bot[]>(`/bots?workspaceId=${workspaceId}`)).data).toHaveLength(1);
+    expect((await request<ChatMessage[]>(`/bots/${bots[0].id}/messages`)).data[0].content).toBe(
+      'Only this workspace',
+    );
+  });
+  it('streams actual reasoning and file actions through the SDK, saves artifacts, and replays completed requests without repeating writes', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    writeFileSync(join(project, 'notes.txt'), 'Useful notes for the draft.');
+    const workspace = (
+      await request<Workspace>('/workspaces', 'POST', { name: 'Writing', folder: project })
+    ).data;
+    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    mode = 'tools';
+    const sent = await chat('Create a useful draft from my notes', randomUUID(), bot.id);
+    expect(sent.events.some((event) => event.type === 'reasoning')).toBe(true);
+    expect(sent.events.filter((event) => event.type === 'activity')).toHaveLength(10);
+    expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
+    const messages = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
+    expect(messages[1].status).toBe('complete');
+    expect(messages[1].reasoning).toContain('review the notes');
+    expect(messages[1].activity).toHaveLength(5);
+    expect(messages[1].activity?.every((item) => item.status === 'complete')).toBe(true);
+    const artifacts = (await request<FileArtifact[]>(`/bots/${bot.id}/artifacts`)).data;
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].path).toBe('draft.md');
+    const count = calls.length;
+    await chat('', sent.requestId, bot.id);
+    expect(calls).toHaveLength(count);
+    expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
+    const tools = (await request<ToolInfo[]>(`/tools?workspaceId=${workspace.id}`)).data;
+    expect(tools[0]).toMatchObject({
+      id: 'file_operations',
+      scope: 'all-bots',
+      available: true,
+      counts: { write_file: 1, patch: 1 },
+    });
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    const restored = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
+    expect(restored.reasoning).toBe(messages[1].reasoning);
+    expect(restored.activity).toEqual(messages[1].activity);
+    const download = await fetch(api.url + '/artifacts/' + artifacts[0].id, {
+      headers: { Authorization: `Bearer ${api.token}` },
+    });
+    expect(download.headers.get('content-disposition')).toContain('attachment');
+    expect(await download.text()).toContain('A clearer second version.');
+    await request(`/bots/${bot.id}`, 'DELETE');
+    expect(
+      (
+        await fetch(api.url + '/artifacts/' + artifacts[0].id, {
+          headers: { Authorization: `Bearer ${api.token}` },
+        })
+      ).status,
+    ).toBe(404);
+    expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
+  });
+  it('connects the existing workspace without replacing its bot or history and disables files until a folder is connected', async () => {
+    await configure();
+    await chat('Keep my earlier chat');
+    expect((await request<ToolInfo[]>('/tools')).data[0].available).toBe(false);
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    expect(
+      (
+        await request<Workspace>('/workspaces/default', 'PUT', {
+          name: 'My original workspace',
+          folder: project,
+        })
+      ).response.status,
+    ).toBe(200);
+    expect((await request<ToolInfo[]>('/tools')).data[0].available).toBe(true);
+    expect((await request<Bot[]>('/bots')).data[0].id).toBe('scout');
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[0].content).toBe(
+      'Keep my earlier chat',
+    );
+    expect(
+      (await request('/workspaces/default', 'PUT', { name: 'Changed', folder: project })).response
+        .status,
+    ).toBe(409);
+  });
   it('keeps health public, authenticates API calls, and refuses untrusted origins', async () => {
     const health = await fetch(api.url + '/health');
     expect(health.headers.get('cache-control')).toBe('no-store');
@@ -248,7 +412,10 @@ describe('Mukai bots and AI API', () => {
       'A real SDK response.',
     );
     expect((await request<Bot[]>('/bots')).data).toHaveLength(2);
-    expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([{ version: 1 }]);
+    expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([
+      { version: 1 },
+      { version: 2 },
+    ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
     await close(api.server);

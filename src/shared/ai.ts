@@ -21,6 +21,7 @@ export interface ProviderInput {
 }
 export interface Bot {
   id: string;
+  workspaceId: string;
   name: string;
   description: string;
   instructions: string;
@@ -30,7 +31,42 @@ export interface Bot {
   avatar: 'scout' | 'nova' | 'atlas';
   createdAt: string;
 }
-export type BotInput = Omit<Bot, 'id' | 'createdAt'>;
+export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId'>;
+export interface Workspace {
+  id: string;
+  name: string;
+  folder: string | null;
+  createdAt: string;
+}
+export interface WorkspaceInput {
+  name: string;
+  folder: string;
+}
+export interface ChatActivity {
+  id: string;
+  tool: string;
+  action: string;
+  path: string;
+  status: 'running' | 'complete' | 'failed' | 'interrupted';
+  summary: string;
+}
+export interface FileArtifact {
+  id: string;
+  botId: string;
+  messageId: string;
+  name: string;
+  path: string;
+  createdAt: string;
+}
+export interface ToolInfo {
+  id: string;
+  name: string;
+  description: string;
+  actions: string[];
+  scope: 'all-bots' | 'selected-bots';
+  available: boolean;
+  counts: Record<string, number>;
+}
 export interface Attachment {
   id: string;
   botId: string;
@@ -52,10 +88,14 @@ export interface ChatMessage {
   error: string | null;
   createdAt: string;
   attachments: Attachment[];
+  reasoning?: string;
+  activity?: ChatActivity[];
 }
 export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
   | { type: 'delta'; id: string; text: string }
+  | { type: 'reasoning'; id: string; text: string }
+  | { type: 'activity'; id: string; activity: ChatActivity }
   | { type: 'done' | 'error'; message: ChatMessage };
 export interface ChatInput {
   requestId: string;

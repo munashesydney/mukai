@@ -1,5 +1,5 @@
 import type { Database } from '../db/database';
-import type { MessageStatus } from '../../shared/ai';
+import type { ChatActivity, MessageStatus } from '../../shared/ai';
 import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
@@ -53,6 +53,26 @@ export class MessageRepository {
       .map(messageRecord);
   }
   interruptStreaming(error: string, botId?: string) {
+    const pending = this.database.all(
+      `SELECT * FROM messages WHERE status='streaming'${botId === undefined ? '' : ' AND bot_id=?'}`,
+      ...(botId === undefined ? [] : [botId]),
+    );
+    for (const row of pending) {
+      const activity = (messageRecord(row).activity || []).map((item) =>
+        item.status === 'running'
+          ? {
+              ...item,
+              status: 'interrupted',
+              summary: 'The response was interrupted before this operation finished.',
+            }
+          : item,
+      );
+      this.database.run(
+        'UPDATE messages SET activity_json=? WHERE id=?',
+        JSON.stringify(activity),
+        row.id,
+      );
+    }
     this.database.run(
       `UPDATE messages SET status = 'interrupted', error = ? WHERE status = 'streaming'${botId === undefined ? '' : ' AND bot_id = ?'}`,
       error,
@@ -61,21 +81,51 @@ export class MessageRepository {
   }
   reset(id: string) {
     this.database.run(
-      "UPDATE messages SET content = '', status = 'streaming', error = NULL WHERE id = ?",
+      "UPDATE messages SET content = '', reasoning = '', status = 'streaming', error = NULL WHERE id = ?",
       id,
     );
   }
-  saveContent(id: string, content: string) {
-    this.database.run('UPDATE messages SET content = ? WHERE id = ?', content, id);
-  }
-  finish(id: string, content: string, status: MessageStatus, error: string | null) {
+  saveProgress(id: string, content: string, reasoning: string, activity: ChatActivity[]) {
     this.database.run(
-      'UPDATE messages SET content = ?, status = ?, error = ? WHERE id = ?',
+      'UPDATE messages SET content = ?,reasoning=?,activity_json=? WHERE id = ?',
+      content,
+      reasoning,
+      JSON.stringify(activity),
+      id,
+    );
+  }
+  finish(
+    id: string,
+    content: string,
+    status: MessageStatus,
+    error: string | null,
+    reasoning: string,
+    activity: ChatActivity[],
+  ) {
+    this.database.run(
+      'UPDATE messages SET content = ?, status = ?, error = ?,reasoning=?,activity_json=? WHERE id = ?',
       content,
       status,
       error,
+      reasoning,
+      JSON.stringify(activity),
       id,
     );
+  }
+  toolCounts(workspaceId: string) {
+    const counts: Record<string, Record<string, number>> = {};
+    const rows = this.database.all(
+      'SELECT activity_json FROM messages JOIN bots ON bots.id=messages.bot_id WHERE bots.workspace_id=? ORDER BY sequence DESC LIMIT 5000',
+      workspaceId,
+    );
+    for (const row of rows) {
+      for (const activity of JSON.parse(String(row.activity_json)) as ChatActivity[]) {
+        if (activity.status !== 'complete') continue;
+        counts[activity.tool] ??= {};
+        counts[activity.tool][activity.action] = (counts[activity.tool][activity.action] || 0) + 1;
+      }
+    }
+    return counts;
   }
   createTurn(input: {
     botId: string;

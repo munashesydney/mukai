@@ -154,6 +154,28 @@ export const chatStore = {
                 : message,
             ),
           });
+        else if (event.type === 'reasoning')
+          update(id, {
+            messages: get(id).messages.map((message) =>
+              message.id === event.id
+                ? { ...message, reasoning: (message.reasoning || '') + event.text }
+                : message,
+            ),
+          });
+        else if (event.type === 'activity')
+          update(id, {
+            messages: get(id).messages.map((message) =>
+              message.id === event.id
+                ? {
+                    ...message,
+                    activity: [
+                      ...(message.activity || []).filter((item) => item.id !== event.activity.id),
+                      event.activity,
+                    ],
+                  }
+                : message,
+            ),
+          });
         else {
           update(id, {
             messages: get(id).messages.map((message) =>

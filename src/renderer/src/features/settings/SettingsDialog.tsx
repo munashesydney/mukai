@@ -6,6 +6,7 @@ import { useTheme } from '../appearance/useTheme';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
+import type { Workspace } from '../../../../shared/ai';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
@@ -18,10 +19,14 @@ export function SettingsDialog({
   onClose,
   initialSection = 'workspace',
   onProvidersChanged = () => {},
+  workspace,
+  onConnectFolder,
 }: {
   onClose: () => void;
   initialSection?: SettingsSection;
   onProvidersChanged?: () => void;
+  workspace?: Workspace;
+  onConnectFolder?: () => void;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const { storageAvailable } = useTheme();
@@ -73,7 +78,7 @@ export function SettingsDialog({
           tabIndex={0}
         >
           {section === 'workspace' ? (
-            <WorkspacePanel />
+            <WorkspacePanel workspace={workspace} onConnectFolder={onConnectFolder} />
           ) : section === 'appearance' ? (
             <AppearancePanel />
           ) : (

@@ -13,20 +13,23 @@ export function NavigationRail({
   onNavigate,
   onSettings,
   onCreate,
+  workspaceName = 'Munashe’s workspace',
 }: {
   section: Section;
   onNavigate: (section: Section) => void;
   onSettings: () => void;
   onCreate: () => void;
+  workspaceName?: string;
 }) {
   return (
     <nav className="navigation-rail" aria-label="Main navigation">
       <button
         className="workspace-emblem"
         onClick={() => onNavigate('spaces')}
-        aria-label="Munashe’s workspace"
+        aria-label={workspaceName}
       >
-        M<span />
+        {workspaceName[0]?.toUpperCase() || 'M'}
+        <span />
       </button>
       <div className="rail-links">
         {items.map(({ id, label, icon: Icon }) => (
@@ -48,7 +51,13 @@ export function NavigationRail({
         <button
           className="rail-add"
           onClick={onCreate}
-          aria-label={section === 'bots' ? 'Create a new bot' : 'Create a space'}
+          aria-label={
+            section === 'tools'
+              ? 'Create workspace'
+              : section === 'bots'
+                ? 'Create a new bot'
+                : 'Create a space'
+          }
         >
           <Plus size={21} />
         </button>

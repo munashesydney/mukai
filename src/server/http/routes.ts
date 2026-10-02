@@ -7,7 +7,10 @@ import type { BotService } from '../services/botService';
 import type { ProviderService } from '../services/providerService';
 import type { AttachmentService } from '../services/attachmentService';
 import type { ChatService } from '../services/chatService';
-import { botSchema, providerSchema, chatSchema } from './schemas';
+import { botSchema, createBotSchema, providerSchema, chatSchema, workspaceSchema } from './schemas';
+import type { WorkspaceService } from '../services/workspaceService';
+import type { ArtifactService } from '../services/artifactService';
+import type { ToolService } from '../services/toolService';
 import { body, jsonBody, send, chatOutput } from './transport';
 
 export function createRoutes({
@@ -17,6 +20,9 @@ export function createRoutes({
   providers,
   attachments,
   chats,
+  workspaces,
+  artifacts,
+  tools,
 }: {
   token: string;
   startedAt: number;
@@ -24,6 +30,9 @@ export function createRoutes({
   providers: ProviderService;
   attachments: AttachmentService;
   chats: ChatService;
+  workspaces: WorkspaceService;
+  artifacts: ArtifactService;
+  tools: ToolService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -44,7 +53,8 @@ export function createRoutes({
       response.writeHead(204).end();
       return;
     }
-    const path = new URL(request.url || '/', 'http://localhost').pathname;
+    const url = new URL(request.url || '/', 'http://localhost');
+    const path = url.pathname;
     const method = request.method || 'GET';
     if (path === '/health') {
       if (!['GET', 'HEAD'].includes(method)) {
@@ -61,7 +71,8 @@ export function createRoutes({
       send(response, method === 'HEAD' ? undefined : payload);
       return;
     }
-    if (!/^\/(bots|providers|attachments)(\/|$)/.test(path)) throw new ApiError(404, 'Not found');
+    if (!/^\/(bots|providers|attachments|workspaces|artifacts|tools)(\/|$)/.test(path))
+      throw new ApiError(404, 'Not found');
     const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
     const expected = Buffer.from(token);
     if (given.length !== expected.length || !timingSafeEqual(given, expected))
@@ -69,7 +80,32 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
-    if (resource === 'providers') {
+    if (resource === 'workspaces') {
+      if (!id && method === 'GET') return send(response, workspaces.list());
+      if (!id && method === 'POST')
+        return send(
+          response,
+          workspaces.create(workspaceSchema.parse(await jsonBody(request))),
+          201,
+        );
+      if (id && !action && method === 'PUT')
+        return send(
+          response,
+          workspaces.update(id, workspaceSchema.parse(await jsonBody(request))),
+        );
+    } else if (resource === 'tools' && !id && method === 'GET') {
+      return send(response, tools.list(url.searchParams.get('workspaceId') || 'default'));
+    } else if (resource === 'artifacts' && id && !action && method === 'GET') {
+      const file = await artifacts.read(id);
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.setHeader(
+        'Content-Disposition',
+        `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      );
+      response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      response.writeHead(200).end(file.bytes);
+      return;
+    } else if (resource === 'providers') {
       if (!id && method === 'GET') return send(response, providers.list());
       if (!id && method === 'POST')
         return send(response, providers.save(providerSchema.parse(await jsonBody(request))), 201);
@@ -83,9 +119,12 @@ export function createRoutes({
       if (id && action === 'test' && method === 'POST')
         return send(response, await providers.test(id));
     } else if (resource === 'bots') {
-      if (!id && method === 'GET') return send(response, bots.list());
-      if (!id && method === 'POST')
-        return send(response, bots.save(botSchema.parse(await jsonBody(request))), 201);
+      if (!id && method === 'GET')
+        return send(response, bots.list(url.searchParams.get('workspaceId') || 'default'));
+      if (!id && method === 'POST') {
+        const value = createBotSchema.parse(await jsonBody(request));
+        return send(response, bots.save(value, undefined, value.workspaceId), 201);
+      }
       const bot = bots.require(id || '');
       if (method === 'PUT' && !action)
         return send(response, bots.save(botSchema.parse(await jsonBody(request)), id));
@@ -96,6 +135,7 @@ export function createRoutes({
       if (action === 'messages' && method === 'GET') return send(response, chats.history(id));
       if (action === 'files' && method === 'GET')
         return send(response, attachments.list(id, false));
+      if (action === 'artifacts' && method === 'GET') return send(response, artifacts.list(id));
       if (action === 'attachments' && method === 'GET')
         return send(response, attachments.list(id, true));
       if (action === 'attachments' && method === 'POST') {

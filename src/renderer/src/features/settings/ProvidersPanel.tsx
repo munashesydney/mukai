@@ -257,7 +257,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               checked={value.isDefault}
               onChange={(event) => setValue({ ...value, isDefault: event.target.checked })}
             />
-            Use as the workspace default
+            Use as the default provider
           </label>
           <p className="ai-caption">
             Connection tests send a short request and may incur a small provider charge.
@@ -324,7 +324,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   {removeId === provider.id && (
                     <div className="delete-confirm">
                       <p>
-                        Remove this provider? Bots using the workspace default will use the next
+                        Remove this provider? Bots using the default provider will use the next
                         available provider.
                       </p>
                       <button

@@ -137,10 +137,10 @@ export function ConversationHeader({
                     <button
                       onClick={() => {
                         setMenuOpen(false);
-                        onTab('Files');
+                        onTab('Artifacts');
                       }}
                     >
-                      <FileText size={15} /> Files
+                      <FileText size={15} /> Artifacts
                     </button>
                     <button
                       onClick={() => {
@@ -185,7 +185,7 @@ export function ConversationHeader({
       </div>
       {(!bot || tab !== 'Messages') && (
         <div className="conversation-tabs" role="tablist" aria-label="Conversation views">
-          {['Messages', 'Files', 'Activity'].map((label) => (
+          {['Messages', 'Artifacts', 'Activity'].map((label) => (
             <button
               key={label}
               role="tab"

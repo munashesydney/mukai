@@ -7,10 +7,10 @@ import {
   ArrowUpRight,
   Sunrise,
   Check,
-  Plug,
+  Puzzle,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { Bot } from '../../../../shared/ai';
+import type { Bot, Workspace } from '../../../../shared/ai';
 import type { Location, Space, Pursuit, DialogKind } from '../../features/workspace/types';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
@@ -23,6 +23,10 @@ export function WorkspaceSidebar({
   onDialog,
   collapsed,
   bots,
+  workspace,
+  workspaces,
+  onWorkspace,
+  onCreateWorkspace,
 }: {
   location: Location;
   spaces: Space[];
@@ -31,6 +35,10 @@ export function WorkspaceSidebar({
   onDialog: (dialog: DialogKind) => void;
   collapsed: boolean;
   bots: Bot[];
+  workspace?: Workspace;
+  workspaces: Workspace[];
+  onWorkspace: (id: string) => void;
+  onCreateWorkspace: () => void;
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
   const [directOpen, setDirectOpen] = useState(true);
@@ -54,20 +62,39 @@ export function WorkspaceSidebar({
       <div className="workspace-switcher">
         <button onClick={() => setWorkspaceMenu(!workspaceMenu)} aria-expanded={workspaceMenu}>
           <span>
-            Munashe’s workspace
+            {workspace?.name || 'Your workspace'}
             <span className="workspace-subtitle">A little momentum, every day.</span>
           </span>
           <ChevronDown size={16} />
         </button>
         {workspaceMenu && (
           <div className="workspace-menu">
-            <div>
-              <span className="workspace-mini">M</span>
-              <span>
-                Munashe’s workspace<small>Personal workspace</small>
-              </span>
-              <Check size={15} />
-            </div>
+            {workspaces.map((item) => (
+              <button
+                key={item.id}
+                className="workspace-choice"
+                onClick={() => {
+                  setWorkspaceMenu(false);
+                  onWorkspace(item.id);
+                }}
+              >
+                <span className="workspace-mini">{item.name[0]?.toUpperCase()}</span>
+                <span>
+                  {item.name}
+                  <small>{item.folder ? 'Folder workspace' : 'Personal workspace'}</small>
+                </span>
+                {item.id === workspace?.id && <Check size={15} />}
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                setWorkspaceMenu(false);
+                onCreateWorkspace();
+              }}
+            >
+              <Plus size={15} />
+              Create workspace
+            </button>
             <button
               onClick={() => {
                 setWorkspaceMenu(false);
@@ -120,17 +147,26 @@ export function WorkspaceSidebar({
               </button>
             </div>
             {directOpen && <div className="sidebar-group">{bots.map(botRow)}</div>}
-            <div className="sidebar-section-heading plain-heading">
-              <span>In motion</span>
-              <Target size={14} />
-            </div>
-            <button
-              className="sidebar-row pursuit-row"
-              onClick={() => onSelect({ section: 'pursuits', item: 'grow-mrr' })}
-            >
-              <Target size={18} />
-              <span>Grow MRR to $2,000</span>
-            </button>
+            {!!pursuits.length && (
+              <>
+                <div className="sidebar-section-heading plain-heading">
+                  <span>In motion</span>
+                  <Target size={14} />
+                </div>
+                {pursuits
+                  .filter((pursuit) => !pursuit.paused)
+                  .map((pursuit) => (
+                    <button
+                      key={pursuit.id}
+                      className="sidebar-row pursuit-row"
+                      onClick={() => onSelect({ section: 'pursuits', item: pursuit.id })}
+                    >
+                      <Target size={18} />
+                      <span>{pursuit.name}</span>
+                    </button>
+                  ))}
+              </>
+            )}
           </>
         )}
         {location.section === 'bots' && (
@@ -188,13 +224,12 @@ export function WorkspaceSidebar({
           <>
             <div className="sidebar-title">
               <h2>Tools</h2>
-              <Plug size={18} />
+              <Puzzle size={18} />
             </div>
-            <button className="sidebar-row is-selected">
-              <PuzzleIcon />
-              <span>All integrations</span>
-              <span className="section-count">6</span>
-            </button>
+            <div className="sidebar-row is-selected">
+              <Puzzle size={18} />
+              <span>Workspace tools</span>
+            </div>
           </>
         )}
       </div>
@@ -208,7 +243,4 @@ export function WorkspaceSidebar({
       </div>
     </aside>
   );
-}
-function PuzzleIcon() {
-  return <Plug size={18} />;
 }

@@ -11,6 +11,7 @@ export function TitleBar({
   canBack,
   canForward,
   onToggleSidebar,
+  workspaceName = 'Munashe’s workspace',
 }: {
   onSearch: () => void;
   onBack: () => void;
@@ -18,6 +19,7 @@ export function TitleBar({
   canBack: boolean;
   canForward: boolean;
   onToggleSidebar: () => void;
+  workspaceName?: string;
 }) {
   const [connection, setConnection] = useState('Connecting…');
   useEffect(() => {
@@ -55,7 +57,7 @@ export function TitleBar({
       </div>
       <button className="workspace-search" onClick={onSearch}>
         <Search size={16} />
-        <span>Search Munashe’s workspace</span>
+        <span>Search {workspaceName}</span>
         <kbd>Ctrl K</kbd>
       </button>
       <div className="title-right">

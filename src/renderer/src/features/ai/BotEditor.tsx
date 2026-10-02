@@ -12,12 +12,14 @@ export function BotEditor({
   onClose,
   onSaved,
   onDeleted,
+  workspaceId = 'default',
 }: {
   bot?: Bot;
   providers: ProviderSettings[];
   onClose: () => void;
   onSaved: (bot: Bot) => void;
   onDeleted: () => void;
+  workspaceId?: string;
 }) {
   const [value, setValue] = useState<BotInput>(
     bot || {
@@ -40,7 +42,9 @@ export function BotEditor({
     setBusy(true);
     setError('');
     try {
-      onSaved(await (bot ? botService.update(bot.id, value) : botService.create(value)));
+      onSaved(
+        await (bot ? botService.update(bot.id, value) : botService.create(value, workspaceId)),
+      );
     } catch (error) {
       setError(errorText(error));
       setBusy(false);

@@ -15,12 +15,17 @@ import { useAIWorkspace } from '../features/ai/useAIWorkspace';
 import { BotChat } from '../features/ai/BotChat';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
-import type { Bot } from '../../../shared/ai';
+import { WorkspaceEditor } from '../features/workspace/WorkspaceEditor';
+import type { Bot, Workspace } from '../../../shared/ai';
 import type { DialogKind, Location, Section } from '../features/workspace/types';
 
 export function App() {
-  const workspace = useWorkspace();
   const ai = useAIWorkspace();
+  return <WorkspaceApp key={ai.workspaceId} ai={ai} />;
+}
+function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
+  const workspace = useWorkspace(ai.workspaceId);
+  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [settingsSection, setSettingsSection] = useState<'workspace' | 'providers'>('workspace');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -65,12 +70,12 @@ export function App() {
       section,
       item:
         section === 'spaces'
-          ? workspace.spaces[0].id
+          ? workspace.spaces[0]?.id || 'empty'
           : section === 'pursuits'
-            ? workspace.pursuits[0].id
+            ? workspace.pursuits[0]?.id || 'empty'
             : section === 'bots'
               ? bot?.id || 'scout'
-              : 'integrations',
+              : 'workspace-tools',
     });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -92,6 +97,7 @@ export function App() {
   return (
     <div className="app-shell">
       <TitleBar
+        workspaceName={ai.workspace?.name}
         onSearch={() => setSearchOpen(true)}
         onBack={workspace.back}
         onForward={workspace.forward}
@@ -101,6 +107,7 @@ export function App() {
       />
       <div className="app-body">
         <NavigationRail
+          workspaceName={ai.workspace?.name}
           section={location.section}
           onNavigate={navigateSection}
           onSettings={() => {
@@ -108,10 +115,18 @@ export function App() {
             setDialog('settings');
           }}
           onCreate={() =>
-            location.section === 'bots' ? setEditingBot('new') : setDialog('create-space')
+            location.section === 'tools'
+              ? setEditingWorkspace('new')
+              : location.section === 'bots'
+                ? setEditingBot('new')
+                : setDialog('create-space')
           }
         />
         <WorkspaceSidebar
+          workspace={ai.workspace}
+          workspaces={ai.workspaces}
+          onWorkspace={ai.selectWorkspace}
+          onCreateWorkspace={() => setEditingWorkspace('new')}
           location={
             location.section === 'bots' && bot ? { section: 'bots', item: bot.id } : location
           }
@@ -123,7 +138,13 @@ export function App() {
           onDialog={openDialog}
         />
         {location.section === 'tools' ? (
-          <ToolsPage />
+          <ToolsPage
+            workspaceId={ai.workspaceId}
+            folder={ai.workspace?.folder || null}
+            onConnectFolder={() => {
+              if (ai.workspace) setEditingWorkspace(ai.workspace);
+            }}
+          />
         ) : location.section === 'bots' ? (
           ai.loading ? (
             <main className="conversation ai-main-state">
@@ -186,7 +207,7 @@ export function App() {
                   onReact={workspace.toggleReaction}
                   onPursuit={openPursuit}
                 />
-              ) : tab === 'Files' ? (
+              ) : tab === 'Artifacts' ? (
                 <FilesView messages={messages} onDialog={openDialog} />
               ) : tab === 'Activity' ? (
                 <ActivityView onPursuit={openPursuit} onDraft={() => setDialog('draft')} />
@@ -252,6 +273,11 @@ export function App() {
       />
       {dialog === 'settings' && (
         <SettingsDialog
+          workspace={ai.workspace}
+          onConnectFolder={() => {
+            setDialog(null);
+            if (ai.workspace) setEditingWorkspace(ai.workspace);
+          }}
           initialSection={settingsSection}
           onClose={() => setDialog(null)}
           onProvidersChanged={() => void ai.refresh()}
@@ -259,6 +285,7 @@ export function App() {
       )}
       {editingBot && (
         <BotEditor
+          workspaceId={ai.workspaceId}
           bot={editingBot === 'new' ? undefined : editingBot}
           providers={ai.providers}
           onClose={() => setEditingBot(null)}
@@ -271,6 +298,17 @@ export function App() {
             setEditingBot(null);
             void ai.refresh();
             select({ section: 'bots', item: 'scout' });
+          }}
+        />
+      )}
+      {editingWorkspace && (
+        <WorkspaceEditor
+          workspace={editingWorkspace === 'new' ? undefined : editingWorkspace}
+          onClose={() => setEditingWorkspace(null)}
+          onSaved={(saved) => {
+            setEditingWorkspace(null);
+            if (saved.id === ai.workspaceId) void ai.refresh();
+            else ai.selectWorkspace(saved.id);
           }}
         />
       )}

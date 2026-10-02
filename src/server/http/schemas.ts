@@ -26,3 +26,10 @@ export const chatSchema = z.object({
   text: z.string().trim().max(16000),
   attachmentIds: z.array(z.string().uuid()).max(4),
 });
+export const createBotSchema = botSchema.extend({
+  workspaceId: z.string().min(1).max(80).optional(),
+});
+export const workspaceSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  folder: z.string().trim().min(1).max(2000),
+});

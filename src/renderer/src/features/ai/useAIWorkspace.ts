@@ -1,31 +1,71 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Bot, ProviderSettings, Workspace } from '../../../../shared/ai';
 import { botService } from '../../services/botService';
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
+import { workspaceService } from '../../services/workspaceService';
 
 export function useAIWorkspace() {
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [providers, setProviders] = useState<ProviderSettings[]>([]);
+  const [workspaceId, setWorkspaceId] = useState(() => {
+    try {
+      return localStorage.getItem('mukai.active-workspace') || 'default';
+    } catch {
+      return 'default';
+    }
+  });
+  const [data, setData] = useState<{
+    bots: Bot[];
+    providers: ProviderSettings[];
+    workspaces: Workspace[];
+  }>({ bots: [], providers: [], workspaces: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const revision = useRef(0);
   const refresh = useCallback(async () => {
+    const current = ++revision.current;
     try {
-      const [nextBots, nextProviders] = await Promise.all([
-        botService.list(),
+      const [workspaces, providers] = await Promise.all([
+        workspaceService.list(),
         providerService.list(),
       ]);
-      setBots(nextBots);
-      setProviders(nextProviders);
+      const selected =
+        workspaces.find((workspace) => workspace.id === workspaceId) || workspaces[0];
+      if (!selected) throw new Error('No workspace is available. Restart Mukai.');
+      const bots = await botService.list(selected.id);
+      if (current !== revision.current) return;
+      setData({ bots, providers, workspaces });
+      setWorkspaceId(selected.id);
       setError('');
     } catch (error) {
-      setError(errorText(error));
+      if (current === revision.current) setError(errorText(error));
     } finally {
-      setLoading(false);
+      if (current === revision.current) setLoading(false);
     }
-  }, []);
+  }, [workspaceId]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  return { bots, providers, loading, error, refresh };
+  useEffect(() => {
+    try {
+      localStorage.setItem('mukai.active-workspace', workspaceId);
+    } catch {
+      /* The workspace still works without a preference cache. */
+    }
+  }, [workspaceId]);
+  function selectWorkspace(id: string) {
+    if (id === workspaceId) return;
+    revision.current++;
+    setLoading(true);
+    setData((data) => ({ ...data, bots: [] }));
+    setWorkspaceId(id);
+  }
+  return {
+    ...data,
+    workspaceId,
+    workspace: data.workspaces.find((workspace) => workspace.id === workspaceId),
+    loading,
+    error,
+    refresh,
+    selectWorkspace,
+  };
 }
