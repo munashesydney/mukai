@@ -1,4 +1,4 @@
-/* Shared theme surfaces; agent identities keep their own colors. */
+/* Shared theme surfaces; bot identities keep their own colors. */
 .rail-link:hover,
 .rail-link.is-active {
   background: transparent;
@@ -37,7 +37,6 @@
   background: var(--theme-glow);
   box-shadow: 0 0 0 2px var(--navy);
 }
-.brand svg,
 .brand-period {
   color: var(--theme-glow);
 }
@@ -55,7 +54,7 @@
 .message-meta > strong {
   color: var(--ink);
 }
-.heading-hash,
+.heading-space,
 .composer-plus,
 .heading-pursuit-icon {
   background: var(--theme-soft);
@@ -102,27 +101,21 @@
 }
 .draft-card,
 .message-card,
-.sidebar-pursuit,
 .integration-card {
   background: var(--surface);
   border-color: var(--line);
 }
 .draft-card:hover,
 .message-card:hover,
-.sidebar-pursuit:hover,
 .integration-card:hover {
   background: var(--surface-muted);
   border-color: var(--theme-border);
 }
-.mini-progress,
 .goal-progress,
-.banner-progress,
 .details-progress {
   background: var(--theme-border);
 }
-.mini-progress > span,
 .goal-progress > span,
-.banner-progress > span,
 .details-progress > span {
   background: var(--theme-accent);
 }
@@ -135,8 +128,7 @@
   border-color: var(--theme-accent);
 }
 .context-goal h3,
-.context-goal-top,
-.goal-amount {
+.context-goal-top {
   color: var(--theme-text);
 }
 .card-copy strong,
@@ -153,9 +145,9 @@
 .member-stack .avatar {
   border-color: var(--surface);
 }
-.agent-online,
+.bot-online,
 .tiny-status,
-.agent-available i {
+.bot-available i {
   background: #76bda2;
 }
 .status-label--paused {
@@ -323,7 +315,7 @@
   box-shadow: 0 0 0 3px var(--theme-soft);
 }
 .draft-document h3,
-.agent-preview h3,
+.bot-preview h3,
 .details-document h3 {
   color: var(--theme-text);
 }
@@ -405,8 +397,9 @@
   font-size: 21px;
   gap: 6px;
 }
-.settings-nav-footer .brand svg {
+.settings-nav-footer .brand-logo {
   width: 26px;
+  height: 26px;
 }
 .settings-nav-footer > span {
   font-size: 10px;

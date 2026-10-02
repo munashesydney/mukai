@@ -1,89 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { initialMessages, initialPursuits, initialSpaces } from './data';
-import type { Location, Message, Pursuit, Space } from './types';
-
-interface StoredWorkspace {
-  messages: Record<string, Message[]>;
-  spaces: Space[];
-  pursuits: Pursuit[];
-  bookmarks: string[];
-  reactions: string[];
-}
-const storageKey = 'mukai.workspace.v1';
-const defaults: StoredWorkspace = {
-  messages: initialMessages,
-  spaces: initialSpaces,
-  pursuits: initialPursuits,
-  bookmarks: [],
-  reactions: [],
-};
-function loadWorkspace(): StoredWorkspace {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
-    if (!value || typeof value !== 'object') return defaults;
-    const state = value as Partial<StoredWorkspace>;
-    const people = new Set(['atlas', 'nova', 'scout', 'munashe']);
-    const isStringArray = (value: unknown): value is string[] =>
-      Array.isArray(value) && value.every((v) => typeof v === 'string');
-    if (
-      !state.messages ||
-      Array.isArray(state.messages) ||
-      typeof state.messages !== 'object' ||
-      !Object.values(state.messages).every(
-        (list) =>
-          Array.isArray(list) &&
-          list.every(
-            (m) =>
-              m &&
-              typeof m.id === 'string' &&
-              typeof m.text === 'string' &&
-              typeof m.time === 'string' &&
-              people.has(m.author) &&
-              (!m.card || ['pursuit', 'draft'].includes(m.card)) &&
-              (!m.attachment || typeof m.attachment === 'string'),
-          ),
-      ) ||
-      !Array.isArray(state.spaces) ||
-      !state.spaces.every(
-        (s) =>
-          s &&
-          typeof s.id === 'string' &&
-          typeof s.name === 'string' &&
-          typeof s.description === 'string',
-      ) ||
-      !Array.isArray(state.pursuits) ||
-      !state.pursuits.every(
-        (p) =>
-          p &&
-          typeof p.id === 'string' &&
-          typeof p.name === 'string' &&
-          typeof p.description === 'string' &&
-          ['atlas', 'nova', 'scout'].includes(p.agent) &&
-          typeof p.progress === 'number' &&
-          p.progress >= 0 &&
-          p.progress <= 100,
-      ) ||
-      !isStringArray(state.bookmarks) ||
-      !isStringArray(state.reactions)
-    )
-      return defaults;
-    return state as StoredWorkspace;
-  } catch {
-    return defaults;
-  }
-}
-
+import type { Location, Message } from './types';
+import { loadWorkspace, workspaceStorageKey } from './workspaceStorage';
 export function useWorkspace() {
   const [state, setState] = useState(loadWorkspace);
   const [storageFailed, setStorageFailed] = useState(false);
   const [history, setHistory] = useState<{ entries: Location[]; index: number }>({
-    entries: [{ section: 'spaces', item: 'ai-telegram-copier' }],
+    entries: [{ section: 'bots', item: 'nova' }],
     index: 0,
   });
   const location = history.entries[history.index];
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(state));
+      localStorage.setItem(workspaceStorageKey, JSON.stringify(state));
       setStorageFailed(false);
     } catch {
       setStorageFailed(true);
@@ -152,7 +80,7 @@ export function useWorkspace() {
           id,
           name,
           description: description || 'One small step at a time.',
-          agent: 'atlas',
+          bot: 'atlas',
           progress: 0,
         },
       ],

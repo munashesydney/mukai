@@ -78,15 +78,8 @@ export function ToolsPage() {
         </span>
         <span className="preview-label">UI preview</span>
       </div>
-      <h1>
-        A little more connected.
-        <br />
-        <span>A lot more possible.</span>
-      </h1>
-      <p className="tools-intro">
-        The tools you already use, together with the agents
-        <br className="desktop-break" /> helping you move things forward.
-      </p>
+      <h1>Tools for your bots.</h1>
+      <p className="tools-intro">Connect the apps and services your bots can use.</p>
       <div className="tools-filter">
         <span>
           Explore integrations <small>{integrations.length}</small>
@@ -142,7 +135,7 @@ export function ToolsPage() {
       </div>
       {tool && (
         <Modal title={`${tool.name} integration`} onClose={() => setPreview(undefined)}>
-          <div className="agent-preview">
+          <div className="bot-preview">
             <span className={`integration-icon integration-icon--${tool.color}`}>
               <tool.icon size={32} />
             </span>

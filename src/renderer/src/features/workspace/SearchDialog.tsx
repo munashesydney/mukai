@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Search, Hash, Target, ArrowUpRight } from 'lucide-react';
+import { Search, Layers3, Target, ArrowUpRight } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Avatar } from '../../components/ui/Avatar';
-import { agents } from './data';
+import { bots } from './data';
 import type { Location, Space, Pursuit } from './types';
 
 export function SearchDialog({
@@ -26,15 +26,15 @@ export function SearchDialog({
         name: s.name,
         detail: 'Space',
         location: { section: 'spaces', item: s.id } as Location,
-        icon: <Hash size={19} />,
+        icon: <Layers3 size={19} />,
       })),
-    ...agents
+    ...bots
       .filter((a) => matches(a.name + a.role))
       .map((a) => ({
         id: a.id,
         name: a.name,
         detail: a.role,
-        location: { section: 'agents', item: a.id } as Location,
+        location: { section: 'bots', item: a.id } as Location,
         icon: <Avatar person={a.id} size="xs" />,
       })),
     ...pursuits
@@ -55,7 +55,7 @@ export function SearchDialog({
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search spaces, agents, and pursuits…"
+          placeholder="Search spaces, bots, and pursuits…"
           aria-label="Search workspace"
           onKeyDown={(event) => {
             if (event.key === 'Enter' && results[0]) {

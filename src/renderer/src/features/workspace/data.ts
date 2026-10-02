@@ -1,6 +1,6 @@
-import type { Agent, Message, Pursuit, Space } from './types';
+import type { Bot, Message, Pursuit, Space } from './types';
 
-export const agents: Agent[] = [
+export const bots: Bot[] = [
   {
     id: 'atlas',
     name: 'Atlas',
@@ -45,7 +45,7 @@ export const initialPursuits: Pursuit[] = [
   {
     id: 'grow-mrr',
     name: 'Grow MRR to $2,000',
-    agent: 'atlas',
+    bot: 'atlas',
     description:
       'Grow AI Telegram Copier to $2,000 in monthly recurring revenue by the end of 2027.',
     progress: 53,
@@ -53,21 +53,21 @@ export const initialPursuits: Pursuit[] = [
   {
     id: 'map-room',
     name: 'Help Cubey map a room',
-    agent: 'nova',
+    bot: 'nova',
     description: 'Give Cubey the confidence to find its way around a room.',
     progress: 28,
   },
   {
     id: 'business-idea',
     name: 'Explore a business idea',
-    agent: 'scout',
+    bot: 'scout',
     description: 'Find a problem worth solving. Start with the people who have it.',
     progress: 15,
   },
   {
     id: 'japanese',
     name: 'Learn Japanese',
-    agent: 'atlas',
+    bot: 'atlas',
     description: 'Make a little time each day to learn something new.',
     progress: 12,
     paused: true,

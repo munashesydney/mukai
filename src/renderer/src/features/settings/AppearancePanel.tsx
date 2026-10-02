@@ -1,4 +1,4 @@
-import { Check, Monitor, Moon, Sun, Sparkles } from 'lucide-react';
+import { Check, Monitor, Moon, Sun, Palette } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useTheme } from '../appearance/useTheme';
 import { themes, type ColorMode } from '../appearance/themes';
@@ -133,7 +133,7 @@ export function AppearancePanel() {
         </div>
       </fieldset>
       <div className="appearance-note">
-        <Sparkles size={14} />
+        <Palette size={14} />
         <span>Yours to change. Make yourself at home.</span>
         <span className="appearance-live">Live preview</span>
       </div>

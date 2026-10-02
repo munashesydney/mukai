@@ -1,17 +1,16 @@
 import {
   ChevronDown,
   ChevronRight,
-  Hash,
+  Layers3,
   Plus,
   Target,
   ArrowUpRight,
-  Sparkles,
+  Sunrise,
   Check,
   Plug,
-  Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
-import { agents } from '../../features/workspace/data';
+import { bots } from '../../features/workspace/data';
 import type { Location, Space, Pursuit, DialogKind } from '../../features/workspace/types';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
@@ -35,17 +34,15 @@ export function WorkspaceSidebar({
   const [directOpen, setDirectOpen] = useState(true);
   const [workspaceMenu, setWorkspaceMenu] = useState(false);
   const isSelected = (item: string) => location.item === item;
-  const agentRow = (agent: (typeof agents)[number]) => (
+  const botRow = (bot: (typeof bots)[number]) => (
     <button
-      key={agent.id}
-      className={`sidebar-row agent-row ${isSelected(agent.id) ? 'is-selected' : ''}`}
-      onClick={() =>
-        onSelect({ section: location.section === 'agents' ? 'agents' : 'spaces', item: agent.id })
-      }
+      key={bot.id}
+      className={`sidebar-row bot-row ${isSelected(bot.id) ? 'is-selected' : ''}`}
+      onClick={() => onSelect({ section: 'bots', item: bot.id })}
     >
-      <Avatar person={agent.id} size="xs" />
-      <span>{agent.name}</span>
-      <i className="agent-online" />
+      <Avatar person={bot.id} size="xs" />
+      <span>{bot.name}</span>
+      <i className="bot-online" />
     </button>
   );
   return (
@@ -101,7 +98,7 @@ export function WorkspaceSidebar({
                     className={`sidebar-row ${isSelected(space.id) ? 'is-selected' : ''}`}
                     onClick={() => onSelect({ section: 'spaces', item: space.id })}
                   >
-                    <Hash size={18} strokeWidth={1.6} />
+                    <Layers3 size={18} strokeWidth={1.6} />
                     <span>{space.name}</span>
                     {space.unread && <span className="unread-count">{space.unread}</span>}
                   </button>
@@ -118,49 +115,32 @@ export function WorkspaceSidebar({
             <div className="sidebar-section-heading">
               <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
                 {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>Your agents</span>
-                <span className="section-count">3</span>
+                <span>Your bots</span>
               </button>
-              <IconButton label="Create an agent" onClick={() => onDialog('create-agent')}>
-                <Plus size={15} />
-              </IconButton>
             </div>
-            {directOpen && <div className="sidebar-group">{agents.map(agentRow)}</div>}
+            {directOpen && <div className="sidebar-group">{bots.map(botRow)}</div>}
             <div className="sidebar-section-heading plain-heading">
               <span>In motion</span>
               <Target size={14} />
             </div>
             <button
-              className="sidebar-pursuit"
+              className="sidebar-row pursuit-row"
               onClick={() => onSelect({ section: 'pursuits', item: 'grow-mrr' })}
             >
-              <div>
-                <span className="tiny-status" />
-                Grow MRR to $2,000
-              </div>
-              <div className="mini-progress">
-                <span style={{ width: '53%' }} />
-              </div>
-              <small>
-                $1,062 <span>of $2,000</span>
-              </small>
+              <Target size={18} />
+              <span>Grow MRR to $2,000</span>
             </button>
           </>
         )}
-        {location.section === 'agents' && (
+        {location.section === 'bots' && (
           <>
             <div className="sidebar-title">
-              <h2>Agents</h2>
-              <IconButton label="Create an agent" onClick={() => onDialog('create-agent')}>
+              <h2>Bots</h2>
+              <IconButton label="Create a bot" onClick={() => onDialog('create-bot')}>
                 <Plus size={18} />
               </IconButton>
             </div>
-            <p className="sidebar-caption">Good company for your next idea.</p>
-            <div className="sidebar-group">{agents.map(agentRow)}</div>
-            <button className="sidebar-row sidebar-add" onClick={() => onDialog('create-agent')}>
-              <Plus size={17} />
-              <span>Create an agent</span>
-            </button>
+            <div className="sidebar-group">{bots.map(botRow)}</div>
           </>
         )}
         {location.section === 'pursuits' && (
@@ -171,7 +151,6 @@ export function WorkspaceSidebar({
                 <Plus size={18} />
               </IconButton>
             </div>
-            <p className="sidebar-caption">Big intentions. Small steps.</p>
             <div className="sidebar-group">
               {pursuits
                 .filter((p) => !p.paused)
@@ -210,27 +189,19 @@ export function WorkspaceSidebar({
               <h2>Tools</h2>
               <Plug size={18} />
             </div>
-            <p className="sidebar-caption">Give your ideas a little more reach.</p>
             <button className="sidebar-row is-selected">
               <PuzzleIcon />
               <span>All integrations</span>
               <span className="section-count">6</span>
             </button>
-            <div className="tools-sidebar-note">
-              <Workflow size={22} />
-              <h3>Connect your world.</h3>
-              <p>A home for the tools your agents will work with.</p>
-              <span>Integration preview</span>
-            </div>
           </>
         )}
       </div>
       <div className="sidebar-footer">
         <div className="wake-icon">
-          <Sparkles size={15} />
+          <Sunrise size={15} />
         </div>
         <div>
-          <strong>Make room for possibility.</strong>
           <span>Mukai means “wake up” in Shona.</span>
         </div>
       </div>

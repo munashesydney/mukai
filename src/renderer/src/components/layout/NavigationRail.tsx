@@ -1,9 +1,9 @@
-import { Layers3, Target, BotMessageSquare, Puzzle, Settings, Plus } from 'lucide-react';
+import { Layers3, Target, Puzzle, Settings, Plus } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
-import { Avatar } from '../ui/Avatar';
+import { TriangleMark } from '../ui/TriangleMark';
 
 const items = [
-  { id: 'agents', label: 'Agents', icon: BotMessageSquare },
+  { id: 'bots', label: 'Bots', icon: null },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
@@ -37,7 +37,7 @@ export function NavigationRail({
             aria-current={section === id ? 'page' : undefined}
           >
             <span className="rail-icon">
-              <Icon size={22} strokeWidth={1.8} />
+              {Icon ? <Icon size={22} strokeWidth={1.8} /> : <TriangleMark />}
               {id === 'spaces' && <i className="rail-notification" />}
             </span>
             <span>{label}</span>
@@ -50,9 +50,6 @@ export function NavigationRail({
         </button>
         <button className="rail-settings" onClick={onSettings} aria-label="Open settings">
           <Settings size={21} strokeWidth={1.6} />
-        </button>
-        <button className="rail-profile" onClick={onSettings} aria-label="Munashe’s profile">
-          <Avatar person="munashe" size="sm" status />
         </button>
       </div>
     </nav>
