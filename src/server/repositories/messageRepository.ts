@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database';
 import type { ChatActivity, MessageStatus, ResponsePart } from '../../shared/ai';
 import type { MessageRecord } from '../models/entities';
@@ -12,11 +13,11 @@ export class MessageRepository {
     private attachments: AttachmentRepository,
     private changes: FileChangeRepository,
   ) {}
-  history(botId: string) {
-    const files = this.attachments.forBot(botId, false);
-    const changes = this.changes.forBot(botId);
+  history(conversationId: string) {
+    const files = this.attachments.forConversation(conversationId);
+    const changes = this.changes.forConversation(conversationId);
     return this.database
-      .all('SELECT * FROM messages WHERE bot_id = ? ORDER BY sequence', botId)
+      .all('SELECT * FROM messages WHERE conversation_id = ? ORDER BY sequence', conversationId)
       .map((row) => {
         const message = messageRecord(row);
         return {
@@ -36,35 +37,36 @@ export class MessageRepository {
       changes: this.changes.forMessage(id),
     };
   }
-  forRequest(botId: string, requestId: string, role: MessageRecord['role']) {
+  forRequest(conversationId: string, requestId: string, role: MessageRecord['role']) {
     const row = this.database.get(
-      'SELECT * FROM messages WHERE bot_id = ? AND request_id = ? AND role = ?',
-      botId,
+      'SELECT * FROM messages WHERE conversation_id = ? AND request_id = ? AND role = ?',
+      conversationId,
       requestId,
       role,
     );
     return row ? messageRecord(row) : undefined;
   }
-  latestUserId(botId: string) {
+  latestUserId(conversationId: string) {
     return this.database.get(
-      "SELECT id FROM messages WHERE bot_id = ? AND role = 'user' ORDER BY sequence DESC LIMIT 1",
-      botId,
+      "SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY sequence DESC LIMIT 1",
+      conversationId,
     )?.id;
   }
-  context(botId: string, limit: number) {
+  context(conversationId: string, limit: number, throughSequence: number) {
     return this.database
       .all(
-        "SELECT * FROM messages WHERE bot_id = ? AND status != 'streaming' AND (role = 'user' OR content != '') ORDER BY sequence DESC LIMIT ?",
-        botId,
+        "SELECT * FROM messages WHERE conversation_id = ? AND sequence <= ? AND status = 'complete' AND (role = 'user' OR content != '') ORDER BY sequence DESC LIMIT ?",
+        conversationId,
+        throughSequence,
         limit,
       )
       .reverse()
       .map(messageRecord);
   }
-  interruptStreaming(error: string, botId?: string) {
+  interruptStreaming(error: string, conversationId?: string) {
     const pending = this.database.all(
-      `SELECT * FROM messages WHERE status='streaming'${botId === undefined ? '' : ' AND bot_id=?'}`,
-      ...(botId === undefined ? [] : [botId]),
+      `SELECT * FROM messages WHERE status='streaming'${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
+      ...(conversationId === undefined ? [] : [conversationId]),
     );
     for (const row of pending) {
       const activity = (messageRecord(row).activity || []).map((item) =>
@@ -83,9 +85,9 @@ export class MessageRepository {
       );
     }
     this.database.run(
-      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming'${botId === undefined ? '' : ' AND bot_id = ?'}`,
+      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming'${conversationId === undefined ? '' : ' AND conversation_id = ?'}`,
       error,
-      ...(botId === undefined ? [] : [botId]),
+      ...(conversationId === undefined ? [] : [conversationId]),
     );
   }
   reset(id: string) {
@@ -145,8 +147,38 @@ export class MessageRepository {
     }
     return counts;
   }
+  createUser(conversationId: string, requestId: string, text: string) {
+    const id = randomUUID();
+    this.database.run(
+      'INSERT INTO messages(id,conversation_id,request_id,role,content,status,created_at,author_name) VALUES(?,?,?,?,?,?,?,?)',
+      id,
+      conversationId,
+      requestId,
+      'user',
+      text,
+      'complete',
+      new Date().toISOString(),
+      'You',
+    );
+    return this.message(id);
+  }
+  setSaved(conversationId: string, id: string, saved: boolean) {
+    const row = this.database.get(
+      'SELECT id FROM messages WHERE id=? AND conversation_id=?',
+      id,
+      conversationId,
+    );
+    if (!row) return false;
+    this.database.run('UPDATE messages SET saved=? WHERE id=?', Number(saved), id);
+    return true;
+  }
+  sequence(id: string) {
+    return Number(this.database.get('SELECT sequence FROM messages WHERE id=?', id)?.sequence);
+  }
   createTurn(input: {
     botId: string;
+    conversationId: string;
+    authorName: string;
     requestId: string;
     userId: string;
     assistantId: string;
@@ -157,7 +189,7 @@ export class MessageRepository {
       const now = new Date().toISOString();
       for (const role of ['user', 'assistant'] as const) {
         this.database.run(
-          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at) VALUES (?,?,?,?,?,?,?,?)',
+          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name) VALUES (?,?,?,?,?,?,?,?,?,?)',
           role === 'user' ? input.userId : input.assistantId,
           input.botId,
           input.requestId,
@@ -166,6 +198,8 @@ export class MessageRepository {
           role === 'user' ? 'complete' : 'streaming',
           now,
           role === 'assistant' ? now : null,
+          input.conversationId,
+          role === 'user' ? 'You' : input.authorName,
         );
       }
       for (const id of input.attachmentIds) {

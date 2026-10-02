@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
@@ -12,6 +12,9 @@ import { WorkspaceDialogs } from '../features/workspace/WorkspaceDialogs';
 import { ToolsPage } from '../features/workspace/ToolsPage';
 import { useWorkspace } from '../features/workspace/useWorkspace';
 import { useAIWorkspace } from '../features/ai/useAIWorkspace';
+import { useSpaces } from '../features/workspace/useSpaces';
+import { SpaceChat } from '../features/chat/SpaceChat';
+import { SpaceDetails } from '../features/chat/SpaceDetails';
 import { BotChat } from '../features/ai/BotChat';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
@@ -25,6 +28,7 @@ export function App() {
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const workspace = useWorkspace(ai.workspaceId);
+  const spaceState = useSpaces(ai.workspaceId);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [settingsSection, setSettingsSection] = useState<'workspace' | 'providers'>('workspace');
@@ -53,7 +57,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     },
     [navigate],
   );
-  const space = workspace.spaces.find((s) => s.id === location.item);
+  const space = spaceState.spaces.find((s) => s.id === location.item);
   const pursuit = workspace.pursuits.find((p) => p.id === location.item);
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
   const openDialog = (kind: DialogKind) => {
@@ -70,7 +74,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       section,
       item:
         section === 'spaces'
-          ? workspace.spaces[0]?.id || 'empty'
+          ? spaceState.spaces[0]?.id || 'empty'
           : section === 'pursuits'
             ? workspace.pursuits[0]?.id || 'empty'
             : section === 'bots'
@@ -130,7 +134,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           location={
             location.section === 'bots' && bot ? { section: 'bots', item: bot.id } : location
           }
-          spaces={workspace.spaces}
+          spaces={spaceState.spaces}
           pursuits={workspace.pursuits}
           onSelect={select}
           collapsed={sidebarCollapsed}
@@ -178,6 +182,68 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               </button>
             </main>
           )
+        ) : location.section === 'spaces' ? (
+          <div className="conversation-layout">
+            <main className="conversation">
+              {spaceState.loading ? (
+                <p className="ai-caption">Loading spaces…</p>
+              ) : spaceState.error ? (
+                <div className="ai-main-state">
+                  <p role="alert">{spaceState.error}</p>
+                  <button className="button" onClick={() => void spaceState.refresh()}>
+                    Try again
+                  </button>
+                </div>
+              ) : space ? (
+                <Fragment key={space.id}>
+                  <ConversationHeader
+                    location={location}
+                    space={space}
+                    tab={tab}
+                    onTab={(next) => {
+                      setTab(next);
+                      setSavedOpen(false);
+                    }}
+                    detailsOpen={detailsOpen}
+                    onDetails={() => setDetailsOpen(!detailsOpen)}
+                    onDialog={openDialog}
+                    onSaved={() => setSavedOpen(true)}
+                    members={ai.bots.filter((bot) => space.botIds.includes(bot.id))}
+                  />
+                  {tab === 'Activity' && !savedOpen ? (
+                    <ActivityView onPursuit={openPursuit} onDraft={() => setDialog('draft')} />
+                  ) : (
+                    <SpaceChat
+                      space={space}
+                      bots={ai.bots}
+                      tab={tab}
+                      savedOpen={savedOpen}
+                      onCloseSaved={() => setSavedOpen(false)}
+                    />
+                  )}
+                </Fragment>
+              ) : (
+                <div className="ai-chat-empty">
+                  <h2>Create a space.</h2>
+                  <p>Choose its bots, then start a conversation.</p>
+                  <button
+                    className="button button--primary"
+                    onClick={() => setDialog('create-space')}
+                  >
+                    Create space
+                  </button>
+                </div>
+              )}
+            </main>
+            {detailsOpen && space && (
+              <SpaceDetails
+                space={space}
+                bots={ai.bots}
+                onClose={() => setDetailsOpen(false)}
+                onSelectBot={(id) => select({ section: 'bots', item: id })}
+              />
+            )}
+          </div>
         ) : (
           <div className="conversation-layout">
             <main className="conversation">
@@ -255,7 +321,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       </div>
       {searchOpen && (
         <SearchDialog
-          spaces={workspace.spaces}
+          spaces={spaceState.spaces}
           pursuits={workspace.pursuits}
           onSelect={select}
           onClose={() => setSearchOpen(false)}
@@ -267,7 +333,11 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         kind={dialog === 'settings' ? null : dialog}
         pursuit={pursuit}
         onClose={() => setDialog(null)}
-        onCreateSpace={workspace.createSpace}
+        bots={ai.bots}
+        onCreateSpace={async (name, description, botIds) => {
+          const created = await spaceState.create(name, description, botIds);
+          select({ section: 'spaces', item: created.id });
+        }}
         onCreatePursuit={workspace.createPursuit}
         onTogglePaused={workspace.togglePaused}
       />

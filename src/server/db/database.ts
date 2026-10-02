@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { migrations } from './migrations';
+import { migrations, rebuildMigrations } from './migrations';
 
 export type Row = Record<string, string | number | null>;
 export class Database {
@@ -22,18 +22,31 @@ export class Database {
       this.db.close();
       throw new Error('This database needs a newer version of Mukai.');
     }
-    migrations.forEach((sql, index) => {
-      if (!this.get('SELECT version FROM schema_migrations WHERE version = ?', index + 1)) {
-        this.transaction(() => {
-          this.db.exec(sql);
-          this.run(
-            'INSERT INTO schema_migrations VALUES (?,?)',
-            index + 1,
-            new Date().toISOString(),
-          );
-        });
-      }
-    });
+    try {
+      migrations.forEach((sql, index) => {
+        if (!this.get('SELECT version FROM schema_migrations WHERE version = ?', index + 1)) {
+          const rebuild = rebuildMigrations.has(index + 1);
+          if (rebuild) this.db.exec('PRAGMA foreign_keys = OFF');
+          try {
+            this.transaction(() => {
+              this.db.exec(sql);
+              if (rebuild && this.all('PRAGMA foreign_key_check').length)
+                throw new Error('Database upgrade failed its foreign-key check.');
+              this.run(
+                'INSERT INTO schema_migrations VALUES (?,?)',
+                index + 1,
+                new Date().toISOString(),
+              );
+            });
+          } finally {
+            if (rebuild) this.db.exec('PRAGMA foreign_keys = ON');
+          }
+        }
+      });
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   get(sql: string, ...params: (string | number | null)[]) {

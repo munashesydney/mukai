@@ -13,9 +13,9 @@ export async function body(request: IncomingMessage, limit = 64 * 1024) {
   }
   return Buffer.concat(chunks);
 }
-export async function jsonBody(request: IncomingMessage) {
+export async function jsonBody(request: IncomingMessage, limit?: number) {
   try {
-    return JSON.parse((await body(request)).toString('utf8')) as unknown;
+    return JSON.parse((await body(request, limit)).toString('utf8')) as unknown;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(400, 'Invalid JSON request.');

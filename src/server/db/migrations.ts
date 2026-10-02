@@ -53,4 +53,47 @@ export const migrations = [
     UNIQUE(message_id,path_key));
    CREATE INDEX message_file_changes ON file_changes(message_id);
    CREATE INDEX bot_file_changes ON file_changes(bot_id);`,
+  `CREATE TABLE conversations (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    kind TEXT NOT NULL CHECK(kind IN ('private','space')), name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', owner_bot_id TEXT UNIQUE REFERENCES bots(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL);
+   CREATE TABLE conversation_bots (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    PRIMARY KEY(conversation_id,bot_id));
+   INSERT INTO conversations SELECT 'bot-'||id,workspace_id,'private',name,description,id,created_at FROM bots;
+   INSERT INTO conversation_bots SELECT 'bot-'||id,id FROM bots;
+   CREATE TRIGGER bot_conversation AFTER INSERT ON bots BEGIN
+    INSERT INTO conversations VALUES('bot-'||NEW.id,NEW.workspace_id,'private',NEW.name,NEW.description,NEW.id,NEW.created_at);
+    INSERT INTO conversation_bots VALUES('bot-'||NEW.id,NEW.id);
+   END;
+   CREATE TABLE messages_next (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+    bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL, request_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant')), content TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL,
+    reasoning TEXT NOT NULL DEFAULT '', activity_json TEXT NOT NULL DEFAULT '[]',
+    parts_json TEXT NOT NULL DEFAULT '[]', started_at TEXT, finished_at TEXT,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+    author_name TEXT NOT NULL DEFAULT '', saved INTEGER NOT NULL DEFAULT 0,
+    CHECK(conversation_id IS NOT NULL OR bot_id IS NOT NULL),
+    UNIQUE(conversation_id,request_id,role));
+   INSERT INTO messages_next(sequence,id,bot_id,request_id,role,content,status,error,created_at,reasoning,activity_json,parts_json,started_at,finished_at,conversation_id,author_name)
+    SELECT m.sequence,m.id,m.bot_id,m.request_id,m.role,m.content,m.status,m.error,m.created_at,m.reasoning,m.activity_json,m.parts_json,m.started_at,m.finished_at,'bot-'||m.bot_id,CASE WHEN m.role='user' THEN 'You' ELSE b.name END FROM messages m JOIN bots b ON b.id=m.bot_id;
+   DROP TABLE messages;
+   ALTER TABLE messages_next RENAME TO messages;
+   CREATE INDEX chat_history ON messages(conversation_id,sequence);
+   CREATE INDEX bot_messages ON messages(bot_id);
+   CREATE TRIGGER legacy_message_conversation AFTER INSERT ON messages WHEN NEW.conversation_id IS NULL AND NEW.bot_id IS NOT NULL BEGIN
+    UPDATE messages SET conversation_id='bot-'||NEW.bot_id WHERE id=NEW.id;
+   END;
+   CREATE TABLE artifacts_next (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE, path TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL, conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE, UNIQUE(conversation_id,path));
+   INSERT INTO artifacts_next SELECT a.*,m.conversation_id FROM artifacts a JOIN messages m ON m.id=a.message_id;
+   DROP TABLE artifacts;
+   ALTER TABLE artifacts_next RENAME TO artifacts;
+   CREATE INDEX conversation_artifacts ON artifacts(conversation_id);`,
 ];
+
+// SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.
+export const rebuildMigrations = new Set([5]);

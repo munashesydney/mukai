@@ -33,3 +33,40 @@ export const workspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),
   folder: z.string().trim().min(1).max(2000),
 });
+export const spaceSchema = z.object({
+  workspaceId: z.string().min(1).max(80),
+  name: z.string().trim().min(1).max(60),
+  description: z.string().trim().max(400),
+  botIds: z.array(z.string().min(1).max(80)).max(50),
+});
+export const spaceChatSchema = z.object({
+  requestId: z.string().uuid(),
+  text: z.string().trim().max(16000),
+  botId: z.string().min(1).max(80).nullable(),
+});
+export const savedMessageSchema = z.object({
+  messageId: z.string().min(1).max(100),
+  saved: z.boolean(),
+});
+export const spaceImportSchema = z.object({
+  workspaceId: z.string().min(1).max(80),
+  spaces: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(100),
+        name: z.string().min(1).max(60),
+        description: z.string().max(400),
+        messages: z
+          .array(
+            z.object({
+              id: z.string().max(100),
+              text: z.string().max(16000),
+              author: z.string().max(80),
+              saved: z.boolean(),
+            }),
+          )
+          .max(5000),
+      }),
+    )
+    .max(100),
+});

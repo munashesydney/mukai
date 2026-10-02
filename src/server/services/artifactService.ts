@@ -16,6 +16,9 @@ export class ArtifactService {
   list(botId: string) {
     return this.artifacts.list(botId);
   }
+  forConversation(id: string) {
+    return this.artifacts.forConversation(id);
+  }
   record(botId: string, messageId: string, path: string) {
     this.artifacts.save({
       id: randomUUID(),

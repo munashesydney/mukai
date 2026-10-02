@@ -35,6 +35,14 @@ export class FileChangeRepository {
       )
       .map(summary);
   }
+  forConversation(id: string) {
+    return this.database
+      .all(
+        'SELECT f.id,f.message_id,f.path,f.added,f.removed,CASE WHEN f.before_text IS NULL THEN NULL ELSE 1 END AS before_text FROM file_changes f JOIN messages m ON m.id=f.message_id WHERE m.conversation_id=? ORDER BY f.rowid',
+        id,
+      )
+      .map(summary);
+  }
   find(id: string): FileChangeDetail | undefined {
     const row = this.database.get('SELECT * FROM file_changes WHERE id=?', id);
     return row

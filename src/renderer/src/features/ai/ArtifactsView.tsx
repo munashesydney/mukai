@@ -8,9 +8,11 @@ import { AttachmentCard } from './AttachmentCard';
 
 export function ArtifactsView({
   botId,
+  conversationId,
   attachments,
 }: {
-  botId: string;
+  botId?: string;
+  conversationId?: string;
   attachments: Attachment[];
 }) {
   const [files, setFiles] = useState<FileArtifact[]>([]),
@@ -19,14 +21,18 @@ export function ArtifactsView({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setFiles(await artifactService.list(botId));
+      setFiles(
+        await (conversationId
+          ? artifactService.forConversation(conversationId)
+          : artifactService.list(botId!)),
+      );
       setError('');
     } catch (error) {
       setError(errorText(error));
     } finally {
       setLoading(false);
     }
-  }, [botId]);
+  }, [botId, conversationId]);
   useEffect(() => {
     void refresh();
   }, [refresh]);

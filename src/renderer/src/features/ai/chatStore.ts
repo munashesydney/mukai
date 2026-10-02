@@ -6,6 +6,7 @@ import { chatService } from '../../services/chatService';
 import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
 import type { ChatState, ChatDraft } from '../../models/chat';
+import { conversationService } from '../../services/conversationService';
 
 const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
@@ -67,7 +68,7 @@ export const chatStore = {
     try {
       const [messages, files] = await Promise.all([
         chatService.history(id),
-        attachmentService.pending(id),
+        id.startsWith('space:') ? Promise.resolve([]) : attachmentService.pending(id),
       ]);
       if (active.has(id) || get(id).messages !== previous.messages) return;
       const accepted = messages.find(
@@ -125,7 +126,7 @@ export const chatStore = {
       update(id, { error: errorText(error) });
     }
   },
-  async send(id: string, retryId?: string) {
+  async send(id: string, retryId?: string, botId?: string | null) {
     if (get(id).error && !retryId) {
       await chatStore.load(id);
       if (get(id).error) return;
@@ -204,10 +205,13 @@ export const chatStore = {
             ),
           });
         else {
+          if (!accepted) accept();
           update(id, {
-            messages: get(id).messages.map((message) =>
-              message.id === event.message.id ? event.message : message,
-            ),
+            messages: get(id).messages.some((message) => message.id === event.message.id)
+              ? get(id).messages.map((message) =>
+                  message.id === event.message.id ? event.message : message,
+                )
+              : [...get(id).messages, event.message],
           });
         }
       };
@@ -217,6 +221,15 @@ export const chatStore = {
           requestId,
           text: retryId ? '' : state.text,
           attachmentIds: retryId ? [] : state.files.map((file) => file.id),
+          ...(id.startsWith('space:')
+            ? {
+                botId: retryId
+                  ? state.messages.find(
+                      (message) => message.requestId === retryId && message.role === 'assistant',
+                    )?.botId || botId
+                  : botId,
+              }
+            : {}),
         },
         handle,
       );
@@ -240,6 +253,22 @@ export const chatStore = {
       await chatService.stop(id);
     } catch (error) {
       update(id, { error: errorText(error) });
+    }
+  },
+  async save(id: string, messageId: string, saved: boolean) {
+    try {
+      const message = await conversationService.save(
+        id.startsWith('space:') ? id.slice(6) : 'bot-' + id,
+        messageId,
+        saved,
+      );
+      update(id, {
+        messages: get(id).messages.map((item) =>
+          item.id === messageId ? { ...item, saved: message.saved } : item,
+        ),
+      });
+    } catch (caught) {
+      update(id, { error: errorText(caught) });
     }
   },
 };

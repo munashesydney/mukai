@@ -50,7 +50,10 @@ export function messageRecord(row: Row): MessageRecord {
   return {
     id: String(row.id),
     requestId: String(row.request_id),
-    botId: String(row.bot_id),
+    botId: row.bot_id === null ? '' : String(row.bot_id),
+    conversationId: String(row.conversation_id || ''),
+    authorName: String(row.author_name || ''),
+    saved: Boolean(row.saved),
     role: row.role as MessageRecord['role'],
     content: String(row.content),
     status: row.status as MessageRecord['status'],

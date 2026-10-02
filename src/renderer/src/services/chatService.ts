@@ -1,14 +1,27 @@
 import type { ChatEvent, ChatInput, ChatMessage } from '../../../shared/ai';
 import { api, apiFetch } from './http';
 
+const root = (id: string) =>
+  id.startsWith('space:')
+    ? `/conversations/${encodeURIComponent(id.slice(6))}`
+    : `/bots/${encodeURIComponent(id)}`;
+
 export const chatService = {
-  history: (botId: string) => api<ChatMessage[]>(`/bots/${encodeURIComponent(botId)}/messages`),
-  stop: (botId: string) => api<{ ok: boolean }>(`/bots/${encodeURIComponent(botId)}/stop`, 'POST'),
-  async stream(botId: string, input: ChatInput, onEvent: (event: ChatEvent) => void) {
-    const response = await apiFetch(`/bots/${encodeURIComponent(botId)}/chat`, {
+  history: (id: string) => api<ChatMessage[]>(`${root(id)}/messages`),
+  stop: (id: string) => api<{ ok: boolean }>(`${root(id)}/stop`, 'POST'),
+  async stream(
+    id: string,
+    input: ChatInput & { botId?: string | null },
+    onEvent: (event: ChatEvent) => void,
+  ) {
+    const response = await apiFetch(`${root(id)}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(
+        id.startsWith('space:')
+          ? { requestId: input.requestId, text: input.text, botId: input.botId ?? null }
+          : input,
+      ),
     });
     const reader = response.body?.getReader();
     if (!reader) throw new Error('The response stream is unavailable.');

@@ -1361,6 +1361,16 @@ p {
   font-weight: 500;
   display: block;
 }
+.context-bot-copy {
+  flex: 1;
+  min-width: 0;
+}
+.context-bot-list strong,
+.context-bot-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .context-bot-list small {
   display: block;
   font-size: 10px;

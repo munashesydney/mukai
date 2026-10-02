@@ -1083,6 +1083,75 @@
   border-radius: 0;
   border-width: 0 0 0 1px;
 }
+.space-bot-picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin: 0;
+}
+.space-bot-picker legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+.space-bot-picker > p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.create-form .space-bot-picker label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.create-form .space-bot-picker input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--theme-accent);
+}
+.space-bot-picker small,
+.space-mention-list small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.space-details > .context-section-label {
+  margin-top: 26px;
+}
+.space-composer {
+  position: relative;
+}
+.space-mention-list {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  z-index: 2;
+}
+.space-mention-list button {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 9px;
+  color: var(--ink);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.space-mention-list button:hover,
+.space-mention-list button:focus-visible {
+  background: var(--surface-muted);
+}
 .diff-drawer[open] {
   display: flex;
   flex-direction: column;

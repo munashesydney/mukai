@@ -36,6 +36,9 @@ export function publicMessage(record: MessageRecord, attachments: AttachmentReco
     parts,
     startedAt,
     finishedAt,
+    conversationId,
+    authorName,
+    saved,
   } = record;
   return {
     id,
@@ -51,6 +54,9 @@ export function publicMessage(record: MessageRecord, attachments: AttachmentReco
     parts,
     startedAt,
     finishedAt,
+    conversationId,
+    authorName,
+    saved,
     attachments: attachments.map(publicAttachment),
   };
 }

@@ -78,26 +78,6 @@ export function useWorkspace(workspaceId = 'default') {
         ? previous[key].filter((value) => value !== id)
         : [...previous[key], id],
     }));
-  const createSpace = (name: string, description: string) => {
-    const id = `${
-      name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '') || 'space'
-    }-${crypto.randomUUID().slice(0, 6)}`;
-    setState((previous) => ({
-      ...previous,
-      spaces: [
-        ...previous.spaces,
-        {
-          id,
-          name: name.toLowerCase().replace(/\s+/g, '-'),
-          description: description || 'A new space for your next idea.',
-        },
-      ],
-    }));
-    navigate({ section: 'spaces', item: id });
-  };
   const createPursuit = (name: string, description: string) => {
     const id = crypto.randomUUID();
     setState((previous) => ({
@@ -126,7 +106,6 @@ export function useWorkspace(workspaceId = 'default') {
     navigate,
     sendMessage,
     storageFailed,
-    createSpace,
     createPursuit,
     togglePaused,
     toggleBookmark: (id: string) => toggle('bookmarks', id),

@@ -7,12 +7,23 @@ import type { BotService } from '../services/botService';
 import type { ProviderService } from '../services/providerService';
 import type { AttachmentService } from '../services/attachmentService';
 import type { ChatService } from '../services/chatService';
-import { botSchema, createBotSchema, providerSchema, chatSchema, workspaceSchema } from './schemas';
+import {
+  botSchema,
+  createBotSchema,
+  providerSchema,
+  chatSchema,
+  workspaceSchema,
+  spaceSchema,
+  spaceChatSchema,
+  savedMessageSchema,
+  spaceImportSchema,
+} from './schemas';
 import type { WorkspaceService } from '../services/workspaceService';
 import type { ArtifactService } from '../services/artifactService';
 import type { ToolService } from '../services/toolService';
 import { body, jsonBody, send, chatOutput } from './transport';
 import type { FileChangeService } from '../services/fileChangeService';
+import type { ConversationService } from '../services/conversationService';
 
 export function createRoutes({
   token,
@@ -25,6 +36,7 @@ export function createRoutes({
   artifacts,
   tools,
   changes,
+  conversations,
 }: {
   token: string;
   startedAt: number;
@@ -36,6 +48,7 @@ export function createRoutes({
   artifacts: ArtifactService;
   tools: ToolService;
   changes: FileChangeService;
+  conversations: ConversationService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -74,7 +87,11 @@ export function createRoutes({
       send(response, method === 'HEAD' ? undefined : payload);
       return;
     }
-    if (!/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes)(\/|$)/.test(path))
+    if (
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations)(\/|$)/.test(
+        path,
+      )
+    )
       throw new ApiError(404, 'Not found');
     const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
     const expected = Buffer.from(token);
@@ -83,7 +100,39 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
-    if (resource === 'changes' && id && !action && method === 'GET') {
+    if (resource === 'conversations') {
+      if (!id && method === 'GET')
+        return send(response, conversations.list(url.searchParams.get('workspaceId') || 'default'));
+      if (!id && method === 'POST') {
+        const input = spaceSchema.parse(await jsonBody(request));
+        return send(response, conversations.create(input.workspaceId, input), 201);
+      }
+      if (id === 'import' && !action && method === 'POST') {
+        const input = spaceImportSchema.parse(await jsonBody(request, 2 * 1024 * 1024));
+        return send(response, conversations.import(input.workspaceId, input.spaces));
+      }
+      if (id) {
+        conversations.require(id);
+        if (action === 'messages' && method === 'GET')
+          return send(response, conversations.history(id));
+        if (action === 'chat' && method === 'POST')
+          return conversations.send(
+            id,
+            spaceChatSchema.parse(await jsonBody(request)),
+            chatOutput(response),
+          );
+        if (action === 'saved' && method === 'PUT') {
+          const input = savedMessageSchema.parse(await jsonBody(request));
+          return send(response, conversations.save(id, input.messageId, input.saved));
+        }
+        if (action === 'artifacts' && method === 'GET')
+          return send(response, artifacts.forConversation(id));
+        if (action === 'stop' && method === 'POST') {
+          conversations.stop(id);
+          return send(response, { ok: true });
+        }
+      }
+    } else if (resource === 'changes' && id && !action && method === 'GET') {
       return send(response, changes.detail(id));
     } else if (resource === 'workspaces') {
       if (!id && method === 'GET') return send(response, workspaces.list());

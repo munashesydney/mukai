@@ -100,6 +100,9 @@ export interface ChatMessage {
   startedAt?: string | null;
   finishedAt?: string | null;
   changes?: FileChangeSummary[];
+  conversationId?: string;
+  authorName?: string;
+  saved?: boolean;
 }
 export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }

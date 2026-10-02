@@ -15,6 +15,39 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('preserves existing reviews and artifacts when rebuilding the messages table', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
+    for (const sql of migrations.slice(0, 4)) db.exec(sql);
+    db.exec(
+      "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'old'),(2,'old'),(3,'old'),(4,'old');",
+    );
+    db.exec(
+      "INSERT INTO bots VALUES('scout','Scout','Original description','Original instructions',NULL,NULL,NULL,'scout','2026-10-01','default'); INSERT INTO metadata VALUES('scout_seeded','1');",
+    );
+    db.exec(
+      "INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at) VALUES('reply','scout','request','assistant','Done','complete','2026-10-01'); INSERT INTO artifacts VALUES('artifact','scout','reply','draft.md','draft.md','2026-10-01'); INSERT INTO file_changes VALUES('change','reply','scout','draft.md','draft.md','before','after',1,1,'[]');",
+    );
+    db.close();
+    const api = await startApiServer(0, { dataDir: dir });
+    try {
+      expect(
+        api.store.get('SELECT conversation_id FROM messages WHERE id=?', 'reply')?.conversation_id,
+      ).toBe('bot-scout');
+      expect(
+        api.store.get('SELECT conversation_id FROM artifacts WHERE id=?', 'artifact')
+          ?.conversation_id,
+      ).toBe('bot-scout');
+      expect(
+        api.store.get('SELECT before_text,after_text FROM file_changes WHERE id=?', 'change'),
+      ).toMatchObject({ before_text: 'before', after_text: 'after' });
+      expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+      expect(api.store.get('PRAGMA foreign_keys')?.foreign_keys).toBe(1);
+    } finally {
+      await api.shutdown();
+      await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    }
+  });
   it('upgrades a populated version-one database without losing bots, messages, providers, or attachments', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
@@ -65,6 +98,7 @@ describe('Existing database upgrades', () => {
         { version: 2 },
         { version: 3 },
         { version: 4 },
+        { version: 5 },
       ]);
       expect(api.store.get('SELECT id FROM providers')?.id).toBe('provider');
       expect(() =>

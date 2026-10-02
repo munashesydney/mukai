@@ -17,6 +17,7 @@ import type {
   ToolInfo,
 } from '../shared/ai';
 import type { FileChangeDetail } from '../shared/fileChanges';
+import type { Conversation } from '../shared/conversations';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
@@ -77,6 +78,26 @@ async function upload(name: string, bytes: Buffer, botId = 'scout') {
     body: new Uint8Array(bytes),
   });
   return { response, data: (await response.json()) as Attachment };
+}
+async function spaceChat(
+  id: string,
+  text: string,
+  botId: string | null = null,
+  requestId = randomUUID(),
+) {
+  const response = await fetch(`${api.url}/conversations/${id}/chat`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, botId, requestId }),
+  });
+  expect(response.status).toBe(200);
+  return {
+    events: (await response.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as ChatEvent),
+    requestId,
+  };
 }
 function pdfFixture() {
   const text = 'BT /F1 12 Tf 20 150 Td (Readable PDF note) Tj ET';
@@ -270,6 +291,187 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('runs the same bot in separate spaces and cancels only the requested conversation', async () => {
+    await configure();
+    mode = 'slow';
+    const create = async (name: string) =>
+      (
+        await request<Conversation>('/conversations', 'POST', {
+          workspaceId: 'default',
+          name,
+          description: '',
+          botIds: ['scout'],
+        })
+      ).data;
+    const first = await create('First'),
+      second = await create('Second');
+    const start = async (id: string) =>
+      fetch(api.url + `/conversations/${id}/chat`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: randomUUID(), text: '@scout wait', botId: 'scout' }),
+      });
+    const firstResponse = await start(first.id),
+      secondResponse = await start(second.id);
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    const firstBody = firstResponse.text(),
+      secondBody = secondResponse.text();
+    expect((await start(first.id)).status).toBe(409);
+    await request(`/conversations/${first.id}/stop`, 'POST');
+    expect(await firstBody).toContain('stopped');
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${second.id}/messages`)).data.at(-1)!.status,
+    ).toBe('streaming');
+    await request(`/conversations/${second.id}/stop`, 'POST');
+    expect(await secondBody).toContain('stopped');
+  });
+  it('persists spaces, memberships, bookmarks, and exactly ten isolated context messages', async () => {
+    await configure();
+    await chat('PRIVATE HISTORY MUST STAY PRIVATE');
+    const space = (
+      await request<Conversation>('/conversations', 'POST', {
+        workspaceId: 'default',
+        name: 'Planning',
+        description: 'A real space',
+        botIds: ['scout'],
+      })
+    ).data;
+    expect(space.botIds).toEqual(['scout']);
+    const other = (
+      await request<Conversation>('/conversations', 'POST', {
+        workspaceId: 'default',
+        name: 'Other',
+        description: '',
+        botIds: [],
+      })
+    ).data;
+    await spaceChat(other.id, 'OTHER SPACE MUST STAY PRIVATE');
+    const count = calls.length;
+    for (let i = 0; i < 12; i++) await spaceChat(space.id, 'Context ' + i);
+    expect(calls.length).toBe(count);
+    const sent = await spaceChat(space.id, '@scout hello', 'scout');
+    const serialized = JSON.stringify(calls.at(-1)!.messages);
+    expect(calls.at(-1)!.messages).toHaveLength(11);
+    expect(serialized).toContain('Context 3');
+    expect(serialized).not.toContain('Context 2');
+    expect(serialized).toContain('[You] @scout hello');
+    expect(serialized).not.toContain('MUST STAY PRIVATE');
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(2);
+    const history = (await request<ChatMessage[]>(`/conversations/${space.id}/messages`)).data;
+    expect(history).toHaveLength(14);
+    const reply = history.at(-1)!;
+    expect(reply).toMatchObject({
+      botId: 'scout',
+      conversationId: space.id,
+      authorName: 'Scout',
+      status: 'complete',
+    });
+    await request(`/conversations/${space.id}/saved`, 'PUT', { messageId: reply.id, saved: true });
+    expect(
+      (
+        await request(`/conversations/${other.id}/saved`, 'PUT', {
+          messageId: reply.id,
+          saved: true,
+        })
+      ).response.status,
+    ).toBe(404);
+    await spaceChat(space.id, '', 'scout', sent.requestId);
+    expect(calls.length).toBe(count + 1);
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect((await request<Conversation[]>('/conversations')).data.map((item) => item.id)).toContain(
+      space.id,
+    );
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${space.id}/messages`)).data.at(-1)!.saved,
+    ).toBe(true);
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('validates space membership, imports local history once, and keeps untagged sends idempotent', async () => {
+    expect(
+      (
+        await request('/conversations', 'POST', {
+          workspaceId: 'default',
+          name: 'Invalid',
+          description: '',
+          botIds: ['missing'],
+        })
+      ).response.status,
+    ).toBe(400);
+    const input = {
+      workspaceId: 'default',
+      spaces: [
+        {
+          id: 'old-space',
+          name: 'Old space',
+          description: 'Keep me',
+          messages: [
+            { id: 'old-message', text: 'Saved legacy text', author: 'munashe', saved: true },
+          ],
+        },
+      ],
+    };
+    const imported = (await request<Conversation[]>('/conversations/import', 'POST', input)).data;
+    const again = (await request<Conversation[]>('/conversations/import', 'POST', input)).data;
+    expect(again).toEqual(imported);
+    const history = (await request<ChatMessage[]>(`/conversations/${imported[0].id}/messages`))
+      .data;
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ content: 'Saved legacy text', saved: true });
+    const empty = (
+      await request<Conversation>('/conversations', 'POST', {
+        workspaceId: 'default',
+        name: 'No bots',
+        description: '',
+        botIds: [],
+      })
+    ).data;
+    const requestId = randomUUID();
+    await spaceChat(empty.id, 'Hello', null, requestId);
+    await spaceChat(empty.id, 'Hello', null, requestId);
+    expect((await request<ChatMessage[]>(`/conversations/${empty.id}/messages`)).data).toHaveLength(
+      1,
+    );
+    expect(
+      (
+        await request(`/conversations/${empty.id}/chat`, 'POST', {
+          requestId: randomUUID(),
+          text: '@scout hello',
+          botId: 'scout',
+        })
+      ).response.status,
+    ).toBe(400);
+    expect(calls).toHaveLength(0);
+    expect((await fetch(api.url + '/conversations')).status).toBe(401);
+  });
+  it('keeps space artifacts and file diffs scoped to the space that generated them', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    writeFileSync(join(project, 'notes.txt'), 'A note');
+    await request('/workspaces/default', 'PUT', { name: 'Files workspace', folder: project });
+    const space = (
+      await request<Conversation>('/conversations', 'POST', {
+        workspaceId: 'default',
+        name: 'Files',
+        description: '',
+        botIds: ['scout'],
+      })
+    ).data;
+    mode = 'tools';
+    await spaceChat(space.id, '@scout create a draft', 'scout');
+    const history = (await request<ChatMessage[]>(`/conversations/${space.id}/messages`)).data;
+    expect(history.at(-1)!.changes).toHaveLength(1);
+    expect(
+      (await request<FileArtifact[]>(`/conversations/${space.id}/artifacts`)).data[0],
+    ).toMatchObject({ path: 'draft.md', messageId: history.at(-1)!.id });
+    expect((await request<FileArtifact[]>('/bots/scout/artifacts')).data).toEqual([]);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toEqual([]);
+    mode = 'normal';
+    await spaceChat(space.id, '@scout followup', 'scout');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('[Scout]');
+  });
   it('reserves a tool-free final response after eight steps, including a failed last tool call', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
@@ -558,6 +760,7 @@ describe('Mukai bots and AI API', () => {
       { version: 2 },
       { version: 3 },
       { version: 4 },
+      { version: 5 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();

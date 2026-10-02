@@ -15,6 +15,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { bots } from '../workspace/data';
 import type { BotId, DialogKind, Location, Space, Pursuit } from '../workspace/types';
+import type { Bot } from '../../../../shared/ai';
 
 export function ConversationHeader({
   location,
@@ -26,6 +27,7 @@ export function ConversationHeader({
   onDetails,
   onDialog,
   onSaved,
+  members,
 }: {
   location: Location;
   space?: Space;
@@ -36,6 +38,7 @@ export function ConversationHeader({
   onDetails: () => void;
   onDialog: (dialog: DialogKind) => void;
   onSaved: () => void;
+  members?: Bot[];
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -107,10 +110,18 @@ export function ConversationHeader({
               onClick={onDetails}
               aria-label="View the bots in this space"
             >
-              <Avatar person="atlas" size="xs" />
-              <Avatar person="nova" size="xs" />
-              <Avatar person="scout" size="xs" />
-              <span>3</span>
+              {members ? (
+                members
+                  .slice(0, 3)
+                  .map((member) => <Avatar key={member.id} person={member.avatar} size="xs" />)
+              ) : (
+                <>
+                  <Avatar person="atlas" size="xs" />
+                  <Avatar person="nova" size="xs" />
+                  <Avatar person="scout" size="xs" />
+                </>
+              )}
+              <span>{members?.length ?? 3}</span>
             </button>
           )}
           <IconButton

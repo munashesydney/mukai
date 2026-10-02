@@ -2,6 +2,7 @@ import { ChevronRight, FileText, Target, X } from 'lucide-react';
 import { bots } from './data';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
+import { ContextBotList } from '../chat/ContextBotList';
 import type { Location, DialogKind, Message, Pursuit, Space } from './types';
 
 export function ContextPanel({
@@ -102,18 +103,15 @@ export function ContextPanel({
               <div className="context-section-label">BOTS IN THIS SPACE</div>
             </>
           )}
-          <div className="context-bot-list">
-            {participants.map((a) => (
-              <button key={a.id} onClick={() => onSelect({ section: 'bots', item: a.id })}>
-                <Avatar person={a.id} size="sm" />
-                <span>
-                  <strong>{a.name}</strong>
-                  <small>{a.role}</small>
-                </span>
-                <i className="bot-online" />
-              </button>
-            ))}
-          </div>
+          <ContextBotList
+            bots={participants.map((bot) => ({
+              id: bot.id,
+              name: bot.name,
+              avatar: bot.id,
+              subtitle: bot.role,
+            }))}
+            onSelect={(id) => onSelect({ section: 'bots', item: id })}
+          />
         </>
       )}
       {hasDraft && (

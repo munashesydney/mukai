@@ -21,6 +21,14 @@ export class AttachmentRepository {
       .all('SELECT * FROM attachments WHERE message_id = ?', id)
       .map(attachmentRecord);
   }
+  forConversation(id: string) {
+    return this.database
+      .all(
+        'SELECT a.* FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.conversation_id=?',
+        id,
+      )
+      .map(attachmentRecord);
+  }
   pendingCount(botId: string) {
     return Number(
       this.database.get(

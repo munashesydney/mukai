@@ -19,6 +19,8 @@ import { ArtifactService } from './services/artifactService';
 import { ToolService } from './services/toolService';
 import { FileChangeRepository } from './repositories/fileChangeRepository';
 import { FileChangeService } from './services/fileChangeService';
+import { ConversationRepository } from './repositories/conversationRepository';
+import { ConversationService } from './services/conversationService';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -68,6 +70,12 @@ export function createApiServer(options: ApiOptions = {}) {
     );
     bots.initialize();
     chats.initialize();
+    const conversations = new ConversationService(
+      new ConversationRepository(store),
+      messageRepository,
+      bots,
+      chats,
+    );
     const route = createRoutes({
       token,
       startedAt,
@@ -79,6 +87,7 @@ export function createApiServer(options: ApiOptions = {}) {
       artifacts,
       tools,
       changes,
+      conversations,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => sendError(response, error));

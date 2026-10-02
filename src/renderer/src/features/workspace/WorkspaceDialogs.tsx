@@ -5,6 +5,8 @@ import { Avatar } from '../../components/ui/Avatar';
 import { TriangleMark } from '../../components/ui/TriangleMark';
 import type { DialogKind, Pursuit } from './types';
 import { SettingsDialog } from '../settings/SettingsDialog';
+import type { Bot } from '../../../../shared/ai';
+import { errorText } from '../../utils/errors';
 
 export function WorkspaceDialogs({
   kind,
@@ -13,11 +15,13 @@ export function WorkspaceDialogs({
   onCreateSpace,
   onCreatePursuit,
   onTogglePaused,
+  bots = [],
 }: {
   kind: DialogKind;
   pursuit?: Pursuit;
   onClose: () => void;
-  onCreateSpace: (name: string, description: string) => void;
+  onCreateSpace: (name: string, description: string, botIds: string[]) => Promise<void>;
+  bots?: Bot[];
   onCreatePursuit: (name: string, description: string) => void;
   onTogglePaused: (id: string) => void;
 }) {
@@ -80,6 +84,7 @@ export function WorkspaceDialogs({
         type={kind === 'create-space' ? 'space' : 'pursuit'}
         onClose={onClose}
         onCreate={kind === 'create-space' ? onCreateSpace : onCreatePursuit}
+        bots={kind === 'create-space' ? bots : []}
       />
     );
   if (kind === 'create-bot')
@@ -167,21 +172,34 @@ function CreateDialog({
   type,
   onClose,
   onCreate,
+  bots,
 }: {
   type: 'space' | 'pursuit';
   onClose: () => void;
-  onCreate: (name: string, description: string) => void;
+  onCreate: (name: string, description: string, botIds: string[]) => void | Promise<void>;
+  bots: Bot[];
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [botIds, setBotIds] = useState<string[]>([]),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
   return (
     <Modal title={`Create a ${type}`} onClose={onClose}>
       <form
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
           if (name.trim()) {
-            onCreate(name.trim(), description.trim());
-            onClose();
+            setBusy(true);
+            setError('');
+            try {
+              await onCreate(name.trim(), description.trim(), botIds);
+              onClose();
+            } catch (caught) {
+              setError(errorText(caught));
+            } finally {
+              setBusy(false);
+            }
           }
         }}
       >
@@ -204,6 +222,38 @@ function CreateDialog({
               }
             />
           </label>
+          {type === 'space' && (
+            <fieldset className="space-bot-picker">
+              <legend>Bots in this space</legend>
+              <p>Choose who you can mention. You can also create a space without bots.</p>
+              {bots.map((bot) => (
+                <label key={bot.id}>
+                  <input
+                    type="checkbox"
+                    checked={botIds.includes(bot.id)}
+                    onChange={(event) =>
+                      setBotIds((previous) =>
+                        event.target.checked
+                          ? [...previous, bot.id]
+                          : previous.filter((id) => id !== bot.id),
+                      )
+                    }
+                  />
+                  <Avatar person={bot.avatar} size="xs" />
+                  <span>
+                    {bot.name}
+                    <small>{bot.description}</small>
+                  </span>
+                </label>
+              ))}
+              {!bots.length && <p>Create a bot in this workspace to invite it to a space.</p>}
+            </fieldset>
+          )}
+          {error && (
+            <p className="ai-alert" role="alert">
+              {error}
+            </p>
+          )}
           <label>
             A little context <span>(optional)</span>
             <textarea
@@ -219,7 +269,7 @@ function CreateDialog({
           <button type="button" className="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="button button--primary" disabled={!name.trim()}>
+          <button type="submit" className="button button--primary" disabled={!name.trim() || busy}>
             Create {type} <ArrowRight size={15} />
           </button>
         </div>

@@ -18,6 +18,7 @@ import { ToolService } from './toolService';
 const TOOL_STEP_LIMIT = 8;
 
 interface Generation {
+  botId: string;
   controller: AbortController;
   content: string;
   reasoning: string;
@@ -47,14 +48,20 @@ export class ChatService {
     );
   }
   busy(id: string) {
-    return this.active.has(id);
+    return [...this.active.values()].some((generation) => generation.botId === id);
   }
   history(id: string) {
-    if (!this.busy(id))
+    return this.conversationHistory('bot-' + id);
+  }
+  conversationHistory(id: string) {
+    if (!this.active.has(id))
       this.messages.interruptStreaming('This response did not finish saving. You can retry.', id);
     return this.messages.history(id);
   }
   stop(id: string) {
+    this.stopConversation('bot-' + id);
+  }
+  stopConversation(id: string) {
     const active = this.active.get(id);
     if (active) {
       active.reason = 'stopped';
@@ -67,14 +74,20 @@ export class ChatService {
     }
     await Promise.all([...this.active.values()].map((active) => active.done));
   }
-  private context(botId: string, vision: boolean): ModelMessage[] {
+  private context(
+    conversationId: string,
+    botId: string,
+    vision: boolean,
+    throughSequence: number,
+  ): ModelMessage[] {
     // The pending assistant is excluded. Ten persisted messages include the current user.
-    const rows = this.messages.context(botId, 10);
+    const rows = this.messages.context(conversationId, 10, throughSequence);
     return rows.map((row) => {
       if (row.role === 'assistant')
         return {
-          role: 'assistant' as const,
+          role: row.botId === botId ? ('assistant' as const) : ('user' as const),
           content:
+            (conversationId.startsWith('bot-') ? '' : '[' + (row.authorName || 'Bot') + '] ') +
             row.content +
             (row.activity?.length
               ? '\nFile operations performed: ' +
@@ -85,7 +98,12 @@ export class ChatService {
               : ''),
         };
       const content: UserContent = [
-        { type: 'text', text: String(row.content) || 'Please review the attached files.' },
+        {
+          type: 'text',
+          text:
+            (conversationId.startsWith('bot-') ? '' : '[You] ') +
+            (String(row.content) || 'Please review the attached files.'),
+        },
       ];
       for (const file of this.attachments.forMessage(row.id)) {
         if (file.kind === 'image' && vision)
@@ -106,16 +124,30 @@ export class ChatService {
       return { role: 'user' as const, content };
     });
   }
-  async respond(bot: BotRecord, value: ChatInput, output: ChatOutput) {
+  async respond(
+    bot: BotRecord,
+    value: ChatInput,
+    output: ChatOutput,
+    conversationId = 'bot-' + bot.id,
+  ) {
     const botId = String(bot.id);
-    if (this.busy(botId))
-      throw new ApiError(409, 'This bot is already responding. Stop it or wait for it to finish.');
+    if (this.active.has(conversationId))
+      throw new ApiError(
+        409,
+        'This conversation is already receiving a response. Stop it or wait for it to finish.',
+      );
     const config = this.providers.resolve(bot);
-    const existingUser = this.messages.forRequest(botId, value.requestId, 'user');
+    const existingUser = this.messages.forRequest(conversationId, value.requestId, 'user');
     let userId: string, assistantId: string;
     if (existingUser) {
       userId = String(existingUser.id);
-      const assistant = this.messages.forRequest(botId, value.requestId, 'assistant')!;
+      const assistant = this.messages.forRequest(conversationId, value.requestId, 'assistant')!;
+      if (!assistant)
+        throw new ApiError(
+          409,
+          'This message was sent without a bot response. Send a new mention.',
+        );
+      if (assistant.botId !== botId) throw new ApiError(409, 'Retry with the original bot.');
       assistantId = String(assistant.id);
       if (assistant.status === 'complete') {
         output.start();
@@ -128,7 +160,7 @@ export class ChatService {
         output.end();
         return;
       }
-      if (this.messages.latestUserId(botId) !== userId)
+      if (this.messages.latestUserId(conversationId) !== userId)
         throw new ApiError(
           409,
           'Only the most recent response can be retried. Send a new message instead.',
@@ -145,6 +177,8 @@ export class ChatService {
       assistantId = randomUUID();
       this.messages.createTurn({
         botId,
+        conversationId,
+        authorName: bot.name,
         requestId: value.requestId,
         userId,
         assistantId,
@@ -153,6 +187,7 @@ export class ChatService {
       });
     }
     const generation: Generation = {
+      botId,
       controller: new AbortController(),
       content: '',
       reasoning: '',
@@ -174,7 +209,7 @@ export class ChatService {
     generation.done = new Promise<void>((resolve) => {
       resolveDone = resolve;
     });
-    this.active.set(botId, generation);
+    this.active.set(conversationId, generation);
     output.start();
     const emit = (event: ChatEvent) => output.emit(event);
     const removeDisconnect = output.onDisconnect(() => generation.controller.abort());
@@ -224,7 +259,12 @@ export class ChatService {
       const result = streamText({
         model: config.model,
         system,
-        messages: this.context(botId, config.vision),
+        messages: this.context(
+          conversationId,
+          botId,
+          config.vision,
+          this.messages.sequence(userId),
+        ),
         maxRetries: 0,
         abortSignal: generation.controller.signal,
         timeout: { totalMs: 180000, chunkMs: 45000 },
@@ -397,7 +437,7 @@ export class ChatService {
           },
         });
       } finally {
-        this.active.delete(botId);
+        this.active.delete(conversationId);
         removeDisconnect();
         output.end();
         resolveDone();
