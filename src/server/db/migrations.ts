@@ -93,7 +93,36 @@ export const migrations = [
    DROP TABLE artifacts;
    ALTER TABLE artifacts_next RENAME TO artifacts;
    CREATE INDEX conversation_artifacts ON artifacts(conversation_id);`,
+  `DROP TRIGGER bot_conversation;
+   CREATE TABLE conversations_next (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    kind TEXT NOT NULL CHECK(kind IN ('private','space','pursuit_run')), name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', owner_bot_id TEXT UNIQUE REFERENCES bots(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL);
+   INSERT INTO conversations_next SELECT * FROM conversations;
+   DROP TABLE conversations;
+   ALTER TABLE conversations_next RENAME TO conversations;
+   CREATE TRIGGER bot_conversation AFTER INSERT ON bots BEGIN
+    INSERT INTO conversations VALUES('bot-'||NEW.id,NEW.workspace_id,'private',NEW.name,NEW.description,NEW.id,NEW.created_at);
+    INSERT INTO conversation_bots VALUES('bot-'||NEW.id,NEW.id);
+   END;
+   CREATE TABLE pursuits (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    name TEXT NOT NULL, objective TEXT NOT NULL, success_criteria TEXT NOT NULL,
+    owner_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','waiting','blocked','waiting_for_you','paused','completed')),
+    interval_minutes INTEGER NOT NULL CHECK(interval_minutes >= 1), deadline TEXT,
+    next_run_at TEXT, next_run_reason TEXT NOT NULL, created_at TEXT NOT NULL);
+   CREATE INDEX pursuit_due ON pursuits(status,next_run_at);
+   CREATE TABLE pursuit_runs (
+    id TEXT PRIMARY KEY, pursuit_id TEXT NOT NULL REFERENCES pursuits(id),
+    conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id),
+    status TEXT NOT NULL CHECK(status IN ('running','complete','failed','stopped','interrupted')),
+    trigger TEXT NOT NULL CHECK(trigger IN ('schedule','manual')),
+    started_at TEXT NOT NULL, finished_at TEXT, summary TEXT NOT NULL DEFAULT '', error TEXT,
+    snapshot_json TEXT NOT NULL);
+   CREATE UNIQUE INDEX one_running_pursuit ON pursuit_runs(pursuit_id) WHERE status='running';`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.
-export const rebuildMigrations = new Set([5]);
+export const rebuildMigrations = new Set([5, 6]);

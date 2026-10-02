@@ -35,5 +35,4 @@ export interface Location {
   section: Section;
   item: string;
 }
-export type DialogKind =
-  'draft' | 'details' | 'settings' | 'create-bot' | 'create-space' | 'create-pursuit' | null;
+export type DialogKind = 'draft' | 'details' | 'settings' | 'create-bot' | 'create-space' | null;

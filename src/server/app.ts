@@ -21,6 +21,8 @@ import { FileChangeRepository } from './repositories/fileChangeRepository';
 import { FileChangeService } from './services/fileChangeService';
 import { ConversationRepository } from './repositories/conversationRepository';
 import { ConversationService } from './services/conversationService';
+import { PursuitService } from './services/pursuitService';
+import { PursuitRepository } from './repositories/pursuitRepository';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -70,6 +72,8 @@ export function createApiServer(options: ApiOptions = {}) {
     );
     bots.initialize();
     chats.initialize();
+    const pursuits = new PursuitService(new PursuitRepository(store), bots, chats);
+    tools.attachPursuits(pursuits);
     const conversations = new ConversationService(
       new ConversationRepository(store),
       messageRepository,
@@ -88,6 +92,7 @@ export function createApiServer(options: ApiOptions = {}) {
       tools,
       changes,
       conversations,
+      pursuits,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => sendError(response, error));
@@ -103,10 +108,19 @@ export function createApiServer(options: ApiOptions = {}) {
         releaseLock();
       }
     };
+    let shutdownPromise: Promise<void> | undefined;
+    const shutdown = () =>
+      (shutdownPromise ??= (async () => {
+        await pursuits.shutdown();
+        await chats.shutdown();
+      })());
     server.on('close', () => {
-      void chats.shutdown().finally(dispose);
+      pursuits.stopScheduling();
+      if (!pursuits.hasActiveRuns() && !chats.hasActiveResponses()) dispose();
+      else void shutdown().finally(dispose);
     });
-    return { server, token, store, shutdown: () => chats.shutdown(), dispose };
+    server.once('listening', () => pursuits.start());
+    return { server, token, store, shutdown, dispose, pursuits };
   } catch (error) {
     store.db.close();
     releaseLock();

@@ -7,6 +7,7 @@ import {
   CircleAlert,
   Search,
   Pencil,
+  Target,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -22,12 +23,22 @@ const actionLabels: Record<string, string> = {
 };
 
 function ToolRow({ activity }: { activity: ChatActivity }) {
+  const pursuitLabels: Record<string, string> = {
+    create: 'Created pursuit',
+    update: 'Updated pursuit',
+    list: 'Listed pursuits',
+    pause: 'Paused pursuit',
+    resume: 'Resumed pursuit',
+    complete: 'Completed pursuit',
+  };
   const Icon =
-    activity.action === 'search_files'
-      ? Search
-      : ['write_file', 'patch', 'create_directory'].includes(activity.action)
-        ? Pencil
-        : FileText;
+    activity.tool === 'manage_pursuit'
+      ? Target
+      : activity.action === 'search_files'
+        ? Search
+        : ['write_file', 'patch', 'create_directory'].includes(activity.action)
+          ? Pencil
+          : FileText;
   const running = activity.status === 'running';
   const problem = activity.status === 'failed' || activity.status === 'interrupted';
   return (
@@ -39,7 +50,9 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
             ? `Running ${activity.action.replaceAll('_', ' ')}`
             : problem
               ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
-              : actionLabels[activity.action] || activity.action.replaceAll('_', ' ')}{' '}
+              : (activity.tool === 'manage_pursuit'
+                  ? pursuitLabels[activity.action]
+                  : actionLabels[activity.action]) || activity.action.replaceAll('_', ' ')}{' '}
           <span className="response-tool-path" title={activity.path}>
             {activity.path}
           </span>
@@ -75,17 +88,19 @@ function ToolGroup({
       labels.add(
         activity.status !== 'complete'
           ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
-          : ['write_file', 'patch'].includes(activity.action)
-            ? 'Edited files'
-            : activity.action === 'search_files'
-              ? 'Searched files'
-              : activity.action === 'read_file'
-                ? 'Read files'
-                : activity.action === 'create_directory'
-                  ? 'Created folders'
-                  : activity.action === 'list'
-                    ? 'Listed folders'
-                    : 'Used tools',
+          : activity.tool === 'manage_pursuit'
+            ? 'Managed pursuits'
+            : ['write_file', 'patch'].includes(activity.action)
+              ? 'Edited files'
+              : activity.action === 'search_files'
+                ? 'Searched files'
+                : activity.action === 'read_file'
+                  ? 'Read files'
+                  : activity.action === 'create_directory'
+                    ? 'Created folders'
+                    : activity.action === 'list'
+                      ? 'Listed folders'
+                      : 'Used tools',
       );
   }
   return (

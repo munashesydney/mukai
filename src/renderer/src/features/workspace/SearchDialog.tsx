@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Search, Layers3, Target, ArrowUpRight } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
+import type { Pursuit } from '../../../../shared/pursuits';
 import { Avatar } from '../../components/ui/Avatar';
 import type { Bot } from '../../../../shared/ai';
-import type { Location, Space, Pursuit } from './types';
+import type { Location, Space } from './types';
 
 export function SearchDialog({
   spaces,

@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Bot, Workspace } from '../../../../shared/ai';
-import type { Location, Space, Pursuit, DialogKind } from '../../features/workspace/types';
+import type { Location, Space, DialogKind } from '../../features/workspace/types';
+import type { Pursuit } from '../../../../shared/pursuits';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
 
@@ -19,6 +20,8 @@ export function WorkspaceSidebar({
   location,
   spaces,
   pursuits,
+  pursuitsLoading = false,
+  pursuitsError = '',
   onSelect,
   onDialog,
   collapsed,
@@ -31,6 +34,8 @@ export function WorkspaceSidebar({
   location: Location;
   spaces: Space[];
   pursuits: Pursuit[];
+  pursuitsLoading?: boolean;
+  pursuitsError?: string;
   onSelect: (location: Location) => void;
   onDialog: (dialog: DialogKind) => void;
   collapsed: boolean;
@@ -44,6 +49,11 @@ export function WorkspaceSidebar({
   const [directOpen, setDirectOpen] = useState(true);
   const [workspaceMenu, setWorkspaceMenu] = useState(false);
   const isSelected = (item: string) => location.item === item;
+  const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');
+  const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
+  const inMotion = pursuits.filter(
+    (pursuit) => pursuit.status !== 'paused' && pursuit.status !== 'completed',
+  );
   const botRow = (bot: (typeof bots)[number]) => (
     <button
       key={bot.id}
@@ -147,24 +157,22 @@ export function WorkspaceSidebar({
               </button>
             </div>
             {directOpen && <div className="sidebar-group">{bots.map(botRow)}</div>}
-            {!!pursuits.length && (
+            {!!inMotion.length && (
               <>
                 <div className="sidebar-section-heading plain-heading">
                   <span>In motion</span>
                   <Target size={14} />
                 </div>
-                {pursuits
-                  .filter((pursuit) => !pursuit.paused)
-                  .map((pursuit) => (
-                    <button
-                      key={pursuit.id}
-                      className="sidebar-row pursuit-row"
-                      onClick={() => onSelect({ section: 'pursuits', item: pursuit.id })}
-                    >
-                      <Target size={18} />
-                      <span>{pursuit.name}</span>
-                    </button>
-                  ))}
+                {inMotion.map((pursuit) => (
+                  <button
+                    key={pursuit.id}
+                    className="sidebar-row pursuit-row"
+                    onClick={() => onSelect({ section: 'pursuits', item: pursuit.id })}
+                  >
+                    <Target size={18} />
+                    <span>{pursuit.name}</span>
+                  </button>
+                ))}
               </>
             )}
           </>
@@ -184,31 +192,27 @@ export function WorkspaceSidebar({
           <>
             <div className="sidebar-title">
               <h2>Pursuits</h2>
-              <IconButton label="Create a pursuit" onClick={() => onDialog('create-pursuit')}>
-                <Plus size={18} />
-              </IconButton>
             </div>
+            {!pursuits.length && (pursuitsLoading || pursuitsError) && (
+              <p className="sidebar-empty">
+                {pursuitsLoading ? 'Loading pursuits…' : 'Couldn’t load pursuits.'}
+              </p>
+            )}
+            {!pursuits.length && !pursuitsLoading && !pursuitsError && (
+              <div className="sidebar-empty">
+                <Target size={22} strokeWidth={1.5} aria-hidden="true" />
+                <strong>No pursuits yet</strong>
+                <p>Ask a bot to work toward a goal on a schedule. Its pursuits will appear here.</p>
+                <button
+                  className="sidebar-empty-action"
+                  onClick={() => onSelect({ section: 'bots', item: bots[0]?.id || '' })}
+                >
+                  {bots.length ? 'Talk to a bot' : 'Go to bots'} <ArrowUpRight size={14} />
+                </button>
+              </div>
+            )}
             <div className="sidebar-group">
-              {pursuits
-                .filter((p) => !p.paused)
-                .map((p) => (
-                  <button
-                    key={p.id}
-                    className={`sidebar-row pursuit-row ${isSelected(p.id) ? 'is-selected' : ''}`}
-                    onClick={() => onSelect({ section: 'pursuits', item: p.id })}
-                  >
-                    <Target size={18} />
-                    <span>{p.name}</span>
-                  </button>
-                ))}
-            </div>
-            <div className="sidebar-section-heading plain-heading">
-              <span>Paused</span>
-              <span className="section-rule" />
-            </div>
-            {pursuits
-              .filter((p) => p.paused)
-              .map((p) => (
+              {unpausedPursuits.map((p) => (
                 <button
                   key={p.id}
                   className={`sidebar-row pursuit-row ${isSelected(p.id) ? 'is-selected' : ''}`}
@@ -218,6 +222,25 @@ export function WorkspaceSidebar({
                   <span>{p.name}</span>
                 </button>
               ))}
+            </div>
+            {!!pausedPursuits.length && (
+              <>
+                <div className="sidebar-section-heading plain-heading">
+                  <span>Paused</span>
+                  <span className="section-rule" />
+                </div>
+                {pausedPursuits.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`sidebar-row pursuit-row ${isSelected(p.id) ? 'is-selected' : ''}`}
+                    onClick={() => onSelect({ section: 'pursuits', item: p.id })}
+                  >
+                    <Target size={18} />
+                    <span>{p.name}</span>
+                  </button>
+                ))}
+              </>
+            )}
           </>
         )}
         {location.section === 'tools' && (

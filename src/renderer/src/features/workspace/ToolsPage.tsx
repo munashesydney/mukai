@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, FolderOpen, Puzzle, Search } from 'lucide-react';
+import { FileText, FolderOpen, Puzzle, Search, Target } from 'lucide-react';
 import type { ToolInfo } from '../../../../shared/ai';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
@@ -39,7 +39,9 @@ export function ToolsPage({
         <span>
           <Puzzle size={17} /> YOUR TOOLKIT
         </span>
-        <span className="ai-caption">{tools.length} tool family</span>
+        <span className="ai-caption">
+          {tools.length} tool {tools.length === 1 ? 'family' : 'families'}
+        </span>
       </div>
       <h1>Tools for your bots.</h1>
       <p className="tools-intro">Small, useful capabilities. A little more room to do.</p>
@@ -70,7 +72,7 @@ export function ToolsPage({
           {visible.map((tool) => (
             <article key={tool.id} className="tool-family-card">
               <div className="tool-family-icon">
-                <FileText size={23} />
+                {tool.id === 'manage_pursuit' ? <Target size={23} /> : <FileText size={23} />}
               </div>
               <div className="tool-family-body">
                 <div className="tool-family-title">
@@ -92,7 +94,12 @@ export function ToolsPage({
                   {tool.scope === 'all-bots'
                     ? 'Available to every bot'
                     : 'Available to selected bots'}{' '}
-                  · {folder ? 'Within this workspace folder' : 'Connect a folder to start'}
+                  ·{' '}
+                  {tool.id === 'manage_pursuit'
+                    ? 'Manages its own pursuits'
+                    : folder
+                      ? 'Within this workspace folder'
+                      : 'Connect a folder to start'}
                 </small>
               </div>
             </article>

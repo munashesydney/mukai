@@ -1,30 +1,24 @@
 import { useState } from 'react';
-import { ArrowRight, Check, FileText, Pause, Play, Target, Info } from 'lucide-react';
+import { ArrowRight, Check, FileText, Target, Info } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Sheet } from '../../components/ui/Sheet';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Avatar } from '../../components/ui/Avatar';
-import type { DialogKind, Pursuit } from './types';
+import type { DialogKind } from './types';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import type { Bot } from '../../../../shared/ai';
 import { errorText } from '../../utils/errors';
 
 export function WorkspaceDialogs({
   kind,
-  pursuit,
   onClose,
   onCreateSpace,
-  onCreatePursuit,
-  onTogglePaused,
   bots = [],
 }: {
   kind: DialogKind;
-  pursuit?: Pursuit;
   onClose: () => void;
   onCreateSpace: (name: string, description: string, botIds: string[]) => Promise<void>;
   bots?: Bot[];
-  onCreatePursuit: (name: string, description: string) => void;
-  onTogglePaused: (id: string) => void;
 }) {
   if (kind === 'draft')
     return (
@@ -79,81 +73,37 @@ export function WorkspaceDialogs({
       </Modal>
     );
   if (kind === 'settings') return <SettingsDialog onClose={onClose} />;
-  if (kind === 'create-space' || kind === 'create-pursuit')
-    return (
-      <CreateDialog
-        type={kind === 'create-space' ? 'space' : 'pursuit'}
-        onClose={onClose}
-        onCreate={kind === 'create-space' ? onCreateSpace : onCreatePursuit}
-        bots={kind === 'create-space' ? bots : []}
-      />
-    );
+  if (kind === 'create-space')
+    return <CreateSpaceDialog onClose={onClose} onCreate={onCreateSpace} bots={bots} />;
   if (kind === 'details')
     return (
-      <Modal title={pursuit ? 'Pursuit details' : 'About this workspace'} onClose={onClose}>
+      <Modal title="About this workspace" onClose={onClose}>
         <div className="details-document">
           <span className="preview-symbol">
             <Target size={29} />
           </span>
-          <h3>{pursuit?.name ?? 'A home for your next good idea.'}</h3>
+          <h3>A home for your next good idea.</h3>
           <p>
-            {pursuit?.description ??
-              'Mukai brings your spaces, pursuits, and bots together. A little intention, a little conversation, and a useful next step.'}
+            Mukai brings your spaces, pursuits, and bots together. A little intention, a little
+            conversation, and a useful next step.
           </p>
-          {pursuit && (
-            <>
-              <div className="details-stat">
-                <span>Progress</span>
-                <strong>{pursuit.progress}%</strong>
-              </div>
-              <div className="details-progress">
-                <span style={{ width: `${pursuit.progress}%` }} />
-              </div>
-              <div className="details-stat">
-                <span>Keeping things moving</span>
-                <span className="details-bot">
-                  <Avatar person={pursuit.bot} size="xs" />
-                  {pursuit.bot[0].toUpperCase() + pursuit.bot.slice(1)}
-                </span>
-              </div>
-              <div className="details-stat">
-                <span>Status</span>
-                <span className="status-label">{pursuit.paused ? 'Paused' : 'In motion'}</span>
-              </div>
-            </>
-          )}
         </div>
         <div className="modal-footer">
           <span>One step at a time.</span>
-          {pursuit ? (
-            <button
-              className="button"
-              onClick={() => {
-                onTogglePaused(pursuit.id);
-                onClose();
-              }}
-            >
-              {pursuit.paused ? <Play size={15} /> : <Pause size={15} />}
-              {pursuit.paused ? 'Resume pursuit' : 'Pause pursuit'}
-            </button>
-          ) : (
-            <button className="button button--primary" onClick={onClose}>
-              Got it
-            </button>
-          )}
+          <button className="button button--primary" onClick={onClose}>
+            Got it
+          </button>
         </div>
       </Modal>
     );
   return null;
 }
 
-function CreateDialog({
-  type,
+function CreateSpaceDialog({
   onClose,
   onCreate,
   bots,
 }: {
-  type: 'space' | 'pursuit';
   onClose: () => void;
   onCreate: (name: string, description: string, botIds: string[]) => void | Promise<void>;
   bots: Bot[];
@@ -163,13 +113,8 @@ function CreateDialog({
   const [botIds, setBotIds] = useState<string[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const Surface = type === 'space' ? Sheet : Modal;
   return (
-    <Surface
-      title={`Create a ${type}`}
-      onClose={onClose}
-      className={type === 'space' ? 'create-space-sheet' : ''}
-    >
+    <Sheet title="Create a space" onClose={onClose} className="create-space-sheet">
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -188,50 +133,42 @@ function CreateDialog({
         }}
       >
         <div className="create-form">
-          <p>
-            {type === 'space'
-              ? 'Give your next idea a place to grow.'
-              : 'What would you like to move toward? Atlas can keep the bigger picture in view.'}
-          </p>
+          <p>Give your next idea a place to grow.</p>
           <label>
-            {type === 'space' ? 'Space name' : 'What’s the pursuit?'}
+            Space name
             <input
               autoFocus
               required
               maxLength={60}
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder={
-                type === 'space' ? 'e.g. the-next-big-thing' : 'e.g. Launch my first product'
-              }
+              placeholder="e.g. the-next-big-thing"
             />
           </label>
-          {type === 'space' && (
-            <fieldset className="space-bot-picker">
-              <legend>Bots in this space</legend>
-              <p>Choose who you can mention. You can also create a space without bots.</p>
-              {bots.map((bot) => (
-                <label key={bot.id}>
-                  <Checkbox
-                    checked={botIds.includes(bot.id)}
-                    onChange={(event) =>
-                      setBotIds((previous) =>
-                        event.target.checked
-                          ? [...previous, bot.id]
-                          : previous.filter((id) => id !== bot.id),
-                      )
-                    }
-                  />
-                  <Avatar person={bot.avatar} size="xs" />
-                  <span>
-                    {bot.name}
-                    <small>{bot.description}</small>
-                  </span>
-                </label>
-              ))}
-              {!bots.length && <p>Create a bot in this workspace to invite it to a space.</p>}
-            </fieldset>
-          )}
+          <fieldset className="space-bot-picker">
+            <legend>Bots in this space</legend>
+            <p>Choose who you can mention. You can also create a space without bots.</p>
+            {bots.map((bot) => (
+              <label key={bot.id}>
+                <Checkbox
+                  checked={botIds.includes(bot.id)}
+                  onChange={(event) =>
+                    setBotIds((previous) =>
+                      event.target.checked
+                        ? [...previous, bot.id]
+                        : previous.filter((id) => id !== bot.id),
+                    )
+                  }
+                />
+                <Avatar person={bot.avatar} size="xs" />
+                <span>
+                  {bot.name}
+                  <small>{bot.description}</small>
+                </span>
+              </label>
+            ))}
+            {!bots.length && <p>Create a bot in this workspace to invite it to a space.</p>}
+          </fieldset>
           {error && (
             <p className="ai-alert" role="alert">
               {error}
@@ -253,10 +190,10 @@ function CreateDialog({
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={!name.trim() || busy}>
-            Create {type} <ArrowRight size={15} />
+            Create space <ArrowRight size={15} />
           </button>
         </div>
       </form>
-    </Surface>
+    </Sheet>
   );
 }

@@ -12,6 +12,7 @@ import './styles/tokens.css';
 import './styles/global.css';
 import './styles/appearance.css';
 import './styles/ai.css';
+import './styles/pursuits.css';
 
 applyTheme(readPreferences(), window.matchMedia('(prefers-color-scheme: dark)').matches);
 

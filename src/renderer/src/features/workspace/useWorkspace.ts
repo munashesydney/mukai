@@ -78,36 +78,12 @@ export function useWorkspace(workspaceId = 'default') {
         ? previous[key].filter((value) => value !== id)
         : [...previous[key], id],
     }));
-  const createPursuit = (name: string, description: string) => {
-    const id = crypto.randomUUID();
-    setState((previous) => ({
-      ...previous,
-      pursuits: [
-        ...previous.pursuits,
-        {
-          id,
-          name,
-          description: description || 'One small step at a time.',
-          bot: 'atlas',
-          progress: 0,
-        },
-      ],
-    }));
-    navigate({ section: 'pursuits', item: id });
-  };
-  const togglePaused = (id: string) =>
-    setState((previous) => ({
-      ...previous,
-      pursuits: previous.pursuits.map((p) => (p.id === id ? { ...p, paused: !p.paused } : p)),
-    }));
   return {
     ...state,
     location,
     navigate,
     sendMessage,
     storageFailed,
-    createPursuit,
-    togglePaused,
     toggleBookmark: (id: string) => toggle('bookmarks', id),
     toggleReaction: (id: string) => toggle('reactions', id),
     canBack: history.index > 0,

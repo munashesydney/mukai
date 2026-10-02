@@ -2,6 +2,18 @@ import { tool, type ToolSet } from 'ai';
 import { fileOperationsDefinition } from './file-operations/definition';
 import { executeFileOperations } from './file-operations/execute';
 import type { ToolContext, ToolScope } from './types';
+import { pursuitDefinition } from './pursuits/definition';
+import { executePursuit } from './pursuits/execute';
+
+export function pursuitTools(context: Parameters<typeof executePursuit>[1]): ToolSet {
+  return {
+    [pursuitDefinition.name]: tool({
+      description: pursuitDefinition.description,
+      inputSchema: pursuitDefinition.inputSchema,
+      execute: (input, options) => executePursuit(input, context, options.toolCallId),
+    }),
+  };
+}
 
 // New tool families add their own definition/execute folder and register here.
 // A scope can target bot IDs without changing the chat runtime.
@@ -36,11 +48,20 @@ export function toolsForBot(context: ToolContext): ToolSet {
   return tools;
 }
 export function toolCatalog() {
-  return registrations.map(({ definition, scope }) => ({
-    id: definition.name,
-    name: definition.title,
-    description: definition.summary,
-    actions: definition.actions,
-    scope: scope.type,
-  }));
+  return [
+    ...registrations.map(({ definition, scope }) => ({
+      id: definition.name,
+      name: definition.title,
+      description: definition.summary,
+      actions: definition.actions,
+      scope: scope.type,
+    })),
+    {
+      id: pursuitDefinition.name,
+      name: pursuitDefinition.title,
+      description: pursuitDefinition.summary,
+      actions: pursuitDefinition.actions,
+      scope: 'all-bots' as const,
+    },
+  ];
 }

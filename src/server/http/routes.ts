@@ -24,6 +24,8 @@ import type { ToolService } from '../services/toolService';
 import { body, jsonBody, send, chatOutput } from './transport';
 import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
+import type { PursuitService } from '../services/pursuitService';
+import { z } from 'zod';
 
 export function createRoutes({
   token,
@@ -37,6 +39,7 @@ export function createRoutes({
   tools,
   changes,
   conversations,
+  pursuits,
 }: {
   token: string;
   startedAt: number;
@@ -49,6 +52,7 @@ export function createRoutes({
   tools: ToolService;
   changes: FileChangeService;
   conversations: ConversationService;
+  pursuits: PursuitService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -88,7 +92,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations)(\/|$)/.test(
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits)(\/|$)/.test(
         path,
       )
     )
@@ -100,7 +104,19 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
-    if (resource === 'conversations') {
+    if (resource === 'pursuits') {
+      if (!id && method === 'GET')
+        return send(response, pursuits.list(url.searchParams.get('workspaceId') || 'default'));
+      if (id && !action && method === 'GET') return send(response, pursuits.detail(id));
+      if (id && action === 'status' && method === 'PUT') {
+        const input = z
+          .object({ status: z.enum(['paused', 'active']) })
+          .parse(await jsonBody(request));
+        return send(response, pursuits.control(id, input.status));
+      }
+      if (id && action === 'run' && method === 'POST')
+        return send(response, pursuits.runNow(id), 201);
+    } else if (resource === 'conversations') {
       if (!id && method === 'GET')
         return send(response, conversations.list(url.searchParams.get('workspaceId') || 'default'));
       if (!id && method === 'POST') {

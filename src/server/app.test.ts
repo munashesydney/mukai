@@ -745,7 +745,10 @@ describe('Mukai bots and AI API', () => {
     await chat('First Scout message');
     await chat('First Writer message', randomUUID(), bot.id);
     expect(calls[1].model).toBe('writer-model');
-    expect(calls[1].messages[0]).toEqual({ role: 'system', content: 'Write in short sentences.' });
+    expect(calls[1].messages[0]).toEqual({
+      role: 'system',
+      content: expect.stringMatching(/^Write in short sentences\.\nCurrent UTC time: /),
+    });
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
     await close(api.server);
@@ -761,6 +764,7 @@ describe('Mukai bots and AI API', () => {
       { version: 3 },
       { version: 4 },
       { version: 5 },
+      { version: 6 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();

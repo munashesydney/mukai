@@ -571,6 +571,36 @@ p {
   letter-spacing: -0.6px;
   font-weight: 650;
 }
+.sidebar-empty {
+  padding: 22px 10px;
+  color: var(--text-secondary);
+}
+.sidebar-empty > svg {
+  color: var(--theme-text);
+  margin-bottom: 14px;
+}
+.sidebar-empty strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sidebar-empty p {
+  margin: 8px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.sidebar-empty-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--theme-text);
+  font-size: 12px;
+  border-radius: 4px;
+}
+.sidebar-empty-action:hover {
+  text-decoration: underline;
+}
 .pursuit-row {
   min-height: 44px;
   font-size: 12px;

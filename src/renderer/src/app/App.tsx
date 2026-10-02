@@ -1,12 +1,10 @@
+import { Target } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
 import { ConversationHeader } from '../features/chat/ConversationHeader';
-import { MessageFeed } from '../features/chat/MessageFeed';
-import { Composer } from '../features/chat/Composer';
-import { FilesView, ActivityView, SavedView } from '../features/chat/ConversationViews';
-import { ContextPanel } from '../features/workspace/ContextPanel';
+import { ActivityView } from '../features/chat/ConversationViews';
 import { SearchDialog } from '../features/workspace/SearchDialog';
 import { WorkspaceDialogs } from '../features/workspace/WorkspaceDialogs';
 import { ToolsPage } from '../features/workspace/ToolsPage';
@@ -15,6 +13,8 @@ import { useAIWorkspace } from '../features/ai/useAIWorkspace';
 import { useSpaces } from '../features/workspace/useSpaces';
 import { SpaceChat } from '../features/chat/SpaceChat';
 import { SpaceDetails } from '../features/chat/SpaceDetails';
+import { usePursuits } from '../features/pursuits/usePursuits';
+import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
@@ -29,6 +29,7 @@ export function App() {
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const workspace = useWorkspace(ai.workspaceId);
   const spaceState = useSpaces(ai.workspaceId);
+  const pursuitState = usePursuits(ai.workspaceId);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [settingsSection, setSettingsSection] = useState<'workspace' | 'providers'>('workspace');
@@ -58,7 +59,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     [navigate],
   );
   const space = spaceState.spaces.find((s) => s.id === location.item);
-  const pursuit = workspace.pursuits.find((p) => p.id === location.item);
+  const pursuit =
+    pursuitState.pursuits.find((p) => p.id === location.item) || pursuitState.pursuits[0];
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
   const openDialog = (kind: DialogKind) => {
     if (kind === 'create-bot') setEditingBot('new');
@@ -67,8 +69,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       setDialog(kind);
     }
   };
-  const messages = workspace.messages[location.item] ?? [];
-  const openPursuit = () => select({ section: 'pursuits', item: 'grow-mrr' });
+  const openPursuit = () =>
+    select({ section: 'pursuits', item: pursuitState.pursuits[0]?.id || 'empty' });
   const navigateSection = (section: Section) =>
     select({
       section,
@@ -76,7 +78,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         section === 'spaces'
           ? spaceState.spaces[0]?.id || 'empty'
           : section === 'pursuits'
-            ? workspace.pursuits[0]?.id || 'empty'
+            ? pursuitState.pursuits[0]?.id || 'empty'
             : section === 'bots'
               ? bot?.id || 'scout'
               : 'workspace-tools',
@@ -135,7 +137,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             location.section === 'bots' && bot ? { section: 'bots', item: bot.id } : location
           }
           spaces={spaceState.spaces}
-          pursuits={workspace.pursuits}
+          pursuits={pursuitState.pursuits}
+          pursuitsLoading={pursuitState.loading}
+          pursuitsError={pursuitState.error}
           onSelect={select}
           collapsed={sidebarCollapsed}
           bots={ai.bots}
@@ -244,85 +248,44 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               />
             )}
           </div>
+        ) : pursuitState.loading ? (
+          <main className="conversation ai-main-state">
+            <p>Loading pursuits…</p>
+          </main>
+        ) : pursuitState.error ? (
+          <main className="conversation ai-main-state">
+            <p role="alert">{pursuitState.error}</p>
+            <button className="button" onClick={() => void pursuitState.refresh().catch(() => {})}>
+              Try again
+            </button>
+          </main>
+        ) : pursuit ? (
+          <PursuitPage
+            key={pursuit.id}
+            id={pursuit.id}
+            bots={ai.bots}
+            onOwner={(id) => select({ section: 'bots', item: id })}
+          />
         ) : (
-          <div className="conversation-layout">
-            <main className="conversation">
-              <ConversationHeader
-                key={location.item}
-                location={location}
-                space={space}
-                pursuit={pursuit}
-                tab={tab}
-                onTab={(next) => {
-                  setTab(next);
-                  setSavedOpen(false);
-                }}
-                detailsOpen={detailsOpen}
-                onDetails={() => setDetailsOpen(!detailsOpen)}
-                onDialog={openDialog}
-                onSaved={() => setSavedOpen(true)}
-              />
-              {savedOpen ? (
-                <SavedView
-                  messages={messages}
-                  onClose={() => setSavedOpen(false)}
-                  onDialog={openDialog}
-                  bookmarks={workspace.bookmarks}
-                  onBookmark={workspace.toggleBookmark}
-                  reactions={workspace.reactions}
-                  onReact={workspace.toggleReaction}
-                  onPursuit={openPursuit}
-                />
-              ) : tab === 'Artifacts' ? (
-                <FilesView messages={messages} onDialog={openDialog} />
-              ) : tab === 'Activity' ? (
-                <ActivityView onPursuit={openPursuit} onDraft={() => setDialog('draft')} />
-              ) : (
-                <MessageFeed
-                  key={`feed-${location.item}`}
-                  messages={messages}
-                  onDialog={openDialog}
-                  onPursuit={openPursuit}
-                  bookmarks={workspace.bookmarks}
-                  onBookmark={workspace.toggleBookmark}
-                  reactions={workspace.reactions}
-                  onReact={workspace.toggleReaction}
-                />
-              )}
-              {tab === 'Messages' && !savedOpen && (
-                <Composer
-                  key={`composer-${location.item}`}
-                  placeholder={
-                    pursuit ? 'Talk about this pursuit…' : `Message ${space?.name ?? 'your bots'}…`
-                  }
-                  onSend={workspace.sendMessage}
-                />
-              )}
-              {workspace.storageFailed && (
-                <div className="storage-warning" role="status">
-                  Device storage is full or unavailable. New changes will last for this session.
-                </div>
-              )}
-            </main>
-            {detailsOpen && (
-              <ContextPanel
-                location={location}
-                space={space}
-                pursuit={pursuit}
-                pursuits={workspace.pursuits}
-                messages={messages}
-                onSelect={select}
-                onDialog={openDialog}
-                onClose={() => setDetailsOpen(false)}
-              />
+          <main className="conversation ai-chat-empty">
+            <Target size={36} />
+            <h2>A little intention, on a schedule.</h2>
+            <p>
+              Ask a bot to create a pursuit with an objective, success criteria, and a wake-up
+              schedule. That bot will own its runs.
+            </p>
+            {bot && (
+              <button className="button" onClick={() => select({ section: 'bots', item: bot.id })}>
+                Talk to {bot.name}
+              </button>
             )}
-          </div>
+          </main>
         )}
       </div>
       {searchOpen && (
         <SearchDialog
           spaces={spaceState.spaces}
-          pursuits={workspace.pursuits}
+          pursuits={pursuitState.pursuits}
           onSelect={select}
           onClose={() => setSearchOpen(false)}
           bots={ai.bots}
@@ -331,15 +294,12 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       <WorkspaceDialogs
         key={dialog}
         kind={dialog === 'settings' ? null : dialog}
-        pursuit={pursuit}
         onClose={() => setDialog(null)}
         bots={ai.bots}
         onCreateSpace={async (name, description, botIds) => {
           const created = await spaceState.create(name, description, botIds);
           select({ section: 'spaces', item: created.id });
         }}
-        onCreatePursuit={workspace.createPursuit}
-        onTogglePaused={workspace.togglePaused}
       />
       {dialog === 'settings' && (
         <SettingsDialog

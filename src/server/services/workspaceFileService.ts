@@ -184,8 +184,10 @@ export class WorkspaceFileService {
   async execute(input: FileOperationsInput, signal: AbortSignal) {
     if (!['write_file', 'patch', 'create_directory'].includes(input.action))
       return this.executeAction(input, signal);
-    const target = await this.path(input.path || '.', true);
-    const key = process.platform === 'win32' ? target.absolute.toLowerCase() : target.absolute;
+    // Reserve the queue position before any asynchronous validation, preserving call order.
+    // This path is only a lock key; executeAction validates it before touching the filesystem.
+    const target = resolve(this.folder, (input.path || '.').replace(/\\/g, '/'));
+    const key = process.platform === 'win32' ? target.toLowerCase() : target;
     const previous = mutationLocks.get(key) || Promise.resolve();
     let unlock!: () => void;
     const current = new Promise<void>((resolve) => {

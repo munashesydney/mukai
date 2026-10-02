@@ -1,0 +1,309 @@
+.pursuit-page {
+  min-width: 0;
+}
+.pursuit-header {
+  padding: 28px 30px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pursuit-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pursuit-title h1 {
+  font-size: 22px;
+  letter-spacing: -0.5px;
+}
+.pursuit-header > p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 12px 0;
+}
+.pursuit-header > .text-button {
+  margin-bottom: 18px;
+}
+.pursuit-header > .button {
+  margin-bottom: 14px;
+}
+.pursuit-state {
+  border: 1px solid var(--theme-border);
+  background: var(--theme-soft);
+  color: var(--theme-text);
+  border-radius: 20px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.pursuit-state--blocked,
+.pursuit-state--waiting_for_you {
+  color: var(--text-secondary);
+  border-color: var(--line-strong);
+  background: var(--surface-muted);
+}
+.pursuit-owner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.pursuit-owner .text-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.pursuit-header .conversation-tabs {
+  padding: 0;
+  height: 50px;
+  margin-top: 18px;
+}
+.pursuit-content {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 28px 30px;
+}
+.pursuit-runtime {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+.pursuit-wake {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: 1;
+}
+.pursuit-wake-dial {
+  padding: 3px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pursuit-wake-dial > span {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--theme-text);
+}
+.pursuit-countdown {
+  font-size: clamp(22px, 2.3vw, 30px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+  margin: 6px 0;
+}
+.pursuit-countdown > span {
+  color: var(--text-muted);
+  margin: 0 4px;
+}
+.pursuit-wake p,
+.pursuit-wake-reason {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.pursuit-wake-reason {
+  flex-basis: 100%;
+  padding-left: 91px;
+}
+.pursuit-controls {
+  display: flex;
+  gap: 8px;
+}
+.pursuit-objective-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 22px;
+}
+.pursuit-info-card {
+  border: 1px solid var(--line);
+  padding: 20px;
+  border-radius: 12px;
+}
+.pursuit-info-card > p {
+  margin-top: 12px;
+  color: var(--text-body);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pursuit-policy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 20px 0 32px;
+}
+.pursuit-policy > time {
+  margin-left: auto;
+}
+.pursuit-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.pursuit-section-heading h2,
+.pursuit-notebook h2 {
+  font-size: 17px;
+}
+.pursuit-section-heading > span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.pursuit-run-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.pursuit-run-row:hover strong {
+  color: var(--theme-text);
+}
+.pursuit-run-row > div {
+  min-width: 0;
+  flex: 1;
+}
+.pursuit-run-row strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.pursuit-run-row small {
+  display: block;
+  color: var(--text-muted);
+  margin-top: 5px;
+  font-size: 11px;
+}
+.pursuit-run-row p {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pursuit-run-status,
+.pursuit-run-row > svg {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.pursuit-run-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.pursuit-run-dot.is-running {
+  background: var(--theme-accent);
+  box-shadow: 0 0 0 4px var(--theme-soft);
+}
+.pursuit-empty-runs {
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  padding: 26px;
+  color: var(--text-muted);
+}
+.pursuit-empty-runs > p {
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.pursuit-empty-runs small {
+  font-size: 11px;
+}
+.pursuit-notebook > h2 {
+  margin-top: 18px;
+}
+.pursuit-notebook > p,
+.pursuit-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+  margin-top: 16px;
+}
+.pursuit-note {
+  border: 1px solid var(--line);
+  padding: 22px;
+  border-radius: 12px;
+}
+.pursuit-note h3 {
+  color: var(--ink);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.pursuit-note ol {
+  padding-left: 18px;
+}
+.preview-badge {
+  padding: 5px 8px;
+  background: var(--theme-soft);
+  color: var(--theme-text);
+  font-size: 11px;
+  border-radius: 5px;
+}
+.pursuit-run-context {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 14px;
+}
+.pursuit-run-context summary {
+  cursor: pointer;
+}
+.pursuit-run-context dt {
+  font-weight: 600;
+  margin-top: 16px;
+}
+.pursuit-run-context dd {
+  margin-top: 6px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.pursuit-run-context pre {
+  margin-top: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.pursuit-run-summary {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 20px;
+}
+.pursuit-run-summary .ai-markdown {
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .pursuit-objective-grid {
+    grid-template-columns: 1fr;
+  }
+  .pursuit-wake-reason {
+    padding-left: 0;
+  }
+  .pursuit-header,
+  .pursuit-content {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+}
