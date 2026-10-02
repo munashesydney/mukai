@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Location, Message } from './types';
 import { loadWorkspace, workspaceStorageKey } from './workspaceStorage';
-export function useWorkspace() {
-  const [state, setState] = useState(loadWorkspace);
+export function useWorkspace(workspaceId = 'default') {
+  const storageKey =
+    workspaceId === 'default' ? workspaceStorageKey : `${workspaceStorageKey}.${workspaceId}`;
+  const [state, setState] = useState(() =>
+    loadWorkspace(undefined, storageKey, workspaceId !== 'default'),
+  );
   const [storageFailed, setStorageFailed] = useState(false);
   const [history, setHistory] = useState<{ entries: Location[]; index: number }>({
     entries: [
@@ -10,7 +14,11 @@ export function useWorkspace() {
         section: 'bots',
         item: (() => {
           try {
-            return localStorage.getItem('mukai.active-bot') || 'scout';
+            return (
+              localStorage.getItem(`mukai.active-bot.${workspaceId}`) ||
+              (workspaceId === 'default' ? localStorage.getItem('mukai.active-bot') : null) ||
+              'scout'
+            );
           } catch {
             return 'scout';
           }
@@ -23,20 +31,20 @@ export function useWorkspace() {
   useEffect(() => {
     if (location.section === 'bots') {
       try {
-        localStorage.setItem('mukai.active-bot', location.item);
+        localStorage.setItem(`mukai.active-bot.${workspaceId}`, location.item);
       } catch {
         /* Chat data is persisted by the server. */
       }
     }
-  }, [location]);
+  }, [location, workspaceId]);
   useEffect(() => {
     try {
-      localStorage.setItem(workspaceStorageKey, JSON.stringify(state));
+      localStorage.setItem(storageKey, JSON.stringify(state));
       setStorageFailed(false);
     } catch {
       setStorageFailed(true);
     }
-  }, [state]);
+  }, [state, storageKey]);
   const navigate = useCallback((next: Location) => {
     setHistory((previous) => {
       const current = previous.entries[previous.index];

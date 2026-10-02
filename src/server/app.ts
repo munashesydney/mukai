@@ -12,6 +12,11 @@ import { AttachmentService } from './services/attachmentService';
 import { ChatService } from './services/chatService';
 import { createRoutes } from './http/routes';
 import { sendError } from './http/transport';
+import { WorkspaceRepository } from './repositories/workspaceRepository';
+import { ArtifactRepository } from './repositories/artifactRepository';
+import { WorkspaceService } from './services/workspaceService';
+import { ArtifactService } from './services/artifactService';
+import { ToolService } from './services/toolService';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -34,19 +39,42 @@ export function createApiServer(options: ApiOptions = {}) {
     const providerRepository = new ProviderRepository(store);
     const attachmentRepository = new AttachmentRepository(store);
     const messageRepository = new MessageRepository(store, attachmentRepository);
+    const workspaceRepository = new WorkspaceRepository(store);
+    const workspaces = new WorkspaceService(workspaceRepository, botRepository, dir);
+    const artifacts = new ArtifactService(
+      new ArtifactRepository(store),
+      botRepository,
+      workspaces,
+      dir,
+    );
+    const tools = new ToolService(workspaces, artifacts, messageRepository, dir);
     const providers = new ProviderService(providerRepository, botRepository, store.dir);
     const attachments = new AttachmentService(
       attachmentRepository,
       botRepository,
       join(dir, 'uploads'),
     );
-    const chats = new ChatService(messageRepository, providers, attachments);
-    const bots = new BotService(botRepository, providerRepository, attachments, (id) =>
-      chats.busy(id),
+    const chats = new ChatService(messageRepository, providers, attachments, tools);
+    const bots = new BotService(
+      botRepository,
+      providerRepository,
+      attachments,
+      (id) => chats.busy(id),
+      workspaceRepository,
     );
     bots.initialize();
     chats.initialize();
-    const route = createRoutes({ token, startedAt, bots, providers, attachments, chats });
+    const route = createRoutes({
+      token,
+      startedAt,
+      bots,
+      providers,
+      attachments,
+      chats,
+      workspaces,
+      artifacts,
+      tools,
+    });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => sendError(response, error));
     });

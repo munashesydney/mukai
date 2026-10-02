@@ -2,7 +2,7 @@
 
 **Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace built with React and TypeScript.
 
-Bots and their chats now use a real local Node backend, SQLite, and the Vercel AI SDK. Spaces, Pursuits, and Tools retain their earlier UI prototype behavior; autonomous work and integrations are outside this feature.
+Bots, chats, workspaces, artifacts, and file tools use a real local Node backend, SQLite, and the Vercel AI SDK. Spaces and Pursuits retain their earlier UI prototype behavior; autonomous work and integrations are outside this feature.
 
 ## Run
 
@@ -28,12 +28,15 @@ Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:114
 
 ## What works
 
-- Scout is created once on first setup. Create, edit, and delete additional bots with their own name, description, instructions, provider, model, and identity.
+- Create a workspace from a local folder using the workspace menu. The desktop has a native folder picker; browser development accepts an absolute local path. Each workspace has its own Scout, bots, and chats. Provider connections are shared across workspaces. Connect the original personal workspace to a folder from Settings without losing its chats.
+- Scout is created once on first setup and in each new workspace. Create, edit, and delete additional bots with their own name, description, instructions, provider, model, and identity.
 - Each bot has one continuous chat. SQLite saves user messages, assistant messages, partial responses, and file references. Switching bots does not stop an active stream.
 - Every response includes the bot’s instructions and its latest **10 usable chat messages, including the current user message**. Empty failed assistant records are excluded; older history stays visible.
 - Streaming Markdown, loading states, stop generation, and retry of the latest failed, stopped, or interrupted response. Retries reuse the same user and assistant records. Refreshing during a response interrupts that stream and leaves a retryable saved turn.
 - Provider settings, encrypted keys, connection tests, workspace defaults, and explicit model/image capability settings. Saved key values are never sent back to the UI or written to logs.
-- Persistent image previews, file downloads, and a chat attachments view. Pending uploads are recovered after refresh.
+- Persistent image previews, file downloads, and an Artifacts view for uploaded files and drafts created by bots. Pending uploads are recovered after refresh. Generated artifacts preview/download the current workspace file; moving or editing that file outside Mukai affects what is available.
+- Model-provided reasoning streams into a collapsible Thinking card and persists with the response. It is available only when the selected provider/model returns reasoning or a reasoning summary; Mukai does not invent private model thoughts.
+- File Operations is available to every bot with a connected workspace folder. Bots can list, read, write, patch, search, and create directories. Tool activity and action counts are visible in chat and Tools. Stop replaces Send during generation and cancels further work; completed file changes remain on disk.
 - Unsent text drafts and their retry IDs survive refresh in device storage; accepted messages remain authoritative in SQLite.
 - Existing themes, navigation, bot search, native window controls, and the current Mukai design.
 
@@ -43,7 +46,9 @@ Up to **4 files per message**, **10 MB per file**. Supported images: PNG, JPEG, 
 
 PDF, DOCX, and common UTF-8 text/code files are extracted to text for chat models. The original files remain downloadable. PDF extraction reads the first 20 pages; scanned PDFs need OCR elsewhere. Document formatting and embedded images are not sent. Extracted text is limited to 24,000 characters per file, with any extraction/truncation notice shown before sending. DOCX archives also have expanded-size and entry-count limits. Legacy `.doc`, spreadsheets, audio/video, executables, and arbitrary binary files are unsupported.
 
-Message text is limited to 16,000 characters; bot instructions to 12,000. Responses are capped at 4,096 output tokens and three minutes, with a 45-second idle stream timeout. Provider context windows, account permissions, quotas, and model availability still apply. Very large attachments/context can exceed a smaller local model’s window. No tools or autonomous model actions are enabled.
+Message text is limited to 16,000 characters; bot instructions to 12,000. Responses are capped at 4,096 output tokens per model step, eight steps, and three minutes, with a 45-second idle stream timeout. File tools allow at most 16 executed actions per response. Provider context windows, account permissions, quotas, and model availability still apply. Very large attachments/context can exceed a smaller local model’s window. File actions require a model/endpoint that supports tool calling; reasoning requires a model/endpoint that returns it.
+
+File Operations works with UTF-8 text files up to 256 KB, returns at most 200 lines/24,000 characters per read, and bounds searches to 5,000 entries and 100 matches. Paths are relative to the selected folder. Traversal, links/junctions, hard-linked files, Mukai’s private data, `.git`, common credential folders, `.env*`, and key files are blocked. New writes refuse existing files unless overwrite is explicit; patches require exactly one match. There are no shell, delete, or move actions. File edits do not have automatic undo; retries preserve previous tool activity and instruct the model to check completed operations before repeating writes. Use a project folder whose contents you intend your bots and selected provider to access.
 
 ## Persistence and security
 
@@ -65,8 +70,13 @@ src/
   server/
     app.ts                    Composition, dependency wiring, server lifecycle
     db/                       SQLite connection, transactions, versioned migrations
-    repositories/             Bot, provider, message, attachment database operations
-    services/                 Bot rules, credentials, AI chat, file extraction/storage
+    repositories/             Workspace, bot, provider, message, attachment/artifact data
+    services/                 Business rules, credentials, AI chat, confined file operations
+    tools/
+      registry.ts             Typed definitions, SDK adapters, all/selected-bot scopes
+      file-operations/
+        definition.ts         Bundled action schema and model-facing description
+        execute.ts            Execution and persisted activity/artifact callbacks
     models/                   Internal records and explicit public projections
     http/                     Routes, request validation, auth, NDJSON transport
     config.ts                 Local paths and secrets
@@ -74,17 +84,19 @@ src/
   renderer/src/
     app/                      Application composition
     components/               Shared shell and UI components
-    services/                 Typed bot/provider/chat/attachment API calls and streaming
+    services/                 Typed workspace/bot/provider/chat/artifact/tool API calls
     models/                   Renderer chat state and drafts
     features/ai/              Bot UI, chat state coordination, attachment presentation
     features/settings/        Workspace, Appearance, Providers
-    features/workspace/       Existing prototype areas
+    features/workspace/       Workspace creation, tool catalog, prototype areas
     styles/                   Theme tokens and component styles
 ```
 
 Server dependencies run from **HTTP → services → repositories → SQLite**. Repositories map SQL rows into typed internal records; services own business rules and project private records into the shared public contracts. HTTP handlers have no SQL, and AI streaming is independent of Node HTTP through a small output interface. `app.ts` constructs the dependencies explicitly.
 
-On the client, components and chat state call typed services rather than building URLs or parsing streams. `services/http.ts` owns authentication and transport errors; `services/chatService.ts` owns the NDJSON reader. Shared request/response types remain in `shared/`, while `renderer/src/models/` contains UI-specific state. ESLint enforces the main import boundaries. The database schema, API paths, UI, and run commands are unchanged by this separation.
+On the client, components and chat state call typed services rather than building URLs or parsing streams. `services/http.ts` owns authentication and transport errors; `services/chatService.ts` owns the NDJSON reader. Shared request/response types remain in `shared/`, while `renderer/src/models/` contains UI-specific state. ESLint enforces the main import boundaries.
+
+Each tool has its own folder with a Zod definition and executor. `registry.ts` adapts definitions to the AI SDK and supports `all-bots` or `selected-bots` with explicit bot IDs. Services supply the workspace, cancellation, activity, and artifact context. Add future tools through this registry rather than embedding tool implementations in chat or HTTP routes.
 
 ## Verification and builds
 
@@ -97,7 +109,7 @@ npm run build
 npm run preview
 ```
 
-Integration tests use the actual AI SDK against a **test-only local OpenAI protocol fixture** and disposable SQLite databases. They cover credentials/redaction, context limits, bot-specific instructions/models, restart persistence, streaming stop/retry, attachments, deletion, and API authentication. Production provider adapters always call the selected real endpoint; no fixture or canned reply is connected to the app.
+Integration tests use the actual AI SDK against a **test-only local OpenAI protocol fixture** and disposable SQLite databases. They cover credentials/redaction, context limits, bot-specific instructions/models, restart persistence, streaming stop/retry, attachments, deletion, API authentication, workspace isolation, streamed reasoning/tool calls, generated artifacts, file boundaries, and upgrades from a populated version-one database. Production provider adapters always call the selected real endpoint; no fixture or canned reply is connected to the app.
 
 `npm run build` produces Electron output in `out/` and the standalone service in `dist/server/`. Run the compiled service with `npm run start:server`. `/health` remains public and supports GET/HEAD.
 

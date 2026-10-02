@@ -4,8 +4,10 @@ import { botRecord } from './records';
 
 export class BotRepository {
   constructor(private database: Database) {}
-  list() {
-    return this.database.all('SELECT * FROM bots ORDER BY created_at,id').map(botRecord);
+  list(workspaceId = 'default') {
+    return this.database
+      .all('SELECT * FROM bots WHERE workspace_id=? ORDER BY created_at,id', workspaceId)
+      .map(botRecord);
   }
   find(id: string) {
     const row = this.database.get('SELECT * FROM bots WHERE id = ?', id);
@@ -16,7 +18,7 @@ export class BotRepository {
   }
   create(bot: BotRecord) {
     this.database.run(
-      'INSERT INTO bots VALUES (?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO bots(id,name,description,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
       bot.id,
       bot.name,
       bot.description,
@@ -26,6 +28,7 @@ export class BotRepository {
       bot.supportsImages === null ? null : Number(bot.supportsImages),
       bot.avatar,
       bot.createdAt,
+      bot.workspaceId,
     );
   }
   update(bot: BotRecord) {

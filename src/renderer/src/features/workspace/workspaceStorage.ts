@@ -16,12 +16,17 @@ const defaults: StoredWorkspace = {
   bookmarks: [],
   reactions: [],
 };
-export function loadWorkspace(storage?: Pick<Storage, 'getItem'>): StoredWorkspace {
+export function loadWorkspace(
+  storage?: Pick<Storage, 'getItem'>,
+  key = workspaceStorageKey,
+  empty = false,
+): StoredWorkspace {
+  const initial = empty
+    ? { messages: {}, spaces: [], pursuits: [], bookmarks: [], reactions: [] }
+    : defaults;
   try {
-    const value: unknown = JSON.parse(
-      (storage ?? localStorage).getItem(workspaceStorageKey) ?? 'null',
-    );
-    if (!value || typeof value !== 'object') return defaults;
+    const value: unknown = JSON.parse((storage ?? localStorage).getItem(key) ?? 'null');
+    if (!value || typeof value !== 'object') return initial;
     const state = value as Partial<StoredWorkspace>;
     if (Array.isArray(state.pursuits)) {
       state.pursuits = state.pursuits.map((item) => {
@@ -75,9 +80,9 @@ export function loadWorkspace(storage?: Pick<Storage, 'getItem'>): StoredWorkspa
       !isStringArray(state.bookmarks) ||
       !isStringArray(state.reactions)
     )
-      return defaults;
+      return initial;
     return state as StoredWorkspace;
   } catch {
-    return defaults;
+    return initial;
   }
 }

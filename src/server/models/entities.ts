@@ -22,7 +22,8 @@ export function publicAttachment(record: AttachmentRecord): Attachment {
   return { id, botId, messageId, name, mediaType, size, kind, warning };
 }
 export function publicMessage(record: MessageRecord, attachments: AttachmentRecord[]): ChatMessage {
-  const { id, requestId, botId, role, content, status, error, createdAt } = record;
+  const { id, requestId, botId, role, content, status, error, createdAt, reasoning, activity } =
+    record;
   return {
     id,
     requestId,
@@ -32,6 +33,8 @@ export function publicMessage(record: MessageRecord, attachments: AttachmentReco
     status,
     error,
     createdAt,
+    reasoning,
+    activity,
     attachments: attachments.map(publicAttachment),
   };
 }

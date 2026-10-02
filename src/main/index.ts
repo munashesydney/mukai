@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
@@ -73,6 +73,16 @@ else {
       ipcMain.handle(IPC.apiConnection, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
         return { url: apiUrl, token: api.token };
+      });
+      ipcMain.handle(IPC.chooseWorkspaceFolder, async (event) => {
+        const window = senderWindow(event);
+        if (!window) throw new Error('Untrusted IPC sender');
+        const result = await dialog.showOpenDialog(window, {
+          title: 'Choose a Mukai workspace folder',
+          properties: ['openDirectory', 'createDirectory'],
+          buttonLabel: 'Use this folder',
+        });
+        return result.canceled ? null : result.filePaths[0] || null;
       });
       ipcMain.handle(IPC.openExternal, async (event, value: unknown) => {
         if (!senderWindow(event) || typeof value !== 'string') throw new Error('Untrusted link');

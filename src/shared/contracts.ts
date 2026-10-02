@@ -11,6 +11,7 @@ export interface DesktopBridge {
   getHealth: () => Promise<HealthResponse>;
   getApiConnection: () => Promise<{ url: string; token: string }>;
   openExternal: (url: string) => Promise<void>;
+  chooseWorkspaceFolder: () => Promise<string | null>;
   minimize: () => void;
   toggleMaximize: () => void;
   close: () => void;
@@ -20,6 +21,7 @@ export const IPC = {
   health: 'mukai:health',
   apiConnection: 'mukai:api-connection',
   openExternal: 'mukai:open-external',
+  chooseWorkspaceFolder: 'mukai:choose-workspace-folder',
   minimize: 'mukai:minimize',
   maximize: 'mukai:maximize',
   close: 'mukai:close',

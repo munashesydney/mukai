@@ -18,6 +18,8 @@ import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { AttachmentCard } from './AttachmentCard';
 import { chatStore, useChat } from './chatStore';
+import { ResponseActivity } from './ResponseActivity';
+import { ArtifactsView } from './ArtifactsView';
 
 export function BotChat({
   bot,
@@ -69,7 +71,7 @@ export function BotChat({
             </div>
             <div className="header-actions">
               <IconButton
-                label={filesOpen ? 'Back to chat' : 'Chat attachments'}
+                label={filesOpen ? 'Back to chat' : 'Artifacts'}
                 className={filesOpen ? 'is-on' : ''}
                 onClick={() => setFilesOpen(!filesOpen)}
               >
@@ -89,21 +91,7 @@ export function BotChat({
           </div>
         </header>
         {filesOpen ? (
-          <div className="ai-file-view">
-            <h2>Chat attachments</h2>
-            <p className="ai-caption">
-              Files are saved with this bot’s chat and stay available on this device.
-            </p>
-            {files.length ? (
-              <div className="ai-attachments">
-                {files.map((file) => (
-                  <AttachmentCard key={file.id} attachment={file} />
-                ))}
-              </div>
-            ) : (
-              <p className="ai-caption">No files shared yet.</p>
-            )}
-          </div>
+          <ArtifactsView botId={bot.id} attachments={files} />
         ) : (
           <>
             <div
@@ -158,6 +146,7 @@ export function BotChat({
                         })}
                       </time>
                     </div>
+                    {message.role === 'assistant' && <ResponseActivity message={message} />}
                     {message.content && (
                       <div className="ai-markdown">
                         <ReactMarkdown
@@ -202,7 +191,13 @@ export function BotChat({
                           <i />
                           <i />
                         </span>
-                        {message.content ? 'Responding…' : `${bot.name} is thinking…`}
+                        {message.activity?.some((activity) => activity.status === 'running')
+                          ? 'Working with files…'
+                          : message.content
+                            ? 'Responding…'
+                            : message.reasoning
+                              ? `${bot.name} is thinking…`
+                              : 'Waiting for the model…'}
                       </div>
                     )}
                     {['failed', 'stopped', 'interrupted'].includes(message.status) && (
@@ -300,7 +295,11 @@ export function BotChat({
                     </span>
                   </div>
                   {state.busy ? (
-                    <button className="button ai-stop" onClick={() => void chatStore.stop(bot.id)}>
+                    <button
+                      className="send-button ai-stop"
+                      aria-label="Stop generation"
+                      onClick={() => void chatStore.stop(bot.id)}
+                    >
                       <Square size={13} fill="currentColor" />
                       Stop
                     </button>
@@ -373,6 +372,8 @@ export function BotChat({
             </dd>
             <dt>Instructions</dt>
             <dd className="bot-instructions">{bot.instructions}</dd>
+            <dt>Reasoning</dt>
+            <dd>Shown when your selected model shares reasoning or a thinking summary.</dd>
           </dl>
           <button className="button" onClick={onEdit}>
             Edit bot

@@ -134,7 +134,25 @@ export class ProviderService {
           ? Boolean(provider.supportsImages)
           : Boolean(bot.supportsImages),
       model: this.model(provider, modelId),
+      options: this.reasoningOptions(provider, modelId),
     };
+  }
+  private reasoningOptions(provider: ProviderRecord, model: string) {
+    const openai =
+      provider.kind === 'openai' && /^(o[1-9]|gpt-[5-9])/i.test(model)
+        ? { store: false, reasoningSummary: 'auto', reasoningEffort: 'medium' }
+        : { store: false };
+    const anthropic =
+      provider.kind === 'anthropic' && /claude-(?:sonnet|opus)-4-[6-9]/i.test(model)
+        ? { thinking: { type: 'adaptive' } }
+        : provider.kind === 'anthropic' && /claude-(?:3-7|(?:sonnet|opus)-4)/i.test(model)
+          ? { thinking: { type: 'enabled', budgetTokens: 2048 } }
+          : {};
+    const google =
+      provider.kind === 'google' && /^gemini-(?:2\.5|[3-9])/i.test(model)
+        ? { thinkingConfig: { includeThoughts: true } }
+        : {};
+    return { openai, anthropic, google };
   }
   private model(provider: ProviderRecord, id: string) {
     const apiKey = this.decrypt(provider.encryptedKey as string | null);

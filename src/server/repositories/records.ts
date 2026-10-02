@@ -9,6 +9,7 @@ import type {
 export function botRecord(row: Row): BotRecord {
   return {
     id: String(row.id),
+    workspaceId: String(row.workspace_id),
     name: String(row.name),
     description: String(row.description),
     instructions: String(row.instructions),
@@ -56,5 +57,7 @@ export function messageRecord(row: Row): MessageRecord {
     error: row.error as string | null,
     createdAt: String(row.created_at),
     sequence: Number(row.sequence),
+    reasoning: String(row.reasoning || ''),
+    activity: JSON.parse(String(row.activity_json || '[]')) as MessageRecord['activity'],
   };
 }
