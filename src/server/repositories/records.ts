@@ -59,5 +59,8 @@ export function messageRecord(row: Row): MessageRecord {
     sequence: Number(row.sequence),
     reasoning: String(row.reasoning || ''),
     activity: JSON.parse(String(row.activity_json || '[]')) as MessageRecord['activity'],
+    parts: JSON.parse(String(row.parts_json || '[]')) as MessageRecord['parts'],
+    startedAt: row.started_at as string | null,
+    finishedAt: row.finished_at as string | null,
   };
 }

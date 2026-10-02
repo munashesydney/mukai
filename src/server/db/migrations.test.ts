@@ -50,12 +50,20 @@ describe('Existing database upgrades', () => {
         instructions: 'Original instructions',
       });
       const message = (await get<ChatMessage[]>('/bots/scout/messages'))[0];
-      expect(message).toMatchObject({ content: 'Keep this chat', reasoning: '', activity: [] });
+      expect(message).toMatchObject({
+        content: 'Keep this chat',
+        reasoning: '',
+        activity: [],
+        parts: [],
+        startedAt: null,
+        finishedAt: null,
+      });
       expect(message.attachments[0]).toMatchObject({ id: 'attachment', name: 'note.txt' });
       expect(await get<Attachment[]>('/bots/scout/files')).toHaveLength(1);
       expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([
         { version: 1 },
         { version: 2 },
+        { version: 3 },
       ]);
       expect(api.store.get('SELECT id FROM providers')?.id).toBe('provider');
       expect(() =>

@@ -40,4 +40,7 @@ export const migrations = [
     message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     path TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL,
     UNIQUE(bot_id,path));`,
+  `ALTER TABLE messages ADD COLUMN parts_json TEXT NOT NULL DEFAULT '[]';
+   ALTER TABLE messages ADD COLUMN started_at TEXT;
+   ALTER TABLE messages ADD COLUMN finished_at TEXT;`,
 ];

@@ -28,6 +28,33 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace file boundaries and operations', () => {
+  it('searches a single file, preserving line numbers and bounded output', async () => {
+    writeFileSync(join(root, 'page.html'), '<p>Hello</p>\n<p>Other</p>\n<p>HELLO</p>');
+    writeFileSync(join(root, 'other.html'), 'Hello elsewhere');
+    expect(
+      await service.execute(
+        { action: 'search_files', path: 'page.html', query: 'hello' },
+        signal(),
+      ),
+    ).toMatchObject({
+      path: 'page.html',
+      matches: [
+        { path: 'page.html', line: 1, text: '<p>Hello</p>' },
+        { path: 'page.html', line: 3, text: '<p>HELLO</p>' },
+      ],
+      truncated: false,
+    });
+    writeFileSync(join(root, 'many.txt'), 'Match\n'.repeat(101));
+    expect(
+      await service.execute({ action: 'search_files', path: 'many.txt', query: 'match' }, signal()),
+    ).toMatchObject({ truncated: true, summary: 'Found 100 matching lines.' });
+    await expect(
+      service.execute(
+        { action: 'search_files', path: 'private-data/secret.txt', query: 'Private' },
+        signal(),
+      ),
+    ).rejects.toThrow();
+  });
   it('creates, reads, searches, and patches readable files, without overwriting by default', async () => {
     await service.execute({ action: 'create_directory', path: 'drafts' }, signal());
     await service.execute(

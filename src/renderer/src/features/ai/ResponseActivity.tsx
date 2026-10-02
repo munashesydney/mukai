@@ -1,49 +1,233 @@
-import { Brain, Check, FileText, LoaderCircle, CircleAlert } from 'lucide-react';
-import type { ChatMessage } from '../../../../shared/ai';
+import { useState } from 'react';
+import {
+  Brain,
+  ChevronDown,
+  FileText,
+  LoaderCircle,
+  CircleAlert,
+  Search,
+  Pencil,
+} from 'lucide-react';
+import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
+import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
+import { MessageMarkdown } from './MessageMarkdown';
+
+const actionLabels: Record<string, string> = {
+  create_directory: 'Created folder',
+  write_file: 'Wrote',
+  read_file: 'Read',
+  patch: 'Edited',
+  list: 'Listed',
+  search_files: 'Searched',
+};
+
+function ToolRow({ activity }: { activity: ChatActivity }) {
+  const Icon =
+    activity.action === 'search_files'
+      ? Search
+      : ['write_file', 'patch', 'create_directory'].includes(activity.action)
+        ? Pencil
+        : FileText;
+  const running = activity.status === 'running';
+  const problem = activity.status === 'failed' || activity.status === 'interrupted';
+  return (
+    <details className={`response-tool response-tool--${activity.status}`}>
+      <summary>
+        {running ? <LoaderCircle size={14} className="is-spinning" /> : <Icon size={14} />}
+        <span className="response-tool-label">
+          {running
+            ? `Running ${activity.action.replaceAll('_', ' ')}`
+            : problem
+              ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
+              : actionLabels[activity.action] || activity.action.replaceAll('_', ' ')}{' '}
+          <span className="response-tool-path" title={activity.path}>
+            {activity.path}
+          </span>
+        </span>
+        {problem && <CircleAlert size={13} aria-label={activity.status} />}
+        <ChevronDown size={13} className="response-chevron" />
+      </summary>
+      <div className="response-tool-detail">
+        <small>
+          {activity.tool.replaceAll('_', ' ')} · {activity.action} · {activity.status}
+        </small>
+        <p>
+          {activity.summary ||
+            (running ? 'Working in your workspace folder…' : 'Waiting for the operation result…')}
+        </p>
+      </div>
+    </details>
+  );
+}
+
+function ToolGroup({
+  parts,
+  message,
+}: {
+  parts: Extract<ResponsePart, { type: 'tool' }>[];
+  message: ChatMessage;
+}) {
+  const [open, setOpen] = useState(message.status === 'streaming');
+  const labels = new Set<string>();
+  for (const part of parts) {
+    const activity = message.activity?.find((item) => item.id === part.activityId);
+    if (activity)
+      labels.add(
+        activity.status !== 'complete'
+          ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
+          : ['write_file', 'patch'].includes(activity.action)
+            ? 'Edited files'
+            : activity.action === 'search_files'
+              ? 'Searched files'
+              : activity.action === 'read_file'
+                ? 'Read files'
+                : activity.action === 'create_directory'
+                  ? 'Created folders'
+                  : activity.action === 'list'
+                    ? 'Listed folders'
+                    : 'Used tools',
+      );
+  }
+  return (
+    <details
+      className="response-tool-group"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <FileText size={14} />
+        <span>
+          {[...labels].join(', ') || 'Calling tools'} · {parts.length}
+        </span>
+        <ChevronDown size={13} className="response-chevron" />
+      </summary>
+      <div className="response-tool-group-content">
+        {parts.map((part) => (
+          <ToolPart key={part.id} part={part} message={message} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ToolPart({
+  part,
+  message,
+}: {
+  part: Extract<ResponsePart, { type: 'tool' }>;
+  message: ChatMessage;
+}) {
+  const activity = message.activity?.find((item) => item.id === part.activityId);
+  return activity ? (
+    <ToolRow activity={activity} />
+  ) : (
+    <div className="response-tool-pending">
+      {message.status === 'streaming' && <LoaderCircle size={14} className="is-spinning" />}
+      {message.status === 'streaming' ? 'Calling tool…' : 'Tool result unavailable.'}
+    </div>
+  );
+}
+
+function ReasoningPart({
+  part,
+  active,
+}: {
+  part: Extract<ResponsePart, { type: 'reasoning' }>;
+  active: boolean;
+}) {
+  const [open, setOpen] = useState(active);
+  return (
+    <details
+      className="response-reasoning"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        {active ? <LoaderCircle size={14} className="is-spinning" /> : <Brain size={14} />}
+        <span>{active ? 'Thinking' : 'Reasoning'}</span>
+        <ChevronDown size={13} className="response-chevron" />
+      </summary>
+      <div className="response-reasoning-detail">
+        <MessageMarkdown text={part.text} />
+      </div>
+    </details>
+  );
+}
+
+function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
+  const groups: ResponsePart[][] = [];
+  for (const part of parts) {
+    const previous = groups.at(-1);
+    if (part.type === 'tool' && previous?.[0].type === 'tool') previous.push(part);
+    else groups.push([part]);
+  }
+  return (
+    <div className="response-transcript" aria-label="Response activity">
+      {groups.map((group) => {
+        const part = group[0];
+        if (part.type === 'text') return <MessageMarkdown key={part.id} text={part.text} />;
+        if (part.type === 'reasoning') {
+          const active =
+            message.status === 'streaming' &&
+            (part.state === 'streaming' || (!part.state && parts.at(-1)?.id === part.id));
+          // Reset the disclosure once on completion; manual toggles persist while text streams.
+          return <ReasoningPart key={`${part.id}:${active}`} part={part} active={active} />;
+        }
+        const tools = group.filter((item) => item.type === 'tool');
+        return tools.length > 1 ? (
+          <ToolGroup key={part.id} parts={tools} message={message} />
+        ) : (
+          <ToolPart key={part.id} part={part} message={message} />
+        );
+      })}
+    </div>
+  );
+}
+
+function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  const duration = formatWorkDuration(message.startedAt, message.finishedAt);
+  const label =
+    message.status === 'complete'
+      ? 'Worked'
+      : message.status === 'stopped'
+        ? 'Stopped'
+        : message.status === 'failed'
+          ? 'Failed'
+          : 'Interrupted';
+  return (
+    <details
+      className="response-work"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>
+        <span>
+          {label}
+          {duration ? ` for ${duration}` : ''}
+        </span>
+        <ChevronDown size={13} className="response-chevron" />
+      </summary>
+      <ProcessTranscript parts={parts} message={message} />
+    </details>
+  );
+}
 
 export function ResponseActivity({ message }: { message: ChatMessage }) {
+  const { process, answer } = responsePresentation(message);
   return (
-    <div className="ai-response-activity">
-      {message.reasoning && (
-        <details
-          className="reasoning-card"
-          open={message.status === 'streaming' ? true : undefined}
-        >
-          <summary>
-            <Brain size={15} />
-            <span>{message.status === 'streaming' ? 'Thinking' : 'Reasoning'}</span>
-            <small>From the model</small>
-          </summary>
-          <div className="reasoning-content">{message.reasoning}</div>
-        </details>
-      )}
-      {!!message.activity?.length && (
-        <div className="tool-activity-list" aria-label="File operations">
-          {message.activity.map((activity) => (
-            <details
-              key={activity.id}
-              className={`tool-activity tool-activity--${activity.status}`}
-            >
-              <summary>
-                <FileText size={14} />
-                <span>File Operations</span>
-                <code>{activity.action}</code>
-                <span className="tool-path" title={activity.path}>
-                  {activity.path}
-                </span>
-                {activity.status === 'running' ? (
-                  <LoaderCircle size={13} className="is-spinning" />
-                ) : activity.status === 'complete' ? (
-                  <Check size={13} />
-                ) : (
-                  <CircleAlert size={13} />
-                )}
-              </summary>
-              <p>{activity.summary || 'Working in your workspace folder…'}</p>
-            </details>
-          ))}
-        </div>
-      )}
-    </div>
+    <>
+      {!!process.length &&
+        (message.status === 'streaming' ? (
+          <ProcessTranscript parts={process} message={message} />
+        ) : (
+          <CompletedProcess
+            key={`${message.id}:${message.startedAt || ''}`}
+            parts={process}
+            message={message}
+          />
+        ))}
+      {!!answer && <MessageMarkdown text={answer} />}
+    </>
   );
 }

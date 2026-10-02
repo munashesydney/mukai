@@ -283,6 +283,23 @@ export class WorkspaceFileService {
       case 'search_files': {
         if (!input.query) throw new ApiError(400, 'query is required for search_files.');
         const start = await this.path(value);
+        if ((await lstat(start.absolute)).isFile()) {
+          signal.throwIfAborted();
+          const file = await this.text(start.relative);
+          const matches = file.text
+            .split('\n')
+            .flatMap((line, index) =>
+              line.toLowerCase().includes(input.query!.toLowerCase())
+                ? [{ path: file.relative, line: index + 1, text: line.slice(0, 240) }]
+                : [],
+            );
+          return {
+            path: file.relative,
+            summary: `Found ${Math.min(matches.length, 100)} matching lines.`,
+            matches: matches.slice(0, 100),
+            truncated: matches.length > 100,
+          };
+        }
         const queue = [start.relative];
         const matches: { path: string; line: number; text: string }[] = [];
         let visited = 0;

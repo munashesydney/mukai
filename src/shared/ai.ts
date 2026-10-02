@@ -78,6 +78,10 @@ export interface Attachment {
   warning: string | null;
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
+export type ResponsePart =
+  | { id: string; type: 'text'; text: string }
+  | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
+  | { id: string; type: 'tool'; activityId: string };
 export interface ChatMessage {
   id: string;
   requestId: string;
@@ -90,11 +94,15 @@ export interface ChatMessage {
   attachments: Attachment[];
   reasoning?: string;
   activity?: ChatActivity[];
+  parts?: ResponsePart[];
+  startedAt?: string | null;
+  finishedAt?: string | null;
 }
 export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
-  | { type: 'delta'; id: string; text: string }
-  | { type: 'reasoning'; id: string; text: string }
+  | { type: 'delta'; id: string; text: string; partId?: string }
+  | { type: 'reasoning'; id: string; text: string; partId?: string }
+  | { type: 'part'; id: string; part: ResponsePart }
   | { type: 'activity'; id: string; activity: ChatActivity }
   | { type: 'done' | 'error'; message: ChatMessage };
 export interface ChatInput {
