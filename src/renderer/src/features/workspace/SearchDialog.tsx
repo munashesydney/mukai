@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Search, Layers3, Target, ArrowUpRight } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Avatar } from '../../components/ui/Avatar';
-import { bots } from './data';
+import type { Bot } from '../../../../shared/ai';
 import type { Location, Space, Pursuit } from './types';
 
 export function SearchDialog({
@@ -10,11 +10,13 @@ export function SearchDialog({
   pursuits,
   onSelect,
   onClose,
+  bots,
 }: {
   spaces: Space[];
   pursuits: Pursuit[];
   onSelect: (location: Location) => void;
   onClose: () => void;
+  bots: Bot[];
 }) {
   const [query, setQuery] = useState('');
   const matches = (name: string) => name.toLowerCase().includes(query.toLowerCase());
@@ -29,13 +31,13 @@ export function SearchDialog({
         icon: <Layers3 size={19} />,
       })),
     ...bots
-      .filter((a) => matches(a.name + a.role))
+      .filter((a) => matches(a.name + a.description))
       .map((a) => ({
         id: a.id,
         name: a.name,
-        detail: a.role,
+        detail: a.description || 'Bot',
         location: { section: 'bots', item: a.id } as Location,
-        icon: <Avatar person={a.id} size="xs" />,
+        icon: <Avatar person={a.avatar} size="xs" />,
       })),
     ...pursuits
       .filter((p) => matches(p.name))

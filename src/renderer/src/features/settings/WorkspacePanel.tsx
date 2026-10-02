@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Cpu, HardDrive, RefreshCw, ShieldCheck, Terminal } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import type { HealthResponse } from '../../../../shared/contracts';
+import { getHealth } from '../../services/healthService';
 
 export function WorkspacePanel() {
   const [health, setHealth] = useState<HealthResponse>();
@@ -10,13 +11,7 @@ export function WorkspacePanel() {
   useEffect(() => {
     let cancelled = false;
     setStatus('checking');
-    const request = window.mukai
-      ? window.mukai.getHealth()
-      : fetch('/api/health', { signal: AbortSignal.timeout(3000) }).then((response) => {
-          if (!response.ok) throw new Error('API unavailable');
-          return response.json() as Promise<HealthResponse>;
-        });
-    request
+    getHealth()
       .then((result) => {
         if (!cancelled) {
           setHealth(result);

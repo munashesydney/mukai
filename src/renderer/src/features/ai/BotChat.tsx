@@ -1,0 +1,384 @@
+import { useEffect, useRef, useState } from 'react';
+import {
+  FileText,
+  Info,
+  LoaderCircle,
+  Paperclip,
+  RotateCcw,
+  Send,
+  SlidersHorizontal,
+  Square,
+  X,
+} from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import { ACCEPTED_FILES } from '../../../../shared/ai';
+import { Avatar } from '../../components/ui/Avatar';
+import { IconButton } from '../../components/ui/IconButton';
+import { AttachmentCard } from './AttachmentCard';
+import { chatStore, useChat } from './chatStore';
+
+export function BotChat({
+  bot,
+  providers,
+  onEdit,
+  onProviders,
+}: {
+  bot: Bot;
+  providers: ProviderSettings[];
+  onEdit: () => void;
+  onProviders: () => void;
+}) {
+  const state = useChat(bot.id);
+  const [filesOpen, setFilesOpen] = useState(false),
+    [detailsOpen, setDetailsOpen] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null),
+    feed = useRef<HTMLDivElement>(null),
+    follow = useRef(true);
+  const provider = providers.find((provider) =>
+    bot.providerId ? provider.id === bot.providerId : provider.isDefault,
+  );
+  const model = bot.model || provider?.defaultModel;
+  const vision = bot.supportsImages ?? provider?.supportsImages ?? false;
+  const blocked = state.files.some((file) => file.kind === 'image') && !vision;
+  const files = state.messages.flatMap((message) => message.attachments);
+  const latestAssistant = [...state.messages]
+    .reverse()
+    .find((message) => message.role === 'assistant');
+  useEffect(() => {
+    if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
+  }, [state.messages, state.loading, bot.id]);
+  function send() {
+    if (provider && !blocked) {
+      follow.current = true;
+      void chatStore.send(bot.id);
+    }
+  }
+  return (
+    <div className="conversation-layout">
+      <main className="conversation">
+        <header className="conversation-header conversation-header--minimal">
+          <div className="conversation-heading">
+            <div className="heading-identity">
+              <Avatar person={bot.avatar} />
+              <div>
+                <h1>{bot.name}</h1>
+                <p>{bot.description || 'Your own thoughtful companion.'}</p>
+              </div>
+            </div>
+            <div className="header-actions">
+              <IconButton
+                label={filesOpen ? 'Back to chat' : 'Chat attachments'}
+                className={filesOpen ? 'is-on' : ''}
+                onClick={() => setFilesOpen(!filesOpen)}
+              >
+                <FileText size={18} />
+              </IconButton>
+              <IconButton
+                label="Bot details"
+                className={detailsOpen ? 'is-on' : ''}
+                onClick={() => setDetailsOpen(!detailsOpen)}
+              >
+                <Info size={18} />
+              </IconButton>
+              <IconButton label={`Edit ${bot.name}`} onClick={onEdit}>
+                <SlidersHorizontal size={18} />
+              </IconButton>
+            </div>
+          </div>
+        </header>
+        {filesOpen ? (
+          <div className="ai-file-view">
+            <h2>Chat attachments</h2>
+            <p className="ai-caption">
+              Files are saved with this bot’s chat and stay available on this device.
+            </p>
+            {files.length ? (
+              <div className="ai-attachments">
+                {files.map((file) => (
+                  <AttachmentCard key={file.id} attachment={file} />
+                ))}
+              </div>
+            ) : (
+              <p className="ai-caption">No files shared yet.</p>
+            )}
+          </div>
+        ) : (
+          <>
+            <div
+              ref={feed}
+              className="ai-message-feed"
+              role="log"
+              aria-label={`${bot.name} chat`}
+              aria-busy={state.busy}
+              onScroll={() => {
+                if (feed.current)
+                  follow.current =
+                    feed.current.scrollHeight - feed.current.scrollTop - feed.current.clientHeight <
+                    120;
+              }}
+            >
+              {state.loading ? (
+                <div className="ai-chat-empty">
+                  <LoaderCircle className="is-spinning" size={24} />
+                  <p>Loading your chat…</p>
+                </div>
+              ) : (
+                !state.messages.length && (
+                  <div className="ai-chat-empty">
+                    <Avatar person={bot.avatar} size="lg" />
+                    <h2>A good place to start.</h2>
+                    <p>
+                      {provider
+                        ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
+                        : 'Connect a provider, then start a conversation with Scout or your own bot.'}
+                    </p>
+                    {!provider && (
+                      <button className="button button--primary" onClick={onProviders}>
+                        Configure a provider
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+              {state.messages.map((message) => (
+                <article className={`ai-message ai-message--${message.role}`} key={message.id}>
+                  <Avatar person={message.role === 'user' ? 'munashe' : bot.avatar} size="sm" />
+                  <div className="ai-message-body">
+                    <div className="ai-message-meta">
+                      <strong>{message.role === 'user' ? 'You' : bot.name}</strong>
+                      {message.role === 'assistant' && (
+                        <span className={`bot-badge bot-badge--${bot.avatar}`}>BOT</span>
+                      )}
+                      <time dateTime={message.createdAt}>
+                        {new Date(message.createdAt).toLocaleTimeString([], {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                    </div>
+                    {message.content && (
+                      <div className="ai-markdown">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            a: ({ href, children }) =>
+                              /^https?:\/\//i.test(href || '') ? (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(event) => {
+                                    if (window.mukai && href) {
+                                      event.preventDefault();
+                                      void window.mukai.openExternal(href).catch(() => {});
+                                    }
+                                  }}
+                                >
+                                  {children}
+                                </a>
+                              ) : (
+                                <span>{children}</span>
+                              ),
+                            img: ({ alt }) => <span>{alt ? `[${alt}]` : '[Image link]'}</span>,
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                    {!!message.attachments.length && (
+                      <div className="ai-attachments">
+                        {message.attachments.map((file) => (
+                          <AttachmentCard attachment={file} key={file.id} />
+                        ))}
+                      </div>
+                    )}
+                    {message.status === 'streaming' && (
+                      <div className="ai-response-status" role="status">
+                        <span className="typing-dots">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                        {message.content ? 'Responding…' : `${bot.name} is thinking…`}
+                      </div>
+                    )}
+                    {['failed', 'stopped', 'interrupted'].includes(message.status) && (
+                      <div className="ai-response-status">
+                        <span>{message.error || 'Response stopped.'}</span>
+                        {message.id === latestAssistant?.id && (
+                          <button
+                            className="text-button"
+                            disabled={state.busy}
+                            onClick={() => {
+                              follow.current = true;
+                              void chatStore.send(bot.id, message.requestId);
+                            }}
+                          >
+                            <RotateCcw size={13} />
+                            Retry response
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="composer-area ai-composer-area">
+              {state.error && (
+                <div className="ai-alert" role="alert">
+                  {state.error}
+                  {!state.busy && (
+                    <button className="text-button" onClick={() => void chatStore.load(bot.id)}>
+                      Refresh chat
+                    </button>
+                  )}
+                </div>
+              )}
+              {blocked && (
+                <div className="ai-alert" role="alert">
+                  This model is configured for text only. Remove the image or choose a vision model
+                  before sending.
+                  <button className="text-button" onClick={onEdit}>
+                    Edit model settings
+                  </button>
+                </div>
+              )}
+              <div className="composer">
+                {!!state.files.length && (
+                  <div className="ai-attachments ai-pending-attachments">
+                    {state.files.map((file) => (
+                      <AttachmentCard
+                        key={file.id}
+                        attachment={file}
+                        onRemove={
+                          !state.busy && !state.uploading
+                            ? () => void chatStore.removeFile(bot.id, file.id)
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  rows={2}
+                  aria-label={`Message ${bot.name}`}
+                  placeholder={`Message ${bot.name}…`}
+                  value={state.text}
+                  maxLength={16000}
+                  disabled={state.loading || state.busy}
+                  onChange={(event) => chatStore.draft(bot.id, event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      send();
+                    }
+                  }}
+                />
+                <div className="composer-toolbar">
+                  <div className="composer-actions">
+                    <IconButton
+                      label="Attach images or files"
+                      disabled={state.busy || state.uploading || state.loading}
+                      onClick={() => fileInput.current?.click()}
+                    >
+                      <Paperclip size={18} />
+                    </IconButton>
+                    <span className="ai-model-label" title={model}>
+                      {state.uploading
+                        ? 'Uploading & reading…'
+                        : provider
+                          ? model
+                          : 'No provider configured'}
+                    </span>
+                  </div>
+                  {state.busy ? (
+                    <button className="button ai-stop" onClick={() => void chatStore.stop(bot.id)}>
+                      <Square size={13} fill="currentColor" />
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      className="send-button"
+                      aria-label="Send message"
+                      disabled={
+                        state.loading ||
+                        state.uploading ||
+                        blocked ||
+                        !provider ||
+                        (!state.text.trim() && !state.files.length)
+                      }
+                      onClick={send}
+                    >
+                      <Send size={16} />
+                      <span>Send</span>
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={fileInput}
+                  className="visually-hidden"
+                  type="file"
+                  multiple
+                  accept={ACCEPTED_FILES}
+                  tabIndex={-1}
+                  aria-label="Upload chat attachments"
+                  onChange={(event) => {
+                    void chatStore.upload(bot.id, Array.from(event.target.files || []));
+                    event.target.value = '';
+                  }}
+                />
+              </div>
+              <div className="composer-hint ai-composer-hint">
+                <span>Enter to send · Shift + Enter for a new line</span>
+                <span>4 files · 10 MB each · {vision ? 'Images enabled' : 'Text only'}</span>
+              </div>
+              {!provider && (
+                <button className="text-button ai-configure-link" onClick={onProviders}>
+                  Set up a provider in Settings
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+      {detailsOpen && (
+        <aside className="ai-details">
+          <div className="ai-details-heading">
+            <h2>About {bot.name}</h2>
+            <IconButton label="Close bot details" onClick={() => setDetailsOpen(false)}>
+              <X size={18} />
+            </IconButton>
+          </div>
+          <Avatar person={bot.avatar} size="lg" />
+          <h3>{bot.name}</h3>
+          <p>{bot.description}</p>
+          <dl>
+            <dt>Provider</dt>
+            <dd>{provider?.name || 'Not configured'}</dd>
+            <dt>Model</dt>
+            <dd>{model || 'Workspace default'}</dd>
+            <dt>Images</dt>
+            <dd>{vision ? 'Enabled' : 'Text only'}</dd>
+            <dt>Model context</dt>
+            <dd>
+              Latest 10 chat messages, including your current message. Your full history stays here.
+            </dd>
+            <dt>Instructions</dt>
+            <dd className="bot-instructions">{bot.instructions}</dd>
+          </dl>
+          <button className="button" onClick={onEdit}>
+            Edit bot
+          </button>
+        </aside>
+      )}
+    </div>
+  );
+}

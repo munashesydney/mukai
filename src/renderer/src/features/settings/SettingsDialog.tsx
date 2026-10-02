@@ -1,19 +1,29 @@
 import { useState } from 'react';
-import { Check, Layers3, Palette, Settings2 } from 'lucide-react';
+import { Check, Layers3, Palette, Settings2, KeyRound } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Brand } from '../../components/ui/Brand';
 import { useTheme } from '../appearance/useTheme';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
+import { ProvidersPanel } from './ProvidersPanel';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'providers', label: 'Providers', icon: KeyRound },
 ] as const;
 type SettingsSection = (typeof sections)[number]['id'];
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const [section, setSection] = useState<SettingsSection>('workspace');
+export function SettingsDialog({
+  onClose,
+  initialSection = 'workspace',
+  onProvidersChanged = () => {},
+}: {
+  onClose: () => void;
+  initialSection?: SettingsSection;
+  onProvidersChanged?: () => void;
+}) {
+  const [section, setSection] = useState<SettingsSection>(initialSection);
   const { storageAvailable } = useTheme();
   return (
     <Modal title="Settings" className="settings-modal" onClose={onClose}>
@@ -62,7 +72,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           aria-labelledby={`settings-tab-${section}`}
           tabIndex={0}
         >
-          {section === 'workspace' ? <WorkspacePanel /> : <AppearancePanel />}
+          {section === 'workspace' ? (
+            <WorkspacePanel />
+          ) : section === 'appearance' ? (
+            <AppearancePanel />
+          ) : (
+            <ProvidersPanel onChanged={onProvidersChanged} />
+          )}
         </div>
       </div>
       <div className="modal-footer settings-footer">

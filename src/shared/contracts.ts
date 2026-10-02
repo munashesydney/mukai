@@ -9,6 +9,8 @@ export interface HealthResponse {
 export interface DesktopBridge {
   platform: string;
   getHealth: () => Promise<HealthResponse>;
+  getApiConnection: () => Promise<{ url: string; token: string }>;
+  openExternal: (url: string) => Promise<void>;
   minimize: () => void;
   toggleMaximize: () => void;
   close: () => void;
@@ -16,6 +18,8 @@ export interface DesktopBridge {
 
 export const IPC = {
   health: 'mukai:health',
+  apiConnection: 'mukai:api-connection',
+  openExternal: 'mukai:open-external',
   minimize: 'mukai:minimize',
   maximize: 'mukai:maximize',
   close: 'mukai:close',

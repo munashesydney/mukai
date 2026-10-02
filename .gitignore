@@ -10,3 +10,10 @@ release/
 coverage/
 .DS_Store
 artifacts/
+.dev-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+credentials.key
+api.token
+server.lock

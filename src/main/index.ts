@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
 import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
@@ -6,6 +6,8 @@ import type { Server } from 'node:http';
 
 let apiServer: Server | undefined;
 let apiUrl = '';
+let shutdownApi: (() => Promise<void>) | undefined;
+let quitting = false;
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -47,8 +49,11 @@ else {
   app
     .whenReady()
     .then(async () => {
-      const api = await startApiServer();
+      const api = await startApiServer(0, {
+        dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
+      });
       apiServer = api.server;
+      shutdownApi = api.shutdown;
       apiUrl = api.url;
       session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
         callback(false),
@@ -65,6 +70,17 @@ else {
         return response.json();
       });
       ipcMain.on(IPC.minimize, (event) => senderWindow(event)?.minimize());
+      ipcMain.handle(IPC.apiConnection, (event) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        return { url: apiUrl, token: api.token };
+      });
+      ipcMain.handle(IPC.openExternal, async (event, value: unknown) => {
+        if (!senderWindow(event) || typeof value !== 'string') throw new Error('Untrusted link');
+        const url = new URL(value);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+          throw new Error('Unsupported link');
+        await shell.openExternal(url.href);
+      });
       ipcMain.on(IPC.maximize, (event) => {
         const window = senderWindow(event);
         if (window?.isMaximized()) window.unmaximize();
@@ -83,8 +99,15 @@ else {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
-  app.on('before-quit', () => {
-    apiServer?.close();
-    apiServer?.closeAllConnections();
+  app.on('before-quit', (event) => {
+    if (!quitting && apiServer) {
+      event.preventDefault();
+      quitting = true;
+      void shutdownApi?.().finally(() => {
+        apiServer?.close();
+        apiServer?.closeAllConnections();
+        app.quit();
+      });
+    }
   });
 }

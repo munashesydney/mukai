@@ -5,10 +5,30 @@ export function useWorkspace() {
   const [state, setState] = useState(loadWorkspace);
   const [storageFailed, setStorageFailed] = useState(false);
   const [history, setHistory] = useState<{ entries: Location[]; index: number }>({
-    entries: [{ section: 'bots', item: 'nova' }],
+    entries: [
+      {
+        section: 'bots',
+        item: (() => {
+          try {
+            return localStorage.getItem('mukai.active-bot') || 'scout';
+          } catch {
+            return 'scout';
+          }
+        })(),
+      },
+    ],
     index: 0,
   });
   const location = history.entries[history.index];
+  useEffect(() => {
+    if (location.section === 'bots') {
+      try {
+        localStorage.setItem('mukai.active-bot', location.item);
+      } catch {
+        /* Chat data is persisted by the server. */
+      }
+    }
+  }, [location]);
   useEffect(() => {
     try {
       localStorage.setItem(workspaceStorageKey, JSON.stringify(state));

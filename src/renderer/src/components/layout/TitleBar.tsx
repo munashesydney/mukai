@@ -1,6 +1,8 @@
 import { ArrowLeft, ArrowRight, Search, Minus, Square, X, PanelLeft } from 'lucide-react';
 import { Brand } from '../ui/Brand';
 import { IconButton } from '../ui/IconButton';
+import { useEffect, useState } from 'react';
+import { getHealth } from '../../services/healthService';
 
 export function TitleBar({
   onSearch,
@@ -17,6 +19,24 @@ export function TitleBar({
   canForward: boolean;
   onToggleSidebar: () => void;
 }) {
+  const [connection, setConnection] = useState('Connecting…');
+  useEffect(() => {
+    let disposed = false;
+    const check = async () => {
+      try {
+        await getHealth();
+        if (!disposed) setConnection('All systems calm');
+      } catch {
+        if (!disposed) setConnection('Server unavailable');
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 30000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
   return (
     <header className="title-bar">
       <div className="title-brand">
@@ -40,7 +60,7 @@ export function TitleBar({
       </button>
       <div className="title-right">
         <span className="workspace-state">
-          <i /> All systems calm
+          <i /> {connection}
         </span>
         {window.mukai && (
           <div className="window-controls">
