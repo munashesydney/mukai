@@ -18,14 +18,25 @@ import type {
 } from '../shared/ai';
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
+import { TOOL_STEP_LIMIT } from './services/responsePolicy';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
 let fixture: Server, api: Awaited<ReturnType<typeof startApiServer>>, dir: string;
 let calls: { model: string; messages: { role: string; content: unknown }[] }[];
 let mode:
-  'normal' | 'fail' | 'slow' | 'tools' | 'invalid-tool' | 'tool-limit' | 'no-final' | 'truncated' =
-  'normal';
+  | 'normal'
+  | 'fail'
+  | 'slow'
+  | 'tools'
+  | 'invalid-tool'
+  | 'tool-limit'
+  | 'no-final'
+  | 'truncated'
+  | 'raw-tool-once'
+  | 'raw-tool-always'
+  | 'long-browser'
+  | 'runtime-tools' = 'normal';
 let endpoint = '';
 let project = '';
 async function close(server: Server) {
@@ -195,6 +206,89 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (['raw-tool-once', 'raw-tool-always', 'long-browser'].includes(mode)) {
+      const completed = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const recovering = JSON.stringify(body.messages).includes('Runtime notice:');
+      const send = (delta: unknown, finish: string | null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'recovery', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
+        );
+      if (
+        mode === 'raw-tool-always' ||
+        (mode === 'raw-tool-once' && completed === 1 && !recovering)
+      )
+        send(
+          {
+            content:
+              '<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="browser">not executed</｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>',
+          },
+          'stop',
+        );
+      else if (completed < (mode === 'long-browser' ? 12 : 2))
+        send(
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'browser-' + completed,
+                type: 'function',
+                function: { name: 'browser', arguments: JSON.stringify({ action: 'tabs' }) },
+              },
+            ],
+          },
+          'tool_calls',
+        );
+      else send({ content: 'All browser checks finished.' }, 'stop');
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    if (mode === 'runtime-tools') {
+      const completed = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const steps = [
+        {
+          name: 'terminal',
+          input: {
+            command:
+              process.platform === 'win32'
+                ? 'Write-Output "terminal fixture"'
+                : 'printf "terminal fixture"',
+            yieldMs: 30000,
+          },
+        },
+        { name: 'process', input: { action: 'list' } },
+        { name: 'browser', input: { action: 'tabs' } },
+      ];
+      const send = (delta: unknown, finish: string | null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'runtime', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
+        );
+      if (completed < steps.length) {
+        const step = steps[completed];
+        send(
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'runtime-' + completed,
+                type: 'function',
+                function: { name: step.name, arguments: JSON.stringify(step.input) },
+              },
+            ],
+          },
+          'tool_calls',
+        );
+      } else
+        send(
+          { content: 'Verified terminal output, process status, and browser sessions.' },
+          'stop',
+        );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (['tools', 'invalid-tool', 'tool-limit', 'no-final'].includes(mode)) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
@@ -239,7 +333,9 @@ beforeEach(async () => {
                 function: {
                   name: 'file_operations',
                   arguments: JSON.stringify(
-                    completed === 7 ? { action: 'invalid_action' } : { action: 'list', path: '.' },
+                    completed === TOOL_STEP_LIMIT - 1
+                      ? { action: 'invalid_action' }
+                      : { action: 'list', path: '.' },
                   ),
                 },
               },
@@ -308,6 +404,38 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('runs terminal, process and browser tools through the shared SDK loop and persists their activity', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Runtime test', folder: project });
+    mode = 'runtime-tools';
+    await chat('Check the runtime tools');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(message.content).toContain('Verified terminal output');
+    expect(
+      message.activity?.map((activity) => ({
+        tool: activity.tool,
+        action: activity.action,
+        status: activity.status,
+      })),
+    ).toEqual([
+      { tool: 'terminal', action: 'run', status: 'complete' },
+      { tool: 'terminal', action: 'list', status: 'complete' },
+      { tool: 'browser', action: 'tabs', status: 'complete' },
+    ]);
+    expect(message.activity?.[0].summary).toContain('terminal fixture');
+    const tools = (await request<ToolInfo[]>('/tools')).data;
+    expect(tools.find((tool) => tool.id === 'terminal')).toMatchObject({
+      available: true,
+      counts: { run: 1, list: 1 },
+    });
+    expect(tools.find((tool) => tool.id === 'browser')).toMatchObject({
+      available: true,
+      counts: { tabs: 1 },
+    });
+    expect((await fetch(api.url + '/browser')).status).toBe(401);
+    expect((await request('/browser?workspaceId=default')).data).toEqual([]);
+  });
   it('runs the same bot in separate spaces and cancels only the requested conversation', async () => {
     await configure();
     mode = 'slow';
@@ -489,7 +617,7 @@ describe('Mukai bots and AI API', () => {
     await spaceChat(space.id, '@scout followup', 'scout');
     expect(JSON.stringify(calls.at(-1)!.messages)).toContain('[Scout]');
   });
-  it('reserves a tool-free final response after eight steps, including a failed last tool call', async () => {
+  it('reserves a tool-free final response after the step budget, including a failed last tool call', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
     const workspace = (
@@ -498,7 +626,7 @@ describe('Mukai bots and AI API', () => {
     const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
     mode = 'tool-limit';
     const sent = await chat('Work until the limit', randomUUID(), bot.id);
-    expect(calls).toHaveLength(9);
+    expect(calls).toHaveLength(TOOL_STEP_LIMIT + 1);
     expect(calls.at(-1)).not.toHaveProperty('tools');
     expect(JSON.stringify(calls.at(-1))).toContain('Give your final response now');
     const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
@@ -523,6 +651,59 @@ describe('Mukai bots and AI API', () => {
     const incomplete = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data.at(-1)!;
     expect(incomplete.status).toBe('failed');
     expect(incomplete.error).toContain('without a final response');
+  });
+  it('continues browser work past the previous eight-step ceiling', async () => {
+    await configure();
+    mode = 'long-browser';
+    await chat('Test all browser actions');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(13);
+    expect(message.status).toBe('complete');
+    expect(message.activity).toHaveLength(12);
+    expect(message.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'All browser checks finished.',
+    });
+  });
+  it('recovers a textual tool request once while retaining real results and not executing markup', async () => {
+    await configure();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mode = 'raw-tool-once';
+    const sent = await chat('Continue browser work');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(4);
+    expect(message.status).toBe('complete');
+    expect(message.activity?.map((activity) => activity.id)).toEqual(['browser-0', 'browser-1']);
+    expect(message.content).not.toContain('DSML');
+    expect(message.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'All browser checks finished.',
+    });
+    expect(sent.events.filter((event) => event.type === 'start')).toHaveLength(2);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+  it('fails visibly after a second malformed answer without executing its textual invocation', async () => {
+    await configure();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mode = 'raw-tool-always';
+    await chat('Use the browser');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(2);
+    expect(message.status).toBe('failed');
+    expect(message.error).toContain('markup was not executed');
+    expect(message.activity).toEqual([]);
+  });
+  it('keeps legacy malformed answers in saved history but does not teach the model their protocol', async () => {
+    await configure();
+    await chat('Browser checks');
+    const malformed =
+      'Next, navigate. <｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="browser">fake invocation</｜｜DSML｜｜ invoke>';
+    const previous = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    api.store.run('UPDATE messages SET content=? WHERE id=?', malformed, previous.id);
+    await chat('Continue');
+    expect(JSON.stringify(calls.at(-1)!.messages)).not.toContain('DSML');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('That request was not executed');
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].content).toBe(malformed);
   });
   it('does not label a response cut off by its output limit complete', async () => {
     await configure();

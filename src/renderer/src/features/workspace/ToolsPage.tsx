@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, FolderOpen, Puzzle, Search, Target } from 'lucide-react';
+import { FileText, FolderOpen, Puzzle, Search, Target, Globe, Terminal } from 'lucide-react';
 import type { ToolInfo } from '../../../../shared/ai';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
+import { BrowserToggle } from '../browser/BrowserToggle';
 
 export function ToolsPage({
   workspaceId,
@@ -42,6 +43,7 @@ export function ToolsPage({
         <span className="ai-caption">
           {tools.length} tool {tools.length === 1 ? 'family' : 'families'}
         </span>
+        <BrowserToggle />
       </div>
       <h1>Tools for your bots.</h1>
       <p className="tools-intro">Small, useful capabilities. A little more room to do.</p>
@@ -72,7 +74,15 @@ export function ToolsPage({
           {visible.map((tool) => (
             <article key={tool.id} className="tool-family-card">
               <div className="tool-family-icon">
-                {tool.id === 'manage_pursuit' ? <Target size={23} /> : <FileText size={23} />}
+                {tool.id === 'manage_pursuit' ? (
+                  <Target size={23} />
+                ) : tool.id === 'browser' ? (
+                  <Globe size={23} />
+                ) : tool.id === 'terminal' ? (
+                  <Terminal size={23} />
+                ) : (
+                  <FileText size={23} />
+                )}
               </div>
               <div className="tool-family-body">
                 <div className="tool-family-title">
@@ -97,9 +107,13 @@ export function ToolsPage({
                   ·{' '}
                   {tool.id === 'manage_pursuit'
                     ? 'Manages its own pursuits'
-                    : folder
-                      ? 'Within this workspace folder'
-                      : 'Connect a folder to start'}
+                    : tool.id === 'browser'
+                      ? 'Mukai and Google Chrome'
+                      : tool.id === 'terminal'
+                        ? 'Local shell · Per-conversation processes'
+                        : folder
+                          ? 'Within this workspace folder'
+                          : 'Connect a folder to start'}
                 </small>
               </div>
             </article>
@@ -120,8 +134,9 @@ export function ToolsPage({
         )}
       </div>
       <div className="tools-bottom-note">
-        File operations run locally. Your chosen AI provider receives file content returned by
-        tools. Links, credential files, and paths outside this folder are blocked.
+        Tools run locally. Your AI provider receives tool output, including page content and command
+        results. File operations enforce folder boundaries. Terminal commands run with your OS
+        account permissions and are not restricted to that folder.
       </div>
     </main>
   );

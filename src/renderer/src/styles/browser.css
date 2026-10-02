@@ -1,0 +1,134 @@
+.browser-panel {
+  position: fixed;
+  z-index: 20;
+  top: 57px;
+  right: 0;
+  bottom: 0;
+  width: var(--browser-panel-width, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--line-strong);
+  padding-left: 5px;
+}
+.app-shell:has(.browser-panel) > .app-body {
+  margin-right: var(--browser-panel-width, 640px);
+}
+.browser-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.browser-panel-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.browser-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+.browser-tabs > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+  max-width: 180px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+.browser-tabs > button > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browser-tabs > button[aria-selected='true'] {
+  background: var(--theme-soft);
+  color: var(--theme-text);
+}
+.browser-navigation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.browser-navigation > input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  font-size: 12px;
+  color: var(--ink);
+}
+.browser-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--surface);
+}
+.browser-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 28px;
+  text-align: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.browser-panel > footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.browser-resize-handle {
+  position: absolute;
+  inset: 0 auto 0 -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 32;
+  outline: none;
+}
+.browser-resize-handle > span {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 32px;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+.browser-resize-handle:hover,
+.browser-resize-handle:focus-visible,
+.browser-panel.is-resizing .browser-resize-handle {
+  background: var(--theme-soft);
+}
+.browser-resize-handle:hover > span,
+.browser-resize-handle:focus-visible > span,
+.browser-panel.is-resizing .browser-resize-handle > span {
+  background: var(--theme-accent);
+}
+.browser-resize-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 31;
+  cursor: col-resize;
+}
+.app-shell:has(.browser-panel.is-resizing) {
+  user-select: none;
+}

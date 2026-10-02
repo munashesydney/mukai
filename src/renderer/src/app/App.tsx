@@ -22,10 +22,16 @@ import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { WorkspaceEditor } from '../features/workspace/WorkspaceEditor';
 import type { Bot, Workspace } from '../../../shared/ai';
 import type { DialogKind, Location, Section } from '../features/workspace/types';
+import { BrowserPanel } from '../features/browser/BrowserPanel';
+import { BrowserLayout, BrowserWorkspace } from '../features/browser/BrowserWorkspace';
 
 export function App() {
   const ai = useAIWorkspace();
-  return <WorkspaceApp key={ai.workspaceId} ai={ai} />;
+  return (
+    <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
+      <WorkspaceApp ai={ai} />
+    </BrowserWorkspace>
+  );
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const workspace = useWorkspace(ai.workspaceId);
@@ -127,7 +133,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   }, [location]);
 
   return (
-    <div className="app-shell">
+    <BrowserLayout>
       <TitleBar
         workspaceName={ai.workspace?.name}
         onSearch={() => setSearchOpen(true)}
@@ -328,6 +334,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           bots={ai.bots}
         />
       )}
+      <BrowserPanel />
       <WorkspaceDialogs
         key={dialog}
         kind={dialog === 'settings' ? null : dialog}
@@ -379,6 +386,6 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           }}
         />
       )}
-    </div>
+    </BrowserLayout>
   );
 }

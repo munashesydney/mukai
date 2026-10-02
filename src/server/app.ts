@@ -23,10 +23,14 @@ import { ConversationRepository } from './repositories/conversationRepository';
 import { ConversationService } from './services/conversationService';
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
+import { ProcessService } from './services/processService';
+import { BrowserService } from './services/browserService';
+import type { EmbeddedBrowserHost } from './browser/types';
 
 export interface ApiOptions {
   dataDir?: string;
   token?: string;
+  embeddedBrowser?: EmbeddedBrowserHost;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -55,7 +59,17 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaces,
       dir,
     );
-    const tools = new ToolService(workspaces, artifacts, messageRepository, dir, changes);
+    const processes = new ProcessService();
+    const browsers = new BrowserService(dir, options.embeddedBrowser);
+    const tools = new ToolService(
+      workspaces,
+      artifacts,
+      messageRepository,
+      dir,
+      changes,
+      processes,
+      browsers,
+    );
     const providers = new ProviderService(providerRepository, botRepository, store.dir);
     const attachments = new AttachmentService(
       attachmentRepository,
@@ -93,6 +107,7 @@ export function createApiServer(options: ApiOptions = {}) {
       changes,
       conversations,
       pursuits,
+      browsers,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => sendError(response, error));
@@ -113,14 +128,16 @@ export function createApiServer(options: ApiOptions = {}) {
       (shutdownPromise ??= (async () => {
         await pursuits.shutdown();
         await chats.shutdown();
+        await processes.shutdown();
+        await browsers.shutdown();
       })());
     server.on('close', () => {
       pursuits.stopScheduling();
       if (!pursuits.hasActiveRuns() && !chats.hasActiveResponses()) dispose();
-      else void shutdown().finally(dispose);
+      void shutdown().finally(dispose);
     });
     server.once('listening', () => pursuits.start());
-    return { server, token, store, shutdown, dispose, pursuits };
+    return { server, token, store, shutdown, dispose, pursuits, browsers, processes };
   } catch (error) {
     store.db.close();
     releaseLock();

@@ -26,6 +26,8 @@ import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
 import { z } from 'zod';
+import type { BrowserService } from '../services/browserService';
+import { browserDefinition } from '../tools/browser/definition';
 
 function uploadName(request: IncomingMessage) {
   try {
@@ -48,6 +50,7 @@ export function createRoutes({
   changes,
   conversations,
   pursuits,
+  browsers,
 }: {
   token: string;
   startedAt: number;
@@ -61,6 +64,7 @@ export function createRoutes({
   changes: FileChangeService;
   conversations: ConversationService;
   pursuits: PursuitService;
+  browsers: BrowserService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -100,7 +104,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits)(\/|$)/.test(
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser)(\/|$)/.test(
         path,
       )
     )
@@ -112,7 +116,24 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
-    if (resource === 'pursuits') {
+    if (resource === 'browser') {
+      if (!id && method === 'GET') {
+        const workspaceId = url.searchParams.get('workspaceId') || 'default';
+        workspaces.require(workspaceId);
+        return send(response, await browsers.refresh(workspaceId));
+      }
+      if (id && action === 'screenshot' && method === 'GET') {
+        response.setHeader('Content-Type', 'image/png');
+        response.writeHead(200).end(browsers.screenshot(id));
+        return;
+      }
+      if (id && action === 'control' && method === 'POST') {
+        const input = browserDefinition.inputSchema.parse(await jsonBody(request));
+        if (['open', 'tabs'].includes(input.action))
+          throw new ApiError(400, 'Use an existing tab action.');
+        return send(response, await browsers.control(id, input));
+      }
+    } else if (resource === 'pursuits') {
       if (!id && method === 'GET')
         return send(response, pursuits.list(url.searchParams.get('workspaceId') || 'default'));
       if (id && !action && method === 'GET') return send(response, pursuits.detail(id));

@@ -11,5 +11,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src/main", "src/preload", "src/server", "src/shared", "*.config.ts"]
+  "include": ["src/main", "src/preload", "src/server", "src/shared", "scripts", "*.config.ts"]
 }

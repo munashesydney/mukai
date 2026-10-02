@@ -4,6 +4,66 @@ import { executeFileOperations } from './file-operations/execute';
 import type { ToolContext, ToolScope } from './types';
 import { pursuitDefinition } from './pursuits/definition';
 import { executePursuit } from './pursuits/execute';
+import { terminalDefinition, processDefinition } from './terminal/definition';
+import { executeTerminal, executeProcess } from './terminal/execute';
+import { browserDefinition } from './browser/definition';
+import { executeBrowser } from './browser/execute';
+import type { RuntimeToolContext } from './runtimeContext';
+import type { ProcessService } from '../services/processService';
+import type { BrowserService } from '../services/browserService';
+
+export function runtimeTools(
+  context: RuntimeToolContext & {
+    processes: ProcessService;
+    browsers: BrowserService;
+    folder: string | null;
+    vision: boolean;
+  },
+): ToolSet {
+  return {
+    ...(context.folder
+      ? {
+          terminal: tool({
+            description: terminalDefinition.description,
+            inputSchema: terminalDefinition.inputSchema,
+            execute: (input, options) =>
+              executeTerminal(input, { ...context, folder: context.folder! }, options.toolCallId),
+          }),
+          process: tool({
+            description: processDefinition.description,
+            inputSchema: processDefinition.inputSchema,
+            execute: (input, options) => executeProcess(input, context, options.toolCallId),
+          }),
+        }
+      : {}),
+    browser: tool({
+      description: browserDefinition.description,
+      inputSchema: browserDefinition.inputSchema,
+      execute: (input, options) => executeBrowser(input, context, options.toolCallId),
+      toModelOutput: ({ output }) => {
+        const result = output.result;
+        if (
+          result &&
+          typeof result === 'object' &&
+          'image' in result &&
+          typeof result.image === 'string'
+        ) {
+          const { image, ...rest } = result;
+          return context.vision
+            ? {
+                type: 'content',
+                value: [
+                  { type: 'text', text: JSON.stringify({ ...output, result: rest }) },
+                  { type: 'file', mediaType: 'image/png', data: { type: 'data', data: image } },
+                ],
+              }
+            : { type: 'text', value: JSON.stringify({ ...output, result: rest }) };
+        }
+        return { type: 'text', value: JSON.stringify(output) };
+      },
+    }),
+  };
+}
 
 export function pursuitTools(context: Parameters<typeof executePursuit>[1]): ToolSet {
   return {
@@ -63,5 +123,12 @@ export function toolCatalog() {
       actions: pursuitDefinition.actions,
       scope: 'all-bots' as const,
     },
+    ...[terminalDefinition, browserDefinition].map((definition) => ({
+      id: definition.name,
+      name: definition.title,
+      description: definition.summary,
+      actions: definition.actions,
+      scope: 'all-bots' as const,
+    })),
   ];
 }

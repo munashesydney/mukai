@@ -15,6 +15,7 @@ export interface DesktopBridge {
   minimize: () => void;
   toggleMaximize: () => void;
   close: () => void;
+  setBrowserBounds: (value: import('./runtime').BrowserBounds | null) => Promise<void>;
 }
 
 export const IPC = {
@@ -25,4 +26,5 @@ export const IPC = {
   minimize: 'mukai:minimize',
   maximize: 'mukai:maximize',
   close: 'mukai:close',
+  browserBounds: 'mukai:browser-bounds',
 } as const;

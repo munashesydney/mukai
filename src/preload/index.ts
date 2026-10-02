@@ -10,5 +10,6 @@ const bridge: DesktopBridge = {
   minimize: () => ipcRenderer.send(IPC.minimize),
   toggleMaximize: () => ipcRenderer.send(IPC.maximize),
   close: () => ipcRenderer.send(IPC.close),
+  setBrowserBounds: (value) => ipcRenderer.invoke(IPC.browserBounds, value),
 };
 contextBridge.exposeInMainWorld('mukai', bridge);

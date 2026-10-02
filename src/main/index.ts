@@ -3,11 +3,15 @@ import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
 import type { Server } from 'node:http';
+import { MukaiBrowserHost } from './embeddedBrowserHost';
+import { z } from 'zod';
 
 let apiServer: Server | undefined;
 let apiUrl = '';
 let shutdownApi: (() => Promise<void>) | undefined;
 let quitting = false;
+const embeddedBrowser = new MukaiBrowserHost();
+const appWindows = new Set<number>();
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -31,6 +35,10 @@ function createWindow() {
     },
   });
   window.once('ready-to-show', () => window.show());
+  const contentsId = window.webContents.id;
+  appWindows.add(contentsId);
+  window.on('closed', () => appWindows.delete(contentsId));
+  embeddedBrowser.attach(window);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
@@ -51,6 +59,7 @@ else {
     .then(async () => {
       const api = await startApiServer(0, {
         dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
+        embeddedBrowser,
       });
       apiServer = api.server;
       shutdownApi = api.shutdown;
@@ -61,7 +70,9 @@ else {
       session.defaultSession.setPermissionCheckHandler(() => false);
       const senderWindow = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => {
         const window = BrowserWindow.fromWebContents(event.sender);
-        return event.senderFrame === event.sender.mainFrame ? window : null;
+        return appWindows.has(event.sender.id) && event.senderFrame === event.sender.mainFrame
+          ? window
+          : null;
       };
       ipcMain.handle(IPC.health, async (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
@@ -73,6 +84,20 @@ else {
       ipcMain.handle(IPC.apiConnection, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
         return { url: apiUrl, token: api.token };
+      });
+      ipcMain.handle(IPC.browserBounds, (event, value: unknown) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        const bounds = z
+          .object({
+            id: z.string().uuid(),
+            x: z.number().finite(),
+            y: z.number().finite(),
+            width: z.number().finite(),
+            height: z.number().finite(),
+          })
+          .nullable()
+          .parse(value);
+        embeddedBrowser.bounds(bounds);
       });
       ipcMain.handle(IPC.chooseWorkspaceFolder, async (event) => {
         const window = senderWindow(event);

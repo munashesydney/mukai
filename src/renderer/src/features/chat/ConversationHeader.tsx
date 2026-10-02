@@ -16,6 +16,8 @@ import { IconButton } from '../../components/ui/IconButton';
 import { bots } from '../workspace/data';
 import type { BotId, DialogKind, Location, Space, Pursuit } from '../workspace/types';
 import type { Bot } from '../../../../shared/ai';
+import { BrowserToggle } from '../browser/BrowserToggle';
+import { useBrowserPanel } from '../browser/useBrowserPanel';
 
 export function ConversationHeader({
   location,
@@ -41,6 +43,7 @@ export function ConversationHeader({
   members?: Bot[];
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const browser = useBrowserPanel();
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -104,6 +107,7 @@ export function ConversationHeader({
           </div>
         </div>
         <div className="header-actions">
+          <BrowserToggle />
           {!bot && !pursuit && (
             <button
               className="member-stack"
@@ -131,7 +135,7 @@ export function ConversationHeader({
             aria-expanded={detailsOpen}
             aria-controls="conversation-details"
           >
-            {bot ? <Info size={18} /> : <PanelRight size={18} />}
+            {bot || browser?.tabs.length ? <Info size={18} /> : <PanelRight size={18} />}
           </IconButton>
           <div className="header-menu-anchor" ref={menu}>
             <IconButton

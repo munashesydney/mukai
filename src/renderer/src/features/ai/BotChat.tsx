@@ -23,6 +23,7 @@ import { ArtifactsView } from './ArtifactsView';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { FileChanges } from './FileChanges';
 import { DiffDrawer } from './DiffDrawer';
+import { BrowserToggle } from '../browser/BrowserToggle';
 import type { Conversation } from '../../../../shared/conversations';
 
 export function BotChat({
@@ -98,6 +99,7 @@ export function BotChat({
               </div>
             </div>
             <div className="header-actions">
+              <BrowserToggle />
               <IconButton
                 label={`New conversation with ${bot.name}`}
                 disabled={creatingChat}

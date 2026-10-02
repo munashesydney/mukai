@@ -13,6 +13,7 @@ import { WakeCountdown } from './WakeCountdown';
 import { PursuitRunView } from './PursuitRunView';
 import { PursuitRuns } from './PursuitRuns';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
+import { BrowserToggle } from '../browser/BrowserToggle';
 export function PursuitPage({
   id,
   bots,
@@ -90,6 +91,7 @@ export function PursuitPage({
           <span className={`pursuit-state pursuit-state--${p.status}`}>
             {pursuitStatusLabels[p.status]}
           </span>
+          <BrowserToggle />
         </div>
         <div className="pursuit-owner">
           {owner ? (

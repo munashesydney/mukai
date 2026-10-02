@@ -13,6 +13,7 @@ import { DiffDrawer } from '../ai/DiffDrawer';
 import { ArtifactsView } from '../ai/ArtifactsView';
 import { MessageActions } from '../chat/MessageActions';
 import { errorText } from '../../utils/errors';
+import { BrowserToggle } from '../browser/BrowserToggle';
 export function PursuitRunView({
   run,
   bot,
@@ -70,6 +71,7 @@ export function PursuitRunView({
         <div className="pursuit-title">
           <h1>{run.snapshot.name}</h1>
           <span className="status-label">{run.status === 'running' ? 'Running' : run.status}</span>
+          <BrowserToggle />
         </div>
         <p>
           {run.trigger === 'schedule' ? 'Scheduled wake' : 'Requested run'} ·{' '}

@@ -1,11 +1,14 @@
 import type { Bot, ChatActivity, ToolInfo } from '../../shared/ai';
-import { toolCatalog, toolsForBot, pursuitTools } from '../tools/registry';
+import { toolCatalog, toolsForBot, pursuitTools, runtimeTools } from '../tools/registry';
 import type { PursuitService } from './pursuitService';
 import { MessageRepository } from '../repositories/messageRepository';
 import { WorkspaceService } from './workspaceService';
 import { WorkspaceFileService } from './workspaceFileService';
 import { ArtifactService } from './artifactService';
 import { FileChangeService } from './fileChangeService';
+import type { BrowserService } from './browserService';
+import type { ProcessService } from './processService';
+import { FILE_TOOL_CALL_LIMIT, RUNTIME_TOOL_CALL_LIMIT } from './responsePolicy';
 
 export class ToolService {
   private pursuits?: PursuitService;
@@ -18,13 +21,20 @@ export class ToolService {
     private messages: MessageRepository,
     private dataDir: string,
     private changes: FileChangeService,
+    private processes: ProcessService,
+    private browsers: BrowserService,
   ) {}
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
     const counts = this.messages.toolCounts(workspaceId);
     return toolCatalog().map((tool) => ({
       ...tool,
-      available: tool.id === 'manage_pursuit' ? Boolean(this.pursuits) : Boolean(workspace.folder),
+      available:
+        tool.id === 'manage_pursuit'
+          ? Boolean(this.pursuits)
+          : tool.id === 'browser'
+            ? true
+            : Boolean(workspace.folder),
       counts: counts[tool.id] || {},
     }));
   }
@@ -33,6 +43,7 @@ export class ToolService {
     messageId: string,
     signal: AbortSignal,
     onActivity: (activity: ChatActivity) => void,
+    vision = false,
   ) {
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
@@ -40,6 +51,16 @@ export class ToolService {
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
     return {
+      ...runtimeTools({
+        owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
+        signal,
+        onActivity,
+        budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
+        processes: this.processes,
+        browsers: this.browsers,
+        folder: workspace.folder,
+        vision,
+      }),
       ...(workspace.folder
         ? toolsForBot({
             botId: bot.id,
@@ -49,7 +70,7 @@ export class ToolService {
             ),
             onActivity,
             onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
-            callBudget: { remaining: 16 },
+            callBudget: { remaining: FILE_TOOL_CALL_LIMIT },
           })
         : {}),
       ...(this.pursuits

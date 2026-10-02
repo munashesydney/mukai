@@ -8,6 +8,8 @@ import {
   Search,
   Pencil,
   Target,
+  Terminal,
+  Globe,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -32,13 +34,17 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
     complete: 'Completed pursuit',
   };
   const Icon =
-    activity.tool === 'manage_pursuit'
-      ? Target
-      : activity.action === 'search_files'
-        ? Search
-        : ['write_file', 'patch', 'create_directory'].includes(activity.action)
-          ? Pencil
-          : FileText;
+    activity.tool === 'terminal'
+      ? Terminal
+      : activity.tool === 'browser'
+        ? Globe
+        : activity.tool === 'manage_pursuit'
+          ? Target
+          : activity.action === 'search_files'
+            ? Search
+            : ['write_file', 'patch', 'create_directory'].includes(activity.action)
+              ? Pencil
+              : FileText;
   const running = activity.status === 'running';
   const problem = activity.status === 'failed' || activity.status === 'interrupted';
   return (
@@ -90,17 +96,21 @@ function ToolGroup({
           ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
           : activity.tool === 'manage_pursuit'
             ? 'Managed pursuits'
-            : ['write_file', 'patch'].includes(activity.action)
-              ? 'Edited files'
-              : activity.action === 'search_files'
-                ? 'Searched files'
-                : activity.action === 'read_file'
-                  ? 'Read files'
-                  : activity.action === 'create_directory'
-                    ? 'Created folders'
-                    : activity.action === 'list'
-                      ? 'Listed folders'
-                      : 'Used tools',
+            : activity.tool === 'terminal'
+              ? 'Ran commands'
+              : activity.tool === 'browser'
+                ? 'Used browser'
+                : ['write_file', 'patch'].includes(activity.action)
+                  ? 'Edited files'
+                  : activity.action === 'search_files'
+                    ? 'Searched files'
+                    : activity.action === 'read_file'
+                      ? 'Read files'
+                      : activity.action === 'create_directory'
+                        ? 'Created folders'
+                        : activity.action === 'list'
+                          ? 'Listed folders'
+                          : 'Used tools',
       );
   }
   return (
