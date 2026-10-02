@@ -1,4 +1,4 @@
-/* Shared theme surfaces; agent identities keep their own colors. */
+/* Shared theme surfaces; bot identities keep their own colors. */
 .rail-link:hover,
 .rail-link.is-active {
   background: transparent;
@@ -55,7 +55,7 @@
 .message-meta > strong {
   color: var(--ink);
 }
-.heading-hash,
+.heading-space,
 .composer-plus,
 .heading-pursuit-icon {
   background: var(--theme-soft);
@@ -146,9 +146,9 @@
 .member-stack .avatar {
   border-color: var(--surface);
 }
-.agent-online,
+.bot-online,
 .tiny-status,
-.agent-available i {
+.bot-available i {
   background: #76bda2;
 }
 .status-label--paused {
@@ -316,7 +316,7 @@
   box-shadow: 0 0 0 3px var(--theme-soft);
 }
 .draft-document h3,
-.agent-preview h3,
+.bot-preview h3,
 .details-document h3 {
   color: var(--theme-text);
 }

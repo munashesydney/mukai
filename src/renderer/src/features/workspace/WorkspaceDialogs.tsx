@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ArrowRight, Check, FileText, Pause, Play, Target, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, FileText, Pause, Play, Target, Info } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Avatar } from '../../components/ui/Avatar';
+import { TriangleMark } from '../../components/ui/TriangleMark';
 import type { DialogKind, Pursuit } from './types';
 import { SettingsDialog } from '../settings/SettingsDialog';
 
@@ -58,7 +59,7 @@ export function WorkspaceDialogs({
             </div>
           ))}
           <div className="document-note">
-            <Sparkles size={17} />
+            <Info size={17} />
             <span>This is a sample draft for the Mukai UI preview.</span>
           </div>
         </div>
@@ -81,19 +82,19 @@ export function WorkspaceDialogs({
         onCreate={kind === 'create-space' ? onCreateSpace : onCreatePursuit}
       />
     );
-  if (kind === 'create-agent')
+  if (kind === 'create-bot')
     return (
-      <Modal title="Meet your next collaborator" onClose={onClose}>
-        <div className="agent-preview">
+      <Modal title="Meet your next bot" onClose={onClose}>
+        <div className="bot-preview">
           <span className="preview-symbol">
-            <Sparkles size={32} />
+            <TriangleMark />
           </span>
           <h3>A little more possibility.</h3>
           <p>
-            Your workspace already has Atlas, Nova, and Scout. Custom agents will let you bring your
+            Your workspace already has Atlas, Nova, and Scout. Custom bots will let you bring your
             own personalities and skills into the mix.
           </p>
-          <div className="preview-label">Custom agents · Coming next</div>
+          <div className="preview-label">Custom bots · Coming next</div>
         </div>
         <div className="modal-footer">
           <span>For now, get to know your crew.</span>
@@ -113,7 +114,7 @@ export function WorkspaceDialogs({
           <h3>{pursuit?.name ?? 'A home for your next good idea.'}</h3>
           <p>
             {pursuit?.description ??
-              'Mukai brings your spaces, pursuits, and agents together. A little intention, a little conversation, and a useful next step.'}
+              'Mukai brings your spaces, pursuits, and bots together. A little intention, a little conversation, and a useful next step.'}
           </p>
           {pursuit && (
             <>
@@ -126,9 +127,9 @@ export function WorkspaceDialogs({
               </div>
               <div className="details-stat">
                 <span>Keeping things moving</span>
-                <span className="details-agent">
-                  <Avatar person={pursuit.agent} size="xs" />
-                  {pursuit.agent[0].toUpperCase() + pursuit.agent.slice(1)}
+                <span className="details-bot">
+                  <Avatar person={pursuit.bot} size="xs" />
+                  {pursuit.bot[0].toUpperCase() + pursuit.bot.slice(1)}
                 </span>
               </div>
               <div className="details-stat">

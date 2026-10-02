@@ -11,7 +11,7 @@ import { SearchDialog } from '../features/workspace/SearchDialog';
 import { WorkspaceDialogs } from '../features/workspace/WorkspaceDialogs';
 import { ToolsPage } from '../features/workspace/ToolsPage';
 import { useWorkspace } from '../features/workspace/useWorkspace';
-import { agents } from '../features/workspace/data';
+import { bots } from '../features/workspace/data';
 import type { DialogKind, Location, Section } from '../features/workspace/types';
 
 export function App() {
@@ -43,7 +43,7 @@ export function App() {
   );
   const space = workspace.spaces.find((s) => s.id === location.item);
   const pursuit = workspace.pursuits.find((p) => p.id === location.item);
-  const agent = agents.find((a) => a.id === location.item);
+  const bot = bots.find((a) => a.id === location.item);
   const messages = workspace.messages[location.item] ?? [];
   const openPursuit = () => select({ section: 'pursuits', item: 'grow-mrr' });
   const navigateSection = (section: Section) =>
@@ -54,7 +54,7 @@ export function App() {
           ? workspace.spaces[0].id
           : section === 'pursuits'
             ? workspace.pursuits[0].id
-            : section === 'agents'
+            : section === 'bots'
               ? 'nova'
               : 'integrations',
     });
@@ -151,11 +151,11 @@ export function App() {
                 <Composer
                   key={`composer-${location.item}`}
                   placeholder={
-                    agent
-                      ? `Message ${agent.name}…`
+                    bot
+                      ? `Message ${bot.name}…`
                       : pursuit
                         ? 'Talk about this pursuit…'
-                        : `Message #${space?.name ?? 'your agents'}…`
+                        : `Message ${space?.name ?? 'your bots'}…`
                   }
                   onSend={workspace.sendMessage}
                 />

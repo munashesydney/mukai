@@ -1,16 +1,16 @@
 import {
   ChevronDown,
   ChevronRight,
-  Hash,
+  Layers3,
   Plus,
   Target,
   ArrowUpRight,
-  Sparkles,
+  Sunrise,
   Check,
   Plug,
 } from 'lucide-react';
 import { useState } from 'react';
-import { agents } from '../../features/workspace/data';
+import { bots } from '../../features/workspace/data';
 import type { Location, Space, Pursuit, DialogKind } from '../../features/workspace/types';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
@@ -34,15 +34,15 @@ export function WorkspaceSidebar({
   const [directOpen, setDirectOpen] = useState(true);
   const [workspaceMenu, setWorkspaceMenu] = useState(false);
   const isSelected = (item: string) => location.item === item;
-  const agentRow = (agent: (typeof agents)[number]) => (
+  const botRow = (bot: (typeof bots)[number]) => (
     <button
-      key={agent.id}
-      className={`sidebar-row agent-row ${isSelected(agent.id) ? 'is-selected' : ''}`}
-      onClick={() => onSelect({ section: 'agents', item: agent.id })}
+      key={bot.id}
+      className={`sidebar-row bot-row ${isSelected(bot.id) ? 'is-selected' : ''}`}
+      onClick={() => onSelect({ section: 'bots', item: bot.id })}
     >
-      <Avatar person={agent.id} size="xs" />
-      <span>{agent.name}</span>
-      <i className="agent-online" />
+      <Avatar person={bot.id} size="xs" />
+      <span>{bot.name}</span>
+      <i className="bot-online" />
     </button>
   );
   return (
@@ -98,7 +98,7 @@ export function WorkspaceSidebar({
                     className={`sidebar-row ${isSelected(space.id) ? 'is-selected' : ''}`}
                     onClick={() => onSelect({ section: 'spaces', item: space.id })}
                   >
-                    <Hash size={18} strokeWidth={1.6} />
+                    <Layers3 size={18} strokeWidth={1.6} />
                     <span>{space.name}</span>
                     {space.unread && <span className="unread-count">{space.unread}</span>}
                   </button>
@@ -115,10 +115,10 @@ export function WorkspaceSidebar({
             <div className="sidebar-section-heading">
               <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
                 {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>Your agents</span>
+                <span>Your bots</span>
               </button>
             </div>
-            {directOpen && <div className="sidebar-group">{agents.map(agentRow)}</div>}
+            {directOpen && <div className="sidebar-group">{bots.map(botRow)}</div>}
             <div className="sidebar-section-heading plain-heading">
               <span>In motion</span>
               <Target size={14} />
@@ -132,15 +132,15 @@ export function WorkspaceSidebar({
             </button>
           </>
         )}
-        {location.section === 'agents' && (
+        {location.section === 'bots' && (
           <>
             <div className="sidebar-title">
-              <h2>Agents</h2>
-              <IconButton label="Create an agent" onClick={() => onDialog('create-agent')}>
+              <h2>Bots</h2>
+              <IconButton label="Create a bot" onClick={() => onDialog('create-bot')}>
                 <Plus size={18} />
               </IconButton>
             </div>
-            <div className="sidebar-group">{agents.map(agentRow)}</div>
+            <div className="sidebar-group">{bots.map(botRow)}</div>
           </>
         )}
         {location.section === 'pursuits' && (
@@ -199,7 +199,7 @@ export function WorkspaceSidebar({
       </div>
       <div className="sidebar-footer">
         <div className="wake-icon">
-          <Sparkles size={15} />
+          <Sunrise size={15} />
         </div>
         <div>
           <span>Mukai means “wake up” in Shona.</span>

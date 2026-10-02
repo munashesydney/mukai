@@ -1,6 +1,6 @@
 # Mukai
 
-**Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace for your spaces, pursuits, and agents, built with React and TypeScript.
+**Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace for your spaces, pursuits, and bots, built with React and TypeScript.
 
 This first version is a working UI prototype with a real local Node health service. Atlas, Nova, and Scout are sample personalities; they do not call AI models or run background work.
 
@@ -26,18 +26,18 @@ Open http://127.0.0.1:5173. The Vite proxy maps `/api/health` to the standalone 
 
 ## What works
 
-- Agents, Pursuits, Spaces, and Tools navigation, with back/forward history.
-- Spaces and individual agent conversations.
-- Opens directly into an agent conversation. Details panels stay closed until requested; Files and Activity are secondary views.
+- Bots, Pursuits, Spaces, and Tools navigation, with back/forward history.
+- Spaces and individual bot conversations.
+- Opens directly into a bot conversation. Details panels stay closed until requested; Files and Activity are secondary views.
 - Local message composition, Enter/Shift+Enter, emoji insertion, reactions, and saved messages.
-- Search for spaces, agents, and pursuits (`Ctrl+K` / `Cmd+K`).
+- Search for spaces, bots, and pursuits (`Ctrl+K` / `Cmd+K`).
 - Create spaces and pursuits; pause and resume pursuits.
-- Files and activity views, a draft preview, and contextual agent, pursuit, and space details.
+- Files and activity views, a draft preview, and contextual bot, pursuit, and space details.
 - Integration previews with explicit demo states.
 - Native minimize, maximize/restore, close, and draggable title bar.
 - Workspace and Appearance settings, with six color palettes and Light/Dark/System modes.
 
-Workspace messages, spaces, pursuits, bookmarks, and reactions persist in versioned local storage. There is no cloud sync. Attachments show filenames only; file contents are neither saved nor uploaded. Integration selection is session-only. Custom agents and customization currently show preview information.
+Workspace messages, spaces, pursuits, bookmarks, and reactions persist in versioned local storage. There is no cloud sync. Attachments show filenames only; file contents are neither saved nor uploaded. Integration selection is session-only. Custom bots and customization currently show preview information.
 
 Appearance preferences are stored separately under `mukai.appearance.v1`. Themes apply immediately across the shell, conversations, forms, and dialogs; System mode follows device appearance changes. The default remains Mukai in light mode.
 

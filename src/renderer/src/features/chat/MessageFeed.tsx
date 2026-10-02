@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { Bookmark, SmilePlus, Check, FileText } from 'lucide-react';
+import { Bookmark, SmilePlus, Check, FileText, MessageCircle } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
-import { agents } from '../workspace/data';
+import { bots } from '../workspace/data';
 import type { Message, DialogKind } from '../workspace/types';
 import { MessageCard } from './MessageCard';
 
@@ -44,7 +44,7 @@ export function MessageFeed({
       </div>
       <div className="messages">
         {messages.map((message) => {
-          const agent = agents.find((agent) => agent.id === message.author);
+          const bot = bots.find((bot) => bot.id === message.author);
           const saved = bookmarks.includes(message.id);
           const reacted = reactions.includes(message.id);
           return (
@@ -52,8 +52,8 @@ export function MessageFeed({
               <Avatar person={message.author} />
               <div className="message-content">
                 <div className="message-meta">
-                  <strong>{agent?.name ?? 'Munashe'}</strong>
-                  {agent && <span className={`agent-tag agent-tag--${agent.color}`}>AGENT</span>}
+                  <strong>{bot?.name ?? 'Munashe'}</strong>
+                  {bot && <span className={`bot-tag bot-tag--${bot.color}`}>BOT</span>}
                   <time>{message.time}</time>
                   {saved && <Bookmark size={12} className="saved-indicator" />}
                 </div>
@@ -100,7 +100,7 @@ export function MessageFeed({
       </div>
       {messages.length === 0 && (
         <div className="empty-conversation">
-          <span>✳</span>
+          <MessageCircle size={32} aria-hidden="true" />
           <h3>A fresh start.</h3>
           <p>Share an idea, ask a question, or just say hello.</p>
         </div>

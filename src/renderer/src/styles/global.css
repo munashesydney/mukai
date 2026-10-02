@@ -510,11 +510,11 @@ p {
   font-size: 12px;
   margin-top: 5px;
 }
-.agent-row {
+.bot-row {
   min-height: 39px;
   gap: 11px;
 }
-.agent-online {
+.bot-online {
   width: 5px;
   height: 5px;
   background: var(--theme-accent);
@@ -655,7 +655,7 @@ p {
   background: var(--scout-surface);
   border: 1px solid var(--scout-border);
 }
-.scout-mark {
+.triangle-mark {
   width: 0;
   height: 0;
   border-left: 9px solid transparent;
@@ -664,17 +664,17 @@ p {
   border-radius: 4px;
   filter: drop-shadow(0 1px 2px #d8a03c22);
 }
-.avatar--xs .scout-mark {
+.avatar--xs .triangle-mark {
   border-left-width: 6px;
   border-right-width: 6px;
   border-bottom-width: 10px;
 }
-.avatar--sm .scout-mark {
+.avatar--sm .triangle-mark {
   border-left-width: 8px;
   border-right-width: 8px;
   border-bottom-width: 13px;
 }
-.avatar--lg .scout-mark {
+.avatar--lg .triangle-mark {
   border-left-width: 16px;
   border-right-width: 16px;
   border-bottom-width: 27px;
@@ -769,7 +769,7 @@ p {
 .heading-identity > div {
   min-width: 0;
 }
-.heading-hash {
+.heading-space {
   color: var(--text-secondary);
   background: var(--surface-muted);
   border: 1px solid var(--line);
@@ -965,22 +965,22 @@ p {
   font-size: 11px;
   margin-left: 2px;
 }
-.agent-tag {
+.bot-tag {
   font-size: 8px;
   letter-spacing: 0.6px;
   font-weight: 600;
   border-radius: 3px;
   padding: 2px 4px;
 }
-.agent-tag--teal {
+.bot-tag--teal {
   color: var(--atlas-label);
   background: var(--atlas-label-surface);
 }
-.agent-tag--purple {
+.bot-tag--purple {
   color: var(--nova-label);
   background: var(--nova-label-surface);
 }
-.agent-tag--amber {
+.bot-tag--amber {
   color: var(--scout-label);
   background: var(--scout-label-surface);
 }
@@ -1341,29 +1341,29 @@ p {
   letter-spacing: 0.8px;
   color: var(--text-secondary);
 }
-.context-agent-list {
+.context-bot-list {
   display: flex;
   flex-direction: column;
   margin-top: 18px;
   gap: 16px;
 }
-.context-agent-list > button {
+.context-bot-list > button {
   display: flex;
   text-align: left;
   align-items: center;
   gap: 10px;
   padding: 0;
 }
-.context-agent-list > button:hover strong {
+.context-bot-list > button:hover strong {
   color: var(--teal);
 }
-.context-agent-list strong {
+.context-bot-list strong {
   font-size: 12px;
   color: var(--ink);
   font-weight: 500;
   display: block;
 }
-.context-agent-list small {
+.context-bot-list small {
   display: block;
   font-size: 10px;
   color: var(--text-secondary);
@@ -1484,30 +1484,30 @@ p {
   margin-left: auto;
   color: var(--text-muted);
 }
-.agent-about {
+.bot-about {
   text-align: center;
   border-bottom: 1px solid var(--line);
   padding: 0 5px 25px;
 }
-.agent-about h3 {
+.bot-about h3 {
   font-size: 21px;
   margin-top: 13px;
   color: var(--ink);
   letter-spacing: -0.5px;
 }
-.agent-about > span:not(.avatar) {
+.bot-about > span:not(.avatar) {
   font-size: 12px;
   color: #a0ac95;
   display: block;
   margin-top: 5px;
 }
-.agent-about > p {
+.bot-about > p {
   font-size: 12px;
   line-height: 1.8;
   color: var(--text-muted);
   margin-top: 13px;
 }
-.agent-available {
+.bot-available {
   font-size: 10px;
   color: var(--text-secondary);
   display: flex;
@@ -1516,7 +1516,7 @@ p {
   align-items: center;
   margin-top: 16px;
 }
-.agent-available i {
+.bot-available i {
   width: 5px;
   height: 5px;
   background: var(--theme-accent);
@@ -1811,7 +1811,7 @@ p {
 .create-form textarea::placeholder {
   color: var(--text-soft);
 }
-.agent-preview {
+.bot-preview {
   text-align: center;
   padding: 35px 40px;
 }
@@ -1824,14 +1824,14 @@ p {
   display: inline-grid;
   place-items: center;
 }
-.agent-preview h3 {
+.bot-preview h3 {
   font-family: Georgia, serif;
   font-size: 25px;
   color: var(--ink);
   font-weight: 400;
   margin-top: 20px;
 }
-.agent-preview p {
+.bot-preview p {
   font-size: 14px;
   line-height: 1.85;
   color: var(--text-secondary);
@@ -1846,7 +1846,7 @@ p {
   padding: 5px 8px;
   border-radius: 4px;
 }
-.agent-preview .preview-label {
+.bot-preview .preview-label {
   margin-top: 22px;
 }
 .details-document {
@@ -1891,7 +1891,7 @@ p {
   background: var(--theme-accent);
   border-radius: 6px;
 }
-.details-agent {
+.details-bot {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2351,7 +2351,7 @@ button.file-list-row:hover {
     max-width: 180px;
     font-size: 11px;
   }
-  .heading-hash {
+  .heading-space {
     width: 33px;
     height: 33px;
   }

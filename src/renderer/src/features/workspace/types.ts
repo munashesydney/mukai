@@ -1,8 +1,8 @@
-export type Section = 'spaces' | 'pursuits' | 'agents' | 'tools';
-export type AgentId = 'atlas' | 'nova' | 'scout';
-export type PersonId = AgentId | 'munashe';
-export interface Agent {
-  id: AgentId;
+export type Section = 'spaces' | 'pursuits' | 'bots' | 'tools';
+export type BotId = 'atlas' | 'nova' | 'scout';
+export type PersonId = BotId | 'munashe';
+export interface Bot {
+  id: BotId;
   name: string;
   role: string;
   description: string;
@@ -17,7 +17,7 @@ export interface Space {
 export interface Pursuit {
   id: string;
   name: string;
-  agent: AgentId;
+  bot: BotId;
   description: string;
   progress: number;
   paused?: boolean;
@@ -36,4 +36,4 @@ export interface Location {
   item: string;
 }
 export type DialogKind =
-  'draft' | 'details' | 'settings' | 'create-agent' | 'create-space' | 'create-pursuit' | null;
+  'draft' | 'details' | 'settings' | 'create-bot' | 'create-space' | 'create-pursuit' | null;

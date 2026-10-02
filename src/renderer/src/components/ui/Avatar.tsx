@@ -1,4 +1,5 @@
 import type { PersonId } from '../../features/workspace/types';
+import { TriangleMark } from './TriangleMark';
 
 export function Avatar({
   person,
@@ -24,7 +25,7 @@ export function Avatar({
       ) : person === 'nova' ? (
         <span className="nova-mark" />
       ) : (
-        <span className="scout-mark" />
+        <TriangleMark />
       )}
       {status && <span className="presence-dot" />}
     </span>

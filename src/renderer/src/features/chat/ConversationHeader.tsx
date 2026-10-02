@@ -1,5 +1,5 @@
 import {
-  Hash,
+  Layers3,
   MoreHorizontal,
   PanelRight,
   Info,
@@ -13,8 +13,8 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
-import { agents } from '../workspace/data';
-import type { AgentId, DialogKind, Location, Space, Pursuit } from '../workspace/types';
+import { bots } from '../workspace/data';
+import type { BotId, DialogKind, Location, Space, Pursuit } from '../workspace/types';
 
 export function ConversationHeader({
   location,
@@ -57,26 +57,26 @@ export function ConversationHeader({
       document.removeEventListener('keydown', onKey);
     };
   }, [menuOpen]);
-  const agent = agents.find((agent) => agent.id === location.item);
+  const bot = bots.find((bot) => bot.id === location.item);
   return (
     <header
-      className={`conversation-header ${agent && tab === 'Messages' ? 'conversation-header--minimal' : ''}`}
+      className={`conversation-header ${bot && tab === 'Messages' ? 'conversation-header--minimal' : ''}`}
     >
       <div className="conversation-heading">
         <div className="heading-identity">
-          {agent ? (
-            <Avatar person={agent.id as AgentId} size="md" />
+          {bot ? (
+            <Avatar person={bot.id as BotId} size="md" />
           ) : pursuit ? (
             <span className="heading-pursuit-icon">
               <Target size={23} />
             </span>
           ) : (
-            <span className="heading-hash">
-              <Hash size={24} strokeWidth={1.8} />
+            <span className="heading-space">
+              <Layers3 size={24} strokeWidth={1.8} />
             </span>
           )}
           <div>
-            <h1>{agent?.name ?? pursuit?.name ?? space?.name}</h1>
+            <h1>{bot?.name ?? pursuit?.name ?? space?.name}</h1>
             {pursuit ? (
               <div className="pursuit-summary">
                 <span className={`status-label ${pursuit.paused ? 'status-label--paused' : ''}`}>
@@ -96,16 +96,16 @@ export function ConversationHeader({
                 <span className="pursuit-percent">{pursuit.progress}%</span>
               </div>
             ) : (
-              <p>{agent?.role ?? space?.description}</p>
+              <p>{bot?.role ?? space?.description}</p>
             )}
           </div>
         </div>
         <div className="header-actions">
-          {!agent && !pursuit && (
+          {!bot && !pursuit && (
             <button
               className="member-stack"
               onClick={onDetails}
-              aria-label="View the agents in this space"
+              aria-label="View the bots in this space"
             >
               <Avatar person="atlas" size="xs" />
               <Avatar person="nova" size="xs" />
@@ -114,13 +114,13 @@ export function ConversationHeader({
             </button>
           )}
           <IconButton
-            label={agent ? 'Agent details' : pursuit ? 'Pursuit details' : 'Space details'}
+            label={bot ? 'Bot details' : pursuit ? 'Pursuit details' : 'Space details'}
             className={detailsOpen ? 'is-on' : ''}
             onClick={onDetails}
             aria-expanded={detailsOpen}
             aria-controls="conversation-details"
           >
-            {agent ? <Info size={18} /> : <PanelRight size={18} />}
+            {bot ? <Info size={18} /> : <PanelRight size={18} />}
           </IconButton>
           <div className="header-menu-anchor" ref={menu}>
             <IconButton
@@ -132,7 +132,7 @@ export function ConversationHeader({
             </IconButton>
             {menuOpen && (
               <div className="popover-menu">
-                {agent && (
+                {bot && (
                   <>
                     <button
                       onClick={() => {
@@ -183,7 +183,7 @@ export function ConversationHeader({
           </div>
         </div>
       </div>
-      {(!agent || tab !== 'Messages') && (
+      {(!bot || tab !== 'Messages') && (
         <div className="conversation-tabs" role="tablist" aria-label="Conversation views">
           {['Messages', 'Files', 'Activity'].map((label) => (
             <button
