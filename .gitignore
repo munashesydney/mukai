@@ -1,0 +1,12 @@
+node_modules/
+.npm-cache/
+out/
+dist/
+release/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+.DS_Store
+artifacts/

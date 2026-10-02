@@ -1,0 +1,94 @@
+:root {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  color: var(--ink);
+  background: var(--navy);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --theme-accent: #388b73;
+  --theme-hover: #28745e;
+  --theme-soft: #e8f2ed;
+  --theme-text: #37725b;
+  --theme-border: #b9d5c8;
+  --theme-rail: #12232e;
+  --theme-nav: #2b665e;
+  --theme-glow: #65d5c5;
+  --navy: var(--theme-rail);
+  --navy-light: #1b3440;
+  --ink: #263b45;
+  --text-secondary: #68786a;
+  --text-body: #45545d;
+  --text-muted: #89988b;
+  --text-soft: #a7b19f;
+  --muted: var(--text-muted);
+  --teal: var(--theme-accent);
+  --teal-dark: var(--theme-hover);
+  --teal-soft: var(--theme-soft);
+  --surface: #ffffff;
+  --sidebar: #f5f6f3;
+  --surface-raised: #ffffff;
+  --surface-muted: #f7f9f5;
+  --line: #e9eeeb;
+  --line-strong: #d7e0d7;
+  --on-accent: #ffffff;
+  --identity-purple-bg: #f1ebf8;
+  --identity-purple-text: #a187c3;
+  --atlas-surface: linear-gradient(135deg, #e4f4eb, #b9e8d7);
+  --atlas-border: #6aba9b19;
+  --atlas-mark: #fdfffa;
+  --atlas-eyes: #2b7664;
+  --atlas-label: #75a18a;
+  --atlas-label-surface: #eef6ef;
+  --nova-surface: linear-gradient(135deg, #eee7fc, #d8c8f4);
+  --nova-border: #977ac21a;
+  --nova-mark: linear-gradient(145deg, #af8edc, #8f6bbd);
+  --nova-label: #a08ab5;
+  --nova-label-surface: #f3eff9;
+  --scout-surface: #fff3dd;
+  --scout-border: #e8c57515;
+  --scout-mark: #e9ad42;
+  --scout-label: #b39964;
+  --scout-label-surface: #faf5e7;
+  --shadow: 0 20px 70px #12232e24, 0 4px 18px #12232e12;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+:root[data-mode='dark'] {
+  --ink: #e0e8e5;
+  --text-secondary: #acbcb3;
+  --text-body: #c4d0c9;
+  --text-muted: #8c9f95;
+  --text-soft: #72867b;
+  --surface: #1c252a;
+  --surface-raised: #232e34;
+  --surface-muted: #253036;
+  --sidebar: #192126;
+  --line: #303e43;
+  --line-strong: #43545a;
+  --identity-purple-bg: #362f45;
+  --identity-purple-text: #bc9de5;
+  --atlas-surface: linear-gradient(135deg, #223c35, #284b40);
+  --atlas-border: #3b6756;
+  --atlas-mark: #4d8d74;
+  --atlas-eyes: #e1f5e8;
+  --atlas-label: #a1d9be;
+  --atlas-label-surface: #284539;
+  --nova-surface: linear-gradient(135deg, #332b43, #443453);
+  --nova-border: #614a79;
+  --nova-mark: linear-gradient(145deg, #b596df, #9572c4);
+  --nova-label: #c9adeb;
+  --nova-label-surface: #3c304d;
+  --scout-surface: #3d3326;
+  --scout-border: #6b5533;
+  --scout-mark: #e0b265;
+  --scout-label: #e4c18a;
+  --scout-label-surface: #443724;
+  --shadow: 0 24px 90px #00000066, 0 4px 20px #00000033;
+}
