@@ -3,7 +3,8 @@ import { Trash2 } from 'lucide-react';
 import type { Bot, BotInput, ProviderSettings } from '../../../../shared/ai';
 import { Modal } from '../../components/ui/Modal';
 import { Avatar } from '../../components/ui/Avatar';
-import { api, errorText } from './api';
+import { botService } from '../../services/botService';
+import { errorText } from '../../utils/errors';
 
 export function BotEditor({
   bot,
@@ -39,7 +40,7 @@ export function BotEditor({
     setBusy(true);
     setError('');
     try {
-      onSaved(await api<Bot>(bot ? `/bots/${bot.id}` : '/bots', bot ? 'PUT' : 'POST', value));
+      onSaved(await (bot ? botService.update(bot.id, value) : botService.create(value)));
     } catch (error) {
       setError(errorText(error));
       setBusy(false);
@@ -50,7 +51,7 @@ export function BotEditor({
     setBusy(true);
     setError('');
     try {
-      await api(`/bots/${bot.id}`, 'DELETE');
+      await botService.remove(bot.id);
       onDeleted();
     } catch (error) {
       setError(errorText(error));

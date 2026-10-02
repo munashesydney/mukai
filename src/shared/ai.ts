@@ -57,6 +57,15 @@ export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
   | { type: 'delta'; id: string; text: string }
   | { type: 'done' | 'error'; message: ChatMessage };
+export interface ChatInput {
+  requestId: string;
+  text: string;
+  attachmentIds: string[];
+}
+export interface ProviderTestResult {
+  ok: boolean;
+  message: string;
+}
 export const UPLOAD_LIMIT = 10 * 1024 * 1024;
 export const ATTACHMENT_LIMIT = 4;
 export const ACCEPTED_FILES =

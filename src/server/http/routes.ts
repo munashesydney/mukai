@@ -1,0 +1,139 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
+import type { HealthResponse } from '../../shared/contracts';
+import { UPLOAD_LIMIT } from '../../shared/ai';
+import { ApiError } from '../config';
+import type { BotService } from '../services/botService';
+import type { ProviderService } from '../services/providerService';
+import type { AttachmentService } from '../services/attachmentService';
+import type { ChatService } from '../services/chatService';
+import { botSchema, providerSchema, chatSchema } from './schemas';
+import { body, jsonBody, send, chatOutput } from './transport';
+
+export function createRoutes({
+  token,
+  startedAt,
+  bots,
+  providers,
+  attachments,
+  chats,
+}: {
+  token: string;
+  startedAt: number;
+  bots: BotService;
+  providers: ProviderService;
+  attachments: AttachmentService;
+  chats: ChatService;
+}) {
+  return async (request: IncomingMessage, response: ServerResponse) => {
+    response.setHeader('Content-Type', 'application/json; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    const origin = request.headers.origin;
+    const permittedOrigin =
+      !origin || origin === 'null' || /^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin);
+    if (!permittedOrigin || !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(request.headers.host || ''))
+      throw new ApiError(403, 'Untrusted request origin.');
+    if (origin) {
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Vary', 'Origin');
+    }
+    if (request.method === 'OPTIONS') {
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,HEAD');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-Filename');
+      response.writeHead(204).end();
+      return;
+    }
+    const path = new URL(request.url || '/', 'http://localhost').pathname;
+    const method = request.method || 'GET';
+    if (path === '/health') {
+      if (!['GET', 'HEAD'].includes(method)) {
+        response.setHeader('Allow', 'GET, HEAD');
+        throw new ApiError(405, 'Method not allowed');
+      }
+      const payload: HealthResponse = {
+        status: 'ok',
+        service: 'mukai-api',
+        version: '0.1.0',
+        uptime: Math.floor((Date.now() - startedAt) / 1000),
+        timestamp: new Date().toISOString(),
+      };
+      send(response, method === 'HEAD' ? undefined : payload);
+      return;
+    }
+    if (!/^\/(bots|providers|attachments)(\/|$)/.test(path)) throw new ApiError(404, 'Not found');
+    const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
+    const expected = Buffer.from(token);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected))
+      throw new ApiError(401, 'API authentication required.');
+    const parts = path.split('/').filter(Boolean);
+    const [resource, id, action] = parts;
+    if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'providers') {
+      if (!id && method === 'GET') return send(response, providers.list());
+      if (!id && method === 'POST')
+        return send(response, providers.save(providerSchema.parse(await jsonBody(request))), 201);
+      if (id && method === 'PUT' && !action) {
+        return send(response, providers.save(providerSchema.parse(await jsonBody(request)), id));
+      }
+      if (id && method === 'DELETE' && !action) {
+        providers.remove(id);
+        return send(response, { ok: true });
+      }
+      if (id && action === 'test' && method === 'POST')
+        return send(response, await providers.test(id));
+    } else if (resource === 'bots') {
+      if (!id && method === 'GET') return send(response, bots.list());
+      if (!id && method === 'POST')
+        return send(response, bots.save(botSchema.parse(await jsonBody(request))), 201);
+      const bot = bots.require(id || '');
+      if (method === 'PUT' && !action)
+        return send(response, bots.save(botSchema.parse(await jsonBody(request)), id));
+      if (method === 'DELETE' && !action) {
+        bots.remove(id);
+        return send(response, { ok: true });
+      }
+      if (action === 'messages' && method === 'GET') return send(response, chats.history(id));
+      if (action === 'files' && method === 'GET')
+        return send(response, attachments.list(id, false));
+      if (action === 'attachments' && method === 'GET')
+        return send(response, attachments.list(id, true));
+      if (action === 'attachments' && method === 'POST') {
+        let filename: string;
+        try {
+          filename = decodeURIComponent(String(request.headers['x-filename'] || ''));
+        } catch {
+          throw new ApiError(400, 'Invalid filename.');
+        }
+        return send(
+          response,
+          await attachments.upload(id, filename, await body(request, UPLOAD_LIMIT)),
+          201,
+        );
+      }
+      if (action === 'chat' && method === 'POST')
+        return chats.respond(bot, chatSchema.parse(await jsonBody(request)), chatOutput(response));
+      if (action === 'stop' && method === 'POST') {
+        chats.stop(id);
+        return send(response, { ok: true });
+      }
+    } else if (resource === 'attachments' && id && !action) {
+      if (method === 'DELETE') {
+        attachments.remove(id);
+        return send(response, { ok: true });
+      }
+      if (method === 'GET') {
+        const { row, bytes } = attachments.read(id);
+        response.setHeader('Content-Type', String(row.mediaType));
+        response.setHeader(
+          'Content-Disposition',
+          `${row.kind === 'image' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(String(row.name))}`,
+        );
+        response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        response.writeHead(200).end(bytes);
+        return;
+      }
+    }
+    throw new ApiError(405, 'Method not allowed.');
+  };
+}

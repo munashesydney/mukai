@@ -2,7 +2,7 @@ import { ArrowLeft, ArrowRight, Search, Minus, Square, X, PanelLeft } from 'luci
 import { Brand } from '../ui/Brand';
 import { IconButton } from '../ui/IconButton';
 import { useEffect, useState } from 'react';
-import { apiFetch } from '../../features/ai/api';
+import { getHealth } from '../../services/healthService';
 
 export function TitleBar({
   onSearch,
@@ -24,8 +24,7 @@ export function TitleBar({
     let disposed = false;
     const check = async () => {
       try {
-        if (window.mukai) await window.mukai.getHealth();
-        else await apiFetch('/health', { signal: AbortSignal.timeout(3000) });
+        await getHealth();
         if (!disposed) setConnection('All systems calm');
       } catch {
         if (!disposed) setConnection('Server unavailable');

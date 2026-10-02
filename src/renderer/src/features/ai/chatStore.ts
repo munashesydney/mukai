@@ -1,18 +1,11 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import type { Attachment, ChatEvent, ChatMessage } from '../../../../shared/ai';
+import type { ChatEvent } from '../../../../shared/ai';
 import { UPLOAD_LIMIT, ATTACHMENT_LIMIT } from '../../../../shared/ai';
-import { api, apiFetch, errorText } from './api';
+import { chatService } from '../../services/chatService';
+import { attachmentService } from '../../services/attachmentService';
+import { errorText } from '../../utils/errors';
+import type { ChatState, ChatDraft } from '../../models/chat';
 
-interface ChatState {
-  messages: ChatMessage[];
-  loading: boolean;
-  busy: boolean;
-  error: string;
-  text: string;
-  files: Attachment[];
-  uploading: boolean;
-  requestId: string;
-}
 const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
 const active = new Set<string>();
@@ -22,10 +15,9 @@ function get(id: string) {
     let text = '',
       requestId = crypto.randomUUID();
     try {
-      const saved = JSON.parse(localStorage.getItem(`mukai.draft.${id}`) || 'null') as {
-        text?: string;
-        requestId?: string;
-      } | null;
+      const saved = JSON.parse(
+        localStorage.getItem(`mukai.draft.${id}`) || 'null',
+      ) as Partial<ChatDraft> | null;
       if (
         typeof saved?.text === 'string' &&
         saved.text.length <= 16000 &&
@@ -73,8 +65,8 @@ export const chatStore = {
     const previous = get(id);
     try {
       const [messages, files] = await Promise.all([
-        api<ChatMessage[]>(`/bots/${id}/messages`),
-        api<Attachment[]>(`/bots/${id}/attachments`),
+        chatService.history(id),
+        attachmentService.pending(id),
       ]);
       if (active.has(id) || get(id).messages !== previous.messages) return;
       const accepted = messages.find(
@@ -115,15 +107,7 @@ export const chatStore = {
     update(id, { uploading: true, error: '' });
     try {
       for (const file of files) {
-        const response = await apiFetch(`/bots/${id}/attachments`, {
-          method: 'POST',
-          headers: {
-            'X-Filename': encodeURIComponent(file.name),
-            'Content-Type': 'application/octet-stream',
-          },
-          body: file,
-        });
-        const attachment = (await response.json()) as Attachment;
+        const attachment = await attachmentService.upload(id, file);
         update(id, { files: [...get(id).files, attachment] });
       }
     } catch (error) {
@@ -134,7 +118,7 @@ export const chatStore = {
   },
   async removeFile(id: string, fileId: string) {
     try {
-      await api(`/attachments/${fileId}`, 'DELETE');
+      await attachmentService.remove(fileId);
       update(id, { files: get(id).files.filter((file) => file.id !== fileId) });
     } catch (error) {
       update(id, { error: errorText(error) });
@@ -151,26 +135,12 @@ export const chatStore = {
     const requestId = retryId || state.requestId;
     active.add(id);
     update(id, { busy: true, error: '' });
-    let accepted = false,
-      finished = false;
+    let accepted = false;
     const accept = () => {
       accepted = true;
       if (!retryId) update(id, { text: '', files: [], requestId: crypto.randomUUID() });
     };
     try {
-      const response = await apiFetch(`/bots/${id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId,
-          text: retryId ? '' : state.text,
-          attachmentIds: retryId ? [] : state.files.map((file) => file.id),
-        }),
-      });
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('The response stream is unavailable.');
-      const decoder = new TextDecoder();
-      let buffer = '';
       const handle = (event: ChatEvent) => {
         if (event.type === 'start') {
           accept();
@@ -185,7 +155,6 @@ export const chatStore = {
             ),
           });
         else {
-          finished = true;
           update(id, {
             messages: get(id).messages.map((message) =>
               message.id === event.message.id ? event.message : message,
@@ -193,23 +162,19 @@ export const chatStore = {
           });
         }
       };
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        let newline: number;
-        while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline);
-          buffer = buffer.slice(newline + 1);
-          if (line) handle(JSON.parse(line) as ChatEvent);
-        }
-        if (done) break;
-      }
-      if (!finished)
-        throw new Error('The response was interrupted. Your saved message can be retried.');
+      await chatService.stream(
+        id,
+        {
+          requestId,
+          text: retryId ? '' : state.text,
+          attachmentIds: retryId ? [] : state.files.map((file) => file.id),
+        },
+        handle,
+      );
     } catch (error) {
       // Recover acceptance after a transport failure before the first stream event.
       try {
-        const messages = await api<ChatMessage[]>(`/bots/${id}/messages`);
+        const messages = await chatService.history(id);
         if (!accepted && messages.some((message) => message.requestId === requestId)) accept();
         update(id, { messages });
       } catch {
@@ -223,7 +188,7 @@ export const chatStore = {
   },
   async stop(id: string) {
     try {
-      await api(`/bots/${id}/stop`, 'POST');
+      await chatService.stop(id);
     } catch (error) {
       update(id, { error: errorText(error) });
     }

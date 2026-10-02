@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Check, ChevronLeft, KeyRound, Plus, Radio, Trash2 } from 'lucide-react';
 import type { ProviderInput, ProviderSettings, ProviderKind } from '../../../../shared/ai';
-import { api, errorText } from '../ai/api';
+import { providerService } from '../../services/providerService';
+import { errorText } from '../../utils/errors';
 
 const kinds: { id: ProviderKind; label: string; model: string }[] = [
   { id: 'openai', label: 'OpenAI', model: 'gpt-4.1-mini' },
@@ -29,7 +30,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
   const [removeId, setRemoveId] = useState<string | null>(null);
   async function refresh() {
     try {
-      setProviders(await api<ProviderSettings[]>('/providers'));
+      setProviders(await providerService.list());
       setError('');
     } catch (error) {
       setError(errorText(error));
@@ -54,17 +55,15 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     setError('');
     setNotice('');
     try {
-      const saved = await api<ProviderSettings>(
-        editing === 'new' ? '/providers' : `/providers/${editing}`,
-        editing === 'new' ? 'POST' : 'PUT',
-        value,
-      );
+      const saved = await (editing === 'new'
+        ? providerService.create(value)
+        : providerService.update(editing!, value));
       setEditing(saved.id);
       setValue({ ...saved, apiKey: '' });
       await refresh();
       onChanged();
       if (test) {
-        const result = await api<{ message: string }>(`/providers/${saved.id}/test`, 'POST');
+        const result = await providerService.test(saved.id);
         setNotice(result.message);
       } else {
         setEditing(null);
@@ -81,7 +80,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     setNotice('');
     setError('');
     try {
-      setNotice((await api<{ message: string }>(`/providers/${provider.id}/test`, 'POST')).message);
+      setNotice((await providerService.test(provider.id)).message);
     } catch (error) {
       setError(errorText(error));
     } finally {
@@ -92,7 +91,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     setBusy(true);
     setError('');
     try {
-      await api(`/providers/${removeId}`, 'DELETE');
+      await providerService.remove(removeId!);
       setRemoveId(null);
       await refresh();
       onChanged();

@@ -1,11 +1,15 @@
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { extname, join, basename } from 'node:path';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
 import yauzl from 'yauzl';
-import { ATTACHMENT_LIMIT, UPLOAD_LIMIT } from '../shared/ai';
-import { Store, attachmentDto } from './database';
-import { ApiError } from './config';
+import { ATTACHMENT_LIMIT, UPLOAD_LIMIT } from '../../shared/ai';
+import { randomUUID } from 'node:crypto';
+import type { AttachmentRecord } from '../models/entities';
+import { publicAttachment } from '../models/entities';
+import { AttachmentRepository } from '../repositories/attachmentRepository';
+import { BotRepository } from '../repositories/botRepository';
+import { ApiError } from '../config';
 
 const textExtensions = new Set([
   '.txt',
@@ -54,8 +58,26 @@ async function checkDocx(buffer: Buffer) {
     });
   });
 }
-export class Attachments {
-  constructor(private store: Store) {}
+export class AttachmentService {
+  constructor(
+    private attachments: AttachmentRepository,
+    private bots: BotRepository,
+    private uploads: string,
+  ) {
+    mkdirSync(uploads, { recursive: true, mode: 0o700 });
+  }
+  list(botId: string, pending: boolean) {
+    return this.attachments.forBot(botId, pending).map(publicAttachment);
+  }
+  forMessage(id: string) {
+    return this.attachments.forMessage(id);
+  }
+  storageNames(botId: string) {
+    return this.attachments.storageNames(botId);
+  }
+  bytes(file: AttachmentRecord) {
+    return readFileSync(join(this.uploads, file.storageName));
+  }
   async upload(botId: string, originalName: string, buffer: Buffer) {
     if (!buffer.length || buffer.length > UPLOAD_LIMIT)
       throw new ApiError(413, 'Files must be between 1 byte and 10 MB.');
@@ -66,7 +88,7 @@ export class Attachments {
     if (!name) throw new ApiError(400, 'A filename is required.');
     const extension = extname(name).toLowerCase();
     let mediaType = '',
-      kind = 'text',
+      kind: AttachmentRecord['kind'] = 'text',
       text: string | null = null,
       warning: string | null = null;
     if (['.png', '.jpg', '.jpeg', '.webp'].includes(extension)) {
@@ -131,50 +153,37 @@ export class Attachments {
       warning = `${warning ? warning + ' ' : ''}Only the first ${TEXT_LIMIT.toLocaleString()} characters are sent to the model.`;
       text = text.slice(0, TEXT_LIMIT);
     }
-    if (!this.store.get('SELECT id FROM bots WHERE id = ?', botId))
-      throw new ApiError(404, 'Bot not found.');
-    if (
-      Number(
-        this.store.get(
-          'SELECT COUNT(*) AS count FROM attachments WHERE bot_id = ? AND message_id IS NULL',
-          botId,
-        )?.count,
-      ) >= ATTACHMENT_LIMIT
-    )
+    if (!this.bots.find(botId)) throw new ApiError(404, 'Bot not found.');
+    if (this.attachments.pendingCount(botId) >= ATTACHMENT_LIMIT)
       throw new ApiError(400, 'Remove unused attachments before uploading more.');
-    const id = this.store.id();
-    const storageName = id + extension;
-    writeFileSync(join(this.store.uploads, storageName), buffer, { flag: 'wx', mode: 0o600 });
+    const id = randomUUID();
+    const file: AttachmentRecord = {
+      id,
+      botId,
+      messageId: null,
+      name,
+      mediaType,
+      size: buffer.length,
+      kind,
+      storageName: id + extension,
+      extractedText: text,
+      warning,
+    };
+    writeFileSync(join(this.uploads, file.storageName), buffer, { flag: 'wx', mode: 0o600 });
     try {
-      this.store.run(
-        'INSERT INTO attachments VALUES (?,?,?,?,?,?,?,?,?,?)',
-        id,
-        botId,
-        null,
-        name,
-        mediaType,
-        buffer.length,
-        kind,
-        storageName,
-        text,
-        warning,
-      );
+      this.attachments.create(file);
     } catch (error) {
-      unlinkSync(join(this.store.uploads, storageName));
+      unlinkSync(join(this.uploads, file.storageName));
       throw error;
     }
-    return attachmentDto(this.store.get('SELECT * FROM attachments WHERE id = ?', id)!);
+    return publicAttachment(file);
   }
   select(ids: string[], botId: string, vision: boolean) {
     if (ids.length > ATTACHMENT_LIMIT || new Set(ids).size !== ids.length)
       throw new ApiError(400, 'Attach up to four different files.');
     return ids.map((id) => {
-      const row = this.store.get(
-        'SELECT * FROM attachments WHERE id = ? AND bot_id = ? AND message_id IS NULL',
-        id,
-        botId,
-      );
-      if (!row)
+      const row = this.attachments.find(id);
+      if (!row || row.botId !== botId || row.messageId !== null)
         throw new ApiError(400, 'An attachment is missing or already sent. Upload it again.');
       if (row.kind === 'image' && !vision)
         throw new ApiError(
@@ -185,20 +194,20 @@ export class Attachments {
     });
   }
   read(id: string) {
-    const row = this.store.get('SELECT * FROM attachments WHERE id = ?', id);
+    const row = this.attachments.find(id);
     if (!row) throw new ApiError(404, 'Attachment not found.');
-    return { row, bytes: readFileSync(join(this.store.uploads, String(row.storage_name))) };
+    return { row, bytes: this.bytes(row) };
   }
   remove(id: string) {
-    const row = this.store.get('SELECT * FROM attachments WHERE id = ?', id);
+    const row = this.attachments.find(id);
     if (!row) throw new ApiError(404, 'Attachment not found.');
-    if (row.message_id) throw new ApiError(409, 'Sent attachments are part of the chat history.');
-    this.store.run('DELETE FROM attachments WHERE id = ?', id);
-    this.removeFile(String(row.storage_name));
+    if (row.messageId) throw new ApiError(409, 'Sent attachments are part of the chat history.');
+    this.attachments.delete(id);
+    this.removeFile(String(row.storageName));
   }
   removeFile(name: string) {
     try {
-      unlinkSync(join(this.store.uploads, name));
+      unlinkSync(join(this.uploads, name));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }

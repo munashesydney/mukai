@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Download, FileText, LoaderCircle, X } from 'lucide-react';
 import type { Attachment } from '../../../../shared/ai';
-import { apiFetch, errorText } from './api';
+import { attachmentService } from '../../services/attachmentService';
+import { errorText } from '../../utils/errors';
 
 export function AttachmentCard({
   attachment,
@@ -17,8 +18,8 @@ export function AttachmentCard({
     if (attachment.kind !== 'image') return;
     let disposed = false,
       objectUrl = '';
-    void apiFetch(`/attachments/${attachment.id}`)
-      .then((response) => response.blob())
+    void attachmentService
+      .blob(attachment.id)
       .then((blob) => {
         if (!disposed) {
           objectUrl = URL.createObjectURL(blob);
@@ -37,7 +38,7 @@ export function AttachmentCard({
     setBusy(true);
     setError('');
     try {
-      const blob = await (await apiFetch(`/attachments/${attachment.id}`)).blob();
+      const blob = await attachmentService.blob(attachment.id);
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = objectUrl;

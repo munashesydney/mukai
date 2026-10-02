@@ -53,7 +53,7 @@ The directory holds `mukai.sqlite`, its WAL files, durable `uploads/`, `credenti
 
 The backend binds only to `127.0.0.1`, authenticates feature APIs with a local bearer token, checks Host/Origin, rejects credential-bearing custom URLs, and does not follow provider redirects. Electron exposes only a narrow typed preload bridge with context isolation, sandboxing, denied permissions, and CSP. The renderer receives a local API token, never provider credentials. Chat context and supported attachment contents go directly to your selected provider. OpenAI Responses requests explicitly disable response storage; each provider’s own retention policies still apply.
 
-Migrations are append-only, versioned, and transactional in `src/server/database.ts`, tracked in `schema_migrations`. Scout’s one-time seed is tracked separately so deleting it does not recreate it on restart. Startup marks unfinished assistant records interrupted.
+Migrations are append-only, versioned, and transactional in `src/server/db/migrations.ts`, tracked in `schema_migrations`. Scout’s one-time seed is tracked separately so deleting it does not recreate it on restart. Startup marks unfinished assistant records interrupted.
 
 ## Structure
 
@@ -63,21 +63,28 @@ src/
   preload/                    Typed desktop bridge
   shared/                     Public API/chat/provider contracts
   server/
-    app.ts                    Authenticated HTTP routing and validation
-    database.ts               SQLite migrations and repositories
-    providers.ts              Encrypted credentials and SDK adapters
-    chat.ts                   Context, streaming, idempotency, cancellation
-    attachments.ts            Upload validation, extraction, durable files
+    app.ts                    Composition, dependency wiring, server lifecycle
+    db/                       SQLite connection, transactions, versioned migrations
+    repositories/             Bot, provider, message, attachment database operations
+    services/                 Bot rules, credentials, AI chat, file extraction/storage
+    models/                   Internal records and explicit public projections
+    http/                     Routes, request validation, auth, NDJSON transport
     config.ts                 Local paths and secrets
     index.ts                  Standalone service lifecycle
   renderer/src/
     app/                      Application composition
     components/               Shared shell and UI components
-    features/ai/              Real bots, streaming chat state, API, files
+    services/                 Typed bot/provider/chat/attachment API calls and streaming
+    models/                   Renderer chat state and drafts
+    features/ai/              Bot UI, chat state coordination, attachment presentation
     features/settings/        Workspace, Appearance, Providers
     features/workspace/       Existing prototype areas
     styles/                   Theme tokens and component styles
 ```
+
+Server dependencies run from **HTTP → services → repositories → SQLite**. Repositories map SQL rows into typed internal records; services own business rules and project private records into the shared public contracts. HTTP handlers have no SQL, and AI streaming is independent of Node HTTP through a small output interface. `app.ts` constructs the dependencies explicitly.
+
+On the client, components and chat state call typed services rather than building URLs or parsing streams. `services/http.ts` owns authentication and transport errors; `services/chatService.ts` owns the NDJSON reader. Shared request/response types remain in `shared/`, while `renderer/src/models/` contains UI-specific state. ESLint enforces the main import boundaries. The database schema, API paths, UI, and run commands are unchanged by this separation.
 
 ## Verification and builds
 

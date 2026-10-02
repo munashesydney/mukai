@@ -1,19 +1,12 @@
-import type { ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { streamText, type ModelMessage, type UserContent } from 'ai';
-import { z } from 'zod';
-import type { ChatEvent, MessageStatus } from '../shared/ai';
-import { Store, type Row } from './database';
-import { Providers, safeProviderError } from './providers';
-import { Attachments } from './attachments';
-import { ApiError } from './config';
+import type { ChatInput, ChatEvent, MessageStatus } from '../../shared/ai';
+import type { BotRecord } from '../models/entities';
+import { MessageRepository } from '../repositories/messageRepository';
+import { ProviderService, safeProviderError } from './providerService';
+import { AttachmentService } from './attachmentService';
+import { ApiError } from '../config';
 
-const inputSchema = z.object({
-  requestId: z.string().uuid(),
-  text: z.string().trim().max(16000),
-  attachmentIds: z.array(z.string().uuid()).max(4),
-});
 interface Generation {
   controller: AbortController;
   content: string;
@@ -21,23 +14,31 @@ interface Generation {
   reason: 'stopped' | 'interrupted';
   done: Promise<void>;
 }
-export class Chats {
+export interface ChatOutput {
+  start(): void;
+  emit(event: ChatEvent): void;
+  onDisconnect(callback: () => void): () => void;
+  end(): void;
+}
+export class ChatService {
   private active = new Map<string, Generation>();
   constructor(
-    private store: Store,
-    private providers: Providers,
-    private attachments: Attachments,
+    private messages: MessageRepository,
+    private providers: ProviderService,
+    private attachments: AttachmentService,
   ) {}
+  initialize() {
+    this.messages.interruptStreaming(
+      'The server restarted before this response finished. You can retry.',
+    );
+  }
   busy(id: string) {
     return this.active.has(id);
   }
   history(id: string) {
     if (!this.busy(id))
-      this.store.run(
-        "UPDATE messages SET status = 'interrupted', error = 'This response did not finish saving. You can retry.' WHERE bot_id = ? AND status = 'streaming'",
-        id,
-      );
-    return this.store.messages(id);
+      this.messages.interruptStreaming('This response did not finish saving. You can retry.', id);
+    return this.messages.history(id);
   }
   stop(id: string) {
     const active = this.active.get(id);
@@ -54,121 +55,76 @@ export class Chats {
   }
   private context(botId: string, vision: boolean): ModelMessage[] {
     // The pending assistant is excluded. Ten persisted messages include the current user.
-    const rows = this.store
-      .all(
-        "SELECT * FROM messages WHERE bot_id = ? AND status != 'streaming' AND (role = 'user' OR content != '') ORDER BY sequence DESC LIMIT 10",
-        botId,
-      )
-      .reverse();
+    const rows = this.messages.context(botId, 10);
     return rows.map((row) => {
       if (row.role === 'assistant')
         return { role: 'assistant' as const, content: String(row.content) };
       const content: UserContent = [
         { type: 'text', text: String(row.content) || 'Please review the attached files.' },
       ];
-      for (const file of this.store.all('SELECT * FROM attachments WHERE message_id = ?', row.id)) {
+      for (const file of this.attachments.forMessage(row.id)) {
         if (file.kind === 'image' && vision)
           content.push({
             type: 'file',
-            data: readFileSync(join(this.store.uploads, String(file.storage_name))),
-            mediaType: String(file.media_type),
+            data: this.attachments.bytes(file),
+            mediaType: String(file.mediaType),
           });
         else
           content.push({
             type: 'text',
             text:
               file.kind === 'text'
-                ? `Attached document: ${String(file.name)}\n<document>\n${String(file.extracted_text)}\n</document>`
+                ? `Attached document: ${String(file.name)}\n<document>\n${String(file.extractedText)}\n</document>`
                 : `[An image named ${String(file.name)} was attached previously; this text-only model cannot view it.]`,
           });
       }
       return { role: 'user' as const, content };
     });
   }
-  async respond(bot: Row, input: unknown, response: ServerResponse) {
-    const value = inputSchema.parse(input);
+  async respond(bot: BotRecord, value: ChatInput, output: ChatOutput) {
     const botId = String(bot.id);
     if (this.busy(botId))
       throw new ApiError(409, 'This bot is already responding. Stop it or wait for it to finish.');
     const config = this.providers.resolve(bot);
-    const existingUser = this.store.get(
-      "SELECT * FROM messages WHERE bot_id = ? AND request_id = ? AND role = 'user'",
-      botId,
-      value.requestId,
-    );
+    const existingUser = this.messages.forRequest(botId, value.requestId, 'user');
     let userId: string, assistantId: string;
     if (existingUser) {
       userId = String(existingUser.id);
-      const assistant = this.store.get(
-        "SELECT * FROM messages WHERE bot_id = ? AND request_id = ? AND role = 'assistant'",
-        botId,
-        value.requestId,
-      )!;
+      const assistant = this.messages.forRequest(botId, value.requestId, 'assistant')!;
       assistantId = String(assistant.id);
       if (assistant.status === 'complete') {
-        response.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
-        response.end(
-          JSON.stringify({
-            type: 'start',
-            user: this.store.message(userId),
-            assistant: this.store.message(assistantId),
-          }) +
-            '\n' +
-            JSON.stringify({ type: 'done', message: this.store.message(assistantId) }) +
-            '\n',
-        );
+        output.start();
+        output.emit({
+          type: 'start',
+          user: this.messages.message(userId),
+          assistant: this.messages.message(assistantId),
+        });
+        output.emit({ type: 'done', message: this.messages.message(assistantId) });
+        output.end();
         return;
       }
-      const latest = this.store.get(
-        "SELECT id FROM messages WHERE bot_id = ? AND role = 'user' ORDER BY sequence DESC LIMIT 1",
-        botId,
-      );
-      if (latest?.id !== userId)
+      if (this.messages.latestUserId(botId) !== userId)
         throw new ApiError(
           409,
           'Only the most recent response can be retried. Send a new message instead.',
         );
-      const previousFiles = this.store.all(
-        'SELECT * FROM attachments WHERE message_id = ?',
-        userId,
-      );
+      const previousFiles = this.attachments.forMessage(userId);
       if (!config.vision && previousFiles.some((file) => file.kind === 'image'))
         throw new ApiError(400, 'Choose a vision model before retrying this image message.');
-      this.store.run(
-        "UPDATE messages SET content = '', status = 'streaming', error = NULL WHERE id = ?",
-        assistantId,
-      );
+      this.messages.reset(assistantId);
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
       const files = this.attachments.select(value.attachmentIds, botId, config.vision);
-      userId = this.store.id();
-      assistantId = this.store.id();
-      this.store.transaction(() => {
-        const now = new Date().toISOString();
-        this.store.run(
-          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at) VALUES (?,?,?,?,?,?,?)',
-          userId,
-          botId,
-          value.requestId,
-          'user',
-          value.text,
-          'complete',
-          now,
-        );
-        this.store.run(
-          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at) VALUES (?,?,?,?,?,?,?)',
-          assistantId,
-          botId,
-          value.requestId,
-          'assistant',
-          '',
-          'streaming',
-          now,
-        );
-        files.forEach((file) =>
-          this.store.run('UPDATE attachments SET message_id = ? WHERE id = ?', userId, file.id),
-        );
+      userId = randomUUID();
+      assistantId = randomUUID();
+      this.messages.createTurn({
+        botId,
+        requestId: value.requestId,
+        userId,
+        assistantId,
+        text: value.text,
+        attachmentIds: files.map((file) => file.id),
       });
     }
     const generation: Generation = {
@@ -183,22 +139,13 @@ export class Chats {
       resolveDone = resolve;
     });
     this.active.set(botId, generation);
-    response.writeHead(200, {
-      'Content-Type': 'application/x-ndjson; charset=utf-8',
-      'X-Accel-Buffering': 'no',
-    });
-    response.flushHeaders();
-    const emit = (event: ChatEvent) => {
-      if (!response.destroyed) response.write(JSON.stringify(event) + '\n');
-    };
-    const onDisconnect = () => {
-      if (!response.writableEnded) generation.controller.abort();
-    };
-    response.on('close', onDisconnect);
+    output.start();
+    const emit = (event: ChatEvent) => output.emit(event);
+    const removeDisconnect = output.onDisconnect(() => generation.controller.abort());
     emit({
       type: 'start',
-      user: this.store.message(userId),
-      assistant: this.store.message(assistantId),
+      user: this.messages.message(userId),
+      assistant: this.messages.message(assistantId),
     });
     let status: MessageStatus = 'complete',
       error: string | null = null,
@@ -222,11 +169,7 @@ export class Chats {
           generation.content += chunk.text;
           emit({ type: 'delta', id: assistantId, text: chunk.text });
           if (Date.now() - lastSaved > 150) {
-            this.store.run(
-              'UPDATE messages SET content = ? WHERE id = ?',
-              generation.content,
-              assistantId,
-            );
+            this.messages.saveContent(assistantId, generation.content);
             lastSaved = Date.now();
           }
         } else if (chunk.type === 'error') throw chunk.error;
@@ -251,20 +194,14 @@ export class Chats {
       if (status === 'interrupted')
         error = 'The connection ended before this response finished. You can retry.';
       try {
-        this.store.run(
-          'UPDATE messages SET content = ?, status = ?, error = ? WHERE id = ?',
-          generation.content,
-          status,
-          error,
-          assistantId,
-        );
+        this.messages.finish(assistantId, generation.content, status, error);
         emit({
           type: status === 'failed' ? 'error' : 'done',
-          message: this.store.message(assistantId),
+          message: this.messages.message(assistantId),
         });
       } catch {
         // Preserve the already-saved user turn even if the disk fills during generation.
-        const message = this.store.message(assistantId);
+        const message = this.messages.message(assistantId);
         emit({
           type: 'error',
           message: {
@@ -276,8 +213,8 @@ export class Chats {
         });
       } finally {
         this.active.delete(botId);
-        response.off('close', onDisconnect);
-        response.end();
+        removeDisconnect();
+        output.end();
         resolveDone();
       }
     }

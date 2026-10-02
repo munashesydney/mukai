@@ -1,4 +1,4 @@
-import type { DesktopBridge } from '../../../../shared/contracts';
+import type { DesktopBridge } from '../../../shared/contracts';
 
 let connection: Promise<{ url: string; token: string }> | undefined;
 export async function apiFetch(path: string, init: RequestInit = {}) {
@@ -29,5 +29,3 @@ export async function api<T>(path: string, method = 'GET', value?: unknown): Pro
   });
   return response.json() as Promise<T>;
 }
-export const errorText = (error: unknown) =>
-  error instanceof Error ? error.message : 'Something went wrong. Please try again.';

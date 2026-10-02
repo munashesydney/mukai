@@ -1,26 +1,19 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText } from 'ai';
-import { z } from 'zod';
-import { ApiError, privateSecret } from './config';
-import { Store, type Row, providerDto } from './database';
+import { ApiError, privateSecret } from '../config';
+import type { BotRecord, ProviderRecord } from '../models/entities';
+import { publicProvider } from '../models/entities';
+import type { ProviderInput } from '../../shared/ai';
+import { ProviderRepository } from '../repositories/providerRepository';
+import { BotRepository } from '../repositories/botRepository';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
-const providerSchema = z.object({
-  name: z.string().trim().min(1).max(80),
-  kind: z.enum(['openai', 'anthropic', 'google', 'compatible']),
-  baseUrl: z.string().trim().max(500),
-  defaultModel: z.string().trim().min(1).max(150),
-  supportsImages: z.boolean(),
-  isDefault: z.boolean(),
-  apiKey: z.string().trim().max(4096).optional(),
-  clearKey: z.boolean().optional(),
-});
 export function safeProviderError(error: unknown) {
   const status = (error as { statusCode?: number })?.statusCode;
   if (status === 401 || status === 403)
@@ -35,10 +28,22 @@ export function safeProviderError(error: unknown) {
     return 'The provider timed out. Check the endpoint and retry.';
   return 'Could not complete the provider request. Check the connection, credentials, model, and account balance, then retry.';
 }
-export class Providers {
+export class ProviderService {
   private key: Buffer;
-  constructor(private store: Store) {
-    this.key = privateSecret(store.dir, 'credentials.key', 32);
+  constructor(
+    private providers: ProviderRepository,
+    private bots: BotRepository,
+    dir: string,
+  ) {
+    this.key = privateSecret(dir, 'credentials.key', 32);
+  }
+  list() {
+    return this.providers.list().map(publicProvider);
+  }
+  require(id: string) {
+    const provider = this.providers.find(id);
+    if (!provider) throw new ApiError(404, 'Provider not found.');
+    return provider;
   }
   private encrypt(value: string) {
     const iv = randomBytes(12);
@@ -53,9 +58,10 @@ export class Providers {
     decipher.setAuthTag(data.subarray(12, 28));
     return Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString('utf8');
   }
-  save(input: unknown, id: string = this.store.id()) {
-    const value = providerSchema.parse(input);
-    const existing = this.store.get('SELECT * FROM providers WHERE id = ?', id);
+  save(input: ProviderInput, id?: string) {
+    const value = { ...input };
+    const existing = id ? this.require(id) : undefined;
+    const providerId = id || randomUUID();
     if (existing && existing.kind !== value.kind)
       throw new ApiError(400, 'Provider type cannot be changed. Add a new provider instead.');
     if (value.kind === 'compatible') {
@@ -87,62 +93,51 @@ export class Providers {
       ? null
       : value.apiKey
         ? this.encrypt(value.apiKey)
-        : (existing?.encrypted_key ?? null);
+        : (existing?.encryptedKey ?? null);
     if (value.kind !== 'compatible' && !encryptedKey)
       throw new ApiError(400, 'An API key is required for this provider.');
-    if (!this.store.providers().length) value.isDefault = true;
-    this.store.transaction(() => {
-      if (value.isDefault) this.store.run('UPDATE providers SET is_default = 0');
+    if (!this.providers.list().length) value.isDefault = true;
+    const provider: ProviderRecord = {
+      id: providerId,
+      name: value.name,
+      kind: value.kind,
+      baseUrl: value.baseUrl,
+      defaultModel: value.defaultModel,
+      supportsImages: value.supportsImages,
       // A saved default remains default until another provider is selected.
-      const isDefault = value.isDefault || Boolean(existing?.is_default);
-      this.store.run(
-        `INSERT INTO providers VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,default_model=excluded.default_model,supports_images=excluded.supports_images,is_default=excluded.is_default,encrypted_key=excluded.encrypted_key`,
-        id,
-        value.name,
-        value.kind,
-        value.baseUrl,
-        value.defaultModel,
-        Number(value.supportsImages),
-        Number(isDefault),
-        encryptedKey,
-      );
-    });
-    return providerDto(this.store.get('SELECT * FROM providers WHERE id = ?', id)!);
+      isDefault: value.isDefault || Boolean(existing?.isDefault),
+      encryptedKey,
+    };
+    this.providers.save(provider);
+    return publicProvider(provider);
   }
   remove(id: string) {
-    if (!this.store.get('SELECT id FROM providers WHERE id = ?', id))
-      throw new ApiError(404, 'Provider not found.');
-    if (this.store.get('SELECT id FROM bots WHERE provider_id = ?', id))
+    this.require(id);
+    if (this.bots.usesProvider(id))
       throw new ApiError(
         409,
         'A bot uses this provider. Edit its model settings before removing the provider.',
       );
-    this.store.transaction(() => {
-      this.store.run('DELETE FROM providers WHERE id = ?', id);
-      if (!this.store.get('SELECT id FROM providers WHERE is_default = 1')) {
-        const next = this.store.get('SELECT id FROM providers ORDER BY name LIMIT 1');
-        if (next) this.store.run('UPDATE providers SET is_default = 1 WHERE id = ?', next.id);
-      }
-    });
+    this.providers.delete(id);
   }
-  resolve(bot: Row) {
-    const provider = bot.provider_id
-      ? this.store.get('SELECT * FROM providers WHERE id = ?', bot.provider_id)
-      : this.store.get('SELECT * FROM providers WHERE is_default = 1');
+  resolve(bot: BotRecord) {
+    const provider = bot.providerId
+      ? this.providers.find(bot.providerId)
+      : this.providers.default();
     if (!provider) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
-    const modelId = String(bot.model || provider.default_model);
+    const modelId = String(bot.model || provider.defaultModel);
     return {
       provider,
       modelId,
       vision:
-        bot.supports_images === null
-          ? Boolean(provider.supports_images)
-          : Boolean(bot.supports_images),
+        bot.supportsImages === null
+          ? Boolean(provider.supportsImages)
+          : Boolean(bot.supportsImages),
       model: this.model(provider, modelId),
     };
   }
-  private model(provider: Row, id: string) {
-    const apiKey = this.decrypt(provider.encrypted_key as string | null);
+  private model(provider: ProviderRecord, id: string) {
+    const apiKey = this.decrypt(provider.encryptedKey as string | null);
     const secureFetch: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' });
     switch (provider.kind) {
       case 'openai':
@@ -154,18 +149,17 @@ export class Providers {
       default:
         return createOpenAICompatible({
           name: 'mukai-custom',
-          baseURL: String(provider.base_url),
+          baseURL: String(provider.baseUrl),
           apiKey,
           fetch: secureFetch,
         })(id);
     }
   }
   async test(id: string) {
-    const provider = this.store.get('SELECT * FROM providers WHERE id = ?', id);
-    if (!provider) throw new ApiError(404, 'Provider not found.');
+    const provider = this.require(id);
     try {
       const result = await generateText({
-        model: this.model(provider, String(provider.default_model)),
+        model: this.model(provider, String(provider.defaultModel)),
         prompt: 'Reply with OK.',
         maxOutputTokens: 64,
         maxRetries: 0,
@@ -175,11 +169,11 @@ export class Providers {
       if (!result.text.trim())
         return {
           ok: true,
-          message: `Connected to ${String(provider.default_model)}. The provider accepted the test but returned no text at the short output limit. Try a chat message to check its output.`,
+          message: `Connected to ${String(provider.defaultModel)}. The provider accepted the test but returned no text at the short output limit. Try a chat message to check its output.`,
         };
       return {
         ok: true,
-        message: `Connected to ${String(provider.default_model)}. A short test request was sent.`,
+        message: `Connected to ${String(provider.defaultModel)}. A short test request was sent.`,
       };
     } catch (error) {
       if (error instanceof ApiError) throw error;
