@@ -15,7 +15,9 @@ export const fileOperationsDefinition = {
       .string()
       .max(500)
       .optional()
-      .describe('Relative file or directory path. Defaults to . for list/search.'),
+      .describe(
+        'Relative file or directory path. search_files accepts a single file or searches a directory recursively. Defaults to . for list/search.',
+      ),
     content: z
       .string()
       .max(120000)

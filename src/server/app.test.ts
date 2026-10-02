@@ -21,7 +21,9 @@ import type {
 // persistence, and error handling without a cloud key or billable requests.
 let fixture: Server, api: Awaited<ReturnType<typeof startApiServer>>, dir: string;
 let calls: { model: string; messages: { role: string; content: unknown }[] }[];
-let mode: 'normal' | 'fail' | 'slow' | 'tools' = 'normal';
+let mode:
+  'normal' | 'fail' | 'slow' | 'tools' | 'invalid-tool' | 'tool-limit' | 'no-final' | 'truncated' =
+  'normal';
 let endpoint = '';
 let project = '';
 async function close(server: Server) {
@@ -154,7 +156,7 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    if (mode === 'tools') {
+    if (['tools', 'invalid-tool', 'tool-limit', 'no-final'].includes(mode)) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
       ).length;
@@ -170,15 +172,51 @@ beforeEach(async () => {
         },
         { action: 'search_files', query: 'clearer' },
       ];
+      if (mode === 'invalid-tool') actions[0] = { action: 'invalid_action', path: '.' };
       const send = (delta: unknown, finish: string | null = null) =>
         res.write(
           `data: ${JSON.stringify({ id: 'tools', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
         );
+      if (mode === 'tool-limit' || mode === 'no-final') {
+        if (!body.tools?.length) {
+          send(
+            mode === 'no-final'
+              ? {}
+              : {
+                  content:
+                    'Final report: the operation limit was reached. Some tool calls failed, and verification remains unfinished.',
+                },
+            'stop',
+          );
+        } else {
+          send({ reasoning_content: 'Check the workspace and handle any errors.' });
+          send({ content: `Progress for step ${completed + 1}.` });
+          send({
+            tool_calls: [
+              {
+                index: 0,
+                id: `limit-${completed}`,
+                type: 'function',
+                function: {
+                  name: 'file_operations',
+                  arguments: JSON.stringify(
+                    completed === 7 ? { action: 'invalid_action' } : { action: 'list', path: '.' },
+                  ),
+                },
+              },
+            ],
+          });
+          send({}, 'tool_calls');
+        }
+        res.end('data: [DONE]\n\n');
+        return;
+      }
       if (completed < actions.length) {
         if (!completed)
           send({
             reasoning_content: 'I will review the notes, create a draft, and check the result.',
           });
+        send({ content: `Progress before operation ${completed + 1}.` });
         send({
           tool_calls: [
             {
@@ -209,7 +247,7 @@ beforeEach(async () => {
       }, 1000);
       res.on('close', () => clearTimeout(timer));
     } else {
-      chunk('response.', 'stop');
+      chunk('response.', mode === 'truncated' ? 'length' : 'stop');
       res.end('data: [DONE]\n\n');
     }
   });
@@ -231,6 +269,71 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('reserves a tool-free final response after eight steps, including a failed last tool call', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const workspace = (
+      await request<Workspace>('/workspaces', 'POST', { name: 'Step limit', folder: project })
+    ).data;
+    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    mode = 'tool-limit';
+    const sent = await chat('Work until the limit', randomUUID(), bot.id);
+    expect(calls).toHaveLength(9);
+    expect(calls.at(-1)).not.toHaveProperty('tools');
+    expect(JSON.stringify(calls.at(-1))).toContain('Give your final response now');
+    const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
+    expect(message.status).toBe('complete');
+    expect(message.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('Final report:'),
+    });
+    expect(message.activity?.at(-1)?.status).toBe('failed');
+    const reasoningEnd = sent.events.find(
+      (event) =>
+        event.type === 'part' && event.part.type === 'reasoning' && event.part.state === 'complete',
+    );
+    expect(reasoningEnd).toBeDefined();
+    expect(
+      message.parts
+        ?.filter((part) => part.type === 'reasoning')
+        .every((part) => part.state === 'complete'),
+    ).toBe(true);
+    mode = 'no-final';
+    await chat('Try again but return no final answer', randomUUID(), bot.id);
+    const incomplete = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data.at(-1)!;
+    expect(incomplete.status).toBe('failed');
+    expect(incomplete.error).toContain('without a final response');
+  });
+  it('does not label a response cut off by its output limit complete', async () => {
+    await configure();
+    mode = 'truncated';
+    await chat('Give a long answer');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(message.status).toBe('failed');
+    expect(message.error).toContain('output limit');
+  });
+  it('saves a failed activity row when SDK validation rejects a tool before execution', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    writeFileSync(join(project, 'notes.txt'), 'Useful notes.');
+    const workspace = (
+      await request<Workspace>('/workspaces', 'POST', { name: 'Invalid tool', folder: project })
+    ).data;
+    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    mode = 'invalid-tool';
+    await chat('Create a draft', randomUUID(), bot.id);
+    const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
+    expect(message.status).toBe('complete');
+    expect(message.activity?.[0]).toMatchObject({
+      status: 'failed',
+      summary: 'The tool could not run. Check its arguments and try again.',
+    });
+    expect(
+      message.parts?.some(
+        (part) => part.type === 'tool' && part.activityId === message.activity?.[0].id,
+      ),
+    ).toBe(true);
+  });
   it('creates folder-backed workspaces with independent Scout bots and persistent chats', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
@@ -282,6 +385,26 @@ describe('Mukai bots and AI API', () => {
     expect(messages[1].reasoning).toContain('review the notes');
     expect(messages[1].activity).toHaveLength(5);
     expect(messages[1].activity?.every((item) => item.status === 'complete')).toBe(true);
+    expect(messages[1].parts?.map((part) => part.type)).toEqual([
+      'reasoning',
+      'text',
+      'tool',
+      'text',
+      'tool',
+      'text',
+      'tool',
+      'text',
+      'tool',
+      'text',
+      'tool',
+      'text',
+    ]);
+    expect(
+      messages[1].parts?.filter((part) => part.type === 'tool').map((part) => part.activityId),
+    ).toEqual(messages[1].activity?.map((activity) => activity.id));
+    expect(Date.parse(messages[1].finishedAt!)).toBeGreaterThanOrEqual(
+      Date.parse(messages[1].startedAt!),
+    );
     const artifacts = (await request<FileArtifact[]>(`/bots/${bot.id}/artifacts`)).data;
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].path).toBe('draft.md');
@@ -301,6 +424,8 @@ describe('Mukai bots and AI API', () => {
     const restored = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
     expect(restored.reasoning).toBe(messages[1].reasoning);
     expect(restored.activity).toEqual(messages[1].activity);
+    expect(restored.parts).toEqual(messages[1].parts);
+    expect(restored.finishedAt).toBe(messages[1].finishedAt);
     const download = await fetch(api.url + '/artifacts/' + artifacts[0].id, {
       headers: { Authorization: `Bearer ${api.token}` },
     });
@@ -415,6 +540,7 @@ describe('Mukai bots and AI API', () => {
     expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();

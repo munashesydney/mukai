@@ -10,8 +10,6 @@ import {
   Square,
   X,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type { Bot, ProviderSettings } from '../../../../shared/ai';
 import { ACCEPTED_FILES } from '../../../../shared/ai';
 import { Avatar } from '../../components/ui/Avatar';
@@ -19,6 +17,7 @@ import { IconButton } from '../../components/ui/IconButton';
 import { AttachmentCard } from './AttachmentCard';
 import { chatStore, useChat } from './chatStore';
 import { ResponseActivity } from './ResponseActivity';
+import { MessageMarkdown } from './MessageMarkdown';
 import { ArtifactsView } from './ArtifactsView';
 
 export function BotChat({
@@ -147,35 +146,8 @@ export function BotChat({
                       </time>
                     </div>
                     {message.role === 'assistant' && <ResponseActivity message={message} />}
-                    {message.content && (
-                      <div className="ai-markdown">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            a: ({ href, children }) =>
-                              /^https?:\/\//i.test(href || '') ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(event) => {
-                                    if (window.mukai && href) {
-                                      event.preventDefault();
-                                      void window.mukai.openExternal(href).catch(() => {});
-                                    }
-                                  }}
-                                >
-                                  {children}
-                                </a>
-                              ) : (
-                                <span>{children}</span>
-                              ),
-                            img: ({ alt }) => <span>{alt ? `[${alt}]` : '[Image link]'}</span>,
-                          }}
-                        >
-                          {message.content}
-                        </ReactMarkdown>
-                      </div>
+                    {message.role === 'user' && message.content && (
+                      <MessageMarkdown text={message.content} />
                     )}
                     {!!message.attachments.length && (
                       <div className="ai-attachments">

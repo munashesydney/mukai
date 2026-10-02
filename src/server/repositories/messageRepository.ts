@@ -1,5 +1,5 @@
 import type { Database } from '../db/database';
-import type { ChatActivity, MessageStatus } from '../../shared/ai';
+import type { ChatActivity, MessageStatus, ResponsePart } from '../../shared/ai';
 import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
@@ -74,23 +74,30 @@ export class MessageRepository {
       );
     }
     this.database.run(
-      `UPDATE messages SET status = 'interrupted', error = ? WHERE status = 'streaming'${botId === undefined ? '' : ' AND bot_id = ?'}`,
+      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming'${botId === undefined ? '' : ' AND bot_id = ?'}`,
       error,
       ...(botId === undefined ? [] : [botId]),
     );
   }
   reset(id: string) {
     this.database.run(
-      "UPDATE messages SET content = '', reasoning = '', status = 'streaming', error = NULL WHERE id = ?",
+      "UPDATE messages SET content = '', reasoning = '', parts_json = '[]', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), finished_at = NULL, status = 'streaming', error = NULL WHERE id = ?",
       id,
     );
   }
-  saveProgress(id: string, content: string, reasoning: string, activity: ChatActivity[]) {
+  saveProgress(
+    id: string,
+    content: string,
+    reasoning: string,
+    activity: ChatActivity[],
+    parts: ResponsePart[] = [],
+  ) {
     this.database.run(
-      'UPDATE messages SET content = ?,reasoning=?,activity_json=? WHERE id = ?',
+      'UPDATE messages SET content = ?,reasoning=?,activity_json=?,parts_json=? WHERE id = ?',
       content,
       reasoning,
       JSON.stringify(activity),
+      JSON.stringify(parts),
       id,
     );
   }
@@ -101,14 +108,16 @@ export class MessageRepository {
     error: string | null,
     reasoning: string,
     activity: ChatActivity[],
+    parts: ResponsePart[] = [],
   ) {
     this.database.run(
-      'UPDATE messages SET content = ?, status = ?, error = ?,reasoning=?,activity_json=? WHERE id = ?',
+      "UPDATE messages SET content = ?, status = ?, error = ?,reasoning=?,activity_json=?,parts_json=?,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
       content,
       status,
       error,
       reasoning,
       JSON.stringify(activity),
+      JSON.stringify(parts),
       id,
     );
   }
@@ -139,7 +148,7 @@ export class MessageRepository {
       const now = new Date().toISOString();
       for (const role of ['user', 'assistant'] as const) {
         this.database.run(
-          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at) VALUES (?,?,?,?,?,?,?)',
+          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at) VALUES (?,?,?,?,?,?,?,?)',
           role === 'user' ? input.userId : input.assistantId,
           input.botId,
           input.requestId,
@@ -147,6 +156,7 @@ export class MessageRepository {
           role === 'user' ? input.text : '',
           role === 'user' ? 'complete' : 'streaming',
           now,
+          role === 'assistant' ? now : null,
         );
       }
       for (const id of input.attachmentIds) {

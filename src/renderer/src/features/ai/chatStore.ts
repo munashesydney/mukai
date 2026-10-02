@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import type { ChatEvent } from '../../../../shared/ai';
 import { UPLOAD_LIMIT, ATTACHMENT_LIMIT } from '../../../../shared/ai';
+import { appendResponseText, upsertResponsePart } from '../../../../shared/responseParts';
 import { chatService } from '../../services/chatService';
 import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
@@ -150,7 +151,13 @@ export const chatStore = {
           update(id, {
             messages: get(id).messages.map((message) =>
               message.id === event.id
-                ? { ...message, content: message.content + event.text }
+                ? {
+                    ...message,
+                    content: message.content + event.text,
+                    parts: event.partId
+                      ? appendResponseText(message.parts || [], event.partId, 'text', event.text)
+                      : message.parts,
+                  }
                 : message,
             ),
           });
@@ -158,7 +165,26 @@ export const chatStore = {
           update(id, {
             messages: get(id).messages.map((message) =>
               message.id === event.id
-                ? { ...message, reasoning: (message.reasoning || '') + event.text }
+                ? {
+                    ...message,
+                    reasoning: (message.reasoning || '') + event.text,
+                    parts: event.partId
+                      ? appendResponseText(
+                          message.parts || [],
+                          event.partId,
+                          'reasoning',
+                          event.text,
+                        )
+                      : message.parts,
+                  }
+                : message,
+            ),
+          });
+        else if (event.type === 'part')
+          update(id, {
+            messages: get(id).messages.map((message) =>
+              message.id === event.id
+                ? { ...message, parts: upsertResponsePart(message.parts || [], event.part) }
                 : message,
             ),
           });
@@ -168,10 +194,11 @@ export const chatStore = {
               message.id === event.id
                 ? {
                     ...message,
-                    activity: [
-                      ...(message.activity || []).filter((item) => item.id !== event.activity.id),
-                      event.activity,
-                    ],
+                    activity: message.activity?.some((item) => item.id === event.activity.id)
+                      ? message.activity.map((item) =>
+                          item.id === event.activity.id ? event.activity : item,
+                        )
+                      : [...(message.activity || []), event.activity],
                   }
                 : message,
             ),
