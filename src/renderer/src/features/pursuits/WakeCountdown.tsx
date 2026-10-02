@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Clock3, LoaderCircle } from 'lucide-react';
-import type { Pursuit } from '../../../../shared/pursuits';
+import { Check, Clock3, LoaderCircle } from 'lucide-react';
+import { pursuitStatusLabels, scheduledStatus, type Pursuit } from '../../../../shared/pursuits';
 export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-  const remaining = pursuit.nextRunAt
-    ? Math.max(0, Math.ceil((Date.parse(pursuit.nextRunAt) - now) / 1000))
-    : null;
+  const scheduled = scheduledStatus(pursuit.status);
+  const remaining =
+    scheduled && pursuit.nextRunAt
+      ? Math.max(0, Math.ceil((Date.parse(pursuit.nextRunAt) - now) / 1000))
+      : null;
   const progress =
     remaining === null ? 0 : 1 - Math.min(1, remaining / (pursuit.intervalMinutes * 60));
   return (
@@ -24,6 +26,8 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
         <span>
           {pursuit.currentRunId ? (
             <LoaderCircle className="is-spinning" size={24} />
+          ) : pursuit.status === 'completed' ? (
+            <Check size={24} />
           ) : (
             <Clock3 size={24} />
           )}
@@ -31,7 +35,7 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
       </div>
       <div>
         <span className="context-section-label">
-          {pursuit.currentRunId ? 'RUN IN PROGRESS' : 'NEXT WAKE'}
+          {pursuit.currentRunId ? 'RUN IN PROGRESS' : scheduled ? 'NEXT WAKE' : 'PURSUIT STATUS'}
         </span>
         <div
           className="pursuit-countdown"
@@ -39,14 +43,18 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
             pursuit.currentRunId
               ? 'Running now'
               : remaining === null
-                ? 'No wake scheduled'
+                ? pursuitStatusLabels[pursuit.status]
                 : `Next wake in ${remaining} seconds`
           }
         >
           {pursuit.currentRunId ? (
             'Working on it'
           ) : remaining === null ? (
-            'On hold'
+            scheduled ? (
+              'No wake scheduled'
+            ) : (
+              pursuitStatusLabels[pursuit.status]
+            )
           ) : remaining === 0 ? (
             'Waking shortly'
           ) : (
@@ -60,9 +68,19 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
           )}
         </div>
         <p>
-          {pursuit.nextRunAt && !pursuit.currentRunId
+          {scheduled && pursuit.nextRunAt && !pursuit.currentRunId
             ? new Date(pursuit.nextRunAt).toLocaleString()
-            : pursuit.nextRunReason}
+            : pursuit.currentRunId
+              ? 'The owner is working toward the objective.'
+              : pursuit.status === 'completed'
+                ? 'No further runs scheduled.'
+                : pursuit.status === 'paused'
+                  ? 'Scheduled wakes are paused.'
+                  : pursuit.status === 'blocked'
+                    ? 'Resolve the obstacle before resuming.'
+                    : pursuit.status === 'waiting_for_you'
+                      ? 'Your input is needed before work can continue.'
+                      : 'Waiting for the next scheduled wake.'}
         </p>
       </div>
     </div>

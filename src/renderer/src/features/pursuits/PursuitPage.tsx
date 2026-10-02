@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Clock3, Pause, Play, Target } from 'lucide-react';
+import { ArrowUpRight, ChevronDown, Clock3, Pause, Play, Target } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
 import {
   pursuitStatusLabels,
@@ -11,6 +11,8 @@ import { errorText } from '../../utils/errors';
 import { Avatar } from '../../components/ui/Avatar';
 import { WakeCountdown } from './WakeCountdown';
 import { PursuitRunView } from './PursuitRunView';
+import { PursuitRuns } from './PursuitRuns';
+import { MessageMarkdown } from '../ai/MessageMarkdown';
 export function PursuitPage({
   id,
   bots,
@@ -73,7 +75,7 @@ export function PursuitPage({
     run = runs.find((item) => item.id === selectedRun);
   if (run)
     return (
-      <main className="conversation">
+      <main className="conversation pursuit-page">
         <PursuitRunView key={run.id} run={run} bot={owner} onBack={() => setSelectedRun(null)} />
       </main>
     );
@@ -102,7 +104,7 @@ export function PursuitPage({
           <span>Owns this pursuit</span>
         </div>
         <div className="conversation-tabs" role="tablist" aria-label="Pursuit views">
-          {['Overview', 'Notebook & plan'].map((name) => (
+          {['Overview', 'Runs', 'Notebook & plan'].map((name) => (
             <button
               key={name}
               role="tab"
@@ -144,32 +146,46 @@ export function PursuitPage({
               </ol>
             </div>
           </section>
+        ) : tab === 'Runs' ? (
+          <PursuitRuns runs={runs} onSelect={setSelectedRun} />
         ) : (
           <>
             <section className="pursuit-runtime">
               <WakeCountdown pursuit={p} />
-              <div className="pursuit-controls">
-                <button
-                  className="button"
-                  disabled={busy || !owner || p.status === 'completed'}
-                  onClick={() =>
-                    void action(() =>
-                      pursuitService.status(id, scheduledStatus(p.status) ? 'paused' : 'active'),
-                    )
-                  }
-                >
-                  {scheduledStatus(p.status) ? <Pause size={15} /> : <Play size={15} />}{' '}
-                  {scheduledStatus(p.status) ? 'Pause' : 'Resume'}
-                </button>
-                <button
-                  className="button button--primary"
-                  disabled={busy || !scheduledStatus(p.status) || Boolean(p.currentRunId) || !owner}
-                  onClick={() => void action(() => pursuitService.run(id))}
-                >
-                  <Play size={15} /> Run now
-                </button>
-              </div>
-              <p className="pursuit-wake-reason">{p.nextRunReason}</p>
+              {p.status !== 'completed' && (
+                <div className="pursuit-controls">
+                  <button
+                    className="button"
+                    disabled={busy || !owner}
+                    onClick={() =>
+                      void action(() =>
+                        pursuitService.status(id, scheduledStatus(p.status) ? 'paused' : 'active'),
+                      )
+                    }
+                  >
+                    {scheduledStatus(p.status) ? <Pause size={15} /> : <Play size={15} />}{' '}
+                    {scheduledStatus(p.status) ? 'Pause' : 'Resume'}
+                  </button>
+                  <button
+                    className="button button--primary"
+                    disabled={
+                      busy || !scheduledStatus(p.status) || Boolean(p.currentRunId) || !owner
+                    }
+                    onClick={() => void action(() => pursuitService.run(id))}
+                  >
+                    <Play size={15} /> Run now
+                  </button>
+                </div>
+              )}
+              {p.nextRunReason && (
+                <details className="pursuit-runtime-details">
+                  <summary>
+                    <ChevronDown size={15} />
+                    {p.status === 'completed' ? 'Completion details' : 'Status details'}
+                  </summary>
+                  <MessageMarkdown text={p.nextRunReason} />
+                </details>
+              )}
             </section>
             <div className="pursuit-objective-grid">
               <section className="pursuit-info-card">
@@ -193,44 +209,6 @@ export function PursuitPage({
                 </time>
               )}
             </div>
-            <section className="pursuit-runs">
-              <div className="pursuit-section-heading">
-                <h2>Runs</h2>
-                <span>{runs.length} recent</span>
-              </div>
-              {runs.length ? (
-                runs.map((item, index) => (
-                  <button
-                    className="pursuit-run-row"
-                    key={item.id}
-                    onClick={() => setSelectedRun(item.id)}
-                  >
-                    <span
-                      className={`pursuit-run-dot ${item.status === 'running' ? 'is-running' : ''}`}
-                    />
-                    <div>
-                      <strong>
-                        {item.status === 'running' ? 'Working now' : `Run ${runs.length - index}`}
-                      </strong>
-                      <small>
-                        {new Date(item.startedAt).toLocaleString()} ·{' '}
-                        {item.trigger === 'schedule' ? 'Scheduled' : 'Requested'}
-                      </small>
-                      <p>
-                        {item.summary || item.error || 'The owner is working toward the objective.'}
-                      </p>
-                    </div>
-                    <span className="pursuit-run-status">{item.status}</span>
-                    <ArrowUpRight size={16} />
-                  </button>
-                ))
-              ) : (
-                <div className="pursuit-empty-runs">
-                  <p>No runs yet.</p>
-                  <small>The owner will wake on schedule. You can also run it now.</small>
-                </div>
-              )}
-            </section>
           </>
         )}
       </div>
