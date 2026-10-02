@@ -596,7 +596,6 @@
   color: var(--text-secondary);
 }
 .ai-form input:not([type='checkbox']),
-.ai-form select,
 .ai-form textarea {
   width: 100%;
   min-width: 0;
@@ -735,13 +734,8 @@
   font-size: 10px;
   letter-spacing: 1px;
 }
-.bot-editor {
-  width: min(620px, calc(100vw - 40px));
-}
 .bot-editor-body {
   padding: 25px 30px;
-  max-height: min(670px, calc(100vh - 200px));
-  overflow: auto;
 }
 .bot-avatar-options {
   display: flex;
@@ -1073,21 +1067,13 @@
   outline-offset: -3px;
 }
 .modal.diff-drawer {
-  position: fixed;
-  inset: 0 0 0 auto;
-  margin: 0;
   width: min(850px, 72vw);
-  max-width: 100vw;
-  height: 100dvh;
-  max-height: 100dvh;
-  border-radius: 0;
-  border-width: 0 0 0 1px;
 }
 .space-bot-picker {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 14px;
-  margin: 0;
+  margin: 24px 0 0;
 }
 .space-bot-picker legend {
   padding: 0 6px;
@@ -1103,12 +1089,8 @@
   align-items: center;
   gap: 10px;
   padding: 8px 0;
+  margin-top: 0;
   cursor: pointer;
-}
-.create-form .space-bot-picker input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--theme-accent);
 }
 .space-bot-picker small,
 .space-mention-list small {
@@ -1152,11 +1134,6 @@
 .space-mention-list button:focus-visible {
   background: var(--surface-muted);
 }
-.diff-drawer[open] {
-  display: flex;
-  flex-direction: column;
-  animation: diff-slide-in 180ms ease-out;
-}
 .diff-drawer > .modal-heading {
   padding: 20px;
   flex-shrink: 0;
@@ -1173,14 +1150,13 @@
   background: var(--surface-muted);
   flex-shrink: 0;
 }
-.diff-navigation select {
+.diff-navigation > .dropdown {
   flex: 1;
   min-width: 0;
+}
+.diff-navigation .dropdown-trigger {
   padding: 7px 8px;
-  border: 1px solid var(--line-strong);
   border-radius: 6px;
-  color: var(--ink);
-  background: var(--surface);
   font-size: 12px;
 }
 .diff-navigation > span {
@@ -1301,14 +1277,6 @@
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
-}
-@keyframes diff-slide-in {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
 }
 @media (max-width: 760px) {
   .modal.diff-drawer {

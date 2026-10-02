@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Bot, BotInput, ProviderSettings } from '../../../../shared/ai';
-import { Modal } from '../../components/ui/Modal';
+import { Sheet } from '../../components/ui/Sheet';
 import { Avatar } from '../../components/ui/Avatar';
+import { Dropdown } from '../../components/ui/Dropdown';
 import { botService } from '../../services/botService';
 import { errorText } from '../../utils/errors';
 
@@ -63,7 +64,7 @@ export function BotEditor({
     }
   }
   return (
-    <Modal
+    <Sheet
       title={bot ? `Edit ${bot.name}` : 'Create a bot'}
       className="bot-editor"
       onClose={() => {
@@ -156,25 +157,26 @@ export function BotEditor({
               <div className="ai-form-grid">
                 <label>
                   Provider
-                  <select
+                  <Dropdown
+                    label="Provider"
                     disabled={busy}
                     value={value.providerId || ''}
-                    onChange={(event) =>
+                    onChange={(providerId) =>
                       setValue({
                         ...value,
-                        providerId: event.target.value || null,
+                        providerId: providerId || null,
                         model: null,
                         supportsImages: null,
                       })
                     }
-                  >
-                    <option value="">Workspace default</option>
-                    {providers.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: '', label: 'Workspace default' },
+                      ...providers.map((provider) => ({
+                        value: provider.id,
+                        label: provider.name,
+                      })),
+                    ]}
+                  />
                 </label>
                 <label>
                   Model
@@ -191,24 +193,25 @@ export function BotEditor({
               </div>
               <label>
                 Image capability
-                <select
+                <Dropdown
+                  label="Image capability"
                   disabled={busy}
                   value={value.supportsImages === null ? 'inherit' : String(value.supportsImages)}
-                  onChange={(event) =>
+                  onChange={(capability) =>
                     setValue({
                       ...value,
-                      supportsImages:
-                        event.target.value === 'inherit' ? null : event.target.value === 'true',
+                      supportsImages: capability === 'inherit' ? null : capability === 'true',
                     })
                   }
-                >
-                  <option value="inherit">
-                    Use provider setting (
-                    {provider?.supportsImages ? 'images enabled' : 'text only'})
-                  </option>
-                  <option value="true">This model supports images</option>
-                  <option value="false">Text only</option>
-                </select>
+                  options={[
+                    {
+                      value: 'inherit',
+                      label: `Use provider setting (${provider?.supportsImages ? 'images enabled' : 'text only'})`,
+                    },
+                    { value: 'true', label: 'This model supports images' },
+                    { value: 'false', label: 'Text only' },
+                  ]}
+                />
                 <small>Confirm your chosen model supports vision before enabling images.</small>
               </label>
               {!providers.length && (
@@ -249,6 +252,6 @@ export function BotEditor({
           </div>
         )}
       </form>
-    </Modal>
+    </Sheet>
   );
 }

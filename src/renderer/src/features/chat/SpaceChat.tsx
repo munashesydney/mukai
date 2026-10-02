@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bookmark, LoaderCircle, Send, Square } from 'lucide-react';
+import { LoaderCircle, Send, Square } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { botHandle, mentionedBot } from '../../../../shared/mentions';
 import { Avatar } from '../../components/ui/Avatar';
-import { IconButton } from '../../components/ui/IconButton';
+import { MessageActions } from './MessageActions';
 import { chatStore, useChat } from '../ai/chatStore';
 import { ResponseActivity } from '../ai/ResponseActivity';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
@@ -97,7 +97,7 @@ export function SpaceChat({
                   <h2>{savedOpen ? 'No saved messages yet.' : 'A space for your next idea.'}</h2>
                   <p>
                     {savedOpen
-                      ? 'Use the bookmark beside a message to save it here.'
+                      ? 'Hover over a message and use its bookmark to save it here.'
                       : members.length
                         ? 'Write a message, or mention a bot with @ to ask for a response.'
                         : 'Messages in this space are saved here.'}
@@ -125,13 +125,6 @@ export function SpaceChat({
                           minute: '2-digit',
                         })}
                       </time>
-                      <IconButton
-                        label={message.saved ? 'Unsave message' : 'Save message'}
-                        className={message.saved ? 'is-on' : ''}
-                        onClick={() => void chatStore.save(id, message.id, !message.saved)}
-                      >
-                        <Bookmark size={14} fill={message.saved ? 'currentColor' : 'none'} />
-                      </IconButton>
                     </div>
                     {message.role === 'assistant' ? (
                       <>
@@ -166,6 +159,11 @@ export function SpaceChat({
                           )}
                       </div>
                     )}
+                    <MessageActions
+                      text={message.content}
+                      saved={Boolean(message.saved)}
+                      onSave={() => void chatStore.save(id, message.id, !message.saved)}
+                    />
                   </div>
                 </article>
               );

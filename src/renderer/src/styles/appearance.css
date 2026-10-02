@@ -65,8 +65,7 @@
   background: var(--theme-soft);
   color: var(--theme-text);
 }
-.sidebar-row.is-selected > svg,
-.saved-indicator {
+.sidebar-row.is-selected > svg {
   color: var(--theme-text);
 }
 .conversation-tabs > button.is-active {
@@ -315,7 +314,6 @@
   box-shadow: 0 0 0 3px var(--theme-soft);
 }
 .draft-document h3,
-.bot-preview h3,
 .details-document h3 {
   color: var(--theme-text);
 }

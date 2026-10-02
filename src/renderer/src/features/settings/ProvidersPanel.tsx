@@ -3,6 +3,7 @@ import { Check, ChevronLeft, KeyRound, Plus, Radio, Trash2 } from 'lucide-react'
 import type { ProviderInput, ProviderSettings, ProviderKind } from '../../../../shared/ai';
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
+import { Dropdown } from '../../components/ui/Dropdown';
 
 const kinds: { id: ProviderKind; label: string; model: string }[] = [
   { id: 'openai', label: 'OpenAI', model: 'gpt-4.1-mini' },
@@ -142,11 +143,12 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
           </button>
           <label>
             Provider type
-            <select
+            <Dropdown
+              label="Provider type"
               value={value.kind}
               disabled={busy || editing !== 'new'}
-              onChange={(event) => {
-                const kind = kinds.find((kind) => kind.id === event.target.value)!;
+              onChange={(selected) => {
+                const kind = kinds.find((kind) => kind.id === selected)!;
                 setValue({
                   ...value,
                   kind: kind.id,
@@ -156,13 +158,8 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   apiKey: '',
                 });
               }}
-            >
-              {kinds.map((kind) => (
-                <option key={kind.id} value={kind.id}>
-                  {kind.label}
-                </option>
-              ))}
-            </select>
+              options={kinds.map((kind) => ({ value: kind.id, label: kind.label }))}
+            />
           </label>
           <label>
             Display name

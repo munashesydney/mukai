@@ -3,8 +3,9 @@ import { ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
 import type { FileChangeDetail, FileChangeSummary } from '../../../../shared/fileChanges';
 import { fileChangeService } from '../../services/fileChangeService';
 import { errorText } from '../../utils/errors';
-import { Modal } from '../../components/ui/Modal';
+import { Sheet } from '../../components/ui/Sheet';
 import { IconButton } from '../../components/ui/IconButton';
+import { Dropdown } from '../../components/ui/Dropdown';
 import { ChangeCounts } from './FileChanges';
 import { DiffView } from './DiffView';
 
@@ -85,19 +86,14 @@ export function DiffDrawer({
   const change = changes[selected];
   if (!change) return null;
   return (
-    <Modal title="File changes" className="diff-drawer" onClose={onClose}>
+    <Sheet title="File changes" className="diff-drawer" onClose={onClose}>
       <nav className="diff-navigation" aria-label="Changed files">
-        <select
-          aria-label="Select changed file"
+        <Dropdown
+          label="Select changed file"
           value={selectedId}
-          onChange={(event) => onSelect(event.target.value)}
-        >
-          {changes.map((file) => (
-            <option key={file.id} value={file.id}>
-              {file.path}
-            </option>
-          ))}
-        </select>
+          onChange={onSelect}
+          options={changes.map((file) => ({ value: file.id, label: file.path }))}
+        />
         <span>
           {selected + 1} / {changes.length}
         </span>
@@ -122,6 +118,6 @@ export function DiffDrawer({
       <footer className="diff-drawer-footer">
         Saved changes from this response · Later edits do not change this diff
       </footer>
-    </Modal>
+    </Sheet>
   );
 }

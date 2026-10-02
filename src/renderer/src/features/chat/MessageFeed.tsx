@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Bookmark, SmilePlus, Check, FileText, MessageCircle } from 'lucide-react';
+import { SmilePlus, FileText, MessageCircle } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { bots } from '../workspace/data';
 import type { Message, DialogKind } from '../workspace/types';
 import { MessageCard } from './MessageCard';
+import { MessageActions } from './MessageActions';
 
 export function MessageFeed({
   messages,
@@ -55,7 +56,6 @@ export function MessageFeed({
                   <strong>{bot?.name ?? 'Munashe'}</strong>
                   {bot && <span className={`bot-tag bot-tag--${bot.color}`}>BOT</span>}
                   <time>{message.time}</time>
-                  {saved && <Bookmark size={12} className="saved-indicator" />}
                 </div>
                 <p>{message.text}</p>
                 {message.card && (
@@ -82,17 +82,15 @@ export function MessageFeed({
                     <span>{message.reaction ? (reacted ? 2 : 1) : 1}</span>
                   </button>
                 )}
-              </div>
-              <div className="message-actions">
-                <IconButton
-                  label={saved ? 'Unsave message' : 'Save message'}
-                  onClick={() => onBookmark(message.id)}
+                <MessageActions
+                  text={message.text}
+                  saved={saved}
+                  onSave={() => onBookmark(message.id)}
                 >
-                  {saved ? <Check size={15} /> : <Bookmark size={15} />}
-                </IconButton>
-                <IconButton label="React to message" onClick={() => onReact(message.id)}>
-                  <SmilePlus size={15} />
-                </IconButton>
+                  <IconButton label="React to message" onClick={() => onReact(message.id)}>
+                    <SmilePlus size={15} />
+                  </IconButton>
+                </MessageActions>
               </div>
             </article>
           );

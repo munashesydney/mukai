@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { ArrowRight, Check, FileText, Pause, Play, Target, Info } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
+import { Sheet } from '../../components/ui/Sheet';
+import { Checkbox } from '../../components/ui/Checkbox';
 import { Avatar } from '../../components/ui/Avatar';
-import { TriangleMark } from '../../components/ui/TriangleMark';
 import type { DialogKind, Pursuit } from './types';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import type { Bot } from '../../../../shared/ai';
@@ -87,28 +88,6 @@ export function WorkspaceDialogs({
         bots={kind === 'create-space' ? bots : []}
       />
     );
-  if (kind === 'create-bot')
-    return (
-      <Modal title="Meet your next bot" onClose={onClose}>
-        <div className="bot-preview">
-          <span className="preview-symbol">
-            <TriangleMark />
-          </span>
-          <h3>A little more possibility.</h3>
-          <p>
-            Your workspace already has Atlas, Nova, and Scout. Custom bots will let you bring your
-            own personalities and skills into the mix.
-          </p>
-          <div className="preview-label">Custom bots · Coming next</div>
-        </div>
-        <div className="modal-footer">
-          <span>For now, get to know your crew.</span>
-          <button className="button button--primary" onClick={onClose}>
-            Back to the workspace <ArrowRight size={15} />
-          </button>
-        </div>
-      </Modal>
-    );
   if (kind === 'details')
     return (
       <Modal title={pursuit ? 'Pursuit details' : 'About this workspace'} onClose={onClose}>
@@ -184,8 +163,13 @@ function CreateDialog({
   const [botIds, setBotIds] = useState<string[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const Surface = type === 'space' ? Sheet : Modal;
   return (
-    <Modal title={`Create a ${type}`} onClose={onClose}>
+    <Surface
+      title={`Create a ${type}`}
+      onClose={onClose}
+      className={type === 'space' ? 'create-space-sheet' : ''}
+    >
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -228,8 +212,7 @@ function CreateDialog({
               <p>Choose who you can mention. You can also create a space without bots.</p>
               {bots.map((bot) => (
                 <label key={bot.id}>
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={botIds.includes(bot.id)}
                     onChange={(event) =>
                       setBotIds((previous) =>
@@ -274,6 +257,6 @@ function CreateDialog({
           </button>
         </div>
       </form>
-    </Modal>
+    </Surface>
   );
 }
