@@ -83,14 +83,31 @@ export class ChatService {
     vision: boolean,
     throughSequence: number,
   ): ModelMessage[] {
-    // The pending assistant is excluded. Ten persisted messages include the current user.
-    const rows = this.messages.context(conversationId, 10, throughSequence);
+    // Spaces retain their short shared context. Private chats use their own longer history.
+    const privateChat = this.messages.privateConversation(conversationId);
+    let rows = this.messages.context(conversationId, privateChat ? 200 : 10, throughSequence);
+    if (privateChat) {
+      let size = 0;
+      const retained = [];
+      for (const row of [...rows].reverse()) {
+        const cost =
+          row.content.length +
+          Math.min(4000, JSON.stringify(row.activity || []).length) +
+          this.attachments
+            .forMessage(row.id)
+            .reduce((sum, file) => sum + (file.extractedText?.length || 1000), 0);
+        if (retained.length && size + cost > 96000) break;
+        retained.push(row);
+        size += cost;
+      }
+      rows = retained.reverse();
+    }
     return rows.map((row) => {
       if (row.role === 'assistant')
         return {
           role: row.botId === botId ? ('assistant' as const) : ('user' as const),
           content:
-            (conversationId.startsWith('bot-') ? '' : '[' + (row.authorName || 'Bot') + '] ') +
+            (privateChat ? '' : '[' + (row.authorName || 'Bot') + '] ') +
             row.content +
             (row.activity?.length
               ? '\nFile operations performed: ' +
@@ -104,7 +121,7 @@ export class ChatService {
         {
           type: 'text',
           text:
-            (conversationId.startsWith('bot-') ? '' : '[You] ') +
+            (privateChat ? '' : '[You] ') +
             (String(row.content) || 'Please review the attached files.'),
         },
       ];
@@ -176,7 +193,12 @@ export class ChatService {
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
-      const files = this.attachments.select(value.attachmentIds, botId, config.vision);
+      const files = this.attachments.select(
+        value.attachmentIds,
+        botId,
+        config.vision,
+        conversationId,
+      );
       userId = randomUUID();
       assistantId = randomUUID();
       this.messages.createTurn({

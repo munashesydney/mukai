@@ -34,5 +34,6 @@ export interface Message {
 export interface Location {
   section: Section;
   item: string;
+  conversationId?: string;
 }
 export type DialogKind = 'draft' | 'details' | 'settings' | 'create-bot' | 'create-space' | null;

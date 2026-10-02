@@ -122,7 +122,31 @@ export const migrations = [
     started_at TEXT NOT NULL, finished_at TEXT, summary TEXT NOT NULL DEFAULT '', error TEXT,
     snapshot_json TEXT NOT NULL);
    CREATE UNIQUE INDEX one_running_pursuit ON pursuit_runs(pursuit_id) WHERE status='running';`,
+  `DROP TRIGGER bot_conversation;
+   CREATE TABLE conversations_next (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    kind TEXT NOT NULL CHECK(kind IN ('private','space','pursuit_run')), name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', owner_bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+   INSERT INTO conversations_next SELECT c.*,COALESCE((SELECT MAX(created_at) FROM messages WHERE conversation_id=c.id),c.created_at) FROM conversations c;
+   DROP TABLE conversations;
+   ALTER TABLE conversations_next RENAME TO conversations;
+   UPDATE conversations SET name=COALESCE((SELECT substr(replace(content,char(10),' '),1,60) FROM messages WHERE conversation_id=conversations.id AND role='user' AND content!='' ORDER BY sequence LIMIT 1),'New conversation'),description='' WHERE kind='private';
+   CREATE INDEX bot_conversations ON conversations(owner_bot_id,kind,updated_at);
+   CREATE TRIGGER bot_conversation AFTER INSERT ON bots BEGIN
+    INSERT INTO conversations VALUES('bot-'||NEW.id,NEW.workspace_id,'private','New conversation','',NEW.id,NEW.created_at,NEW.created_at);
+    INSERT INTO conversation_bots VALUES('bot-'||NEW.id,NEW.id);
+   END;
+   CREATE TRIGGER conversation_activity AFTER INSERT ON messages BEGIN
+    UPDATE conversations SET updated_at=NEW.created_at WHERE id=NEW.conversation_id;
+   END;
+   CREATE TRIGGER conversation_finished AFTER UPDATE OF finished_at ON messages WHEN NEW.finished_at IS NOT NULL BEGIN
+    UPDATE conversations SET updated_at=NEW.finished_at WHERE id=NEW.conversation_id;
+   END;
+   ALTER TABLE attachments ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE;
+   UPDATE attachments SET conversation_id=COALESCE((SELECT conversation_id FROM messages WHERE id=attachments.message_id),'bot-'||bot_id);
+   CREATE INDEX pending_conversation_attachments ON attachments(conversation_id,message_id);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.
-export const rebuildMigrations = new Set([5, 6]);
+export const rebuildMigrations = new Set([5, 6, 7]);

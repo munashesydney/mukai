@@ -3,6 +3,7 @@ import {
   FileText,
   Info,
   LoaderCircle,
+  MessageCirclePlus,
   Paperclip,
   RotateCcw,
   Send,
@@ -22,19 +23,41 @@ import { ArtifactsView } from './ArtifactsView';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { FileChanges } from './FileChanges';
 import { DiffDrawer } from './DiffDrawer';
+import type { Conversation } from '../../../../shared/conversations';
 
 export function BotChat({
   bot,
+  conversation,
+  onNewConversation,
   providers,
   onEdit,
   onProviders,
 }: {
   bot: Bot;
+  conversation: Conversation;
+  onNewConversation: () => Promise<void>;
   providers: ProviderSettings[];
   onEdit: () => void;
   onProviders: () => void;
 }) {
-  const state = useChat(bot.id);
+  const chatId = 'private:' + conversation.id;
+  const state = useChat(chatId);
+  const [creatingChat, setCreatingChat] = useState(false),
+    [newChatError, setNewChatError] = useState('');
+  async function createChat() {
+    if (creatingChat) return;
+    setCreatingChat(true);
+    setNewChatError('');
+    try {
+      await onNewConversation();
+    } catch (caught) {
+      setNewChatError(
+        caught instanceof Error ? caught.message : 'Could not create a conversation.',
+      );
+    } finally {
+      setCreatingChat(false);
+    }
+  }
   const [filesOpen, setFilesOpen] = useState(false),
     [detailsOpen, setDetailsOpen] = useState(false);
   const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
@@ -59,7 +82,7 @@ export function BotChat({
   function send() {
     if (provider && !blocked) {
       follow.current = true;
-      void chatStore.send(bot.id);
+      void chatStore.send(chatId);
     }
   }
   return (
@@ -71,10 +94,17 @@ export function BotChat({
               <Avatar person={bot.avatar} />
               <div>
                 <h1>{bot.name}</h1>
-                <p>{bot.description || 'Your own thoughtful companion.'}</p>
+                <p title={conversation.name}>{conversation.name}</p>
               </div>
             </div>
             <div className="header-actions">
+              <IconButton
+                label={`New conversation with ${bot.name}`}
+                disabled={creatingChat}
+                onClick={() => void createChat()}
+              >
+                <MessageCirclePlus size={18} />
+              </IconButton>
               <IconButton
                 label={filesOpen ? 'Back to chat' : 'Artifacts'}
                 className={filesOpen ? 'is-on' : ''}
@@ -96,7 +126,7 @@ export function BotChat({
           </div>
         </header>
         {filesOpen ? (
-          <ArtifactsView botId={bot.id} attachments={files} />
+          <ArtifactsView conversationId={conversation.id} attachments={files} />
         ) : (
           <>
             <div
@@ -193,7 +223,7 @@ export function BotChat({
                             disabled={state.busy}
                             onClick={() => {
                               follow.current = true;
-                              void chatStore.send(bot.id, message.requestId);
+                              void chatStore.send(chatId, message.requestId);
                             }}
                           >
                             <RotateCcw size={13} />
@@ -207,11 +237,16 @@ export function BotChat({
               ))}
             </div>
             <div className="composer-area ai-composer-area">
+              {newChatError && (
+                <p className="ai-alert" role="alert">
+                  {newChatError}
+                </p>
+              )}
               {state.error && (
                 <div className="ai-alert" role="alert">
                   {state.error}
                   {!state.busy && (
-                    <button className="text-button" onClick={() => void chatStore.load(bot.id)}>
+                    <button className="text-button" onClick={() => void chatStore.load(chatId)}>
                       Refresh chat
                     </button>
                   )}
@@ -235,7 +270,7 @@ export function BotChat({
                         attachment={file}
                         onRemove={
                           !state.busy && !state.uploading
-                            ? () => void chatStore.removeFile(bot.id, file.id)
+                            ? () => void chatStore.removeFile(chatId, file.id)
                             : undefined
                         }
                       />
@@ -249,7 +284,7 @@ export function BotChat({
                   value={state.text}
                   maxLength={16000}
                   disabled={state.loading || state.busy}
-                  onChange={(event) => chatStore.draft(bot.id, event.target.value)}
+                  onChange={(event) => chatStore.draft(chatId, event.target.value)}
                   onKeyDown={(event) => {
                     if (
                       event.key === 'Enter' &&
@@ -282,7 +317,7 @@ export function BotChat({
                     <button
                       className="send-button ai-stop"
                       aria-label="Stop generation"
-                      onClick={() => void chatStore.stop(bot.id)}
+                      onClick={() => void chatStore.stop(chatId)}
                     >
                       <Square size={13} fill="currentColor" />
                       Stop
@@ -314,7 +349,7 @@ export function BotChat({
                   tabIndex={-1}
                   aria-label="Upload chat attachments"
                   onChange={(event) => {
-                    void chatStore.upload(bot.id, Array.from(event.target.files || []));
+                    void chatStore.upload(chatId, Array.from(event.target.files || []));
                     event.target.value = '';
                   }}
                 />
@@ -360,7 +395,8 @@ export function BotChat({
             <dd>{vision ? 'Enabled' : 'Text only'}</dd>
             <dt>Model context</dt>
             <dd>
-              Latest 10 chat messages, including your current message. Your full history stays here.
+              Messages from this conversation, within the model context limits. Other chats stay
+              separate.
             </dd>
             <dt>Instructions</dt>
             <dd className="bot-instructions">{bot.instructions}</dd>

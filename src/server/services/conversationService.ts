@@ -4,6 +4,7 @@ import { MessageRepository } from '../repositories/messageRepository';
 import { BotService } from './botService';
 import { ChatService, type ChatOutput } from './chatService';
 import type { SpaceInput, SpaceChatInput } from '../../shared/conversations';
+import type { ChatInput } from '../../shared/ai';
 
 export class ConversationService {
   constructor(
@@ -20,6 +21,30 @@ export class ConversationService {
   list(workspaceId: string) {
     this.bots.list(workspaceId);
     return this.conversations.list(workspaceId);
+  }
+  privateChats(workspaceId: string) {
+    this.bots.list(workspaceId);
+    return this.conversations.privateChats(workspaceId);
+  }
+  createPrivate(botId: string) {
+    const bot = this.bots.require(botId);
+    return this.conversations.createPrivate(bot.workspaceId, bot.id);
+  }
+  privateBot(id: string) {
+    const conversation = this.require(id);
+    if (
+      conversation.kind !== 'private' ||
+      !conversation.ownerBotId ||
+      !conversation.botIds.includes(conversation.ownerBotId)
+    )
+      throw new ApiError(400, 'This is not a private bot conversation.');
+    const bot = this.bots.require(conversation.ownerBotId);
+    if (bot.workspaceId !== conversation.workspaceId)
+      throw new ApiError(400, 'Conversation workspace does not match its bot.');
+    return bot;
+  }
+  sendPrivate(id: string, input: ChatInput, output: ChatOutput) {
+    return this.chats.respond(this.privateBot(id), input, output, id);
   }
   create(workspaceId: string, input: SpaceInput) {
     const available = this.bots.list(workspaceId);

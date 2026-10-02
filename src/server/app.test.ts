@@ -79,6 +79,23 @@ async function upload(name: string, bytes: Buffer, botId = 'scout') {
   });
   return { response, data: (await response.json()) as Attachment };
 }
+async function privateChat(
+  conversationId: string,
+  text: string,
+  requestId = randomUUID(),
+  attachmentIds: string[] = [],
+) {
+  const response = await fetch(`${api.url}/conversations/${conversationId}/chat`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, text, attachmentIds }),
+  });
+  expect(response.status).toBe(200);
+  return (await response.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as ChatEvent);
+}
 async function spaceChat(
   id: string,
   text: string,
@@ -765,6 +782,7 @@ describe('Mukai bots and AI API', () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
+      { version: 7 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
@@ -773,14 +791,128 @@ describe('Mukai bots and AI API', () => {
     api = await startApiServer(0, { dataDir: dir });
     expect((await request<Bot[]>('/bots')).data.map((bot) => bot.name)).toEqual(['Writer']);
   });
-  it('sends exactly the latest ten chat messages including the new user, keeping old messages visible', async () => {
+  it('uses private conversation history beyond ten messages while keeping the full history visible', async () => {
     await configure();
     for (let index = 0; index < 7; index++) await chat(`Prompt ${index}`);
     const latest = calls.at(-1)!;
-    expect(latest.messages).toHaveLength(11); // System instructions plus ten messages.
+    expect(latest.messages).toHaveLength(14); // System instructions plus thirteen messages.
     expect(latest.messages.at(-1)).toEqual({ role: 'user', content: 'Prompt 6' });
-    expect(JSON.stringify(latest.messages)).not.toContain('Prompt 0');
+    expect(JSON.stringify(latest.messages)).toContain('Prompt 0');
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(14);
+  });
+  it('creates separate chats for one bot with isolated context, titles, retries, and persisted history', async () => {
+    await configure();
+    await chat('Legacy history stays here');
+    const first = (await request<Conversation>('/bots/scout/conversations', 'POST')).data;
+    const repeated = await Promise.all([
+      request<Conversation>('/bots/scout/conversations', 'POST'),
+      request<Conversation>('/bots/scout/conversations', 'POST'),
+    ]);
+    expect(repeated.map((result) => result.data.id)).toEqual([first.id, first.id]);
+    expect(first).toMatchObject({
+      name: 'New conversation',
+      kind: 'private',
+      ownerBotId: 'scout',
+      botIds: ['scout'],
+    });
+    expect((await request<ChatMessage[]>(`/conversations/${first.id}/messages`)).data).toEqual([]);
+    const requestId = randomUUID();
+    await privateChat(first.id, 'Only first conversation knows this', requestId);
+    const second = (await request<Conversation>('/bots/scout/conversations', 'POST')).data;
+    expect(second.id).not.toBe(first.id);
+    await privateChat(second.id, 'Second conversation starts clean', requestId);
+    expect(JSON.stringify(calls.at(-1)!.messages)).not.toContain('Only first conversation');
+    expect(JSON.stringify(calls.at(-1)!.messages)).not.toContain('Legacy history');
+    const callsBefore = calls.length;
+    await privateChat(first.id, '', requestId);
+    expect(calls).toHaveLength(callsBefore);
+    const messages = (await request<ChatMessage[]>(`/conversations/${first.id}/messages`)).data;
+    expect(messages).toHaveLength(2);
+    expect(
+      (
+        await request(`/conversations/${first.id}/saved`, 'PUT', {
+          messageId: messages[1].id,
+          saved: true,
+        })
+      ).response.status,
+    ).toBe(200);
+    expect(
+      (
+        await request(`/conversations/${second.id}/saved`, 'PUT', {
+          messageId: messages[1].id,
+          saved: true,
+        })
+      ).response.status,
+    ).toBe(404);
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    const chats = (await request<Conversation[]>('/conversations?kind=private')).data;
+    expect(chats).toHaveLength(3);
+    expect(chats.find((item) => item.id === first.id)?.name).toBe(
+      'Only first conversation knows this',
+    );
+    expect(chats.find((item) => item.id === second.id)?.name).toBe(
+      'Second conversation starts clean',
+    );
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${first.id}/messages`)).data[1].saved,
+    ).toBe(true);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(2);
+    expect((await request<Conversation[]>('/conversations')).data).toEqual([]);
+    expect((await request('/bots/missing/conversations', 'POST')).response.status).toBe(404);
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('keeps pending uploads and generated artifacts scoped to their private conversation', async () => {
+    await configure();
+    await chat('Existing bot history');
+    const first = (await request<Conversation>('/bots/scout/conversations', 'POST')).data;
+    await privateChat(first.id, 'First conversation');
+    const second = (await request<Conversation>('/bots/scout/conversations', 'POST')).data;
+    const uploaded = await fetch(`${api.url}/conversations/${first.id}/attachments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'X-Filename': 'private-note.txt' },
+      body: 'Private attachment context',
+    });
+    expect(uploaded.status).toBe(201);
+    const file = (await uploaded.json()) as Attachment;
+    expect(
+      (await request<Attachment[]>(`/conversations/${first.id}/attachments`)).data,
+    ).toHaveLength(1);
+    expect((await request<Attachment[]>(`/conversations/${second.id}/attachments`)).data).toEqual(
+      [],
+    );
+    expect((await request<Attachment[]>('/bots/scout/attachments')).data).toEqual([]);
+    expect(
+      (
+        await request(`/conversations/${second.id}/chat`, 'POST', {
+          requestId: randomUUID(),
+          text: 'Wrong conversation',
+          attachmentIds: [file.id],
+        })
+      ).response.status,
+    ).toBe(400);
+    expect((await request<ChatMessage[]>(`/conversations/${second.id}/messages`)).data).toEqual([]);
+    await privateChat(first.id, 'Read my attachment', randomUUID(), [file.id]);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Private attachment context');
+    expect((await request<Attachment[]>(`/conversations/${first.id}/attachments`)).data).toEqual(
+      [],
+    );
+    await privateChat(second.id, 'A clean message');
+    expect(JSON.stringify(calls.at(-1)!.messages)).not.toContain('Private attachment context');
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const workspace = (
+      await request<Workspace>('/workspaces/default', 'PUT', { name: 'Test', folder: project })
+    ).data;
+    expect(workspace.folder).toBe(project);
+    mode = 'tools';
+    await privateChat(first.id, 'Write and verify a draft');
+    expect(
+      (await request<FileArtifact[]>(`/conversations/${first.id}/artifacts`)).data,
+    ).toHaveLength(1);
+    expect((await request<FileArtifact[]>(`/conversations/${second.id}/artifacts`)).data).toEqual(
+      [],
+    );
   });
   it('preserves user messages on failure and retries the same turn without duplicates', async () => {
     const log = vi.spyOn(console, 'error');

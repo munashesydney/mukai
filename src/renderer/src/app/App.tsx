@@ -16,6 +16,7 @@ import { SpaceDetails } from '../features/chat/SpaceDetails';
 import { usePursuits } from '../features/pursuits/usePursuits';
 import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
+import { useBotConversations } from '../features/ai/useBotConversations';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsDialog } from '../features/settings/SettingsDialog';
 import { WorkspaceEditor } from '../features/workspace/WorkspaceEditor';
@@ -30,6 +31,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const workspace = useWorkspace(ai.workspaceId);
   const spaceState = useSpaces(ai.workspaceId);
   const pursuitState = usePursuits(ai.workspaceId);
+  const botChats = useBotConversations(ai.workspaceId);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [settingsSection, setSettingsSection] = useState<'workspace' | 'providers'>('workspace');
@@ -39,7 +41,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth <= 760);
   const [savedOpen, setSavedOpen] = useState(false);
-  const { location, navigate } = workspace;
+  const { location, navigate, replace } = workspace;
   useEffect(() => {
     const narrow = window.matchMedia('(max-width: 760px)');
     const onResize = (event: MediaQueryListEvent) => {
@@ -62,6 +64,30 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const pursuit =
     pursuitState.pursuits.find((p) => p.id === location.item) || pursuitState.pursuits[0];
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
+  const ownedChats = botChats.conversations.filter((chat) => chat.ownerBotId === bot?.id);
+  let rememberedChat = '';
+  try {
+    rememberedChat = localStorage.getItem(`mukai.active-conversation.${bot?.id}`) || '';
+  } catch {
+    /* Server history remains available. */
+  }
+  const botConversation =
+    ownedChats.find((chat) => chat.id === location.conversationId) ||
+    ownedChats.find((chat) => chat.id === rememberedChat) ||
+    ownedChats[0];
+  useEffect(() => {
+    if (
+      location.section === 'bots' &&
+      bot &&
+      botConversation &&
+      location.conversationId !== botConversation.id
+    )
+      replace({ section: 'bots', item: bot.id, conversationId: botConversation.id });
+  }, [location.section, location.conversationId, bot, botConversation, replace]);
+  async function createBotConversation(botId: string) {
+    const conversation = await botChats.create(botId);
+    select({ section: 'bots', item: botId, conversationId: conversation.id });
+  }
   const openDialog = (kind: DialogKind) => {
     if (kind === 'create-bot') setEditingBot('new');
     else {
@@ -133,9 +159,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           workspaces={ai.workspaces}
           onWorkspace={ai.selectWorkspace}
           onCreateWorkspace={() => setEditingWorkspace('new')}
-          location={
-            location.section === 'bots' && bot ? { section: 'bots', item: bot.id } : location
-          }
+          location={location.section === 'bots' && bot ? { ...location, item: bot.id } : location}
           spaces={spaceState.spaces}
           pursuits={pursuitState.pursuits}
           pursuitsLoading={pursuitState.loading}
@@ -143,6 +167,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           onSelect={select}
           collapsed={sidebarCollapsed}
           bots={ai.bots}
+          botConversations={botChats.conversations}
+          onCreateConversation={createBotConversation}
           onDialog={openDialog}
         />
         {location.section === 'tools' ? (
@@ -154,7 +180,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             }}
           />
         ) : location.section === 'bots' ? (
-          ai.loading ? (
+          ai.loading || botChats.loading ? (
             <main className="conversation ai-main-state">
               <p>Loading your bots…</p>
             </main>
@@ -166,10 +192,21 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 Try again
               </button>
             </main>
-          ) : bot ? (
+          ) : bot && !botConversation ? (
+            <main className="conversation ai-main-state">
+              <p role={botChats.error ? 'alert' : undefined}>
+                {botChats.error || 'Loading conversations…'}
+              </p>
+              <button className="button" onClick={botChats.refresh}>
+                Try again
+              </button>
+            </main>
+          ) : bot && botConversation ? (
             <BotChat
-              key={bot.id}
+              key={botConversation.id}
               bot={bot}
+              conversation={botConversation}
+              onNewConversation={() => createBotConversation(bot.id)}
               providers={ai.providers}
               onEdit={() => setEditingBot(bot)}
               onProviders={() => {

@@ -63,6 +63,9 @@ export class MessageRepository {
       .reverse()
       .map(messageRecord);
   }
+  privateConversation(id: string) {
+    return this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'private';
+  }
   interruptStreaming(error: string, conversationId?: string) {
     const pending = this.database.all(
       `SELECT * FROM messages WHERE status='streaming'${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
@@ -187,6 +190,13 @@ export class MessageRepository {
   }) {
     this.database.transaction(() => {
       const now = new Date().toISOString();
+      if (
+        this.privateConversation(input.conversationId) &&
+        !this.latestUserId(input.conversationId)
+      ) {
+        const name = input.text.replace(/\s+/g, ' ').trim().slice(0, 60) || 'Shared files';
+        this.database.run('UPDATE conversations SET name=? WHERE id=?', name, input.conversationId);
+      }
       for (const role of ['user', 'assistant'] as const) {
         this.database.run(
           'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name) VALUES (?,?,?,?,?,?,?,?,?,?)',

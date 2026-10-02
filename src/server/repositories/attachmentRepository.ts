@@ -21,6 +21,14 @@ export class AttachmentRepository {
       .all('SELECT * FROM attachments WHERE message_id = ?', id)
       .map(attachmentRecord);
   }
+  pending(conversationId: string) {
+    return this.database
+      .all(
+        'SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL',
+        conversationId,
+      )
+      .map(attachmentRecord);
+  }
   forConversation(id: string) {
     return this.database
       .all(
@@ -29,11 +37,11 @@ export class AttachmentRepository {
       )
       .map(attachmentRecord);
   }
-  pendingCount(botId: string) {
+  pendingCount(botId: string, conversationId = 'bot-' + botId) {
     return Number(
       this.database.get(
-        'SELECT COUNT(*) AS count FROM attachments WHERE bot_id = ? AND message_id IS NULL',
-        botId,
+        'SELECT COUNT(*) AS count FROM attachments WHERE conversation_id = ? AND message_id IS NULL',
+        conversationId,
       )?.count,
     );
   }
@@ -44,7 +52,7 @@ export class AttachmentRepository {
   }
   create(file: AttachmentRecord) {
     this.database.run(
-      'INSERT INTO attachments VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO attachments(id,bot_id,message_id,name,media_type,size,kind,storage_name,extracted_text,warning,conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       file.id,
       file.botId,
       file.messageId,
@@ -55,6 +63,7 @@ export class AttachmentRepository {
       file.storageName,
       file.extractedText,
       file.warning,
+      file.conversationId,
     );
   }
   delete(id: string) {

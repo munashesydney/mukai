@@ -12,6 +12,8 @@ export class ConversationRepository {
       name: String(row.name),
       description: String(row.description),
       createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      ownerBotId: row.owner_bot_id as string | null,
       botIds: this.database
         .all(
           'SELECT bot_id FROM conversation_bots WHERE conversation_id=? ORDER BY rowid',
@@ -32,14 +34,45 @@ export class ConversationRepository {
       )
       .map((row) => this.project(row));
   }
+  privateChats(workspaceId: string) {
+    return this.database
+      .all(
+        "SELECT * FROM conversations WHERE workspace_id=? AND kind='private' ORDER BY updated_at DESC,rowid DESC",
+        workspaceId,
+      )
+      .map((row) => this.project(row));
+  }
+  createPrivate(workspaceId: string, botId: string) {
+    return this.database.transaction(() => {
+      const empty = this.database.get(
+        "SELECT c.* FROM conversations c WHERE c.workspace_id=? AND c.owner_bot_id=? AND c.kind='private' AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id) ORDER BY c.updated_at DESC,c.rowid DESC LIMIT 1",
+        workspaceId,
+        botId,
+      );
+      if (empty) return this.project(empty);
+      const id = randomUUID(),
+        now = new Date().toISOString();
+      this.database.run(
+        "INSERT INTO conversations(id,workspace_id,kind,name,owner_bot_id,created_at,updated_at) VALUES(?,?,'private','New conversation',?,?,?)",
+        id,
+        workspaceId,
+        botId,
+        now,
+        now,
+      );
+      this.database.run('INSERT INTO conversation_bots VALUES(?,?)', id, botId);
+      return this.find(id)!;
+    });
+  }
   create(workspaceId: string, input: SpaceInput, id = randomUUID()) {
     this.database.transaction(() => {
       this.database.run(
-        "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at) VALUES(?,?,'space',?,?,?)",
+        "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at,updated_at) VALUES(?,?,'space',?,?,?,?)",
         id,
         workspaceId,
         input.name,
         input.description,
+        new Date().toISOString(),
         new Date().toISOString(),
       );
       for (const botId of input.botIds)
@@ -64,11 +97,12 @@ export class ConversationRepository {
       for (const space of spaces) {
         const id = randomUUID();
         this.database.run(
-          "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at) VALUES(?,?,'space',?,?,?)",
+          "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at,updated_at) VALUES(?,?,'space',?,?,?,?)",
           id,
           workspaceId,
           space.name,
           space.description,
+          new Date().toISOString(),
           new Date().toISOString(),
         );
         for (const botId of botIds)

@@ -32,6 +32,11 @@ export function useWorkspace(workspaceId = 'default') {
     if (location.section === 'bots') {
       try {
         localStorage.setItem(`mukai.active-bot.${workspaceId}`, location.item);
+        if (location.conversationId)
+          localStorage.setItem(
+            `mukai.active-conversation.${location.item}`,
+            location.conversationId,
+          );
       } catch {
         /* Chat data is persisted by the server. */
       }
@@ -48,10 +53,21 @@ export function useWorkspace(workspaceId = 'default') {
   const navigate = useCallback((next: Location) => {
     setHistory((previous) => {
       const current = previous.entries[previous.index];
-      if (current.section === next.section && current.item === next.item) return previous;
+      if (
+        current.section === next.section &&
+        current.item === next.item &&
+        current.conversationId === next.conversationId
+      )
+        return previous;
       const entries = [...previous.entries.slice(0, previous.index + 1), next];
       return { entries, index: entries.length - 1 };
     });
+  }, []);
+  const replace = useCallback((next: Location) => {
+    setHistory((previous) => ({
+      ...previous,
+      entries: previous.entries.map((entry, index) => (index === previous.index ? next : entry)),
+    }));
   }, []);
   const sendMessage = (text: string, attachment?: string) => {
     const message: Message = {
@@ -82,6 +98,7 @@ export function useWorkspace(workspaceId = 'default') {
     ...state,
     location,
     navigate,
+    replace,
     sendMessage,
     storageFailed,
     toggleBookmark: (id: string) => toggle('bookmarks', id),

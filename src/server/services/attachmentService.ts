@@ -67,10 +67,14 @@ export class AttachmentService {
     mkdirSync(uploads, { recursive: true, mode: 0o700 });
   }
   list(botId: string, pending: boolean) {
+    if (pending) return this.pending('bot-' + botId);
     return this.attachments.forBot(botId, pending).map(publicAttachment);
   }
   forMessage(id: string) {
     return this.attachments.forMessage(id);
+  }
+  pending(conversationId: string) {
+    return this.attachments.pending(conversationId).map(publicAttachment);
   }
   storageNames(botId: string) {
     return this.attachments.storageNames(botId);
@@ -78,7 +82,12 @@ export class AttachmentService {
   bytes(file: AttachmentRecord) {
     return readFileSync(join(this.uploads, file.storageName));
   }
-  async upload(botId: string, originalName: string, buffer: Buffer) {
+  async upload(
+    botId: string,
+    originalName: string,
+    buffer: Buffer,
+    conversationId = 'bot-' + botId,
+  ) {
     if (!buffer.length || buffer.length > UPLOAD_LIMIT)
       throw new ApiError(413, 'Files must be between 1 byte and 10 MB.');
     const name = [...basename(originalName.replace(/\\/g, '/'))]
@@ -154,13 +163,14 @@ export class AttachmentService {
       text = text.slice(0, TEXT_LIMIT);
     }
     if (!this.bots.find(botId)) throw new ApiError(404, 'Bot not found.');
-    if (this.attachments.pendingCount(botId) >= ATTACHMENT_LIMIT)
+    if (this.attachments.pendingCount(botId, conversationId) >= ATTACHMENT_LIMIT)
       throw new ApiError(400, 'Remove unused attachments before uploading more.');
     const id = randomUUID();
     const file: AttachmentRecord = {
       id,
       botId,
       messageId: null,
+      conversationId,
       name,
       mediaType,
       size: buffer.length,
@@ -178,12 +188,17 @@ export class AttachmentService {
     }
     return publicAttachment(file);
   }
-  select(ids: string[], botId: string, vision: boolean) {
+  select(ids: string[], botId: string, vision: boolean, conversationId = 'bot-' + botId) {
     if (ids.length > ATTACHMENT_LIMIT || new Set(ids).size !== ids.length)
       throw new ApiError(400, 'Attach up to four different files.');
     return ids.map((id) => {
       const row = this.attachments.find(id);
-      if (!row || row.botId !== botId || row.messageId !== null)
+      if (
+        !row ||
+        row.botId !== botId ||
+        row.conversationId !== conversationId ||
+        row.messageId !== null
+      )
         throw new ApiError(400, 'An attachment is missing or already sent. Upload it again.');
       if (row.kind === 'image' && !vision)
         throw new ApiError(

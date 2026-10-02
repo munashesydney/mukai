@@ -27,6 +27,14 @@ import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
 import { z } from 'zod';
 
+function uploadName(request: IncomingMessage) {
+  try {
+    return decodeURIComponent(String(request.headers['x-filename'] || ''));
+  } catch {
+    throw new ApiError(400, 'Invalid filename.');
+  }
+}
+
 export function createRoutes({
   token,
   startedAt,
@@ -117,8 +125,15 @@ export function createRoutes({
       if (id && action === 'run' && method === 'POST')
         return send(response, pursuits.runNow(id), 201);
     } else if (resource === 'conversations') {
-      if (!id && method === 'GET')
-        return send(response, conversations.list(url.searchParams.get('workspaceId') || 'default'));
+      if (!id && method === 'GET') {
+        const workspaceId = url.searchParams.get('workspaceId') || 'default';
+        return send(
+          response,
+          url.searchParams.get('kind') === 'private'
+            ? conversations.privateChats(workspaceId)
+            : conversations.list(workspaceId),
+        );
+      }
       if (!id && method === 'POST') {
         const input = spaceSchema.parse(await jsonBody(request));
         return send(response, conversations.create(input.workspaceId, input), 201);
@@ -128,15 +143,39 @@ export function createRoutes({
         return send(response, conversations.import(input.workspaceId, input.spaces));
       }
       if (id) {
-        conversations.require(id);
+        const conversation = conversations.require(id);
         if (action === 'messages' && method === 'GET')
           return send(response, conversations.history(id));
-        if (action === 'chat' && method === 'POST')
+        if (action === 'chat' && method === 'POST') {
+          if (conversation.kind === 'private')
+            return conversations.sendPrivate(
+              id,
+              chatSchema.parse(await jsonBody(request)),
+              chatOutput(response),
+            );
           return conversations.send(
             id,
             spaceChatSchema.parse(await jsonBody(request)),
             chatOutput(response),
           );
+        }
+        if (action === 'attachments' && method === 'GET') {
+          conversations.privateBot(id);
+          return send(response, attachments.pending(id));
+        }
+        if (action === 'attachments' && method === 'POST') {
+          const bot = conversations.privateBot(id);
+          return send(
+            response,
+            await attachments.upload(
+              bot.id,
+              uploadName(request),
+              await body(request, UPLOAD_LIMIT),
+              id,
+            ),
+            201,
+          );
+        }
         if (action === 'saved' && method === 'PUT') {
           const input = savedMessageSchema.parse(await jsonBody(request));
           return send(response, conversations.save(id, input.messageId, input.saved));
@@ -196,6 +235,8 @@ export function createRoutes({
         return send(response, bots.save(value, undefined, value.workspaceId), 201);
       }
       const bot = bots.require(id || '');
+      if (action === 'conversations' && method === 'POST')
+        return send(response, conversations.createPrivate(bot.id), 201);
       if (method === 'PUT' && !action)
         return send(response, bots.save(botSchema.parse(await jsonBody(request)), id));
       if (method === 'DELETE' && !action) {
@@ -209,15 +250,9 @@ export function createRoutes({
       if (action === 'attachments' && method === 'GET')
         return send(response, attachments.list(id, true));
       if (action === 'attachments' && method === 'POST') {
-        let filename: string;
-        try {
-          filename = decodeURIComponent(String(request.headers['x-filename'] || ''));
-        } catch {
-          throw new ApiError(400, 'Invalid filename.');
-        }
         return send(
           response,
-          await attachments.upload(id, filename, await body(request, UPLOAD_LIMIT)),
+          await attachments.upload(id, uploadName(request), await body(request, UPLOAD_LIMIT)),
           201,
         );
       }

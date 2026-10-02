@@ -3,6 +3,12 @@ import type { ChatMessage } from '../../../shared/ai';
 import { api } from './http';
 
 export const conversationService = {
+  privateChats: (workspaceId: string) =>
+    api<Conversation[]>(
+      `/conversations?workspaceId=${encodeURIComponent(workspaceId)}&kind=private`,
+    ),
+  createPrivate: (botId: string) =>
+    api<Conversation>(`/bots/${encodeURIComponent(botId)}/conversations`, 'POST'),
   list: (workspaceId: string) =>
     api<Conversation[]>(`/conversations?workspaceId=${encodeURIComponent(workspaceId)}`),
   create: (workspaceId: string, input: SpaceInput) =>

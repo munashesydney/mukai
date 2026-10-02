@@ -7,6 +7,7 @@ import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
 import type { ChatState, ChatDraft } from '../../models/chat';
 import { conversationService } from '../../services/conversationService';
+import { chatConversationId } from '../../services/chatTarget';
 
 const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
@@ -18,7 +19,11 @@ function get(id: string) {
       requestId = crypto.randomUUID();
     try {
       const saved = JSON.parse(
-        localStorage.getItem(`mukai.draft.${id}`) || 'null',
+        localStorage.getItem(`mukai.draft.${id}`) ||
+          (id.startsWith('private:bot-')
+            ? localStorage.getItem(`mukai.draft.${id.slice(12)}`)
+            : null) ||
+          'null',
       ) as Partial<ChatDraft> | null;
       if (
         typeof saved?.text === 'string' &&
@@ -257,11 +262,7 @@ export const chatStore = {
   },
   async save(id: string, messageId: string, saved: boolean) {
     try {
-      const message = await conversationService.save(
-        id.startsWith('space:') ? id.slice(6) : 'bot-' + id,
-        messageId,
-        saved,
-      );
+      const message = await conversationService.save(chatConversationId(id), messageId, saved);
       update(id, {
         messages: get(id).messages.map((item) =>
           item.id === messageId ? { ...item, saved: message.saved } : item,

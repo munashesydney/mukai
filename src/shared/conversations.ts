@@ -6,6 +6,8 @@ export interface Conversation {
   description: string;
   botIds: string[];
   createdAt: string;
+  updatedAt: string;
+  ownerBotId: string | null;
 }
 export interface SpaceInput {
   name: string;

@@ -15,6 +15,8 @@ import type { Location, Space, DialogKind } from '../../features/workspace/types
 import type { Pursuit } from '../../../../shared/pursuits';
 import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
+import type { Conversation } from '../../../../shared/conversations';
+import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
 
 export function WorkspaceSidebar({
   location,
@@ -26,6 +28,8 @@ export function WorkspaceSidebar({
   onDialog,
   collapsed,
   bots,
+  botConversations,
+  onCreateConversation,
   workspace,
   workspaces,
   onWorkspace,
@@ -40,6 +44,8 @@ export function WorkspaceSidebar({
   onDialog: (dialog: DialogKind) => void;
   collapsed: boolean;
   bots: Bot[];
+  botConversations: Conversation[];
+  onCreateConversation: (botId: string) => Promise<void>;
   workspace?: Workspace;
   workspaces: Workspace[];
   onWorkspace: (id: string) => void;
@@ -185,7 +191,13 @@ export function WorkspaceSidebar({
                 <Plus size={18} />
               </IconButton>
             </div>
-            <div className="sidebar-group">{bots.map(botRow)}</div>
+            <BotConversationsSidebar
+              bots={bots}
+              conversations={botConversations}
+              location={location}
+              onSelect={onSelect}
+              onCreate={onCreateConversation}
+            />
           </>
         )}
         {location.section === 'pursuits' && (

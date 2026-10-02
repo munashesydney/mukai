@@ -151,11 +151,12 @@ export class PursuitRepository {
         conversationId = randomUUID(),
         date = new Date(now).toISOString();
       this.database.run(
-        "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at) VALUES(?,?,'pursuit_run',?,?,?)",
+        "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at,updated_at) VALUES(?,?,'pursuit_run',?,?,?,?)",
         conversationId,
         pursuit.workspaceId,
         pursuit.name,
         pursuit.objective,
+        date,
         date,
       );
       if (pursuit.ownerBotId)

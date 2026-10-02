@@ -513,6 +513,86 @@ p {
   min-height: 39px;
   gap: 11px;
 }
+.bot-conversation-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bot-conversation-heading {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  padding-right: 7px;
+}
+.bot-conversation-heading:hover {
+  background: var(--surface-muted);
+}
+.bot-conversation-parent {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  font-weight: 600;
+}
+.bot-conversation-parent:hover {
+  background: transparent;
+}
+.bot-conversation-toggle {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+.bot-conversation-toggle > svg {
+  position: absolute;
+  opacity: 0;
+}
+.bot-conversation-heading > .icon-button {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  pointer-events: none;
+}
+.bot-conversation-heading:hover > .icon-button,
+.bot-conversation-heading:has(:focus-visible) > .icon-button,
+.bot-conversation-heading:hover .bot-conversation-toggle > svg,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > svg {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bot-conversation-heading:hover .bot-conversation-toggle > .avatar,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar {
+  opacity: 0;
+}
+@media (hover: none) {
+  .bot-conversation-heading > .icon-button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.bot-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+.bot-conversation-row {
+  padding-left: 28px;
+  gap: 8px;
+  font-size: 12px;
+}
+.bot-conversation-row > span {
+  flex: 1;
+  min-width: 0;
+}
+.bot-conversation-row > time {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
 .bot-online {
   width: 5px;
   height: 5px;

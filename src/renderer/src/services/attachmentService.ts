@@ -1,11 +1,12 @@
 import type { Attachment } from '../../../shared/ai';
 import { api, apiFetch } from './http';
+import { chatRoot } from './chatTarget';
 
 export const attachmentService = {
-  pending: (botId: string) => api<Attachment[]>(`/bots/${encodeURIComponent(botId)}/attachments`),
+  pending: (id: string) => api<Attachment[]>(`${chatRoot(id)}/attachments`),
   sent: (botId: string) => api<Attachment[]>(`/bots/${encodeURIComponent(botId)}/files`),
   async upload(botId: string, file: File): Promise<Attachment> {
-    const response = await apiFetch(`/bots/${encodeURIComponent(botId)}/attachments`, {
+    const response = await apiFetch(`${chatRoot(botId)}/attachments`, {
       method: 'POST',
       headers: {
         'X-Filename': encodeURIComponent(file.name),

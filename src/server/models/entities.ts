@@ -6,6 +6,7 @@ export interface ProviderRecord extends Omit<ProviderSettings, 'hasKey'> {
   encryptedKey: string | null;
 }
 export interface AttachmentRecord extends Attachment {
+  conversationId: string | null;
   storageName: string;
   extractedText: string | null;
 }

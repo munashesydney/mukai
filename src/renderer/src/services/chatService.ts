@@ -1,10 +1,6 @@
 import type { ChatEvent, ChatInput, ChatMessage } from '../../../shared/ai';
 import { api, apiFetch } from './http';
-
-const root = (id: string) =>
-  id.startsWith('space:')
-    ? `/conversations/${encodeURIComponent(id.slice(6))}`
-    : `/bots/${encodeURIComponent(id)}`;
+import { chatRoot as root } from './chatTarget';
 
 export const chatService = {
   history: (id: string) => api<ChatMessage[]>(`${root(id)}/messages`),

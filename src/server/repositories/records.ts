@@ -34,6 +34,7 @@ export function providerRecord(row: Row): ProviderRecord {
 }
 export function attachmentRecord(row: Row): AttachmentRecord {
   return {
+    conversationId: row.conversation_id as string | null,
     id: String(row.id),
     botId: String(row.bot_id),
     messageId: row.message_id as string | null,
