@@ -19,6 +19,9 @@ import { chatStore, useChat } from './chatStore';
 import { ResponseActivity } from './ResponseActivity';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ArtifactsView } from './ArtifactsView';
+import type { FileChangeSummary } from '../../../../shared/fileChanges';
+import { FileChanges } from './FileChanges';
+import { DiffDrawer } from './DiffDrawer';
 
 export function BotChat({
   bot,
@@ -34,6 +37,9 @@ export function BotChat({
   const state = useChat(bot.id);
   const [filesOpen, setFilesOpen] = useState(false),
     [detailsOpen, setDetailsOpen] = useState(false);
+  const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
+    null,
+  );
   const fileInput = useRef<HTMLInputElement>(null),
     feed = useRef<HTMLDivElement>(null),
     follow = useRef(true);
@@ -146,6 +152,12 @@ export function BotChat({
                       </time>
                     </div>
                     {message.role === 'assistant' && <ResponseActivity message={message} />}
+                    {message.role === 'assistant' && (
+                      <FileChanges
+                        message={message}
+                        onReview={(changes, selectedId) => setReview({ changes, selectedId })}
+                      />
+                    )}
                     {message.role === 'user' && message.content && (
                       <MessageMarkdown text={message.content} />
                     )}
@@ -320,6 +332,14 @@ export function BotChat({
           </>
         )}
       </main>
+      {review && (
+        <DiffDrawer
+          changes={review.changes}
+          selectedId={review.selectedId}
+          onSelect={(selectedId) => setReview({ ...review, selectedId })}
+          onClose={() => setReview(null)}
+        />
+      )}
       {detailsOpen && (
         <aside className="ai-details">
           <div className="ai-details-heading">

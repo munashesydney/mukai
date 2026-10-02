@@ -12,6 +12,7 @@ import type { WorkspaceService } from '../services/workspaceService';
 import type { ArtifactService } from '../services/artifactService';
 import type { ToolService } from '../services/toolService';
 import { body, jsonBody, send, chatOutput } from './transport';
+import type { FileChangeService } from '../services/fileChangeService';
 
 export function createRoutes({
   token,
@@ -23,6 +24,7 @@ export function createRoutes({
   workspaces,
   artifacts,
   tools,
+  changes,
 }: {
   token: string;
   startedAt: number;
@@ -33,6 +35,7 @@ export function createRoutes({
   workspaces: WorkspaceService;
   artifacts: ArtifactService;
   tools: ToolService;
+  changes: FileChangeService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -71,7 +74,7 @@ export function createRoutes({
       send(response, method === 'HEAD' ? undefined : payload);
       return;
     }
-    if (!/^\/(bots|providers|attachments|workspaces|artifacts|tools)(\/|$)/.test(path))
+    if (!/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes)(\/|$)/.test(path))
       throw new ApiError(404, 'Not found');
     const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
     const expected = Buffer.from(token);
@@ -80,7 +83,9 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
-    if (resource === 'workspaces') {
+    if (resource === 'changes' && id && !action && method === 'GET') {
+      return send(response, changes.detail(id));
+    } else if (resource === 'workspaces') {
       if (!id && method === 'GET') return send(response, workspaces.list());
       if (!id && method === 'POST')
         return send(

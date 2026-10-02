@@ -16,6 +16,7 @@ import type {
   FileArtifact,
   ToolInfo,
 } from '../shared/ai';
+import type { FileChangeDetail } from '../shared/fileChanges';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
@@ -408,6 +409,16 @@ describe('Mukai bots and AI API', () => {
     const artifacts = (await request<FileArtifact[]>(`/bots/${bot.id}/artifacts`)).data;
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].path).toBe('draft.md');
+    expect(messages[1].changes).toHaveLength(1);
+    const change = messages[1].changes![0];
+    expect(change).toMatchObject({ path: 'draft.md', kind: 'created', added: 2, removed: 0 });
+    const detail = (await request<FileChangeDetail>(`/changes/${change.id}`)).data;
+    expect(detail.before).toBeNull();
+    expect(detail.after).toBe('# A useful draft\nA clearer second version.');
+    expect(detail.hunks?.flatMap((hunk) => hunk.lines)).toContain('+A clearer second version.');
+    // History carries only summaries; snapshots are fetched on demand.
+    expect(change).not.toHaveProperty('before');
+    expect((await fetch(api.url + `/changes/${change.id}`)).status).toBe(401);
     const count = calls.length;
     await chat('', sent.requestId, bot.id);
     expect(calls).toHaveLength(count);
@@ -426,12 +437,17 @@ describe('Mukai bots and AI API', () => {
     expect(restored.activity).toEqual(messages[1].activity);
     expect(restored.parts).toEqual(messages[1].parts);
     expect(restored.finishedAt).toBe(messages[1].finishedAt);
+    expect(restored.changes).toEqual(messages[1].changes);
+    writeFileSync(join(project, 'draft.md'), 'Changed outside this turn.');
+    expect((await request<FileChangeDetail>(`/changes/${change.id}`)).data).toEqual(detail);
+    writeFileSync(join(project, 'draft.md'), detail.after);
     const download = await fetch(api.url + '/artifacts/' + artifacts[0].id, {
       headers: { Authorization: `Bearer ${api.token}` },
     });
     expect(download.headers.get('content-disposition')).toContain('attachment');
     expect(await download.text()).toContain('A clearer second version.');
     await request(`/bots/${bot.id}`, 'DELETE');
+    expect((await request(`/changes/${change.id}`)).response.status).toBe(404);
     expect(
       (
         await fetch(api.url + '/artifacts/' + artifacts[0].id, {
@@ -541,6 +557,7 @@ describe('Mukai bots and AI API', () => {
       { version: 1 },
       { version: 2 },
       { version: 3 },
+      { version: 4 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();

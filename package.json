@@ -32,6 +32,7 @@
     "@ai-sdk/openai-compatible": "^3.0.62",
     "@fontsource/inter": "^5.2.6",
     "ai": "^7.0.127",
+    "diff": "9.0.0",
     "lucide-react": "^1.49.0",
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5",

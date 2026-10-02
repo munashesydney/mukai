@@ -4,6 +4,7 @@ import { MessageRepository } from '../repositories/messageRepository';
 import { WorkspaceService } from './workspaceService';
 import { WorkspaceFileService } from './workspaceFileService';
 import { ArtifactService } from './artifactService';
+import { FileChangeService } from './fileChangeService';
 
 export class ToolService {
   constructor(
@@ -11,6 +12,7 @@ export class ToolService {
     private artifacts: ArtifactService,
     private messages: MessageRepository,
     private dataDir: string,
+    private changes: FileChangeService,
   ) {}
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
@@ -32,7 +34,9 @@ export class ToolService {
     return toolsForBot({
       botId: bot.id,
       signal,
-      files: new WorkspaceFileService(workspace.folder, this.dataDir),
+      files: new WorkspaceFileService(workspace.folder, this.dataDir, (snapshot) =>
+        this.changes.record(bot.id, messageId, snapshot),
+      ),
       onActivity,
       onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
       callBudget: { remaining: 16 },

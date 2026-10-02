@@ -43,4 +43,14 @@ export const migrations = [
   `ALTER TABLE messages ADD COLUMN parts_json TEXT NOT NULL DEFAULT '[]';
    ALTER TABLE messages ADD COLUMN started_at TEXT;
    ALTER TABLE messages ADD COLUMN finished_at TEXT;`,
+  `CREATE TABLE file_changes (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    path TEXT NOT NULL, path_key TEXT NOT NULL,
+    before_text TEXT, after_text TEXT NOT NULL,
+    added INTEGER, removed INTEGER, hunks_json TEXT,
+    UNIQUE(message_id,path_key));
+   CREATE INDEX message_file_changes ON file_changes(message_id);
+   CREATE INDEX bot_file_changes ON file_changes(bot_id);`,
 ];

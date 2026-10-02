@@ -1,3 +1,5 @@
+import type { FileChangeSummary } from './fileChanges';
+
 export type ProviderKind = 'openai' | 'anthropic' | 'google' | 'compatible';
 export interface ProviderSettings {
   id: string;
@@ -97,6 +99,7 @@ export interface ChatMessage {
   parts?: ResponsePart[];
   startedAt?: string | null;
   finishedAt?: string | null;
+  changes?: FileChangeSummary[];
 }
 export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }

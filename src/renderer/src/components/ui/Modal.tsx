@@ -16,9 +16,13 @@ export function Modal({
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current;
+    const previousFocus = document.activeElement;
     element?.showModal();
     element?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea')?.focus();
-    return () => element?.close();
+    return () => {
+      element?.close();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
   }, []);
   return (
     <dialog

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorkspaceFileService } from './workspaceFileService';
+import type { FileMutationSnapshot } from '../../shared/fileChanges';
 
 let dir: string, root: string, privateDir: string, service: WorkspaceFileService;
 const signal = () => new AbortController().signal;
@@ -28,6 +29,54 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace file boundaries and operations', () => {
+  it('captures exact before/after contents inside the mutation queue, including BOM and CRLF', async () => {
+    const snapshots: FileMutationSnapshot[] = [];
+    const tracked = new WorkspaceFileService(root, privateDir, (snapshot) =>
+      snapshots.push(snapshot),
+    );
+    const original = '\uFEFFfirst\r\nsecond\r\n';
+    writeFileSync(join(root, 'note.txt'), original);
+    await tracked.execute(
+      { action: 'patch', path: 'note.txt', oldText: 'second', newText: 'revised' },
+      signal(),
+    );
+    expect(snapshots[0]).toEqual({
+      path: 'note.txt',
+      before: original,
+      after: '\uFEFFfirst\r\nrevised\r\n',
+    });
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe(snapshots[0].after);
+    await expect(
+      tracked.execute({ action: 'write_file', path: 'note.txt', content: 'not allowed' }, signal()),
+    ).rejects.toThrow('already exists');
+    expect(snapshots).toHaveLength(1);
+    await tracked.execute({ action: 'write_file', path: 'new.txt', content: '' }, signal());
+    expect(snapshots[1]).toEqual({ path: 'new.txt', before: null, after: '' });
+    await tracked.execute(
+      { action: 'write_file', path: 'note.txt', content: 'replacement', overwrite: true },
+      signal(),
+    );
+    expect(snapshots[2]).toEqual({
+      path: 'note.txt',
+      before: snapshots[0].after,
+      after: 'replacement',
+    });
+    // Parallel mutations must each see the preceding mutation's saved contents.
+    await Promise.all([
+      tracked.execute(
+        { action: 'write_file', path: 'new.txt', content: 'one', overwrite: true },
+        signal(),
+      ),
+      tracked.execute(
+        { action: 'write_file', path: 'new.txt', content: 'two', overwrite: true },
+        signal(),
+      ),
+    ]);
+    expect(snapshots.slice(3)).toEqual([
+      { path: 'new.txt', before: '', after: 'one' },
+      { path: 'new.txt', before: 'one', after: 'two' },
+    ]);
+  });
   it('searches a single file, preserving line numbers and bounded output', async () => {
     writeFileSync(join(root, 'page.html'), '<p>Hello</p>\n<p>Other</p>\n<p>HELLO</p>');
     writeFileSync(join(root, 'other.html'), 'Hello elsewhere');

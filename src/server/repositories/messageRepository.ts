@@ -4,28 +4,37 @@ import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
 import { messageRecord } from './records';
+import { FileChangeRepository } from './fileChangeRepository';
 
 export class MessageRepository {
   constructor(
     private database: Database,
     private attachments: AttachmentRepository,
+    private changes: FileChangeRepository,
   ) {}
   history(botId: string) {
     const files = this.attachments.forBot(botId, false);
+    const changes = this.changes.forBot(botId);
     return this.database
       .all('SELECT * FROM messages WHERE bot_id = ? ORDER BY sequence', botId)
       .map((row) => {
         const message = messageRecord(row);
-        return publicMessage(
-          message,
-          files.filter((file) => file.messageId === message.id),
-        );
+        return {
+          ...publicMessage(
+            message,
+            files.filter((file) => file.messageId === message.id),
+          ),
+          changes: changes.filter((change) => change.messageId === message.id),
+        };
       });
   }
   message(id: string) {
     const row = this.database.get('SELECT * FROM messages WHERE id = ?', id);
     if (!row) throw new Error('Message not found');
-    return publicMessage(messageRecord(row), this.attachments.forMessage(id));
+    return {
+      ...publicMessage(messageRecord(row), this.attachments.forMessage(id)),
+      changes: this.changes.forMessage(id),
+    };
   }
   forRequest(botId: string, requestId: string, role: MessageRecord['role']) {
     const row = this.database.get(

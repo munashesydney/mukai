@@ -14,6 +14,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../config';
 import type { FileOperationsInput } from '../tools/file-operations/definition';
+import type { FileMutationSnapshot } from '../../shared/fileChanges';
 
 const FILE_LIMIT = 256 * 1024;
 const OUTPUT_LIMIT = 24000;
@@ -42,6 +43,7 @@ export class WorkspaceFileService {
   constructor(
     private folder: string,
     private privateDir: string,
+    private onFileChanged?: (snapshot: FileMutationSnapshot) => void,
   ) {}
   private async root() {
     try {
@@ -127,7 +129,7 @@ export class WorkspaceFileService {
     if (bytes.length > FILE_LIMIT)
       throw new ApiError(400, 'This file exceeds the 256 KB text limit.');
     try {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
       if (text.includes('\0')) throw new Error();
       return { ...target, text };
     } catch {
@@ -243,7 +245,17 @@ export class WorkspaceFileService {
       case 'write_file': {
         if (input.content === undefined)
           throw new ApiError(400, 'content is required for write_file.');
+        const target = await this.path(value, true);
+        let before: string | null = null;
+        try {
+          await lstat(target.absolute);
+          // Existing-file overwrites need readable contents for an accurate snapshot.
+          before = (await this.text(value)).text;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
         const path = await this.save(value, input.content, input.overwrite === true, signal);
+        this.onFileChanged?.({ path, before, after: input.content });
         return { path, changed: true, summary: `Saved ${path}.` };
       }
       case 'patch': {
@@ -258,12 +270,9 @@ export class WorkspaceFileService {
         const latest = await this.text(value);
         if (latest.text !== file.text)
           throw new ApiError(409, 'The file changed while patching. Read it again.');
-        const path = await this.save(
-          value,
-          file.text.replace(input.oldText, () => input.newText!),
-          true,
-          signal,
-        );
+        const after = file.text.replace(input.oldText, () => input.newText!);
+        const path = await this.save(value, after, true, signal);
+        this.onFileChanged?.({ path, before: file.text, after });
         return { path, changed: true, summary: `Patched ${path}.` };
       }
       case 'create_directory': {

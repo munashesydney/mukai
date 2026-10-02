@@ -17,6 +17,8 @@ import { ArtifactRepository } from './repositories/artifactRepository';
 import { WorkspaceService } from './services/workspaceService';
 import { ArtifactService } from './services/artifactService';
 import { ToolService } from './services/toolService';
+import { FileChangeRepository } from './repositories/fileChangeRepository';
+import { FileChangeService } from './services/fileChangeService';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -38,7 +40,9 @@ export function createApiServer(options: ApiOptions = {}) {
     const botRepository = new BotRepository(store);
     const providerRepository = new ProviderRepository(store);
     const attachmentRepository = new AttachmentRepository(store);
-    const messageRepository = new MessageRepository(store, attachmentRepository);
+    const changeRepository = new FileChangeRepository(store);
+    const changes = new FileChangeService(changeRepository);
+    const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
     const workspaces = new WorkspaceService(workspaceRepository, botRepository, dir);
     const artifacts = new ArtifactService(
@@ -47,7 +51,7 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaces,
       dir,
     );
-    const tools = new ToolService(workspaces, artifacts, messageRepository, dir);
+    const tools = new ToolService(workspaces, artifacts, messageRepository, dir, changes);
     const providers = new ProviderService(providerRepository, botRepository, store.dir);
     const attachments = new AttachmentService(
       attachmentRepository,
@@ -74,6 +78,7 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaces,
       artifacts,
       tools,
+      changes,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => sendError(response, error));
