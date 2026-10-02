@@ -1585,11 +1585,11 @@ p {
   max-height: calc(100dvh - 80px);
   color: var(--ink);
   background: var(--surface);
-  box-shadow: 0 25px 100px #06190b33;
+  box-shadow: var(--modal-shadow);
 }
 .modal::backdrop {
   background: #0d262a66;
-  backdrop-filter: blur(4px);
+  backdrop-filter: none;
 }
 .modal-heading {
   display: flex;

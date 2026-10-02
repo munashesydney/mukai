@@ -55,6 +55,7 @@
   --scout-label: #b39964;
   --scout-label-surface: #faf5e7;
   --shadow: 0 20px 70px #12232e24, 0 4px 18px #12232e12;
+  --modal-shadow: 0 4px 12px -3px #00000024, 0 1px 3px #0000000f;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -91,4 +92,5 @@
   --scout-label: #e4c18a;
   --scout-label-surface: #443724;
   --shadow: 0 24px 90px #00000066, 0 4px 20px #00000033;
+  --modal-shadow: 0 4px 12px -3px #00000038, 0 1px 3px #00000018;
 }

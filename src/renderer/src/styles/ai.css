@@ -1095,9 +1095,6 @@
 .diff-drawer > .modal-heading h2 {
   font-size: 16px;
 }
-.diff-drawer::backdrop {
-  backdrop-filter: none;
-}
 .diff-navigation {
   display: flex;
   align-items: center;

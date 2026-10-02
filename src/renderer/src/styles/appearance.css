@@ -177,11 +177,11 @@
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--modal-shadow);
 }
 .modal::backdrop {
   background: #0c182c65;
-  backdrop-filter: blur(5px);
+  backdrop-filter: none;
 }
 .modal-heading {
   padding: 23px 26px;
