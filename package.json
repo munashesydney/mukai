@@ -51,6 +51,7 @@
   "build": {
     "appId": "com.mukai.desktop",
     "productName": "Mukai",
+    "icon": "src/renderer/public/mukai-logo.png",
     "directories": {
       "output": "release"
     },

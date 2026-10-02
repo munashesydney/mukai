@@ -14,6 +14,10 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: 'Mukai',
+    icon: join(
+      app.getAppPath(),
+      app.isPackaged ? 'out/renderer/mukai-logo.png' : 'src/renderer/public/mukai-logo.png',
+    ),
     frame: false,
     backgroundColor: '#12232e',
     show: false,

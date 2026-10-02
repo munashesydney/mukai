@@ -1,6 +1,5 @@
 import { Layers3, Target, Puzzle, Settings, Plus } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
-import { Avatar } from '../ui/Avatar';
 import { TriangleMark } from '../ui/TriangleMark';
 
 const items = [
@@ -51,9 +50,6 @@ export function NavigationRail({
         </button>
         <button className="rail-settings" onClick={onSettings} aria-label="Open settings">
           <Settings size={21} strokeWidth={1.6} />
-        </button>
-        <button className="rail-profile" onClick={onSettings} aria-label="Munashe’s profile">
-          <Avatar person="munashe" size="sm" status />
         </button>
       </div>
     </nav>

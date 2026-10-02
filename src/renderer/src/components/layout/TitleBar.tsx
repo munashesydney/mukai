@@ -21,7 +21,6 @@ export function TitleBar({
     <header className="title-bar">
       <div className="title-brand">
         <Brand />
-        <span className="desktop-label">WORKSPACE</span>
       </div>
       <div className="history-controls">
         <IconButton label="Go back" onClick={onBack} disabled={!canBack}>

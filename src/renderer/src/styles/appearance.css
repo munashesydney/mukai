@@ -37,7 +37,6 @@
   background: var(--theme-glow);
   box-shadow: 0 0 0 2px var(--navy);
 }
-.brand svg,
 .brand-period {
   color: var(--theme-glow);
 }
@@ -398,8 +397,9 @@
   font-size: 21px;
   gap: 6px;
 }
-.settings-nav-footer .brand svg {
+.settings-nav-footer .brand-logo {
   width: 26px;
+  height: 26px;
 }
 .settings-nav-footer > span {
   font-size: 10px;

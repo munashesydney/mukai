@@ -102,4 +102,4 @@ npm run package     # Unpacked desktop app in release/
 npm run dist        # Platform installer: NSIS, DMG, or AppImage
 ```
 
-Installer configuration is included. Public distribution still needs platform icons, signing/notarization, an update strategy, and release CI. Authentication, AI behavior, real integrations, durable server storage, and encrypted secrets are future work.
+Installer configuration and the Mukai logo are included. Public distribution still needs signing/notarization, an update strategy, and release CI. Authentication, AI behavior, real integrations, durable server storage, and encrypted secrets are future work.

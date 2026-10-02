@@ -119,8 +119,11 @@ p {
   letter-spacing: -1.2px;
   color: #eaf6f2;
 }
-.brand svg {
-  color: #65d5c5;
+.brand-logo {
+  width: 36px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 .brand-period {
   color: #65d5c5;
@@ -141,17 +144,11 @@ p {
   -webkit-app-region: no-drag;
 }
 .title-brand {
-  width: 225px;
+  width: 140px;
   display: flex;
   align-items: center;
   gap: 20px;
   flex-shrink: 0;
-}
-.desktop-label {
-  color: var(--text-secondary);
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  margin-top: 4px;
 }
 .history-controls {
   display: flex;
@@ -295,6 +292,10 @@ p {
   place-items: center;
   position: relative;
 }
+.rail-icon .triangle-mark {
+  border-bottom-color: currentColor;
+  filter: none;
+}
 .rail-link.is-active .rail-icon {
   background: #2b665e;
   box-shadow: 0 0 0 4px #2b665e;
@@ -335,9 +336,6 @@ p {
 }
 .rail-settings:hover {
   color: white;
-}
-.rail-profile {
-  padding: 0;
 }
 .workspace-sidebar {
   width: 254px;
@@ -2246,12 +2244,6 @@ button.file-list-row:hover {
   .workspace-sidebar {
     width: 230px;
   }
-  .title-brand {
-    width: 205px;
-  }
-  .desktop-label {
-    display: none;
-  }
   .workspace-state {
     display: none;
   }
@@ -2305,8 +2297,9 @@ button.file-list-row:hover {
     font-size: 20px;
     gap: 5px;
   }
-  .brand svg {
+  .brand-logo {
     width: 27px;
+    height: 27px;
   }
   .history-controls .icon-button:first-child,
   .history-controls .icon-button:nth-child(2) {
