@@ -201,7 +201,18 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             onConnectFolder={() => {
               if (ai.workspace) setEditingWorkspace(ai.workspace);
             }}
-            selectedToolId={location.item === 'workspace-tools' ? null : location.item}
+            selectedToolId={
+              ['workspace-tools', 'custom-tools', 'custom-routes'].includes(location.item)
+                ? null
+                : location.item
+            }
+            capabilitySection={
+              location.item === 'custom-tools'
+                ? 'tool'
+                : location.item === 'custom-routes'
+                  ? 'route'
+                  : undefined
+            }
             onSelectTool={(toolId) =>
               select({ section: 'tools', item: toolId ?? 'workspace-tools' })
             }

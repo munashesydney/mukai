@@ -8,6 +8,8 @@ import {
   Sunrise,
   Check,
   Puzzle,
+  FileCode2,
+  Webhook,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Bot, Workspace } from '../../../../shared/ai';
@@ -263,10 +265,27 @@ export function WorkspaceSidebar({
               <h2>Tools</h2>
               <Puzzle size={18} />
             </div>
-            <div className="sidebar-row is-selected">
+            <button
+              className={`sidebar-row ${isSelected('workspace-tools') ? 'is-selected' : ''}`}
+              onClick={() => onSelect({ section: 'tools', item: 'workspace-tools' })}
+            >
               <Puzzle size={18} />
               <span>Workspace tools</span>
-            </div>
+            </button>
+            <button
+              className={`sidebar-row ${isSelected('custom-tools') ? 'is-selected' : ''}`}
+              onClick={() => onSelect({ section: 'tools', item: 'custom-tools' })}
+            >
+              <FileCode2 size={18} />
+              <span>Custom tools</span>
+            </button>
+            <button
+              className={`sidebar-row ${isSelected('custom-routes') ? 'is-selected' : ''}`}
+              onClick={() => onSelect({ section: 'tools', item: 'custom-routes' })}
+            >
+              <Webhook size={18} />
+              <span>Routes</span>
+            </button>
           </>
         )}
       </div>

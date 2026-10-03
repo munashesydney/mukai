@@ -10,12 +10,15 @@ export function CustomCapabilities({
   workspaceId,
   query,
   onSelect,
+  section,
 }: {
   workspaceId: string;
   query: string;
   onSelect: (id: string) => void;
+  section?: 'tool' | 'route';
 }) {
   const [items, setItems] = useState<CapabilityRegistration[]>([]);
+  const sections = section ? [section] : (['tool', 'route'] as const);
   const [registering, setRegistering] = useState(false);
   const [kind, setKind] = useState<'tool' | 'route'>('tool'),
     [modulePath, setModulePath] = useState('');
@@ -58,7 +61,7 @@ export function CustomCapabilities({
           {error}
         </div>
       )}
-      {(['tool', 'route'] as const).map((section) => (
+      {sections.map((section) => (
         <section key={section} className="tool-detail-section">
           <div className="capability-heading">
             <h2>{section === 'tool' ? 'Custom tools' : 'Routes'}</h2>
@@ -112,6 +115,7 @@ export function CustomCapabilities({
         className="button button--primary capability-register"
         onClick={() => {
           setError('');
+          if (section) setKind(section);
           setRegistering(true);
         }}
       >

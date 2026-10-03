@@ -85,12 +85,14 @@ export function ToolsPage({
   folder,
   onConnectFolder,
   selectedToolId,
+  capabilitySection,
   onSelectTool,
 }: {
   workspaceId: string;
   folder: string | null;
   onConnectFolder: () => void;
   selectedToolId: string | null;
+  capabilitySection?: 'tool' | 'route';
   onSelectTool: (toolId: string | null) => void;
 }) {
   const [tools, setTools] = useState<ToolInfo[]>([]),
@@ -149,15 +151,36 @@ export function ToolsPage({
         <span>
           <Puzzle size={17} /> YOUR TOOLKIT
         </span>
-        <span className="ai-caption">
+        <span
+          className="ai-caption"
+          aria-hidden={Boolean(capabilitySection)}
+          hidden={false}
+          style={{ visibility: capabilitySection ? 'hidden' : 'visible' }}
+        >
           {tools.length} tool {tools.length === 1 ? 'family' : 'families'}
         </span>
         <BrowserToggle />
       </div>
-      <h1>Tools for your bots.</h1>
-      <p className="tools-intro">Small, useful capabilities. A little more room to do.</p>
+      <h1>
+        {capabilitySection === 'tool'
+          ? 'Custom tools.'
+          : capabilitySection === 'route'
+            ? 'Routes.'
+            : 'Tools for your bots.'}
+      </h1>
+      <p className="tools-intro">
+        {capabilitySection
+          ? 'Saved workspace modules, ready for your bots.'
+          : 'Small, useful capabilities. A little more room to do.'}
+      </p>
       <div className="tools-filter">
-        <span>Workspace tools</span>
+        <span>
+          {capabilitySection === 'tool'
+            ? 'Custom tools'
+            : capabilitySection === 'route'
+              ? 'Routes'
+              : 'Workspace tools'}
+        </span>
         <label>
           <Search size={16} />
           <input
@@ -168,7 +191,7 @@ export function ToolsPage({
           />
         </label>
       </div>
-      {error && (
+      {!capabilitySection && error && (
         <div className="ai-alert" role="alert">
           {error}
           <button className="text-button" onClick={() => void refresh()}>
@@ -176,34 +199,40 @@ export function ToolsPage({
           </button>
         </div>
       )}
-      {loading ? (
-        <p className="ai-caption">Loading tools…</p>
-      ) : (
-        <div className="tool-family-list">
-          {visible.map((tool) => (
-            <button
-              key={tool.id}
-              className="tool-family-card"
-              onClick={() => onSelectTool(tool.id)}
-            >
-              <div className="tool-family-icon">
-                <ToolIcon toolId={tool.id} />
-              </div>
-              <div className="tool-family-body">
-                <h2 className="tool-family-name">{tool.name}</h2>
-                <p>{tool.description}</p>
-              </div>
-              <ChevronRight className="tool-family-arrow" size={18} />
-            </button>
-          ))}
-        </div>
+      {!capabilitySection &&
+        (loading ? (
+          <p className="ai-caption">Loading tools…</p>
+        ) : (
+          <div className="tool-family-list">
+            {visible.map((tool) => (
+              <button
+                key={tool.id}
+                className="tool-family-card"
+                onClick={() => onSelectTool(tool.id)}
+              >
+                <div className="tool-family-icon">
+                  <ToolIcon toolId={tool.id} />
+                </div>
+                <div className="tool-family-body">
+                  <h2 className="tool-family-name">{tool.name}</h2>
+                  <p>{tool.description}</p>
+                </div>
+                <ChevronRight className="tool-family-arrow" size={18} />
+              </button>
+            ))}
+          </div>
+        ))}
+      {!capabilitySection && !loading && !visible.length && (
+        <div className="tools-empty">No tools match “{query}”.</div>
       )}
-      {!loading && !visible.length && <div className="tools-empty">No tools match “{query}”.</div>}
-      <CustomCapabilities
-        workspaceId={workspaceId}
-        query={query}
-        onSelect={(id) => onSelectTool('custom:' + id)}
-      />
+      {capabilitySection && (
+        <CustomCapabilities
+          workspaceId={workspaceId}
+          query={query}
+          section={capabilitySection}
+          onSelect={(id) => onSelectTool('custom:' + id)}
+        />
+      )}
       <div className="workspace-tools-folder">
         <FolderOpen size={18} />
         <div>
