@@ -3,6 +3,7 @@ import { Brand } from '../../components/ui/Brand';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
+import { EnvironmentPanel } from './EnvironmentPanel';
 import type { Workspace } from '../../../../shared/ai';
 import type { SettingsSection } from '../workspace/types';
 
@@ -10,6 +11,7 @@ const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'providers', label: 'Providers', icon: KeyRound },
+  { id: 'environment', label: 'Environment variables', icon: KeyRound },
 ] as const;
 
 export function SettingsPage({
@@ -76,6 +78,11 @@ export function SettingsPage({
             <WorkspacePanel workspace={workspace} onConnectFolder={onConnectFolder} />
           ) : section === 'appearance' ? (
             <AppearancePanel />
+          ) : section === 'environment' ? (
+            <EnvironmentPanel
+              key={workspace?.id || 'default'}
+              workspaceId={workspace?.id || 'default'}
+            />
           ) : (
             <ProvidersPanel onChanged={onProvidersChanged} />
           )}

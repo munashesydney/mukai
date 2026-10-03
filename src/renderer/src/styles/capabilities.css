@@ -1,0 +1,116 @@
+.custom-capabilities {
+  margin-top: 32px;
+}
+.capability-panel {
+  max-width: 840px;
+}
+.capability-panel > p,
+.capability-inspector > p {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.capability-heading,
+.capability-card,
+.capability-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.capability-heading {
+  justify-content: space-between;
+}
+.capability-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.capability-card {
+  justify-content: space-between;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+}
+.capability-card p {
+  margin: 6px 0;
+}
+.capability-open {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.capability-open span,
+.capability-card small {
+  color: var(--text-secondary);
+}
+.capability-form {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+}
+.capability-form label,
+.capability-import label,
+.capability-inspector label {
+  display: grid;
+  gap: 8px;
+}
+.capability-form input,
+.capability-form select,
+.capability-import textarea,
+.capability-inspector textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.capability-import textarea,
+.capability-inspector textarea {
+  min-height: 130px;
+  font-family: monospace;
+  resize: vertical;
+}
+.capability-import {
+  margin: 24px 0;
+}
+.capability-import summary,
+.capability-inspector summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.capability-inspector {
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 24px 0;
+}
+.capability-inspector pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  padding: 16px;
+  background: var(--surface-muted);
+  max-height: 400px;
+  overflow: auto;
+}
+.capability-url code {
+  overflow-wrap: anywhere;
+  display: block;
+  margin: 12px 0;
+}
+@media (max-width: 700px) {
+  .capability-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .capability-inspector {
+    padding: 16px;
+  }
+}

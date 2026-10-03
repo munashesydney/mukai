@@ -28,6 +28,8 @@ import type { PursuitService } from '../services/pursuitService';
 import { z } from 'zod';
 import type { BrowserService } from '../services/browserService';
 import { browserDefinition } from '../tools/browser/definition';
+import type { CapabilityService } from '../capabilities/service';
+import { registrationInput } from '../capabilities/service';
 
 function uploadName(request: IncomingMessage) {
   try {
@@ -51,6 +53,7 @@ export function createRoutes({
   conversations,
   pursuits,
   browsers,
+  capabilities,
 }: {
   token: string;
   startedAt: number;
@@ -65,11 +68,16 @@ export function createRoutes({
   conversations: ConversationService;
   pursuits: PursuitService;
   browsers: BrowserService;
+  capabilities: CapabilityService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
+    // Custom ingress applies its own host/auth policy; management APIs retain local auth.
+    if (new URL(request.url || '/', 'http://localhost').pathname.startsWith('/custom/')) {
+      return capabilities.dispatch(request, response, token);
+    }
     const origin = request.headers.origin;
     const permittedOrigin =
       !origin || origin === 'null' || /^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin);
@@ -104,7 +112,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser)(\/|$)/.test(
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment)(\/|$)/.test(
         path,
       )
     )
@@ -116,6 +124,76 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'capabilities' || resource === 'environment') {
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      workspaces.require(workspaceId);
+      if (resource === 'environment') {
+        if (!id && method === 'GET')
+          return send(response, capabilities.environment.list(workspaceId));
+        if (!id && method === 'PUT') {
+          const input = z
+            .object({
+              entries: z.array(z.object({ name: z.string(), value: z.string() })).max(200),
+            })
+            .parse(await jsonBody(request, 1024 * 1024));
+          capabilities.environment.save(workspaceId, input.entries);
+          return send(response, capabilities.environment.list(workspaceId));
+        }
+        if (id && method === 'DELETE') {
+          capabilities.environment.remove(workspaceId, decodeURIComponent(id));
+          return send(response, { removed: true });
+        }
+      } else {
+        if (!id && method === 'GET') return send(response, capabilities.list(workspaceId));
+        if (id && !action && method === 'GET')
+          return send(response, capabilities.detail(id, workspaceId));
+        if (!id && method === 'POST') {
+          const { kind, ownerBotId, ...input } = z
+            .object({
+              kind: z.enum(['tool', 'route']),
+              ownerBotId: z.string().optional(),
+              ...registrationInput.shape,
+            })
+            .parse(await jsonBody(request));
+          if (ownerBotId && bots.require(ownerBotId).workspaceId !== workspaceId)
+            throw new ApiError(403, 'Owner bot belongs to another workspace.');
+          return send(
+            response,
+            await capabilities.manage(workspaceId, ownerBotId || null, kind, input),
+          );
+        }
+        if (id && action === 'test' && method === 'POST') {
+          const { registration } = capabilities.detail(id, workspaceId);
+          const input = await jsonBody(request, 1024 * 1024);
+          if (registration.kind === 'route') {
+            const sample = z
+              .object({
+                headers: z.record(z.string(), z.string()).default({}),
+                rawBody: z.string().max(262144).default(''),
+              })
+              .parse(input);
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(sample.rawBody);
+            } catch {
+              /* Preserve non-JSON bodies. */
+            }
+            return send(
+              response,
+              await capabilities.invoke(id, {
+                method: registration.definition.method,
+                url: registration.definition.path,
+                headers: sample.headers,
+                rawBody: Buffer.from(sample.rawBody),
+                body: parsed,
+              }),
+            );
+          }
+          return send(response, await capabilities.invoke(id, input));
+        }
+      }
+      throw new ApiError(404, 'Not found');
+    }
     if (resource === 'browser') {
       if (!id && method === 'GET') {
         const workspaceId = url.searchParams.get('workspaceId') || 'default';

@@ -13,6 +13,7 @@ import './styles/global.css';
 import './styles/appearance.css';
 import './styles/ai.css';
 import './styles/pursuits.css';
+import './styles/capabilities.css';
 
 applyTheme(readPreferences(), window.matchMedia('(prefers-color-scheme: dark)').matches);
 

@@ -14,6 +14,7 @@ import type { ToolInfo } from '../../../../shared/ai';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
+import { CustomCapabilities } from './CustomCapabilities';
 
 function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'manage_pursuit') return <Target size={size} />;
@@ -183,6 +184,7 @@ export function ToolsPage({
         </div>
       )}
       {!loading && !visible.length && <div className="tools-empty">No tools match “{query}”.</div>}
+      <CustomCapabilities workspaceId={workspaceId} query={query} />
       <div className="workspace-tools-folder">
         <FolderOpen size={18} />
         <div>
