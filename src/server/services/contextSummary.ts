@@ -10,7 +10,9 @@ function summaryOptions(config: ModelConfig): ProviderOptions {
   return {
     openai: {
       store: false,
-      ...(config.provider.kind === 'openai' && /^(o[1-9]|gpt-[5-9])/i.test(config.modelId)
+      ...(config.provider.kind === 'chatgpt' ? { systemMessageMode: 'developer' } : {}),
+      ...(['openai', 'chatgpt'].includes(config.provider.kind) &&
+      /^(o[1-9]|gpt-[5-9])/i.test(config.modelId)
         ? { reasoningEffort: 'low' }
         : {}),
     },
@@ -50,7 +52,7 @@ export function contextSummarizer(
       const summary = await generateText({
         model: config.model,
         maxOutputTokens: output,
-        maxRetries: 1,
+        maxRetries: config.provider.kind === 'chatgpt' ? 0 : 1,
         abortSignal: signal,
         timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: 45000 },
         providerOptions: summaryOptions(config),

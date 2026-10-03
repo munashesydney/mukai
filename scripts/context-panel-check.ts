@@ -9,7 +9,14 @@ export async function checkContextPanel(
   window: BrowserWindow,
   api: Awaited<ReturnType<typeof startApiServer>>,
 ) {
-  const evaluate = <T>(code: string): Promise<T> => window.webContents.executeJavaScript(code);
+  const evaluate = async <T>(code: string): Promise<T> => {
+    const result = await window.webContents.executeJavaScript(
+      `(() => { try { return (${code}); } catch (error) { return {__smokeError:error.message}; } })()`,
+    );
+    if (result && typeof result === 'object' && '__smokeError' in result)
+      throw new Error(`Context panel: ${result.__smokeError}; script: ${code}`);
+    return result;
+  };
   const wait = async (code: string, name: string) => {
     for (let attempt = 0; attempt < 100; attempt++) {
       if (await evaluate<boolean>(code)) return;
@@ -54,8 +61,10 @@ export async function checkContextPanel(
     api.store.get('SELECT context_window_tokens FROM providers')?.context_window_tokens,
     65536,
   );
-  await evaluate('document.querySelector(".settings-footer button").click()');
-  await wait('!document.querySelector(".settings-modal")', 'closed settings');
+  await evaluate(
+    'Array.from(document.querySelectorAll(".rail-link")).find(el=>el.textContent.trim()==="Bots").click()',
+  );
+  await wait('!document.querySelector(".settings-page")', 'closed settings');
   await wait(
     'document.querySelector(".context-meter").textContent.includes("0%")',
     'configured capacity',

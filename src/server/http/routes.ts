@@ -236,15 +236,40 @@ export function createRoutes({
       response.writeHead(200).end(file.bytes);
       return;
     } else if (resource === 'providers') {
+      if (id === 'chatgpt-auth') {
+        if (!action && method === 'POST') {
+          const input = z
+            .object({
+              providerId: z.string().uuid().optional(),
+              consent: z.boolean().optional(),
+              retryAttemptId: z.string().uuid().optional(),
+            })
+            .parse(await jsonBody(request));
+          return send(
+            response,
+            await providers.chatgpt.begin(input.providerId, input.consent, input.retryAttemptId),
+          );
+        }
+        if (action && method === 'GET') return send(response, providers.chatgpt.status(action));
+        if (action && method === 'DELETE') {
+          providers.chatgpt.cancel(action);
+          return send(response, { ok: true });
+        }
+      }
+      if (id && action === 'models' && method === 'GET')
+        return send(response, await providers.chatgpt.models(id));
+      if (id && action === 'disconnect' && method === 'POST')
+        return send(response, await providers.chatgpt.disconnect(id));
       if (!id && method === 'GET') return send(response, providers.list());
       if (!id && method === 'POST')
         return send(response, providers.save(providerSchema.parse(await jsonBody(request))), 201);
       if (id && method === 'PUT' && !action) {
-        return send(response, providers.save(providerSchema.parse(await jsonBody(request)), id));
+        const input = providerSchema.parse(await jsonBody(request));
+        await providers.validateModel(id, input.defaultModel);
+        return send(response, providers.save(input, id));
       }
       if (id && method === 'DELETE' && !action) {
-        providers.remove(id);
-        return send(response, { ok: true });
+        return send(response, await providers.remove(id));
       }
       if (id && action === 'test' && method === 'POST')
         return send(response, await providers.test(id));
@@ -253,13 +278,17 @@ export function createRoutes({
         return send(response, bots.list(url.searchParams.get('workspaceId') || 'default'));
       if (!id && method === 'POST') {
         const value = createBotSchema.parse(await jsonBody(request));
+        await providers.validateModel(value.providerId, value.model);
         return send(response, bots.save(value, undefined, value.workspaceId), 201);
       }
       const bot = bots.require(id || '');
       if (action === 'conversations' && method === 'POST')
         return send(response, conversations.createPrivate(bot.id), 201);
-      if (method === 'PUT' && !action)
-        return send(response, bots.save(botSchema.parse(await jsonBody(request)), id));
+      if (method === 'PUT' && !action) {
+        const input = botSchema.parse(await jsonBody(request));
+        await providers.validateModel(input.providerId, input.model);
+        return send(response, bots.save(input, id));
+      }
       if (method === 'DELETE' && !action) {
         bots.remove(id);
         return send(response, { ok: true });

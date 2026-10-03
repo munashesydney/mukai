@@ -14,7 +14,7 @@ export const botSchema = z.object({
 
 export const providerSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  kind: z.enum(['openai', 'anthropic', 'google', 'compatible']),
+  kind: z.enum(['openai', 'chatgpt', 'anthropic', 'google', 'compatible']),
   baseUrl: z.string().trim().max(500),
   defaultModel: z.string().trim().min(1).max(150),
   supportsImages: z.boolean(),

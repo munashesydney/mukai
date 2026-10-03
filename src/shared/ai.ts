@@ -1,6 +1,26 @@
 import type { FileChangeSummary } from './fileChanges';
 
-export type ProviderKind = 'openai' | 'anthropic' | 'google' | 'compatible';
+export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
+export interface ChatGPTAccount {
+  label: string;
+  clientId: string;
+  connected: boolean;
+  planEnabled: boolean;
+}
+export interface ProviderModel {
+  id: string;
+  name: string;
+  category: 'GPT' | 'Codex' | 'Reasoning' | 'Other';
+  contextWindowTokens: number | null;
+  supportsImages: boolean | null;
+}
+export interface ChatGPTSignIn {
+  id: string;
+  url?: string;
+  status: 'pending' | 'complete' | 'failed' | 'cancelled';
+  providerId?: string;
+  message?: string;
+}
 export interface ProviderSettings {
   id: string;
   name: string;
@@ -10,6 +30,7 @@ export interface ProviderSettings {
   supportsImages: boolean;
   isDefault: boolean;
   hasKey: boolean;
+  account?: ChatGPTAccount;
   contextWindowTokens?: number | null;
   maxOutputTokens?: number;
 }
