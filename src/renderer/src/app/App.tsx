@@ -198,6 +198,10 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             onConnectFolder={() => {
               if (ai.workspace) setEditingWorkspace(ai.workspace);
             }}
+            selectedToolId={location.item === 'workspace-tools' ? null : location.item}
+            onSelectTool={(toolId) =>
+              select({ section: 'tools', item: toolId ?? 'workspace-tools' })
+            }
           />
         ) : location.section === 'bots' ? (
           ai.loading || botChats.loading ? (

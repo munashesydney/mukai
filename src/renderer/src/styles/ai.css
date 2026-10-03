@@ -515,16 +515,28 @@
 .tool-family-list {
   display: grid;
   gap: 14px;
-  max-width: 860px;
 }
 .tool-family-card {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
+  width: 100%;
   padding: 22px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: 12px;
+  transition: background 0.15s ease;
+}
+.tool-family-card:hover {
+  background: var(--surface-muted);
+}
+.tool-family-card:focus-visible {
+  outline: 2px solid var(--theme-border);
+  outline-offset: 2px;
 }
 .tool-family-icon {
   display: grid;
@@ -540,26 +552,18 @@
   flex: 1;
   min-width: 0;
 }
-.tool-family-title {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-.tool-family-title h2 {
+.tool-family-name {
   font-size: 15px;
   color: var(--ink);
 }
 .tool-family-body > p {
   color: var(--text-secondary);
   font-size: 12px;
-  margin: 8px 0 13px;
+  margin: 6px 0 0;
 }
-.tool-family-body > small {
-  display: block;
-  margin-top: 13px;
-  font-size: 10px;
-  color: var(--text-muted);
+.tool-family-arrow {
+  flex-shrink: 0;
+  color: var(--text-soft);
 }
 .tool-action-chips {
   display: flex;
@@ -574,12 +578,66 @@
 .tool-availability.is-ready {
   color: var(--theme-text);
 }
+.tool-detail {
+  max-width: 720px;
+}
+.tool-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tool-detail-back:hover {
+  color: var(--text-secondary);
+}
+.tool-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 28px;
+}
+.tool-detail-header h1 {
+  font-family: Georgia, serif;
+  font-size: clamp(26px, 2.6vw, 38px);
+  line-height: 1.15;
+  letter-spacing: -0.8px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.tool-detail-description {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.9;
+  margin-top: 20px;
+}
+.tool-detail-section {
+  margin-top: 32px;
+}
+.tool-detail-section h2 {
+  font-size: 11px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.tool-detail-section p {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.tool-detail-section small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
 .workspace-tools-folder {
   display: flex;
   align-items: center;
   gap: 13px;
   padding: 20px 0;
-  max-width: 860px;
   color: var(--text-secondary);
   font-size: 12px;
 }

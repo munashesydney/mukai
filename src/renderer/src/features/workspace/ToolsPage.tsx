@@ -1,18 +1,92 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, FolderOpen, Puzzle, Search, Target, Globe, Terminal } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronRight,
+  FileText,
+  FolderOpen,
+  Globe,
+  Puzzle,
+  Search,
+  Target,
+  Terminal,
+} from 'lucide-react';
 import type { ToolInfo } from '../../../../shared/ai';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
 
+function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
+  if (toolId === 'manage_pursuit') return <Target size={size} />;
+  if (toolId === 'browser') return <Globe size={size} />;
+  if (toolId === 'terminal') return <Terminal size={size} />;
+  return <FileText size={size} />;
+}
+
+function toolScopeNote(tool: ToolInfo, folder: string | null) {
+  if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
+  if (tool.id === 'browser') return 'Mukai and Google Chrome';
+  if (tool.id === 'terminal') return 'Local shell · Per-conversation processes';
+  return folder ? 'Within this workspace folder' : 'Connect a folder to start';
+}
+
+function ToolDetail({
+  tool,
+  folder,
+  onBack,
+}: {
+  tool: ToolInfo;
+  folder: string | null;
+  onBack: () => void;
+}) {
+  return (
+    <div className="tool-detail">
+      <button className="tool-detail-back" onClick={onBack}>
+        <ArrowLeft size={15} /> All tools
+      </button>
+      <div className="tool-detail-header">
+        <div className="tool-family-icon">
+          <ToolIcon toolId={tool.id} />
+        </div>
+        <div>
+          <h1>{tool.name}</h1>
+          <span className={`tool-availability ${tool.available ? 'is-ready' : ''}`}>
+            {tool.available ? 'Ready' : 'Needs a folder'}
+          </span>
+        </div>
+      </div>
+      <p className="tool-detail-description">{tool.description}</p>
+      <section className="tool-detail-section">
+        <h2>Actions</h2>
+        <div className="tool-action-chips">
+          {tool.actions.map((action) => (
+            <code key={action}>
+              {action}
+              {tool.counts[action] ? <span> ×{tool.counts[action]}</span> : null}
+            </code>
+          ))}
+        </div>
+      </section>
+      <section className="tool-detail-section">
+        <h2>Availability</h2>
+        <p>{tool.scope === 'all-bots' ? 'Available to every bot' : 'Available to selected bots'}</p>
+        <small>{toolScopeNote(tool, folder)}</small>
+      </section>
+    </div>
+  );
+}
+
 export function ToolsPage({
   workspaceId,
   folder,
   onConnectFolder,
+  selectedToolId,
+  onSelectTool,
 }: {
   workspaceId: string;
   folder: string | null;
   onConnectFolder: () => void;
+  selectedToolId: string | null;
+  onSelectTool: (toolId: string | null) => void;
 }) {
   const [tools, setTools] = useState<ToolInfo[]>([]),
     [query, setQuery] = useState('');
@@ -34,6 +108,25 @@ export function ToolsPage({
   const visible = tools.filter((tool) =>
     (tool.name + tool.description).toLowerCase().includes(query.toLowerCase()),
   );
+  const selected = selectedToolId ? tools.find((tool) => tool.id === selectedToolId) : undefined;
+  if (selectedToolId) {
+    return (
+      <main className="tools-page">
+        {loading ? (
+          <p className="ai-caption">Loading tool…</p>
+        ) : selected ? (
+          <ToolDetail tool={selected} folder={folder} onBack={() => onSelectTool(null)} />
+        ) : (
+          <div className="tool-detail">
+            <button className="tool-detail-back" onClick={() => onSelectTool(null)}>
+              <ArrowLeft size={15} /> All tools
+            </button>
+            <div className="tools-empty">That tool isn’t available in this workspace.</div>
+          </div>
+        )}
+      </main>
+    );
+  }
   return (
     <main className="tools-page">
       <div className="tools-topline">
@@ -72,51 +165,20 @@ export function ToolsPage({
       ) : (
         <div className="tool-family-list">
           {visible.map((tool) => (
-            <article key={tool.id} className="tool-family-card">
+            <button
+              key={tool.id}
+              className="tool-family-card"
+              onClick={() => onSelectTool(tool.id)}
+            >
               <div className="tool-family-icon">
-                {tool.id === 'manage_pursuit' ? (
-                  <Target size={23} />
-                ) : tool.id === 'browser' ? (
-                  <Globe size={23} />
-                ) : tool.id === 'terminal' ? (
-                  <Terminal size={23} />
-                ) : (
-                  <FileText size={23} />
-                )}
+                <ToolIcon toolId={tool.id} />
               </div>
               <div className="tool-family-body">
-                <div className="tool-family-title">
-                  <h2>{tool.name}</h2>
-                  <span className={`tool-availability ${tool.available ? 'is-ready' : ''}`}>
-                    {tool.available ? 'Ready' : 'Needs a folder'}
-                  </span>
-                </div>
+                <h2 className="tool-family-name">{tool.name}</h2>
                 <p>{tool.description}</p>
-                <div className="tool-action-chips">
-                  {tool.actions.map((action) => (
-                    <code key={action}>
-                      {action}
-                      {tool.counts[action] ? <span> ×{tool.counts[action]}</span> : null}
-                    </code>
-                  ))}
-                </div>
-                <small>
-                  {tool.scope === 'all-bots'
-                    ? 'Available to every bot'
-                    : 'Available to selected bots'}{' '}
-                  ·{' '}
-                  {tool.id === 'manage_pursuit'
-                    ? 'Manages its own pursuits'
-                    : tool.id === 'browser'
-                      ? 'Mukai and Google Chrome'
-                      : tool.id === 'terminal'
-                        ? 'Local shell · Per-conversation processes'
-                        : folder
-                          ? 'Within this workspace folder'
-                          : 'Connect a folder to start'}
-                </small>
               </div>
-            </article>
+              <ChevronRight className="tool-family-arrow" size={18} />
+            </button>
           ))}
         </div>
       )}
