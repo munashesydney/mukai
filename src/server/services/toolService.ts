@@ -1,3 +1,5 @@
+import type { SkillService } from '../skills/service';
+import { skillTools } from '../tools/skills/execute';
 import type { Bot, ChatActivity, ToolInfo } from '../../shared/ai';
 import { toolCatalog, toolsForBot, pursuitTools, runtimeTools } from '../tools/registry';
 import type { PursuitService } from './pursuitService';
@@ -15,6 +17,13 @@ import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinitions } from '../tools/memory/definition';
 
 export class ToolService {
+  private skills?: SkillService;
+  attachSkills(service: SkillService) {
+    this.skills = service;
+  }
+  skillContext(bot: Bot, conversationId: string) {
+    return this.skills?.context(bot.workspaceId, bot.id, conversationId) || '';
+  }
   private memory?: MemoryService;
   attachMemory(service: MemoryService) {
     this.memory = service;
@@ -50,15 +59,17 @@ export class ToolService {
     return toolCatalog().map((tool) => ({
       ...tool,
       available:
-        tool.id === 'memory'
-          ? Boolean(this.memory)
-          : tool.id === 'manage_pursuit'
-            ? Boolean(this.pursuits)
-            : tool.id.startsWith('register_custom_')
-              ? Boolean(this.capabilities)
-              : tool.id === 'browser'
-                ? true
-                : Boolean(workspace.folder),
+        tool.id === 'skills'
+          ? Boolean(this.skills)
+          : tool.id === 'memory'
+            ? Boolean(this.memory)
+            : tool.id === 'manage_pursuit'
+              ? Boolean(this.pursuits)
+              : tool.id.startsWith('register_custom_')
+                ? Boolean(this.capabilities)
+                : tool.id === 'browser'
+                  ? true
+                  : Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
     }));
   }
@@ -73,6 +84,7 @@ export class ToolService {
     onActivity: (activity: ChatActivity) => void,
     vision = false,
     resultBytes?: number,
+    skillContextBytes?: number,
   ) {
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
@@ -80,6 +92,16 @@ export class ToolService {
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
     return {
+      ...(this.skills
+        ? skillTools({
+            bot,
+            conversationId: conversationId!,
+            skills: this.skills,
+            maxContextBytes: skillContextBytes,
+            signal,
+            onActivity,
+          })
+        : {}),
       ...(this.memory
         ? memoryTools({
             bot,

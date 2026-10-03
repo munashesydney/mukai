@@ -1,3 +1,5 @@
+import type { SkillService } from '../skills/service';
+import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import type { HealthResponse } from '../../shared/contracts';
@@ -56,6 +58,7 @@ export function createRoutes({
   browsers,
   capabilities,
   memory,
+  skills,
 }: {
   token: string;
   startedAt: number;
@@ -72,6 +75,7 @@ export function createRoutes({
   browsers: BrowserService;
   capabilities: CapabilityService;
   memory: MemoryService;
+  skills: SkillService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -115,7 +119,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory)(\/|$)/.test(
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills)(\/|$)/.test(
         path,
       )
     )
@@ -127,6 +131,47 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'skills') {
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      workspaces.require(workspaceId);
+      if (!id && method === 'GET')
+        return send(
+          response,
+          skills.list(workspaceId, (url.searchParams.get('q') || '').slice(0, 2000)),
+        );
+      if (id === 'preview' && method === 'POST') {
+        const input = z.object({ url: z.string().url().max(2000) }).parse(await jsonBody(request));
+        const controller = new AbortController();
+        const abort = () => {
+          if (!response.writableEnded) controller.abort();
+        };
+        response.once('close', abort);
+        try {
+          return send(response, await skills.preview(input.url, controller.signal));
+        } finally {
+          response.off('close', abort);
+        }
+      }
+      if (!id && method === 'POST')
+        return send(
+          response,
+          skills.save(workspaceId, bundleSchema.parse(await jsonBody(request, 16 * 1024 * 1024))),
+        );
+      if (id && !action && method === 'GET') return send(response, skills.inspect(workspaceId, id));
+      if (id && !action && method === 'PUT') {
+        const input = z
+          .object({ bundle: bundleSchema, expectedVersion: z.string().length(64) })
+          .parse(await jsonBody(request, 16 * 1024 * 1024));
+        return send(response, skills.save(workspaceId, input.bundle, id, input.expectedVersion));
+      }
+      if (id && action === 'enabled' && method === 'PUT') {
+        const input = z.object({ enabled: z.boolean() }).parse(await jsonBody(request));
+        return send(response, skills.enable(workspaceId, id, input.enabled));
+      }
+      if (id && !action && method === 'DELETE')
+        return send(response, skills.remove(workspaceId, id));
+      throw new ApiError(404, 'Not found');
+    }
     if (resource === 'memory') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);

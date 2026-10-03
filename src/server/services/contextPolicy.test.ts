@@ -156,7 +156,7 @@ describe('working context', () => {
       expect(estimateTokens(bounded.slice(1))).toBeLessThanOrEqual(allowance + 150);
     },
   );
-  it('summarizes recent oversized operation groups instead of pinning them indefinitely', async () => {
+  it('retains bounded recent operation evidence when tool definitions reduce context space', async () => {
     const summarize = vi.fn(
       async () => 'Browser verified. Resume with session demo; do not repeat completed actions.',
     );
@@ -165,8 +165,11 @@ describe('working context', () => {
     const messages = [user, ...pair('recent', 'verified '.repeat(3000))];
     const compacted = await manager.prepare(messages);
     expect(compacted).toContainEqual(user);
-    expect(summarize).toHaveBeenCalled();
-    expect(JSON.stringify(compacted)).not.toContain('verified verified verified');
+    expect(summarize).not.toHaveBeenCalled();
+    expect(JSON.stringify(compacted)).toContain('verified');
+    expect(JSON.stringify(compacted)).toContain('truncated');
+    expect(JSON.stringify(compacted).length).toBeLessThan(JSON.stringify(messages).length);
+    expect(messages).toEqual([user, ...pair('recent', 'verified '.repeat(3000))]);
     expect(manager.estimate(compacted) + manager.outputAllowance(compacted)).toBeLessThanOrEqual(
       9000,
     );

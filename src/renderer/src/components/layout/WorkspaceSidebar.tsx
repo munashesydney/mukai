@@ -10,6 +10,7 @@ import {
   Puzzle,
   FileCode2,
   Webhook,
+  BookOpen,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { Bot, Workspace } from '../../../../shared/ai';
@@ -285,6 +286,13 @@ export function WorkspaceSidebar({
             >
               <Webhook size={18} />
               <span>Routes</span>
+            </button>
+            <button
+              className={`sidebar-row ${isSelected('skills') ? 'is-selected' : ''}`}
+              onClick={() => onSelect({ section: 'tools', item: 'skills' })}
+            >
+              <BookOpen size={18} />
+              <span>Skills</span>
             </button>
           </>
         )}

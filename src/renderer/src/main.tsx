@@ -15,6 +15,7 @@ import './styles/ai.css';
 import './styles/pursuits.css';
 import './styles/capabilities.css';
 import './styles/memory.css';
+import './styles/skills.css';
 
 applyTheme(readPreferences(), window.matchMedia('(prefers-color-scheme: dark)').matches);
 

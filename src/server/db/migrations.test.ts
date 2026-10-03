@@ -147,6 +147,7 @@ describe('Existing database upgrades', () => {
         { version: 8 },
         { version: 9 },
         { version: 10 },
+        { version: 11 },
       ]);
       expect(api.store.get('SELECT id FROM providers')?.id).toBe('provider');
       expect(() =>

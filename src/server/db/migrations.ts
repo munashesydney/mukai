@@ -185,6 +185,17 @@ export const migrations = [
      version TEXT NOT NULL, provider TEXT NOT NULL, event_id TEXT NOT NULL,
      payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
      next_at INTEGER NOT NULL, error TEXT, UNIQUE(capability_id,provider,event_id));`,
+  `CREATE TABLE skills (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name TEXT NOT NULL, description TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+    version TEXT NOT NULL, bundle_json TEXT NOT NULL, info_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE(workspace_id,name));
+   CREATE TABLE loaded_skills (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+    version TEXT NOT NULL, name TEXT NOT NULL, instructions TEXT NOT NULL,
+    PRIMARY KEY(conversation_id,bot_id,skill_id));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

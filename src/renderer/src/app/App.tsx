@@ -1,3 +1,4 @@
+import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
@@ -193,6 +194,15 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               if (ai.workspace) setEditingWorkspace(ai.workspace);
             }}
             onProvidersChanged={() => void ai.refresh()}
+          />
+        ) : location.section === 'tools' && location.item === 'skills' ? (
+          <SkillsPage
+            key={ai.workspaceId}
+            workspaceId={ai.workspaceId}
+            folder={ai.workspace?.folder || null}
+            onConnectFolder={() => {
+              if (ai.workspace) setEditingWorkspace(ai.workspace);
+            }}
           />
         ) : location.section === 'tools' ? (
           <ToolsPage

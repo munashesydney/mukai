@@ -1,7 +1,7 @@
 {
   "name": "mukai",
   "version": "0.1.0",
-  "description": "Mukai — a workspace for ideas that move forward.",
+  "description": "Mukai \u2014 a workspace for ideas that move forward.",
   "private": true,
   "engines": {
     "node": ">=24.0.0"
@@ -27,7 +27,8 @@
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:skills-ui": "tsx scripts/run-skills-smoke.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.71",
@@ -48,6 +49,7 @@
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.1",
     "yauzl": "^3.4.0",
     "zod": "^4.6.5"
   },

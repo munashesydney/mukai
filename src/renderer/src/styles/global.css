@@ -2305,7 +2305,8 @@ button.file-list-row:hover {
   letter-spacing: 1.3px;
   font-size: 10px;
 }
-.tools-page > h1 {
+.tools-page > h1,
+.skills-page .skill-heading h1 {
   font-family: Georgia, serif;
   font-size: clamp(32px, 3vw, 47px);
   line-height: 1.15;
@@ -2664,7 +2665,8 @@ button.file-list-row:hover {
     flex-wrap: wrap;
     margin-top: 27px;
   }
-  .tools-page > h1 {
+  .tools-page > h1,
+  .skills-page .skill-heading h1 {
     font-size: 33px;
   }
   .desktop-break {

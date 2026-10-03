@@ -1,3 +1,4 @@
+import { skillsDefinition } from './skills/definition';
 import { tool, type ToolSet } from 'ai';
 import { fileOperationsDefinition } from './file-operations/definition';
 import { executeFileOperations } from './file-operations/execute';
@@ -157,6 +158,7 @@ export function toolCatalog() {
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
       memoryFamilyDefinition,
+      skillsDefinition,
     ].map((definition) => ({
       id: definition.name,
       name: definition.title,

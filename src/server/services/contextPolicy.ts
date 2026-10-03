@@ -160,6 +160,7 @@ export class ContextManager {
     });
     // The exact request is mandatory; recent groups are retained only if they fit.
     // Dropped operation groups are summarized whole, never replayed as orphan results.
+    let trimmedRecent = false;
     const reserve = Math.ceil((limits.summary * 1.5 + 128) * this.factor);
     const pinned = new Set<number>(anchor >= 0 ? [anchor] : []);
     const mandatory = units.filter((_unit, index) => pinned.has(index)).flat();
@@ -173,12 +174,40 @@ export class ContextManager {
       index--
     ) {
       if (pinned.has(index)) continue;
-      const candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
+      let candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
+      // Additional tools and loaded workflows reduce space for recent evidence.
+      // Trim the newest result group before discarding it, preserving call/result pairs.
+      if (
+        this.estimate(candidate) + reserve > budget &&
+        units[index].some((item) => item.role === 'tool')
+      ) {
+        const structural = candidate.map((message) =>
+          message.role === 'tool'
+            ? {
+                ...message,
+                content: message.content.map((part) =>
+                  part.type === 'tool-result'
+                    ? {
+                        ...part,
+                        output: { type: 'text' as const, value: '' },
+                      }
+                    : part,
+                ),
+              }
+            : message,
+        );
+        const room = Math.floor((budget - reserve - this.estimate(structural)) / this.factor);
+        if (room >= 256) {
+          trimmedRecent = true;
+          units[index] = limitToolGroups(units[index], room, estimateTokens);
+          candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
+        }
+      }
       if (this.estimate(candidate) + reserve <= budget) pinned.add(index);
     }
     const retained = units.filter((_unit, index) => pinned.has(index)).flat();
     const removed = units.filter((_unit, index) => !pinned.has(index)).flat();
-    if (!removed.length) return messages;
+    if (!removed.length) return trimmedRecent ? retained : messages;
     const summaryRoom = Math.floor(
       (limits.hardInput - this.estimate(retained)) / this.factor - 128,
     );

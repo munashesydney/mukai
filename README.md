@@ -119,6 +119,16 @@ On the client, components and chat state call typed services rather than buildin
 
 Each tool has its own folder with a Zod definition and executor. `registry.ts` adapts definitions to the AI SDK and supports `all-bots` or `selected-bots` with explicit bot IDs. Services supply the workspace, cancellation, activity, and artifact context. Add future tools through this registry rather than embedding tool implementations in chat or HTTP routes.
 
+## Workspace skills
+
+Tools → Skills manages reusable workflow folders. Create or edit `SKILL.md` (YAML `name` and `description`, followed by instructions), add supporting text files, or preview an import from a public GitHub file/folder URL. Imports preserve references, scripts, licenses, and binary assets, record a pinned commit, and validate all files before saving. Exported JSON bundles can be imported again. Files live in Mukai’s workspace-scoped SQLite store; importing never executes scripts or installs dependencies.
+
+The `skills` tool supports search, inspect, load/unload, read, create/update, import, enable/disable, and remove. Bots receive a small enabled-skill catalog and load full instructions only as needed. Loaded versions are pinned per bot/conversation, persist across restarts and compaction, and are removed when the skill is disabled or deleted. Updates require the inspected version to avoid overwriting concurrent edits. Reload to use updated instructions; `read` returns the current file version and supports paging text or base64 assets. Use file operations to save required supporting files into the workspace before running a script.
+
+A folder is limited to 100 files and 8 MB. Symlinks, submodules, unsafe paths, duplicate paths, malformed frontmatter, and invalid blob integrity are rejected. Loaded instructions are limited to three skills and a model-aware context budget (at most 24 KB); the catalog is separately bounded. Skills cannot grant tools or override the user’s instructions. Required connectors and dependencies must be configured separately. Public GitHub imports use its unauthenticated API and may hit its rate limit; private repositories are not supported.
+
+`npm run test:skills-ui` exercises the production Electron renderer against a disposable workspace, including creation, editing, supporting files, import preview, search, availability, removal, and light/dark/narrow layouts. Run `npm run build` first.
+
 ## Verification and builds
 
 ```sh

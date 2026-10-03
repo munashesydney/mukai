@@ -368,6 +368,12 @@ export class ChatService {
           Math.floor(
             contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.45 * 3,
           ),
+          Math.min(
+            24000,
+            Math.floor(
+              contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.2 * 3,
+            ),
+          ),
         ),
         ...runtime?.tools,
       };
@@ -637,7 +643,11 @@ export class ChatService {
         const custom = this.tools.customForBot(bot, signal, onActivity);
         customNames = Object.keys(custom);
         for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
-        manager.setOverhead(estimateTokens(system) + (await toolTokens(tools)) + memoryOverhead);
+        const skillContext = this.tools.skillContext(bot, conversationId);
+        const currentSystem = system + (skillContext ? '\n' + skillContext : '');
+        manager.setOverhead(
+          estimateTokens(currentSystem) + (await toolTokens(tools)) + memoryOverhead,
+        );
         const capacity = contextLimits(config.contextWindow, config.maxOutputTokens);
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();
@@ -647,7 +657,7 @@ export class ChatService {
             ? 'This run reached its safety step ceiling.'
             : '';
         const attemptSystem = buildBotAttemptPrompt({
-          system,
+          system: currentSystem,
           notice,
           progressNotice: guard.notice,
           pausedReason,
@@ -677,7 +687,7 @@ export class ChatService {
           },
           maxOutputTokens: manager.outputAllowance(
             messages,
-            Math.max(0, estimateTokens(attemptSystem) - estimateTokens(system)),
+            Math.max(0, estimateTokens(attemptSystem) - estimateTokens(currentSystem)),
           ),
           providerOptions: config.options,
           tools: pausedReason ? {} : tools,

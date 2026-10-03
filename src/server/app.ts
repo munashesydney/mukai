@@ -1,3 +1,4 @@
+import { SkillService } from './skills/service';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { Database } from './db/database';
@@ -90,6 +91,8 @@ export function createApiServer(options: ApiOptions = {}) {
       store.dir,
       diagnostics,
     );
+    const skills = new SkillService(store, workspaces);
+    tools.attachSkills(skills);
     tools.attachCapabilities(capabilities);
     const memory = new MemoryService(
       store.db,
@@ -172,6 +175,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
       capabilities,
       memory,
+      skills,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => {
@@ -234,6 +238,7 @@ export function createApiServer(options: ApiOptions = {}) {
       processes,
       capabilities,
       memory,
+      skills,
     };
   } catch (error) {
     store.db.close();

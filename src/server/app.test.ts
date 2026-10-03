@@ -655,6 +655,49 @@ describe('Mukai bots and AI API', () => {
     expect(reply.content).toBe('First half and the rest.');
     expect(reply.parts?.at(-1)).toMatchObject({ type: 'text', continuationOf: expect.any(String) });
   });
+  it('keeps loaded skill instructions in provider context after compaction', async () => {
+    const provider = await configure();
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      contextWindowTokens: 16384,
+      maxOutputTokens: 1024,
+    });
+    const skill = api.skills.save('default', {
+      files: [
+        {
+          path: 'SKILL.md',
+          encoding: 'utf8',
+          content:
+            '---\nname: review-workflow\ndescription: Review code.\n---\nAlways check the REVIEW_SKILL_MARKER checklist.',
+        },
+      ],
+    });
+    api.skills.load('default', 'scout', 'bot-scout', skill.id);
+    await chat('Earlier findings');
+    const original = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+    api.store.run(
+      'UPDATE messages SET content=? WHERE id=?',
+      'Earlier verified findings. '.repeat(3000),
+      original.id,
+    );
+    await chat('Review the latest changes.');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history.at(-1)?.contextUsage?.compactions).toBeGreaterThan(0);
+    expect(
+      calls
+        .filter((call) => call.stream)
+        .at(-1)
+        ?.messages.find((message) => message.role === 'system')?.content,
+    ).toContain('REVIEW_SKILL_MARKER');
+    api.skills.unload('default', 'scout', 'bot-scout', skill.id);
+    await chat('Continue without the skill.');
+    expect(
+      calls
+        .filter((call) => call.stream)
+        .at(-1)
+        ?.messages.find((message) => message.role === 'system')?.content,
+    ).not.toContain('REVIEW_SKILL_MARKER');
+  });
   it('compacts old history without altering saved messages and reuses its notebook next turn', async () => {
     const provider = await configure();
     await request('/providers/' + provider.id, 'PUT', {
@@ -1554,6 +1597,7 @@ describe('Mukai bots and AI API', () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
