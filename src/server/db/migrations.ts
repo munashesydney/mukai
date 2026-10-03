@@ -146,6 +146,25 @@ export const migrations = [
    ALTER TABLE attachments ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE;
    UPDATE attachments SET conversation_id=COALESCE((SELECT conversation_id FROM messages WHERE id=attachments.message_id),'bot-'||bot_id);
    CREATE INDEX pending_conversation_attachments ON attachments(conversation_id,message_id);`,
+  `ALTER TABLE providers ADD COLUMN context_window_tokens INTEGER;
+   ALTER TABLE providers ADD COLUMN max_output_tokens INTEGER NOT NULL DEFAULT 8192;
+   ALTER TABLE bots ADD COLUMN context_window_tokens INTEGER;
+   ALTER TABLE bots ADD COLUMN max_output_tokens INTEGER;
+   ALTER TABLE bots ADD COLUMN run_time_limit_minutes INTEGER NOT NULL DEFAULT 60;
+   ALTER TABLE bots ADD COLUMN run_token_limit INTEGER NOT NULL DEFAULT 1000000;
+   ALTER TABLE messages ADD COLUMN context_usage_json TEXT;
+   CREATE TABLE chat_jobs (
+     message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+     checkpoint_json TEXT NOT NULL DEFAULT '{}', fingerprint TEXT NOT NULL,
+     in_flight INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+   CREATE TABLE conversation_contexts (
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+     summary TEXT NOT NULL, through_sequence INTEGER NOT NULL,
+     PRIMARY KEY(conversation_id,bot_id));`,
+  `ALTER TABLE bots DROP COLUMN run_time_limit_minutes;
+   ALTER TABLE bots DROP COLUMN run_token_limit;
+   UPDATE chat_jobs SET checkpoint_json=json_remove(checkpoint_json,'$.elapsedMs') WHERE json_valid(checkpoint_json);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

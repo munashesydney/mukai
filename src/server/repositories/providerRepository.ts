@@ -21,7 +21,7 @@ export class ProviderRepository {
     this.database.transaction(() => {
       if (provider.isDefault) this.database.run('UPDATE providers SET is_default = 0');
       this.database.run(
-        `INSERT INTO providers VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,default_model=excluded.default_model,supports_images=excluded.supports_images,is_default=excluded.is_default,encrypted_key=excluded.encrypted_key`,
+        `INSERT INTO providers(id,name,kind,base_url,default_model,supports_images,is_default,encrypted_key,context_window_tokens,max_output_tokens) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,default_model=excluded.default_model,supports_images=excluded.supports_images,is_default=excluded.is_default,encrypted_key=excluded.encrypted_key,context_window_tokens=excluded.context_window_tokens,max_output_tokens=excluded.max_output_tokens`,
         provider.id,
         provider.name,
         provider.kind,
@@ -30,6 +30,8 @@ export class ProviderRepository {
         Number(provider.supportsImages),
         Number(provider.isDefault),
         provider.encryptedKey,
+        provider.contextWindowTokens ?? null,
+        provider.maxOutputTokens ?? 8192,
       );
     });
   }

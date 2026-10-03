@@ -19,6 +19,8 @@ const empty = (): ProviderInput => ({
   supportsImages: true,
   isDefault: false,
   apiKey: '',
+  contextWindowTokens: null,
+  maxOutputTokens: 8192,
 });
 export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
   const [providers, setProviders] = useState<ProviderSettings[]>([]);
@@ -52,6 +54,10 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     );
   }
   async function save(test = false) {
+    if (!value.contextWindowTokens) {
+      setError('Enter this model’s context-window size in tokens.');
+      return;
+    }
     setBusy(true);
     setError('');
     setNotice('');
@@ -154,6 +160,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   kind: kind.id,
                   name: kind.label,
                   defaultModel: kind.model,
+                  contextWindowTokens: null,
                   supportsImages: kind.id !== 'compatible',
                   apiKey: '',
                 });
@@ -234,10 +241,56 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               placeholder="Enter an exact model ID"
               value={value.defaultModel}
               disabled={busy}
-              onChange={(event) => setValue({ ...value, defaultModel: event.target.value })}
+              onChange={(event) =>
+                setValue({ ...value, defaultModel: event.target.value, contextWindowTokens: null })
+              }
             />
             <small>Use a chat model available to your account or installed locally.</small>
           </label>
+          <div className="ai-form-grid">
+            <label>
+              Context window (tokens)
+              <input
+                type="number"
+                required
+                min={4096}
+                max={10000000}
+                step={1}
+                disabled={busy}
+                value={value.contextWindowTokens ?? ''}
+                placeholder="e.g. 128000"
+                onChange={(event) =>
+                  setValue({
+                    ...value,
+                    contextWindowTokens: event.target.value ? Number(event.target.value) : null,
+                  })
+                }
+              />
+              <small>
+                Use the capacity documented for this exact model. Mukai uses it for automatic
+                compaction.
+              </small>
+            </label>
+            <label>
+              Maximum output (tokens)
+              <input
+                type="number"
+                required
+                min={256}
+                max={262144}
+                step={1}
+                disabled={busy}
+                value={value.maxOutputTokens ?? 8192}
+                onChange={(event) =>
+                  setValue({ ...value, maxOutputTokens: Number(event.target.value) })
+                }
+              />
+              <small>
+                Per generation, including reasoning where the provider counts it. Mukai reserves up
+                to a quarter of the context for output.
+              </small>
+            </label>
+          </div>
           <label className="ai-checkbox">
             <input
               type="checkbox"

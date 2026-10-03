@@ -15,6 +15,7 @@ export function appendResponseText(
 ): ResponsePart[] {
   const previous = parts.find((part) => part.id === id);
   return upsertResponsePart(parts, {
+    ...(previous?.type === type ? previous : {}),
     id,
     type,
     text: (previous && previous.type !== 'tool' ? previous.text : '') + text,
@@ -34,21 +35,39 @@ export function responsePresentation(message: ChatMessage) {
     return { process, answer: message.content };
   }
   const hasProcess = parts.some((part) => part.type !== 'text');
+  const joinText = (texts: ResponsePart[]) =>
+    texts.reduce(
+      (answer, part) =>
+        part.type === 'text'
+          ? answer + (answer && !part.continuationOf ? '\n\n' : '') + part.text
+          : answer,
+      '',
+    );
   // A plain text response should still read like a normal message while streaming.
   if (!hasProcess && parts.every((part) => part.type === 'text'))
     return {
       process: [],
-      answer: parts.map((part) => (part.type === 'text' ? part.text : '')).join('\n\n'),
+      answer: joinText(parts),
     };
-  if (message.status === 'complete' && parts.at(-1)?.type === 'text') {
+  const last = parts.at(-1);
+  if (
+    (message.status === 'complete' || (last?.type === 'text' && last.final)) &&
+    last?.type === 'text'
+  ) {
     let finalStart = parts.length - 1;
     while (finalStart > 0 && parts[finalStart - 1].type === 'text') finalStart--;
+    const answerIds = new Set(parts.slice(finalStart).map((part) => part.id));
+    let first = parts[finalStart];
+    while (first.type === 'text' && first.continuationOf) {
+      const previousId = first.continuationOf;
+      const previous = parts.find((part) => part.id === previousId && part.type === 'text');
+      if (!previous || answerIds.has(previous.id)) break;
+      answerIds.add(previous.id);
+      first = previous;
+    }
     return {
-      process: parts.slice(0, finalStart),
-      answer: parts
-        .slice(finalStart)
-        .map((part) => (part.type === 'text' ? part.text : ''))
-        .join('\n\n'),
+      process: parts.filter((part) => !answerIds.has(part.id)),
+      answer: joinText(parts.filter((part) => answerIds.has(part.id))),
     };
   }
   return { process: parts, answer: '' };

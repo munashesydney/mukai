@@ -1,0 +1,122 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import type { BrowserWindow } from 'electron';
+import type { startApiServer } from '../src/server/app';
+
+// Exercise the actual React forms and context meter without calling an AI provider.
+export async function checkContextPanel(
+  window: BrowserWindow,
+  api: Awaited<ReturnType<typeof startApiServer>>,
+) {
+  const evaluate = <T>(code: string): Promise<T> => window.webContents.executeJavaScript(code);
+  const wait = async (code: string, name: string) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (await evaluate<boolean>(code)) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error(name + ' did not settle');
+  };
+  await wait('Boolean(document.querySelector(".context-meter"))', 'composer context meter');
+  assert.match(
+    await evaluate<string>('document.querySelector(".context-meter").textContent'),
+    /unknown/,
+  );
+  await evaluate('document.querySelector(".ai-configure-link").click()');
+  await wait('Boolean(document.querySelector(".provider-empty"))', 'provider settings');
+  await evaluate(
+    'Array.from(document.querySelectorAll(".provider-panel button")).find(el=>el.textContent.trim()==="Add provider").click()',
+  );
+  await wait('Boolean(document.querySelector(".provider-panel form"))', 'provider form');
+  const fill = (selector: string, label: string, value: string) =>
+    evaluate(`(() => {
+    const el=Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(el=>el.textContent.includes(${JSON.stringify(label)})).querySelector('input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  await fill('.provider-panel label', 'API key', 'test-key-never-used');
+  assert.equal(
+    await evaluate<boolean>('document.querySelector(".provider-panel form").checkValidity()'),
+    false,
+  );
+  await fill('.provider-panel label', 'Context window (tokens)', '65536');
+  await fill('.provider-panel label', 'Maximum output (tokens)', '4096');
+  assert.equal(
+    await evaluate<boolean>('document.querySelector(".provider-panel form").checkValidity()'),
+    true,
+  );
+  await evaluate('document.querySelector(".provider-panel form").requestSubmit()');
+  await wait(
+    'Boolean(document.querySelector(".provider-card")) && !document.querySelector(".provider-panel form")',
+    'saved provider',
+  );
+  assert.equal(
+    api.store.get('SELECT context_window_tokens FROM providers')?.context_window_tokens,
+    65536,
+  );
+  await evaluate('document.querySelector(".settings-footer button").click()');
+  await wait('!document.querySelector(".settings-modal")', 'closed settings');
+  await wait(
+    'document.querySelector(".context-meter").textContent.includes("0%")',
+    'configured capacity',
+  );
+  const conversation = api.store.get(
+    "SELECT id FROM conversations WHERE owner_bot_id='scout' AND kind='private' ORDER BY created_at LIMIT 1",
+  )!;
+  api.store.run(
+    'INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at,context_usage_json) VALUES(?,?,?,?,?,?,?,?,?)',
+    randomUUID(),
+    'scout',
+    String(conversation.id),
+    randomUUID(),
+    'assistant',
+    'Context display fixture.',
+    'complete',
+    new Date().toISOString(),
+    JSON.stringify({
+      usedTokens: 16384,
+      contextWindow: 65536,
+      inputTokens: 16000,
+      outputTokens: 384,
+      estimated: false,
+      runTokens: 40000,
+      compactions: 1,
+      phase: 'ready',
+    }),
+  );
+  await evaluate('window.dispatchEvent(new Event("focus"))');
+  await wait(
+    'document.querySelector(".context-meter").textContent.includes("25%")',
+    'reported usage',
+  );
+  assert.match(await evaluate<string>('document.querySelector(".context-meter").title'), /16,000/);
+  const fits = await evaluate<boolean>(`(() => {
+    const meter=document.querySelector('.context-meter').getBoundingClientRect();
+    const send=document.querySelector('.send-button').getBoundingClientRect();
+    const composer=document.querySelector('.composer').getBoundingClientRect();
+    return meter.right < send.left && meter.left >= composer.left && meter.bottom <= composer.bottom;
+  })()`);
+  assert.equal(fits, true);
+  await evaluate('document.querySelector(".context-meter").click()');
+  await wait('Boolean(document.querySelector(".bot-editor"))', 'bot settings');
+  await fill('.bot-editor label', 'Model', 'different-test-model');
+  assert.equal(
+    await evaluate<boolean>('document.querySelector(".bot-editor form").checkValidity()'),
+    false,
+  );
+  await fill('.bot-editor label', 'Context window (tokens)', '32768');
+  assert.equal(
+    await evaluate<boolean>('document.querySelector(".bot-editor form").checkValidity()'),
+    true,
+  );
+  await fill('.bot-editor label', 'Model', '');
+  assert.equal(
+    await evaluate<boolean>('Boolean(document.querySelector(".bot-run-settings"))'),
+    false,
+  );
+  await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
+  await wait('!document.querySelector(".bot-editor")', 'saved bot model settings');
+  assert.equal(api.store.get("SELECT model FROM bots WHERE id='scout'")?.model, null);
+  console.log(
+    'PASS context UI: required capacity, inherited limits, exact usage, composer layout, custom-model validation, persisted model settings',
+  );
+}

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { startApiServer } from '../src/server/app';
 import { IPC } from '../src/shared/contracts';
 import type { MukaiBrowserHost } from '../src/main/embeddedBrowserHost';
+import { checkContextPanel } from './context-panel-check';
 
 // Exercise the production renderer and native view together, using only test data.
 export async function checkBrowserPanel(
@@ -34,6 +35,7 @@ export async function checkBrowserPanel(
     console.log('Checking production browser panel');
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(() => evaluate<boolean>('Boolean(document.querySelector(".header-actions"))'));
+    await checkContextPanel(window, api);
     const owner = { workspaceId: 'default', botId: 'scout', conversationId: 'bot-scout' };
     await api.browsers.execute(
       owner,
@@ -115,7 +117,13 @@ export async function checkBrowserPanel(
     await wait(() => view.getVisible());
     assert.equal((await layout()).panelWidth, after.panelWidth + 20);
     const [originalWidth, originalHeight] = window.getSize();
+    window.focus();
+    window.webContents.focus();
     window.setSize(960, originalHeight);
+    await wait(
+      async () => (await evaluate<number>('window.innerWidth')) === window.getContentSize()[0],
+      'renderer viewport resize',
+    );
     await wait(async () => (await layout()).panelWidth < after.panelWidth, 'window shrink width');
     await wait(
       async () => view.getBounds().width === Math.round((await layout()).width),

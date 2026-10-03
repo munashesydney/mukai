@@ -38,6 +38,10 @@ export class ToolService {
       counts: counts[tool.id] || {},
     }));
   }
+  checkpointScope(bot: Bot) {
+    const workspace = this.workspaces.require(bot.workspaceId);
+    return { workspaceId: workspace.id, folder: workspace.folder };
+  }
   forBot(
     bot: Bot,
     messageId: string,

@@ -262,6 +262,11 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                   ) : (
                     <SpaceChat
                       space={space}
+                      providers={ai.providers}
+                      onProviders={() => {
+                        setSettingsSection('providers');
+                        setDialog('settings');
+                      }}
                       bots={ai.bots}
                       tab={tab}
                       savedOpen={savedOpen}

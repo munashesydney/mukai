@@ -186,6 +186,12 @@ export const chatStore = {
                 : message,
             ),
           });
+        else if (event.type === 'context')
+          update(id, {
+            messages: get(id).messages.map((message) =>
+              message.id === event.id ? { ...message, contextUsage: event.usage } : message,
+            ),
+          });
         else if (event.type === 'part')
           update(id, {
             messages: get(id).messages.map((message) =>

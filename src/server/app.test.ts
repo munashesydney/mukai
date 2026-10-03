@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -18,12 +18,16 @@ import type {
 } from '../shared/ai';
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
-import { TOOL_STEP_LIMIT } from './services/responsePolicy';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
 let fixture: Server, api: Awaited<ReturnType<typeof startApiServer>>, dir: string;
-let calls: { model: string; messages: { role: string; content: unknown }[] }[];
+let calls: {
+  model: string;
+  messages: { role: string; content: unknown }[];
+  max_tokens?: number;
+  stream?: boolean;
+}[];
 let mode:
   | 'normal'
   | 'fail'
@@ -33,6 +37,11 @@ let mode:
   | 'tool-limit'
   | 'no-final'
   | 'truncated'
+  | 'truncated-once'
+  | 'usage'
+  | 'compaction-fail'
+  | 'overflow'
+  | 'checkpoint'
   | 'raw-tool-once'
   | 'raw-tool-always'
   | 'long-browser'
@@ -179,15 +188,27 @@ beforeEach(async () => {
   calls = [];
   mode = 'normal';
   project = '';
+  let overflowed = false;
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
     calls.push(body);
-    if (mode === 'fail') {
+    if (
+      mode === 'fail' ||
+      (mode === 'checkpoint' &&
+        body.messages.some((message: { role: string }) => message.role === 'tool'))
+    ) {
       res
         .writeHead(401, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ error: { message: 'DO NOT EXPOSE private-test-key' } }));
+      return;
+    }
+    if (mode === 'overflow' && body.stream && !overflowed) {
+      overflowed = true;
+      res
+        .writeHead(400, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ error: { message: 'context_length_exceeded private-test-key' } }));
       return;
     }
     if (!body.stream) {
@@ -198,7 +219,19 @@ beforeEach(async () => {
           created: 1,
           model: body.model,
           choices: [
-            { index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' },
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content:
+                  mode === 'compaction-fail'
+                    ? ''
+                    : JSON.stringify(body.messages).includes('Summarize working memory')
+                      ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.'
+                      : 'OK',
+              },
+              finish_reason: 'stop',
+            },
           ],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         }),
@@ -226,7 +259,7 @@ beforeEach(async () => {
           },
           'stop',
         );
-      else if (completed < (mode === 'long-browser' ? 12 : 2))
+      else if (body.tools?.length && completed < (mode === 'long-browser' ? 12 : 2))
         send(
           {
             tool_calls: [
@@ -234,7 +267,16 @@ beforeEach(async () => {
                 index: 0,
                 id: 'browser-' + completed,
                 type: 'function',
-                function: { name: 'browser', arguments: JSON.stringify({ action: 'tabs' }) },
+                function: {
+                  name: 'browser',
+                  arguments: JSON.stringify(
+                    mode === 'long-browser'
+                      ? completed === 0
+                        ? { action: 'open', url: 'https://example.com' }
+                        : { action: 'snapshot', sessionId: api.browsers.list('default')[0].id }
+                      : { action: 'tabs' },
+                  ),
+                },
               },
             ],
           },
@@ -289,7 +331,7 @@ beforeEach(async () => {
       res.end('data: [DONE]\n\n');
       return;
     }
-    if (['tools', 'invalid-tool', 'tool-limit', 'no-final'].includes(mode)) {
+    if (['tools', 'invalid-tool', 'tool-limit', 'no-final', 'checkpoint'].includes(mode)) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
       ).length;
@@ -306,6 +348,8 @@ beforeEach(async () => {
         { action: 'search_files', query: 'clearer' },
       ];
       if (mode === 'invalid-tool') actions[0] = { action: 'invalid_action', path: '.' };
+      if (mode === 'checkpoint')
+        actions[0] = { action: 'write_file', path: 'checkpoint.txt', content: 'Saved once.' };
       const send = (delta: unknown, finish: string | null = null) =>
         res.write(
           `data: ${JSON.stringify({ id: 'tools', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
@@ -333,7 +377,7 @@ beforeEach(async () => {
                 function: {
                   name: 'file_operations',
                   arguments: JSON.stringify(
-                    completed === TOOL_STEP_LIMIT - 1
+                    completed === 1000 - 1
                       ? { action: 'invalid_action' }
                       : { action: 'list', path: '.' },
                   ),
@@ -372,6 +416,17 @@ beforeEach(async () => {
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: { content: text }, finish_reason: finish }] })}\n\n`,
       );
+    if (mode === 'truncated-once') {
+      res.write(
+        `data: ${JSON.stringify({ id: 'continuation', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: { reasoning_content: 'Continue from the saved answer.' }, finish_reason: null }] })}\n\n`,
+      );
+      chunk(
+        calls.length === 1 ? 'First half ' : 'and the rest.',
+        calls.length === 1 ? 'length' : 'stop',
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     chunk('A real SDK ');
     if (mode === 'slow') {
       const timer = setTimeout(() => {
@@ -383,12 +438,43 @@ beforeEach(async () => {
       res.on('close', () => clearTimeout(timer));
     } else {
       chunk('response.', mode === 'truncated' ? 'length' : 'stop');
+      if (mode === 'usage')
+        res.write(
+          `data: ${JSON.stringify({ id: 'usage', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [], usage: { prompt_tokens: 2000, completion_tokens: 100, total_tokens: 2100 } })}\n\n`,
+        );
       res.end('data: [DONE]\n\n');
     }
   });
   await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
   endpoint = `http://127.0.0.1:${(fixture.address() as { port: number }).port}/v1`;
-  api = await startApiServer(0, { dataDir: dir });
+  let snapshotCount = 0;
+  api = await startApiServer(0, {
+    dataDir: dir,
+    embeddedBrowser: {
+      open: async (info) => ({
+        isClosed: () => false,
+        close: async () => {},
+        send: async (method) => {
+          if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
+          if (method === 'Page.createIsolatedWorld') return { executionContextId: 42 };
+          if (method === 'Runtime.evaluate')
+            return {
+              result: {
+                value: {
+                  url: info.url,
+                  title: 'Fixture',
+                  text: 'Progress ' + ++snapshotCount,
+                  controls: [],
+                },
+              },
+            };
+          return {};
+        },
+      }),
+      bounds: () => {},
+      shutdown: async () => {},
+    },
+  });
 });
 afterEach(async () => {
   await api.shutdown();
@@ -404,6 +490,210 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('records reported token usage, applies model limits, and distinguishes estimates', async () => {
+    const provider = await configure();
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      contextWindowTokens: 16384,
+      maxOutputTokens: 1024,
+    });
+    mode = 'usage';
+    const sent = await chat('Show usage');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.contextUsage).toMatchObject({
+      inputTokens: 2000,
+      outputTokens: 100,
+      usedTokens: 2100,
+      runTokens: 2100,
+      contextWindow: 16384,
+      estimated: false,
+    });
+    expect(sent.events.some((event) => event.type === 'context' && !event.usage.estimated)).toBe(
+      true,
+    );
+    expect(calls.at(-1)?.max_tokens).toBe(1024);
+    mode = 'normal';
+    await chat('Next question');
+    expect(
+      (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)?.contextUsage,
+    ).toMatchObject({ estimated: true, inputTokens: null, contextWindow: 16384 });
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      defaultModel: 'different-model',
+    });
+    expect(
+      (await request<ProviderSettings[]>('/providers')).data[0].contextWindowTokens,
+    ).toBeNull();
+  });
+  it('continues a length-limited generation and preserves the complete visible final answer', async () => {
+    await configure();
+    mode = 'truncated-once';
+    await chat('Long answer');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(2);
+    expect(reply.status).toBe('complete');
+    expect(reply.content).toBe('First half and the rest.');
+    expect(reply.parts?.at(-1)).toMatchObject({ type: 'text', continuationOf: expect.any(String) });
+  });
+  it('compacts old history without altering saved messages and reuses its notebook next turn', async () => {
+    const provider = await configure();
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      contextWindowTokens: 16384,
+      maxOutputTokens: 1024,
+    });
+    await chat('Earlier findings');
+    const original = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+    const evidence = 'Earlier verified finding. '.repeat(3000);
+    api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, original.id);
+    const sent = await chat('Exact latest goal: review draft.md.');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].content).toBe(evidence);
+    expect(history.at(-1)?.status).toBe('complete');
+    expect(history.at(-1)?.contextUsage?.compactions).toBe(1);
+    expect(
+      sent.events.some((event) => event.type === 'context' && event.usage.phase === 'compacting'),
+    ).toBe(true);
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Exact latest goal: review draft.md.');
+    expect(
+      api.store.get(
+        'SELECT summary FROM conversation_contexts WHERE conversation_id=?',
+        'bot-scout',
+      )?.summary,
+    ).toContain('Earlier conversation notes');
+    await chat('Follow up');
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Earlier conversation notes');
+    expect(JSON.stringify(calls.at(-1)?.messages)).not.toContain(evidence);
+  });
+  it('leaves usable context and original history intact when compaction fails, then permits retry', async () => {
+    const provider = await configure();
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      contextWindowTokens: 16384,
+      maxOutputTokens: 1024,
+    });
+    await chat('Earlier finding');
+    const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+    const evidence = 'Keep original evidence. '.repeat(3000);
+    api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
+    mode = 'compaction-fail';
+    const sent = await chat('Continue exactly from these findings');
+    let history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history.at(-1)?.status).toBe('failed');
+    expect(history.at(-1)?.error).toContain('compaction did not finish');
+    expect(history.at(-1)?.contextUsage?.phase).toBe('failed');
+    expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
+    expect(history[0].content).toBe(evidence);
+    mode = 'normal';
+    await chat('ignored replacement', sent.requestId);
+    history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history).toHaveLength(4);
+    expect(history.at(-1)?.status).toBe('complete');
+    expect(history[0].content).toBe(evidence);
+  });
+  it('handles a provider context rejection with one safe compaction instead of exposing provider text', async () => {
+    await configure();
+    await chat('Prior context');
+    mode = 'overflow';
+    await chat('Continue');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history.at(-1)?.status).toBe('complete');
+    expect(history.at(-1)?.contextUsage?.compactions).toBe(1);
+    expect(JSON.stringify(history)).not.toContain('private-test-key');
+    expect(calls.filter((call) => !call.stream)).toHaveLength(1);
+  });
+  it.each([0, 2000000])(
+    'resumes a completed checkpoint with %i cumulative tokens without replaying its file write',
+    async (runTokens) => {
+      await configure();
+      project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+      const workspace = (
+        await request<Workspace>('/workspaces', 'POST', { name: 'Checkpoint', folder: project })
+      ).data;
+      const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+      mode = 'checkpoint';
+      const sent = await chat('Write once, then report.', randomUUID(), bot.id);
+      expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
+      expect(api.store.get('SELECT in_flight FROM chat_jobs')?.in_flight).toBe(0);
+      api.store.run(
+        "UPDATE chat_jobs SET checkpoint_json=json_set(checkpoint_json,'$.usage.runTokens',?,'$.elapsedMs',86400000)",
+        runTokens,
+      );
+      await api.shutdown();
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir });
+      mode = 'normal';
+      await chat('ignored', sent.requestId, bot.id);
+      const history = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
+      expect(history).toHaveLength(2);
+      expect(history[1].status).toBe('complete');
+      expect(history[1].contextUsage?.runTokens).toBeGreaterThan(runTokens);
+      expect(history[1].activity).toHaveLength(1);
+      expect(JSON.stringify(calls.at(-1)?.messages)).toContain('checkpoint.txt');
+      expect(calls.at(-1)?.messages.some((message) => message.role === 'tool')).toBe(true);
+      expect(api.store.all('SELECT * FROM chat_jobs')).toEqual([]);
+    },
+  );
+  it('reattaches the same request to a running job without a second model request', async () => {
+    await configure();
+    mode = 'slow';
+    const requestId = randomUUID();
+    const response = await fetch(api.url + '/bots/scout/chat', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, text: 'One job', attachmentIds: [] }),
+    });
+    const reader = response.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    await chat('ignored duplicate', requestId);
+    expect(calls).toHaveLength(1);
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history).toHaveLength(2);
+    expect(history[1].status).toBe('complete');
+  });
+  it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
+    const provider = await configure();
+    await request('/providers/' + provider.id, 'PUT', {
+      ...provider,
+      contextWindowTokens: 8192,
+      maxOutputTokens: 1024,
+    });
+    const text = 'Exact input '.repeat(1300);
+    await chat(text);
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].content).toBe(text.trim());
+    expect(history[1].status).toBe('failed');
+    expect(history[1].error).toContain('current request');
+    expect(calls).toHaveLength(0);
+  });
+  it.each(['uncertain operation', 'changed workspace folder'])(
+    'does not reuse a checkpoint after %s and carries a verification notice',
+    async (change) => {
+      await configure();
+      project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+      const workspace = (
+        await request<Workspace>('/workspaces', 'POST', { name: 'Uncertain', folder: project })
+      ).data;
+      const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+      mode = 'checkpoint';
+      const sent = await chat('Write once, then report.', randomUUID(), bot.id);
+      if (change === 'uncertain operation') api.store.run('UPDATE chat_jobs SET in_flight=1');
+      else {
+        const folder = join(project, 'new-scope');
+        mkdirSync(folder);
+        api.store.run('UPDATE workspaces SET folder=? WHERE id=?', folder, workspace.id);
+      }
+      await api.shutdown();
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir });
+      mode = 'normal';
+      await chat('ignored', sent.requestId, bot.id);
+      expect(calls.at(-1)?.messages.some((message) => message.role === 'tool')).toBe(false);
+      expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Check before repeating writes');
+      expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
+    },
+  );
   it('runs terminal, process and browser tools through the shared SDK loop and persists their activity', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
@@ -617,7 +907,7 @@ describe('Mukai bots and AI API', () => {
     await spaceChat(space.id, '@scout followup', 'scout');
     expect(JSON.stringify(calls.at(-1)!.messages)).toContain('[Scout]');
   });
-  it('reserves a tool-free final response after the step budget, including a failed last tool call', async () => {
+  it('warns about repeated no-progress calls, then pauses with a tool-free final report', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
     const workspace = (
@@ -626,16 +916,18 @@ describe('Mukai bots and AI API', () => {
     const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
     mode = 'tool-limit';
     const sent = await chat('Work until the limit', randomUUID(), bot.id);
-    expect(calls).toHaveLength(TOOL_STEP_LIMIT + 1);
+    expect(calls).toHaveLength(10);
+    expect(JSON.stringify(calls.slice(5, 9))).toContain('Reassess the approach');
     expect(calls.at(-1)).not.toHaveProperty('tools');
-    expect(JSON.stringify(calls.at(-1))).toContain('Give your final response now');
+    expect(JSON.stringify(calls.at(-1))).toContain('Tools are now disabled');
     const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
-    expect(message.status).toBe('complete');
+    expect(message.status).toBe('interrupted');
+    expect(message.error).toContain('without progress');
     expect(message.parts?.at(-1)).toMatchObject({
       type: 'text',
       text: expect.stringContaining('Final report:'),
     });
-    expect(message.activity?.at(-1)?.status).toBe('failed');
+    expect(message.activity?.at(-1)?.status).toBe('complete');
     const reasoningEnd = sent.events.find(
       (event) =>
         event.type === 'part' && event.part.type === 'reasoning' && event.part.state === 'complete',
@@ -964,6 +1256,8 @@ describe('Mukai bots and AI API', () => {
       { version: 5 },
       { version: 6 },
       { version: 7 },
+      { version: 8 },
+      { version: 9 },
     ]);
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
@@ -1245,10 +1539,13 @@ describe('Mukai bots and AI API', () => {
     ).toBe(409);
     await reader.cancel();
     await new Promise((resolve) => setTimeout(resolve, 100));
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('streaming');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const messages = (await request<ChatMessage[]>('/bots/scout/messages')).data;
     expect(messages).toHaveLength(2);
     expect(messages[0].content).toBe('Keep me');
-    expect(messages[1].status).toBe('interrupted');
+    expect(messages[1].status).toBe('complete');
+    expect(calls).toHaveLength(1);
   });
   it('saves all supported provider types and keeps exactly one workspace default', async () => {
     for (const kind of ['openai', 'anthropic', 'google'] as const) {

@@ -167,6 +167,8 @@ export function BotEditor({
                         providerId: providerId || null,
                         model: null,
                         supportsImages: null,
+                        contextWindowTokens: null,
+                        maxOutputTokens: null,
                       })
                     }
                     options={[
@@ -186,7 +188,55 @@ export function BotEditor({
                     placeholder={provider?.defaultModel || 'Provider default'}
                     value={value.model || ''}
                     onChange={(event) =>
-                      setValue({ ...value, model: event.target.value.trim() || null })
+                      setValue({
+                        ...value,
+                        model: event.target.value.trim() || null,
+                        contextWindowTokens: null,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="ai-form-grid">
+                <label>
+                  Context window (tokens)
+                  <input
+                    type="number"
+                    min={4096}
+                    max={10000000}
+                    step={1}
+                    disabled={busy}
+                    required={Boolean(value.model && value.model !== provider?.defaultModel)}
+                    value={value.contextWindowTokens ?? ''}
+                    placeholder={
+                      !value.model || value.model === provider?.defaultModel
+                        ? String(provider?.contextWindowTokens ?? 'Provider setting')
+                        : 'Enter this model’s capacity'
+                    }
+                    onChange={(event) =>
+                      setValue({
+                        ...value,
+                        contextWindowTokens: event.target.value ? Number(event.target.value) : null,
+                      })
+                    }
+                  />
+                  <small>A different model needs its own context-window size.</small>
+                </label>
+                <label>
+                  Maximum output (tokens)
+                  <input
+                    type="number"
+                    min={256}
+                    max={262144}
+                    step={1}
+                    disabled={busy}
+                    value={value.maxOutputTokens ?? ''}
+                    placeholder={String(provider?.maxOutputTokens ?? 8192)}
+                    onChange={(event) =>
+                      setValue({
+                        ...value,
+                        maxOutputTokens: event.target.value ? Number(event.target.value) : null,
+                      })
                     }
                   />
                 </label>

@@ -6,6 +6,7 @@ import { BotRepository } from './repositories/botRepository';
 import { ProviderRepository } from './repositories/providerRepository';
 import { AttachmentRepository } from './repositories/attachmentRepository';
 import { MessageRepository } from './repositories/messageRepository';
+import { ChatJobRepository } from './repositories/chatJobRepository';
 import { BotService } from './services/botService';
 import { ProviderService } from './services/providerService';
 import { AttachmentService } from './services/attachmentService';
@@ -76,7 +77,13 @@ export function createApiServer(options: ApiOptions = {}) {
       botRepository,
       join(dir, 'uploads'),
     );
-    const chats = new ChatService(messageRepository, providers, attachments, tools);
+    const chats = new ChatService(
+      messageRepository,
+      providers,
+      attachments,
+      tools,
+      new ChatJobRepository(store),
+    );
     const bots = new BotService(
       botRepository,
       providerRepository,

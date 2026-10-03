@@ -8,6 +8,8 @@ export const botSchema = z.object({
   model: z.string().trim().min(1).max(150).nullable(),
   supportsImages: z.boolean().nullable(),
   avatar: z.enum(['scout', 'nova', 'atlas']),
+  contextWindowTokens: z.number().int().min(4096).max(10000000).nullable().optional(),
+  maxOutputTokens: z.number().int().min(256).max(262144).nullable().optional(),
 });
 
 export const providerSchema = z.object({
@@ -19,6 +21,8 @@ export const providerSchema = z.object({
   isDefault: z.boolean(),
   apiKey: z.string().trim().max(4096).optional(),
   clearKey: z.boolean().optional(),
+  contextWindowTokens: z.number().int().min(4096).max(10000000).nullable().optional(),
+  maxOutputTokens: z.number().int().min(256).max(262144).optional(),
 });
 
 export const chatSchema = z.object({

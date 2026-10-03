@@ -20,7 +20,7 @@ export async function executeFileOperations(
     if (--context.callBudget.remaining < 0)
       throw new ApiError(
         400,
-        'This response reached its 16 file-operation limit. Summarize the results and ask the user for a new message.',
+        'This run reached its file-operation safety budget. Summarize the results and remaining work.',
       );
     const result = await context.files.execute(input, context.signal);
     if ('changed' in result && result.changed) context.onFileChanged(result.path);

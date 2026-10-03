@@ -51,6 +51,16 @@ export class BotService {
       throw new ApiError(400, 'Provider not found.');
     const bot = {
       ...input,
+      contextWindowTokens:
+        input.contextWindowTokens !== undefined
+          ? input.contextWindowTokens
+          : existing?.providerId === input.providerId && existing?.model === input.model
+            ? (existing?.contextWindowTokens ?? null)
+            : null,
+      maxOutputTokens:
+        input.maxOutputTokens !== undefined
+          ? input.maxOutputTokens
+          : (existing?.maxOutputTokens ?? null),
       id: existing?.id || randomUUID(),
       createdAt: existing?.createdAt || new Date().toISOString(),
       workspaceId,

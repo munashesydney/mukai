@@ -10,11 +10,24 @@ import { publicProvider } from '../models/entities';
 import type { ProviderInput } from '../../shared/ai';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { BotRepository } from '../repositories/botRepository';
+import { modelContextWindow } from '../../shared/modelLimits';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
+export function isContextOverflow(error: unknown) {
+  const value = error as { statusCode?: number; message?: string; responseBody?: string };
+  return (
+    [400, 413, 422].includes(value?.statusCode ?? 0) &&
+    /context[_ ](?:length|window)|maximum context|too many (?:input )?tokens|prompt (?:is )?too long|input.*exceed.*token/i.test(
+      `${value.message ?? ''} ${value.responseBody ?? ''}`,
+    )
+  );
+}
+
 export function safeProviderError(error: unknown) {
+  if (isContextOverflow(error))
+    return 'The provider rejected the context size. Check the model’s context-window setting and retry; your saved history is preserved.';
   const status = (error as { statusCode?: number })?.statusCode;
   if (status === 401 || status === 403)
     return 'The provider rejected these credentials. Check the API key and permissions.';
@@ -107,6 +120,13 @@ export class ProviderService {
       // A saved default remains default until another provider is selected.
       isDefault: value.isDefault || Boolean(existing?.isDefault),
       encryptedKey,
+      contextWindowTokens:
+        value.contextWindowTokens !== undefined
+          ? value.contextWindowTokens
+          : ((existing?.defaultModel === value.defaultModel
+              ? existing.contextWindowTokens
+              : null) ?? null),
+      maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? 8192,
     };
     this.providers.save(provider);
     return publicProvider(provider);
@@ -129,6 +149,8 @@ export class ProviderService {
     return {
       provider,
       modelId,
+      contextWindow: modelContextWindow(bot, provider),
+      maxOutputTokens: bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
       vision:
         bot.supportsImages === null
           ? Boolean(provider.supportsImages)

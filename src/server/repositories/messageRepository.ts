@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database';
-import type { ChatActivity, MessageStatus, ResponsePart } from '../../shared/ai';
+import type { ChatActivity, ContextUsage, MessageStatus, ResponsePart } from '../../shared/ai';
 import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
@@ -96,6 +96,13 @@ export class MessageRepository {
   reset(id: string) {
     this.database.run(
       "UPDATE messages SET content = '', reasoning = '', parts_json = '[]', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), finished_at = NULL, status = 'streaming', error = NULL WHERE id = ?",
+      id,
+    );
+  }
+  setContextUsage(id: string, usage: ContextUsage) {
+    this.database.run(
+      'UPDATE messages SET context_usage_json=? WHERE id=?',
+      JSON.stringify(usage),
       id,
     );
   }

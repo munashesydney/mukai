@@ -18,6 +18,9 @@ export function botRecord(row: Row): BotRecord {
     supportsImages: row.supports_images === null ? null : Boolean(row.supports_images),
     avatar: row.avatar as BotRecord['avatar'],
     createdAt: String(row.created_at),
+    contextWindowTokens:
+      row.context_window_tokens == null ? null : Number(row.context_window_tokens),
+    maxOutputTokens: row.max_output_tokens == null ? null : Number(row.max_output_tokens),
   };
 }
 export function providerRecord(row: Row): ProviderRecord {
@@ -30,6 +33,9 @@ export function providerRecord(row: Row): ProviderRecord {
     supportsImages: Boolean(row.supports_images),
     isDefault: Boolean(row.is_default),
     encryptedKey: row.encrypted_key as string | null,
+    contextWindowTokens:
+      row.context_window_tokens == null ? null : Number(row.context_window_tokens),
+    maxOutputTokens: Number(row.max_output_tokens || 8192),
   };
 }
 export function attachmentRecord(row: Row): AttachmentRecord {
@@ -66,5 +72,6 @@ export function messageRecord(row: Row): MessageRecord {
     parts: JSON.parse(String(row.parts_json || '[]')) as MessageRecord['parts'],
     startedAt: row.started_at as string | null,
     finishedAt: row.finished_at as string | null,
+    contextUsage: row.context_usage_json ? JSON.parse(String(row.context_usage_json)) : undefined,
   };
 }

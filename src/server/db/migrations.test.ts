@@ -15,6 +15,49 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('removes installed run budgets while preserving bot settings and saved progress', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
+    db.exec('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
+    migrations.slice(0, 8).forEach((sql, index) => {
+      db.exec(sql);
+      db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
+    });
+    db.exec(
+      "INSERT INTO bots(id,name,description,instructions,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens,run_time_limit_minutes,run_token_limit) VALUES('scout','Scout','Original description','Original instructions','scout','2026-10-01','default',65536,4096,1,10000); INSERT INTO metadata VALUES('scout_seeded','1')",
+    );
+    db.exec(
+      "INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at) VALUES('reply','scout','bot-scout','request','assistant','Saved progress','interrupted','2026-10-01'); INSERT INTO chat_jobs VALUES('reply','{\"elapsedMs\":86400000,\"usage\":{\"runTokens\":2000000},\"messages\":[],\"steps\":12}','fingerprint',1,'2026-10-01')",
+    );
+    db.close();
+    const api = await startApiServer(0, { dataDir: dir });
+    try {
+      const columns = api.store.all('PRAGMA table_info(bots)').map((column) => column.name);
+      expect(columns).not.toContain('run_time_limit_minutes');
+      expect(columns).not.toContain('run_token_limit');
+      expect(
+        api.store.get(
+          "SELECT instructions,context_window_tokens,max_output_tokens FROM bots WHERE id='scout'",
+        ),
+      ).toMatchObject({
+        instructions: 'Original instructions',
+        context_window_tokens: 65536,
+        max_output_tokens: 4096,
+      });
+      const job = api.store.get("SELECT * FROM chat_jobs WHERE message_id='reply'")!;
+      expect(job.in_flight).toBe(1);
+      const checkpoint = JSON.parse(String(job.checkpoint_json));
+      expect(checkpoint).not.toHaveProperty('elapsedMs');
+      expect(checkpoint).toMatchObject({ usage: { runTokens: 2000000 }, steps: 12 });
+      expect(api.store.get("SELECT content FROM messages WHERE id='reply'")?.content).toBe(
+        'Saved progress',
+      );
+      expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      await api.shutdown();
+      await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    }
+  });
   it('preserves existing reviews and artifacts when rebuilding the messages table', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
@@ -101,6 +144,8 @@ describe('Existing database upgrades', () => {
         { version: 5 },
         { version: 6 },
         { version: 7 },
+        { version: 8 },
+        { version: 9 },
       ]);
       expect(api.store.get('SELECT id FROM providers')?.id).toBe('provider');
       expect(() =>

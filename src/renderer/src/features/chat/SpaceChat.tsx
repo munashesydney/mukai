@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, Send, Square } from 'lucide-react';
-import type { Bot } from '../../../../shared/ai';
+import type { Bot, ProviderSettings } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { botHandle, mentionedBot } from '../../../../shared/mentions';
@@ -13,6 +13,8 @@ import { FileChanges } from '../ai/FileChanges';
 import { DiffDrawer } from '../ai/DiffDrawer';
 import { ArtifactsView } from '../ai/ArtifactsView';
 import { errorText } from '../../utils/errors';
+import { ContextMeter } from '../ai/ContextMeter';
+import { modelContextWindow } from '../../../../shared/modelLimits';
 
 export function SpaceChat({
   space,
@@ -20,12 +22,16 @@ export function SpaceChat({
   tab,
   savedOpen,
   onCloseSaved,
+  providers,
+  onProviders,
 }: {
   space: Conversation;
   bots: Bot[];
   tab: string;
   savedOpen: boolean;
   onCloseSaved: () => void;
+  providers: ProviderSettings[];
+  onProviders: () => void;
 }) {
   const id = 'space:' + space.id,
     state = useChat(id);
@@ -57,6 +63,13 @@ export function SpaceChat({
     .reverse()
     .find((message) => message.role === 'assistant');
   const latestUser = [...state.messages].reverse().find((message) => message.role === 'user');
+  const respondingBot = members.find(
+    (bot) =>
+      bot.id === (state.busy ? latestAssistant?.botId : selectedBot || latestAssistant?.botId),
+  );
+  const provider = providers.find((item) =>
+    respondingBot?.providerId ? item.id === respondingBot.providerId : item.isDefault,
+  );
   return (
     <>
       {savedOpen && (
@@ -242,9 +255,24 @@ export function SpaceChat({
                   </div>
                 )}
                 <div className="composer-toolbar">
-                  <span className="ai-caption">
-                    {members.length ? 'Mention one bot to get a response' : 'No bots in this space'}
-                  </span>
+                  <div className="composer-actions">
+                    <span className="ai-caption">
+                      {members.length
+                        ? 'Mention one bot to get a response'
+                        : 'No bots in this space'}
+                    </span>
+                    {respondingBot && (
+                      <ContextMeter
+                        usage={
+                          latestAssistant?.botId === respondingBot.id
+                            ? latestAssistant.contextUsage
+                            : undefined
+                        }
+                        window={modelContextWindow(respondingBot, provider)}
+                        onConfigure={onProviders}
+                      />
+                    )}
+                  </div>
                   {state.busy ? (
                     <button
                       className="send-button ai-stop"

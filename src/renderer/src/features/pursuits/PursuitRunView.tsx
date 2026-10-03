@@ -14,6 +14,7 @@ import { ArtifactsView } from '../ai/ArtifactsView';
 import { MessageActions } from '../chat/MessageActions';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
+import { ContextMeter } from '../ai/ContextMeter';
 export function PursuitRunView({
   run,
   bot,
@@ -62,6 +63,9 @@ export function PursuitRunView({
       setError(errorText(caught));
     }
   }
+  const usage = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant')?.contextUsage;
   return (
     <>
       <header className="pursuit-header">
@@ -76,6 +80,7 @@ export function PursuitRunView({
         <p>
           {run.trigger === 'schedule' ? 'Scheduled wake' : 'Requested run'} ·{' '}
           {new Date(run.startedAt).toLocaleString()}
+          {usage && <ContextMeter usage={usage} window={usage.contextWindow} />}
         </p>
         {run.status === 'running' && (
           <button

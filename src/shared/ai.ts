@@ -10,6 +10,8 @@ export interface ProviderSettings {
   supportsImages: boolean;
   isDefault: boolean;
   hasKey: boolean;
+  contextWindowTokens?: number | null;
+  maxOutputTokens?: number;
 }
 export interface ProviderInput {
   name: string;
@@ -20,6 +22,8 @@ export interface ProviderInput {
   isDefault: boolean;
   apiKey?: string;
   clearKey?: boolean;
+  contextWindowTokens?: number | null;
+  maxOutputTokens?: number;
 }
 export interface Bot {
   id: string;
@@ -32,6 +36,8 @@ export interface Bot {
   supportsImages: boolean | null;
   avatar: 'scout' | 'nova' | 'atlas';
   createdAt: string;
+  contextWindowTokens?: number | null;
+  maxOutputTokens?: number | null;
 }
 export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId'>;
 export interface Workspace {
@@ -81,7 +87,7 @@ export interface Attachment {
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
 export type ResponsePart =
-  | { id: string; type: 'text'; text: string }
+  | { id: string; type: 'text'; text: string; continuationOf?: string; final?: boolean }
   | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
   | { id: string; type: 'tool'; activityId: string };
 export interface ChatMessage {
@@ -103,6 +109,18 @@ export interface ChatMessage {
   conversationId?: string;
   authorName?: string;
   saved?: boolean;
+  contextUsage?: ContextUsage;
+}
+export interface ContextUsage {
+  usedTokens: number;
+  contextWindow: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimated: boolean;
+  runTokens: number;
+  runEstimated?: boolean;
+  compactions: number;
+  phase: 'ready' | 'compacting' | 'failed';
 }
 export type ChatEvent =
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
@@ -110,6 +128,7 @@ export type ChatEvent =
   | { type: 'reasoning'; id: string; text: string; partId?: string }
   | { type: 'part'; id: string; part: ResponsePart }
   | { type: 'activity'; id: string; activity: ChatActivity }
+  | { type: 'context'; id: string; usage: ContextUsage }
   | { type: 'done' | 'error'; message: ChatMessage };
 export interface ChatInput {
   requestId: string;

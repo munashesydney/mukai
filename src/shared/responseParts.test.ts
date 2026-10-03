@@ -22,6 +22,36 @@ const message: ChatMessage = {
 };
 
 describe('Response presentation', () => {
+  it('joins output continuations across reasoning without hiding the beginning of the answer', () => {
+    const continued: ResponsePart[] = [
+      parts[0],
+      { id: 'first', type: 'text', text: 'First half ' },
+      { id: 'next-thought', type: 'reasoning', text: 'Continue.' },
+      { id: 'second', type: 'text', text: 'and the rest.', continuationOf: 'first' },
+    ];
+    expect(responsePresentation({ ...message, parts: continued })).toEqual({
+      process: [continued[0], continued[2]],
+      answer: 'First half and the rest.',
+    });
+    expect(appendResponseText(continued, 'second', 'text', ' Done.').at(-1)).toMatchObject({
+      continuationOf: 'first',
+    });
+  });
+  it('shows a confirmed pause report outside the collapsed process', () => {
+    expect(
+      responsePresentation({
+        ...message,
+        status: 'interrupted',
+        parts: [
+          ...parts.slice(0, 3),
+          { ...parts[3], type: 'text', text: 'Paused after no progress.', final: true },
+        ],
+      }),
+    ).toEqual({
+      process: parts.slice(0, 3),
+      answer: 'Paused after no progress.',
+    });
+  });
   it('keeps progress and reasoning in order and leaves the final answer outside the process', () => {
     expect(responsePresentation(message)).toEqual({
       process: parts.slice(0, 3),

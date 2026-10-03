@@ -18,7 +18,7 @@ export class BotRepository {
   }
   create(bot: BotRecord) {
     this.database.run(
-      'INSERT INTO bots(id,name,description,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO bots(id,name,description,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       bot.id,
       bot.name,
       bot.description,
@@ -29,11 +29,13 @@ export class BotRepository {
       bot.avatar,
       bot.createdAt,
       bot.workspaceId,
+      bot.contextWindowTokens ?? null,
+      bot.maxOutputTokens ?? null,
     );
   }
   update(bot: BotRecord) {
     this.database.run(
-      'UPDATE bots SET name=?,description=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=? WHERE id=?',
+      'UPDATE bots SET name=?,description=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=?,context_window_tokens=?,max_output_tokens=? WHERE id=?',
       bot.name,
       bot.description,
       bot.instructions,
@@ -41,6 +43,8 @@ export class BotRepository {
       bot.model,
       bot.supportsImages === null ? null : Number(bot.supportsImages),
       bot.avatar,
+      bot.contextWindowTokens ?? null,
+      bot.maxOutputTokens ?? null,
       bot.id,
     );
   }

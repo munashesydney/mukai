@@ -24,6 +24,8 @@ import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { FileChanges } from './FileChanges';
 import { DiffDrawer } from './DiffDrawer';
 import { BrowserToggle } from '../browser/BrowserToggle';
+import { ContextMeter } from './ContextMeter';
+import { modelContextWindow } from '../../../../shared/modelLimits';
 import type { Conversation } from '../../../../shared/conversations';
 
 export function BotChat({
@@ -314,6 +316,11 @@ export function BotChat({
                           ? model
                           : 'No provider configured'}
                     </span>
+                    <ContextMeter
+                      usage={latestAssistant?.contextUsage}
+                      window={modelContextWindow(bot, provider)}
+                      onConfigure={onEdit}
+                    />
                   </div>
                   {state.busy ? (
                     <button
