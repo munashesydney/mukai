@@ -28,6 +28,55 @@ export function isContextOverflow(error: unknown) {
   );
 }
 
+function transportErrorMessage(error: unknown): string | undefined {
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  const errors: { name?: string; code?: string; message?: string; statusCode?: number }[] = [];
+  // SDK retries wrap the API error in lastError; fetch wraps the socket error in cause.
+  while (pending.length && seen.size < 16) {
+    const current = pending.shift();
+    if (!current || typeof current !== 'object' || seen.has(current)) continue;
+    seen.add(current);
+    const detail = current as (typeof errors)[number] & { cause?: unknown; lastError?: unknown };
+    errors.push(detail);
+    pending.push(detail.cause, detail.lastError);
+  }
+  // An HTTP rejection has its own explanation, even if its text mentions a connection.
+  if (errors.some((detail) => typeof detail.statusCode === 'number' && detail.statusCode >= 400))
+    return;
+  if (
+    errors.some(
+      (detail) =>
+        ['UND_ERR_SOCKET', 'ECONNRESET', 'EPIPE'].includes(detail.code || '') ||
+        (detail.name === 'SocketError' && /other side closed/i.test(detail.message || '')),
+    )
+  )
+    return 'The connection to the provider closed unexpectedly. Check your connection and retry.';
+  if (
+    errors.some(
+      (detail) =>
+        detail.name === 'TimeoutError' ||
+        [
+          'UND_ERR_CONNECT_TIMEOUT',
+          'UND_ERR_HEADERS_TIMEOUT',
+          'UND_ERR_BODY_TIMEOUT',
+          'ETIMEDOUT',
+        ].includes(detail.code || ''),
+    )
+  )
+    return 'The provider connection timed out. Check your connection and retry.';
+  if (
+    errors.some(
+      (detail) =>
+        ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH'].includes(
+          detail.code || '',
+        ) ||
+        (detail.name === 'TypeError' && /^fetch failed$/i.test(detail.message || '')),
+    )
+  )
+    return 'Could not connect to the provider. Check your internet connection and provider endpoint, then retry.';
+}
+
 export function safeProviderError(error: unknown) {
   if (error instanceof ApiError) return error.message;
   const detail = error as {
@@ -46,6 +95,8 @@ export function safeProviderError(error: unknown) {
   if (code && /^(subscription_sharing_|chatpass_v2_)/.test(code)) return chatGPTError(code);
   if (isContextOverflow(error))
     return 'The provider rejected the context size. Check the model’s context-window setting and retry; your saved history is preserved.';
+  const connectionError = transportErrorMessage(error);
+  if (connectionError) return connectionError;
   const status = (error as { statusCode?: number })?.statusCode;
   if (status === 401 || status === 403)
     return 'The provider rejected these credentials. Check the API key and permissions.';
