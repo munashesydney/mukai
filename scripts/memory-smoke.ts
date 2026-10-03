@@ -95,6 +95,20 @@ async function main() {
       `Array.from(document.querySelectorAll('[role=tab]')).find(tab=>tab.textContent.includes('Memories')).click()`,
     );
     await wait('document.querySelectorAll(".memory-fact").length===3');
+    await evaluate(`document.querySelector('#memory-tab-preferences').click()`);
+    await wait('Boolean(document.querySelector(".memory-preferences"))');
+    const capture = async (name: string) => {
+      await evaluate(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      mkdirSync(join(process.cwd(), 'artifacts'), { recursive: true });
+      writeFileSync(
+        join(process.cwd(), 'artifacts', name),
+        (await window.webContents.capturePage()).toPNG(),
+      );
+    };
+    assert.equal(await evaluate('document.querySelector(".memory-panel h3 svg")'), null);
+    await capture('memory-preferences.png');
     const before = api.memory.settings('default').automaticRecall;
     await evaluate(
       `document.querySelectorAll('.memory-preferences input[type=checkbox]')[1].click()`,
@@ -111,6 +125,40 @@ async function main() {
     const path = join(process.cwd(), 'artifacts', 'memory-smoke.png');
     mkdirSync(join(process.cwd(), 'artifacts'), { recursive: true });
     writeFileSync(path, (await window.webContents.capturePage()).toPNG());
+    await evaluate(
+      `document.querySelector('#memory-tab-graph').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true}))`,
+    );
+    await wait('document.querySelectorAll(".memory-fact").length===3');
+    assert.equal(await evaluate('document.activeElement.id'), 'memory-tab-list');
+    await evaluate(`document.querySelector('#memory-tab-activity').click()`);
+    await wait('Boolean(document.querySelector(".memory-processing"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".memory-recalls").textContent.includes("Recall records")',
+      ),
+    );
+    await capture('memory-activity.png');
+    await evaluate(`document.querySelector('#settings-tab-appearance').click()`);
+    await wait('Boolean(document.querySelector("input[name=color-mode][value=dark]"))');
+    await evaluate(`document.querySelector('input[name=color-mode][value=dark]').click()`);
+    await evaluate(`document.querySelector('#settings-tab-memory').click()`);
+    await wait('document.querySelectorAll(".memory-graph-edge").length===3');
+    await capture('memory-dark.png');
+    window.setSize(900, 900);
+    await capture('memory-narrow.png');
+    assert(
+      await evaluate(
+        `document.querySelector('.memory-panel').scrollWidth <= document.querySelector('.memory-panel').clientWidth + 1`,
+      ),
+    );
+    await evaluate(`document.querySelector('#memory-tab-preferences').click()`);
+    await wait('Boolean(document.querySelector(".memory-preferences"))');
+    await capture('memory-preferences-narrow.png');
+    assert(
+      await evaluate(
+        `document.querySelector('.memory-panel').scrollWidth <= document.querySelector('.memory-panel').clientWidth + 1`,
+      ),
+    );
     assert.deepEqual(errors, []);
     console.log(
       'Memory graph, inspector, list, controls, and renderer passed. Screenshot: ' + path,

@@ -1,14 +1,9 @@
 .memory-panel {
   max-width: 1100px;
 }
-.memory-panel h3 {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
 .memory-preferences {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 18px;
   display: grid;
   gap: 18px;
@@ -28,14 +23,9 @@
 .memory-preferences strong {
   font-size: 13px;
 }
-.memory-panel input[type='checkbox'] {
-  accent-color: var(--teal);
-  margin-top: 3px;
-}
 .memory-model,
 .memory-budget,
 .memory-toolbar,
-.memory-navigation,
 .memory-footer,
 .memory-graph-toolbar {
   display: flex;
@@ -75,26 +65,6 @@
   color: var(--ink);
   font-size: 13px;
 }
-.memory-navigation {
-  margin: 16px 0;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.memory-navigation > div {
-  display: flex;
-  gap: 4px;
-}
-.memory-navigation [role='tab'] {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 12px;
-  border-radius: 7px;
-}
-.memory-navigation .is-selected {
-  background: var(--surface-muted);
-  color: var(--ink);
-}
 .memory-content {
   display: flex;
   align-items: flex-start;
@@ -106,7 +76,7 @@
   min-width: 0;
   flex: 1;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
 }
 .memory-graph-toolbar {
@@ -122,7 +92,8 @@
   width: 100%;
   display: block;
   background: var(--surface-muted);
-  min-height: 280px;
+  min-height: 300px;
+  max-height: 500px;
 }
 .memory-graph-edge {
   cursor: pointer;
@@ -220,7 +191,7 @@
   width: 310px;
   flex-shrink: 0;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 16px;
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -304,16 +275,21 @@
   margin-top: 12px;
 }
 .memory-processing {
-  margin: 20px 0;
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
+  margin: 0 0 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.memory-processing > summary {
+  padding: 14px 16px;
+  background: var(--surface-muted);
 }
 .memory-processing > div {
   display: flex;
   gap: 12px;
   align-items: center;
   border-bottom: 1px solid var(--line);
-  padding: 10px 0;
+  padding: 14px 16px;
   font-size: 12px;
 }
 .memory-processing > div > span {
@@ -349,5 +325,114 @@
   }
   .memory-budget {
     align-items: flex-start;
+  }
+}
+
+.memory-tabs.conversation-tabs {
+  padding: 0;
+  margin-bottom: 24px;
+  gap: 28px;
+  height: 42px;
+}
+.memory-view {
+  min-width: 0;
+}
+.memory-filter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.memory-filter-row label,
+.memory-budget label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memory-search:focus-within {
+  border-color: var(--theme-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent) 12%, transparent);
+}
+.memory-section-heading {
+  margin-bottom: 16px;
+}
+.memory-section-heading h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.memory-section-heading p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.memory-preferences {
+  padding: 0;
+  gap: 0;
+}
+.memory-preferences > label {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.memory-preferences .checkbox-control {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.memory-model {
+  padding: 18px 20px;
+}
+.memory-budget {
+  padding: 16px 20px;
+  background: var(--surface-muted);
+}
+.memory-preferences small {
+  margin-top: 4px;
+  max-width: 560px;
+}
+.memory-footer {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  gap: 8px;
+}
+.memory-footer > button:last-child {
+  margin-left: auto;
+}
+.memory-view > .memory-caption {
+  padding: 0;
+  margin-top: 16px;
+}
+.memory-processing > div:last-child,
+.memory-recalls details:last-child {
+  border-bottom: 0;
+}
+.memory-fact:focus-visible,
+.memory-history-item:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: -2px;
+}
+@media (max-width: 700px) {
+  .memory-tabs.conversation-tabs {
+    gap: 20px;
+    overflow-x: auto;
+  }
+  .memory-tabs > button {
+    flex-shrink: 0;
+  }
+  .memory-footer > button:last-child {
+    margin-left: 0;
+  }
+  .memory-model {
+    align-items: flex-start;
+  }
+  .memory-processing > div {
+    flex-wrap: wrap;
+  }
+  .memory-processing > div > span {
+    flex-basis: 100%;
   }
 }
