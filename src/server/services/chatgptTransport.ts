@@ -63,11 +63,14 @@ export async function collectChatGPTResponse(response: Response) {
   const decoder = new TextDecoder();
   let buffer = '';
   let result: Record<string, unknown> | undefined;
+  const completedItems = new Map<number, Record<string, unknown>>();
+  let receivedBytes = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
+      receivedBytes += value?.byteLength || 0;
       buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
-      if (buffer.length > 32 * 1024 * 1024)
+      if (receivedBytes > 32 * 1024 * 1024)
         throw new ApiError(502, 'ChatGPT response exceeded the supported size.');
       let boundary: number;
       while ((boundary = buffer.indexOf('\n\n')) !== -1) {
@@ -84,6 +87,8 @@ export async function collectChatGPTResponse(response: Response) {
           response?: Record<string, unknown>;
           error?: { code?: string };
           code?: string;
+          output_index?: number;
+          item?: Record<string, unknown>;
         };
         if (event.type === 'response.failed' || event.type === 'error') {
           const error = event.response?.error as { code?: string } | undefined;
@@ -92,6 +97,16 @@ export async function collectChatGPTResponse(response: Response) {
             { code: error?.code || event.error?.code || event.code },
           );
         }
+        // Plan usage can omit output from the terminal response. The completed
+        // stream items contain the answer, reasoning, and tool calls in order.
+        if (
+          event.type === 'response.output_item.done' &&
+          Number.isInteger(event.output_index) &&
+          event.output_index! >= 0 &&
+          event.item &&
+          typeof event.item.id === 'string'
+        )
+          completedItems.set(event.output_index!, event.item);
         if (event.type === 'response.completed' || event.type === 'response.incomplete')
           result = event.response;
       }
@@ -102,6 +117,23 @@ export async function collectChatGPTResponse(response: Response) {
         502,
         'ChatGPT’s response was interrupted before completion. Retry when connected.',
       );
+    if (completedItems.size) {
+      const streamed = [...completedItems.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, item]) => item);
+      const terminal = Array.isArray(result.output)
+        ? (result.output as Record<string, unknown>[])
+        : [];
+      const terminalIds = new Set(terminal.map((item) => item.id));
+      if (streamed.some((item) => !terminalIds.has(item.id))) {
+        const terminalById = new Map(terminal.map((item) => [item.id, item]));
+        const streamedIds = new Set(streamed.map((item) => item.id));
+        result.output = [
+          ...streamed.map((item) => terminalById.get(item.id) || item),
+          ...terminal.filter((item) => !streamedIds.has(item.id)),
+        ];
+      }
+    }
     return new Response(JSON.stringify(result), {
       headers: {
         'Content-Type': 'application/json',

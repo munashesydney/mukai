@@ -6,6 +6,7 @@ export type DiagnosticPhase =
   | 'setup'
   | 'provider-request'
   | 'context-compaction'
+  | 'memory-extraction'
   | 'tool-execution'
   | 'checkpoint'
   | 'response-save'
@@ -89,6 +90,14 @@ export class DiagnosticService {
       statusCode: typeof item.statusCode === 'number' ? item.statusCode : undefined,
       isRetryable: typeof item.isRetryable === 'boolean' ? item.isRetryable : undefined,
     };
+    if (name === 'AI_NoObjectGeneratedError') {
+      if (typeof item.text === 'string') value.generatedTextBytes = Buffer.byteLength(item.text);
+      if (
+        typeof item.finishReason === 'string' &&
+        /^(stop|length|content-filter|tool-calls|error|other)$/.test(item.finishReason)
+      )
+        value.finishReason = item.finishReason;
+    }
     if (typeof item.url === 'string') {
       try {
         const url = new URL(item.url);

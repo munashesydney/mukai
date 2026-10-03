@@ -18,10 +18,12 @@
     "test": "vitest run",
     "test:browser": "tsx scripts/run-browser-smoke.ts",
     "test:capabilities": "tsx scripts/run-capability-smoke.ts",
+    "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
+    "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
     "build": "npm run typecheck && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
-    "start:server": "node dist/server/server/index.js",
+    "start:server": "node dist/server/src/server/index.js",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "format": "prettier --write .",
@@ -33,6 +35,7 @@
     "@ai-sdk/openai": "^4.0.83",
     "@ai-sdk/openai-compatible": "^3.0.62",
     "@fontsource/inter": "^5.2.6",
+    "@huggingface/transformers": "4.3.0",
     "ai": "^7.0.127",
     "ajv": "^8.20.0",
     "diff": "9.0.0",
@@ -82,7 +85,13 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@esbuild/**/*"
+      "node_modules/@esbuild/**/*",
+      "node_modules/onnxruntime*/**/*",
+      "node_modules/@huggingface/**/*",
+      "node_modules/sharp/**/*",
+      "node_modules/@img/**/*",
+      "node_modules/detect-libc/**/*",
+      "node_modules/semver/**/*"
     ],
     "win": {
       "target": "nsis"

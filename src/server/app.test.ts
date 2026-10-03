@@ -524,6 +524,7 @@ beforeEach(async () => {
   let snapshotCount = 0;
   api = await startApiServer(0, {
     dataDir: dir,
+    memoryExtractor: async () => ({ facts: [] }),
     embeddedBrowser: {
       open: async (info) => ({
         isClosed: () => false,
@@ -596,7 +597,7 @@ describe('Mukai bots and AI API', () => {
     expect(text).not.toContain('PRIVATE USER REQUEST');
     await api.shutdown();
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect(readFileSync(path, 'utf8')).toBe(text);
     await request(`/providers/${provider.id}/test`, 'POST');
     const records = readFileSync(path, 'utf8')
@@ -745,7 +746,7 @@ describe('Mukai bots and AI API', () => {
     expect(history[0].content).toBe(evidence);
     await api.shutdown();
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     mode = 'normal';
     await chat('ignored replacement', sent.requestId);
     history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
@@ -822,7 +823,7 @@ describe('Mukai bots and AI API', () => {
       );
       await api.shutdown();
       await close(api.server);
-      api = await startApiServer(0, { dataDir: dir });
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
       mode = 'normal';
       await chat('ignored', sent.requestId, bot.id);
       const history = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
@@ -849,7 +850,7 @@ describe('Mukai bots and AI API', () => {
     );
     await api.shutdown();
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     mode = 'normal';
     await chat('Continue the work', randomUUID(), bot.id);
     const context = JSON.stringify(calls.at(-1)?.messages);
@@ -923,7 +924,7 @@ describe('Mukai bots and AI API', () => {
       }
       await api.shutdown();
       await close(api.server);
-      api = await startApiServer(0, { dataDir: dir });
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
       mode = 'normal';
       await chat('ignored', sent.requestId, bot.id);
       expect(calls.at(-1)?.messages.some((message) => message.role === 'tool')).toBe(false);
@@ -1052,7 +1053,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls.length).toBe(count + 1);
     await api.shutdown();
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect((await request<Conversation[]>('/conversations')).data.map((item) => item.id)).toContain(
       space.id,
     );
@@ -1347,7 +1348,7 @@ describe('Mukai bots and AI API', () => {
       (await request('/workspaces', 'POST', { name: 'Private', folder: dir })).response.status,
     ).toBe(400);
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect((await request<Workspace[]>('/workspaces')).data).toHaveLength(2);
     expect((await request<Bot[]>(`/bots?workspaceId=${workspaceId}`)).data).toHaveLength(1);
     expect((await request<ChatMessage[]>(`/bots/${bots[0].id}/messages`)).data[0].content).toBe(
@@ -1417,7 +1418,7 @@ describe('Mukai bots and AI API', () => {
       counts: { write_file: 1, patch: 1 },
     });
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     const restored = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
     expect(restored.reasoning).toBe(messages[1].reasoning);
     expect(restored.activity).toEqual(messages[1].activity);
@@ -1537,7 +1538,7 @@ describe('Mukai bots and AI API', () => {
     await api.shutdown();
     await close(api.server);
     await new Promise((resolve) => setTimeout(resolve, 10));
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].content).toBe(
       'A real SDK response.',
     );
@@ -1558,7 +1559,7 @@ describe('Mukai bots and AI API', () => {
     await api.shutdown();
     await close(api.server);
     await new Promise((resolve) => setTimeout(resolve, 10));
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect((await request<Bot[]>('/bots')).data.map((bot) => bot.name)).toEqual(['Writer']);
   });
   it('uses private conversation history beyond ten messages while keeping the full history visible', async () => {
@@ -1616,7 +1617,7 @@ describe('Mukai bots and AI API', () => {
     ).toBe(404);
     await api.shutdown();
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     const chats = (await request<Conversation[]>('/conversations?kind=private')).data;
     expect(chats).toHaveLength(3);
     expect(chats.find((item) => item.id === first.id)?.name).toBe(
@@ -1780,7 +1781,7 @@ describe('Mukai bots and AI API', () => {
     await api.shutdown();
     await close(api.server);
     await new Promise((resolve) => setTimeout(resolve, 10));
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1].status).toBe(
       'interrupted',
     );
@@ -1819,7 +1820,9 @@ describe('Mukai bots and AI API', () => {
   it('handles disconnected streams and prevents concurrent requests or duplicate backend ownership', async () => {
     await configure();
     mode = 'slow';
-    await expect(startApiServer(0, { dataDir: dir })).rejects.toThrow('Another Mukai backend');
+    await expect(
+      startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) }),
+    ).rejects.toThrow('Another Mukai backend');
     const response = await fetch(api.url + '/bots/scout/chat', {
       method: 'POST',
       headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },

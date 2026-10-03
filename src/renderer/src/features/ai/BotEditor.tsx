@@ -1,3 +1,4 @@
+import { defaultBotInstructions } from '../../../../shared/botSystemPrompt';
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { Bot, BotInput, ProviderSettings } from '../../../../shared/ai';
@@ -27,7 +28,7 @@ export function BotEditor({
     bot || {
       name: '',
       description: '',
-      instructions: 'You are a helpful, thoughtful assistant. Be clear, practical, and honest.',
+      instructions: defaultBotInstructions,
       providerId: null,
       model: null,
       supportsImages: null,

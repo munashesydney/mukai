@@ -1,4 +1,5 @@
 import { ApiError } from '../config';
+import type { MemoryService } from './memoryService';
 import { ConversationRepository } from '../repositories/conversationRepository';
 import { MessageRepository } from '../repositories/messageRepository';
 import { BotService } from './botService';
@@ -12,6 +13,7 @@ export class ConversationService {
     private messages: MessageRepository,
     private bots: BotService,
     private chats: ChatService,
+    private memory?: MemoryService,
   ) {}
   require(id: string) {
     const conversation = this.conversations.find(id);
@@ -92,6 +94,14 @@ export class ConversationService {
     const message = existing
       ? this.messages.message(existing.id)
       : this.messages.createUser(id, input.requestId, input.text);
+    const actorId = conversation.botIds[0];
+    if (actorId) {
+      try {
+        this.memory?.capture(this.bots.require(actorId), id, message.id);
+      } catch {
+        /* A saved space message remains usable if capture is unavailable. */
+      }
+    }
     output.start();
     output.emit({ type: 'done', message });
     output.end();

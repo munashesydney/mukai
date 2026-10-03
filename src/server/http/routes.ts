@@ -30,6 +30,7 @@ import type { BrowserService } from '../services/browserService';
 import { browserDefinition } from '../tools/browser/definition';
 import type { CapabilityService } from '../capabilities/service';
 import { registrationInput } from '../capabilities/service';
+import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
 
 function uploadName(request: IncomingMessage) {
   try {
@@ -54,6 +55,7 @@ export function createRoutes({
   pursuits,
   browsers,
   capabilities,
+  memory,
 }: {
   token: string;
   startedAt: number;
@@ -69,6 +71,7 @@ export function createRoutes({
   pursuits: PursuitService;
   browsers: BrowserService;
   capabilities: CapabilityService;
+  memory: MemoryService;
 }) {
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -112,7 +115,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment)(\/|$)/.test(
+      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory)(\/|$)/.test(
         path,
       )
     )
@@ -124,6 +127,77 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'memory') {
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      workspaces.require(workspaceId);
+      if (!id && method === 'GET')
+        return send(
+          response,
+          memory.snapshot(
+            workspaceId,
+            (url.searchParams.get('q') || '').slice(0, 2000),
+            url.searchParams.get('history') === 'true',
+          ),
+        );
+      if (id === 'settings' && method === 'PUT')
+        return send(
+          response,
+          memory.saveSettings(workspaceId, memorySettingsSchema.parse(await jsonBody(request))),
+        );
+      if (id === 'embeddings' && method === 'POST')
+        return send(response, await memory.setupEmbeddings(workspaceId));
+      if (id === 'export' && method === 'GET') return send(response, memory.export(workspaceId));
+      if (id === 'import' && method === 'POST') {
+        const input = z
+          .object({
+            version: z.literal(1),
+            facts: z
+              .array(
+                z.object({
+                  subject: z.string().min(1).max(180),
+                  relation: z.string().min(1).max(80),
+                  object: z.string().min(1).max(180),
+                  text: z.string().min(1).max(1200),
+                  validFrom: z.string().datetime({ offset: true }),
+                  validTo: z.string().datetime({ offset: true }).nullable(),
+                  state: z.enum(['confirmed', 'uncertain']),
+                  ownerId: z.string().nullable().optional(),
+                }),
+              )
+              .max(1000),
+          })
+          .parse(await jsonBody(request, 4 * 1024 * 1024));
+        memory.import(workspaceId, input.facts);
+        return send(response, { imported: input.facts.length });
+      }
+      if (!id && method === 'DELETE') {
+        memory.clear(workspaceId);
+        return send(response, { cleared: true });
+      }
+      if (id && action === 'correct' && method === 'POST') {
+        const input = z
+          .object({
+            text: z.string().trim().min(1).max(1200),
+            object: z.string().trim().min(1).max(180),
+            validFrom: z.string().datetime({ offset: true }).optional(),
+          })
+          .parse(await jsonBody(request));
+        return send(response, memory.correct(workspaceId, id, input));
+      }
+      if (id && action === 'retry' && method === 'POST') {
+        memory.retry(workspaceId, id);
+        return send(response, { queued: true });
+      }
+      if (id && action === 'episode' && method === 'DELETE') {
+        memory.forgetEpisode(workspaceId, id);
+        return send(response, { forgotten: true });
+      }
+      if (id && !action && method === 'DELETE') {
+        memory.forget(workspaceId, id);
+        return send(response, { forgotten: true });
+      }
+      throw new ApiError(404, 'Memory operation not found.');
+    }
     if (resource === 'capabilities' || resource === 'environment') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
