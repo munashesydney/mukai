@@ -29,6 +29,21 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace file boundaries and operations', () => {
+  it('reports a committed patch even when change-history recording fails', async () => {
+    writeFileSync(join(root, 'note.txt'), 'original');
+    const tracked = new WorkspaceFileService(root, privateDir, () => {
+      throw new Error('Recording unavailable');
+    });
+    const result = await tracked.execute(
+      { action: 'patch', path: 'note.txt', oldText: 'original', newText: 'updated' },
+      signal(),
+    );
+    expect(result).toMatchObject({
+      changed: true,
+      warnings: [expect.stringContaining('was saved')],
+    });
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('updated');
+  });
   it('captures exact before/after contents inside the mutation queue, including BOM and CRLF', async () => {
     const snapshots: FileMutationSnapshot[] = [];
     const tracked = new WorkspaceFileService(root, privateDir, (snapshot) =>

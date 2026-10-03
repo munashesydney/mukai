@@ -26,6 +26,7 @@ export function WorkspaceSidebar({
   pursuitsError = '',
   onSelect,
   onDialog,
+  onSettings,
   collapsed,
   bots,
   botConversations,
@@ -42,6 +43,7 @@ export function WorkspaceSidebar({
   pursuitsError?: string;
   onSelect: (location: Location) => void;
   onDialog: (dialog: DialogKind) => void;
+  onSettings: () => void;
   collapsed: boolean;
   bots: Bot[];
   botConversations: Conversation[];
@@ -114,7 +116,7 @@ export function WorkspaceSidebar({
             <button
               onClick={() => {
                 setWorkspaceMenu(false);
-                onDialog('settings');
+                onSettings();
               }}
             >
               Workspace settings <ArrowUpRight size={14} />

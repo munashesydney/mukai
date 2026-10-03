@@ -27,6 +27,9 @@ import { PursuitRepository } from './repositories/pursuitRepository';
 import { ProcessService } from './services/processService';
 import { BrowserService } from './services/browserService';
 import type { EmbeddedBrowserHost } from './browser/types';
+import { DiagnosticService } from './services/diagnosticService';
+import { ApiError } from './config';
+import { ZodError } from 'zod';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -46,6 +49,8 @@ export function createApiServer(options: ApiOptions = {}) {
   }
   try {
     const token = options.token || privateSecret(store.dir, 'api.token', 32).toString('hex');
+    const diagnostics = new DiagnosticService(dir);
+    diagnostics.registerSecret(token);
     const botRepository = new BotRepository(store);
     const providerRepository = new ProviderRepository(store);
     const attachmentRepository = new AttachmentRepository(store);
@@ -71,7 +76,12 @@ export function createApiServer(options: ApiOptions = {}) {
       processes,
       browsers,
     );
-    const providers = new ProviderService(providerRepository, botRepository, store.dir);
+    const providers = new ProviderService(
+      providerRepository,
+      botRepository,
+      store.dir,
+      diagnostics,
+    );
     const attachments = new AttachmentService(
       attachmentRepository,
       botRepository,
@@ -83,6 +93,7 @@ export function createApiServer(options: ApiOptions = {}) {
       attachments,
       tools,
       new ChatJobRepository(store),
+      diagnostics,
     );
     const bots = new BotService(
       botRepository,
@@ -117,7 +128,11 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     });
     const server = createServer((request, response) => {
-      void route(request, response).catch((error) => sendError(response, error));
+      void route(request, response).catch((error) => {
+        if (!(error instanceof ApiError) && !(error instanceof ZodError))
+          diagnostics.record('http.failed', error, { phase: 'http-request' });
+        sendError(response, error);
+      });
     });
 
     server.requestTimeout = 30000;

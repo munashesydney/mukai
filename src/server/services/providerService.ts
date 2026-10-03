@@ -11,6 +11,7 @@ import type { ProviderInput } from '../../shared/ai';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { modelContextWindow } from '../../shared/modelLimits';
+import type { DiagnosticService } from './diagnosticService';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -47,6 +48,7 @@ export class ProviderService {
     private providers: ProviderRepository,
     private bots: BotRepository,
     dir: string,
+    private diagnostics: DiagnosticService,
   ) {
     this.key = privateSecret(dir, 'credentials.key', 32);
   }
@@ -69,7 +71,11 @@ export class ProviderService {
     const data = Buffer.from(value, 'base64');
     const decipher = createDecipheriv('aes-256-gcm', this.key, data.subarray(0, 12));
     decipher.setAuthTag(data.subarray(12, 28));
-    return Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString('utf8');
+    const key = Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString(
+      'utf8',
+    );
+    this.diagnostics.registerSecret(key);
+    return key;
   }
   save(input: ProviderInput, id?: string) {
     const value = { ...input };
@@ -217,6 +223,12 @@ export class ProviderService {
       };
     } catch (error) {
       if (error instanceof ApiError) throw error;
+      this.diagnostics.record('provider.test_failed', error, {
+        providerId: provider.id,
+        providerKind: provider.kind,
+        model: provider.defaultModel,
+        phase: 'provider-test',
+      });
       throw new ApiError(502, safeProviderError(error));
     }
   }

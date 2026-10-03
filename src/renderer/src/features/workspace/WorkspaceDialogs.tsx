@@ -5,7 +5,6 @@ import { Sheet } from '../../components/ui/Sheet';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Avatar } from '../../components/ui/Avatar';
 import type { DialogKind } from './types';
-import { SettingsDialog } from '../settings/SettingsDialog';
 import type { Bot } from '../../../../shared/ai';
 import { errorText } from '../../utils/errors';
 
@@ -72,7 +71,6 @@ export function WorkspaceDialogs({
         </div>
       </Modal>
     );
-  if (kind === 'settings') return <SettingsDialog onClose={onClose} />;
   if (kind === 'create-space')
     return <CreateSpaceDialog onClose={onClose} onCreate={onCreateSpace} bots={bots} />;
   if (kind === 'details')

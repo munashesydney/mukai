@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { ApiError } from '../config';
 import type { FileOperationsInput } from '../tools/file-operations/definition';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
+import { patchText } from './patchText';
 
 const FILE_LIMIT = 256 * 1024;
 const OUTPUT_LIMIT = 24000;
@@ -45,6 +46,15 @@ export class WorkspaceFileService {
     private privateDir: string,
     private onFileChanged?: (snapshot: FileMutationSnapshot) => void,
   ) {}
+  private recordChange(snapshot: FileMutationSnapshot) {
+    try {
+      this.onFileChanged?.(snapshot);
+      return [] as string[];
+    } catch (error) {
+      console.error('[mukai file bookkeeping]', error);
+      return ['The file was saved, but its change history could not be recorded.'];
+    }
+  }
   private async root() {
     try {
       const canonical = await realpath(this.folder);
@@ -157,6 +167,7 @@ export class WorkspaceFileService {
     if (target.relative === '.') throw new ApiError(400, 'Choose a file path.');
     signal.throwIfAborted();
     const temporary = resolve(dirname(target.absolute), `.mukai-write-${randomUUID()}.tmp`);
+    let committed = false;
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600, signal });
       await this.path(value, true);
@@ -174,9 +185,13 @@ export class WorkspaceFileService {
           throw error;
         }
       }
+      committed = true;
     } finally {
       await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') throw error;
+        if (error.code !== 'ENOENT') {
+          if (!committed) throw error;
+          console.error('[mukai temporary file cleanup]', error);
+        }
       });
     }
     return target.relative;
@@ -257,25 +272,20 @@ export class WorkspaceFileService {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
         const path = await this.save(value, input.content, input.overwrite === true, signal);
-        this.onFileChanged?.({ path, before, after: input.content });
-        return { path, changed: true, summary: `Saved ${path}.` };
+        const warnings = this.recordChange({ path, before, after: input.content });
+        return { path, changed: true, warnings, summary: `Saved ${path}.` };
       }
       case 'patch': {
         if (!input.oldText || input.newText === undefined)
           throw new ApiError(400, 'patch needs nonempty oldText and newText.');
         const file = await this.text(value);
-        if (file.text.split(input.oldText).length !== 2)
-          throw new ApiError(
-            409,
-            'oldText must match exactly once. Read the current file and provide a unique match.',
-          );
+        const after = patchText(file.text, input.oldText, input.newText);
         const latest = await this.text(value);
         if (latest.text !== file.text)
           throw new ApiError(409, 'The file changed while patching. Read it again.');
-        const after = file.text.replace(input.oldText, () => input.newText!);
         const path = await this.save(value, after, true, signal);
-        this.onFileChanged?.({ path, before: file.text, after });
-        return { path, changed: true, summary: `Patched ${path}.` };
+        const warnings = this.recordChange({ path, before: file.text, after });
+        return { path, changed: true, warnings, summary: `Patched ${path}.` };
       }
       case 'create_directory': {
         const target = await this.path(value, true);

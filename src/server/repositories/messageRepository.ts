@@ -55,7 +55,7 @@ export class MessageRepository {
   context(conversationId: string, limit: number, throughSequence: number) {
     return this.database
       .all(
-        "SELECT * FROM messages WHERE conversation_id = ? AND sequence <= ? AND status = 'complete' AND (role = 'user' OR content != '') ORDER BY sequence DESC LIMIT ?",
+        "SELECT * FROM messages WHERE conversation_id = ? AND sequence <= ? AND status != 'streaming' AND (role = 'user' OR content != '' OR activity_json != '[]') ORDER BY sequence DESC LIMIT ?",
         conversationId,
         throughSequence,
         limit,

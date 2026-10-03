@@ -50,7 +50,8 @@ export function chatOutput(response: ServerResponse): ChatOutput {
   };
 }
 export function sendError(response: ServerResponse, error: unknown) {
-  // Never serialize or log provider errors, request bodies, or credentials.
+  // Never serialize raw provider errors, request bodies, or credentials to the UI.
+  // The server boundary records separately filtered diagnostics.
   if (response.headersSent) {
     response.end();
     return;

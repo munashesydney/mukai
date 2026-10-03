@@ -1,4 +1,5 @@
-export type Section = 'spaces' | 'pursuits' | 'bots' | 'tools';
+export type Section = 'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings';
+export type SettingsSection = 'workspace' | 'appearance' | 'providers';
 export type BotId = 'atlas' | 'nova' | 'scout';
 export type PersonId = BotId | 'munashe';
 export interface Bot {
@@ -36,4 +37,4 @@ export interface Location {
   item: string;
   conversationId?: string;
 }
-export type DialogKind = 'draft' | 'details' | 'settings' | 'create-bot' | 'create-space' | null;
+export type DialogKind = 'draft' | 'details' | 'create-bot' | 'create-space' | null;

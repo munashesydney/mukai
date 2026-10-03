@@ -33,6 +33,7 @@ let calls: {
 let mode:
   | 'normal'
   | 'fail'
+  | 'upstream-fail'
   | 'slow'
   | 'tools'
   | 'invalid-tool'
@@ -191,6 +192,7 @@ function docxFixture() {
   return Buffer.concat([local, name, data, central, name, end]);
 }
 beforeEach(async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
   dir = mkdtempSync(join(tmpdir(), 'mukai-test-'));
   calls = [];
   mode = 'normal';
@@ -201,6 +203,23 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
     calls.push(body);
+    if (mode === 'upstream-fail') {
+      res
+        .writeHead(503, {
+          'Content-Type': 'application/json',
+          'x-request-id': 'fixture-request-42',
+        })
+        .end(
+          JSON.stringify({
+            error: {
+              type: 'server_error',
+              code: 'upstream_reset',
+              message: 'Upstream reset private-test-key',
+            },
+          }),
+        );
+      return;
+    }
     if (
       mode === 'fail' ||
       (mode === 'checkpoint' &&
@@ -545,6 +564,51 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('persists the actual provider failure with chat identifiers and redacts credentials', async () => {
+    const provider = await configure();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mode = 'upstream-fail';
+    await chat('PRIVATE USER REQUEST - do not log this');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.error).toContain('Could not complete the provider request');
+    const path = join(dir, 'logs', 'errors.log');
+    const text = readFileSync(path, 'utf8');
+    const record = JSON.parse(text.trim());
+    expect(record).toMatchObject({
+      event: 'chat.failed',
+      botId: 'scout',
+      conversationId: reply.conversationId,
+      messageId: reply.id,
+      providerId: provider.id,
+      phase: 'provider-request',
+      error: {
+        name: 'AI_RetryError',
+        lastError: {
+          name: 'AI_APICallError',
+          statusCode: 503,
+          providerRequestId: 'fixture-request-42',
+          providerError: { code: 'upstream_reset', message: 'Upstream reset [redacted]' },
+        },
+      },
+    });
+    expect(text).not.toContain('private-test-key');
+    expect(text).not.toContain(api.token);
+    expect(text).not.toContain('PRIVATE USER REQUEST');
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect(readFileSync(path, 'utf8')).toBe(text);
+    await request(`/providers/${provider.id}/test`, 'POST');
+    const records = readFileSync(path, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.at(-1)).toMatchObject({
+      event: 'provider.test_failed',
+      error: { statusCode: 503 },
+    });
+    expect(records).toHaveLength(2);
+  }, 20000);
   it('records reported token usage, applies model limits, and distinguishes estimates', async () => {
     const provider = await configure();
     await request('/providers/' + provider.id, 'PUT', {
@@ -771,6 +835,42 @@ describe('Mukai bots and AI API', () => {
       expect(api.store.all('SELECT * FROM chat_jobs')).toEqual([]);
     },
   );
+  it('carries failed tool work into a fresh message after restart', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const workspace = (
+      await request<Workspace>('/workspaces', 'POST', { name: 'History', folder: project })
+    ).data;
+    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    mode = 'checkpoint';
+    await chat('Write once, then report.', randomUUID(), bot.id);
+    expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1].status).toBe(
+      'failed',
+    );
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    mode = 'normal';
+    await chat('Continue the work', randomUUID(), bot.id);
+    const context = JSON.stringify(calls.at(-1)?.messages);
+    expect(context).toContain('checkpoint.txt');
+    expect(context).toContain('Saved once.');
+    expect(context).toContain('status: failed');
+    expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
+  });
+  it('carries stopped partial responses into a fresh message', async () => {
+    await configure();
+    mode = 'slow';
+    const streaming = chat('Slow prompt', randomUUID());
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await request('/bots/scout/stop', 'POST');
+    await streaming;
+    mode = 'normal';
+    await chat('Continue', randomUUID());
+    const context = JSON.stringify(calls.at(-1)?.messages);
+    expect(context).toContain('A real SDK ');
+    expect(context).toContain('status: stopped');
+  });
   it('reattaches the same request to a running job without a second model request', async () => {
     await configure();
     mode = 'slow';
@@ -1601,7 +1701,11 @@ describe('Mukai bots and AI API', () => {
     expect(messages[0].content).toBe('Keep this prompt');
     expect(messages[1].status).toBe('complete');
     expect(calls).toHaveLength(2);
-    expect(log).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledOnce();
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-test-key');
+    expect(
+      JSON.parse(String(log.mock.calls[0][0]).replace('[mukai diagnostic] ', '')).error.statusCode,
+    ).toBe(401);
   });
   it('stops generation, saves partial text, and retries in the same assistant record', async () => {
     await configure();

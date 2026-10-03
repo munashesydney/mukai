@@ -1,37 +1,36 @@
-import { useState } from 'react';
 import { Check, Layers3, Palette, Settings2, KeyRound } from 'lucide-react';
-import { Modal } from '../../components/ui/Modal';
 import { Brand } from '../../components/ui/Brand';
 import { useTheme } from '../appearance/useTheme';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import type { Workspace } from '../../../../shared/ai';
+import type { SettingsSection } from '../workspace/types';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'providers', label: 'Providers', icon: KeyRound },
 ] as const;
-type SettingsSection = (typeof sections)[number]['id'];
 
-export function SettingsDialog({
+export function SettingsPage({
+  section,
+  onSection,
   onClose,
-  initialSection = 'workspace',
   onProvidersChanged = () => {},
   workspace,
   onConnectFolder,
 }: {
+  section: SettingsSection;
+  onSection: (section: SettingsSection) => void;
   onClose: () => void;
-  initialSection?: SettingsSection;
   onProvidersChanged?: () => void;
   workspace?: Workspace;
   onConnectFolder?: () => void;
 }) {
-  const [section, setSection] = useState<SettingsSection>(initialSection);
   const { storageAvailable } = useTheme();
   return (
-    <Modal title="Settings" className="settings-modal" onClose={onClose}>
+    <main className="settings-page" aria-label="Settings">
       <div className="settings-layout">
         <aside className="settings-navigation">
           <div className="settings-nav-label">YOUR WORKSPACE</div>
@@ -45,7 +44,7 @@ export function SettingsDialog({
                 aria-controls={`settings-panel-${id}`}
                 tabIndex={section === id ? 0 : -1}
                 className={`settings-nav-item ${section === id ? 'is-selected' : ''}`}
-                onClick={() => setSection(id)}
+                onClick={() => onSection(id)}
                 onKeyDown={(event) => {
                   let next = index;
                   if (event.key === 'ArrowDown') next = (index + 1) % sections.length;
@@ -55,7 +54,7 @@ export function SettingsDialog({
                   else if (event.key === 'End') next = sections.length - 1;
                   else return;
                   event.preventDefault();
-                  setSection(sections[next].id);
+                  onSection(sections[next].id);
                   document.getElementById(`settings-tab-${sections[next].id}`)?.focus();
                 }}
               >
@@ -97,6 +96,6 @@ export function SettingsDialog({
           Done
         </button>
       </div>
-    </Modal>
+    </main>
   );
 }

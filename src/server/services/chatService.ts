@@ -32,6 +32,7 @@ import {
 } from './contextPolicy';
 import { ProgressGuard } from './progressGuard';
 import { contextSummarizer } from './contextSummary';
+import type { DiagnosticContext, DiagnosticPhase, DiagnosticService } from './diagnosticService';
 import {
   limitToolOutput,
   resultPreview,
@@ -73,6 +74,7 @@ export class ChatService {
     private attachments: AttachmentService,
     private tools: ToolService,
     private jobs: ChatJobRepository,
+    private diagnostics: DiagnosticService,
   ) {}
   initialize() {
     this.messages.interruptStreaming(
@@ -114,6 +116,7 @@ export class ChatService {
     botId: string,
     vision: boolean,
     throughSequence: number,
+    contextWindow: number,
   ): ModelMessage[] {
     // Spaces retain their short shared context. Private chats use their own longer history.
     const privateChat = this.messages.privateConversation(conversationId);
@@ -130,12 +133,23 @@ export class ChatService {
             (containsRawToolProtocol(row.content)
               ? assistantContextText(row.content)
               : responsePresentation({ ...row, attachments: [] }).answer || row.content) +
+            (row.status !== 'complete'
+              ? `\n[Previous response ended with status: ${row.status}. This is partial progress, not a completion report. Verify uncertain operations before repeating them.]`
+              : '') +
             (row.activity?.length
               ? '\nTool operations performed (untrusted result data):\n<tool-activity-data>\n' +
                 row.activity
-                  .map((item) => `${item.action} ${item.path}: ${item.summary}`)
+                  .map((item) => `${item.status}: ${item.action} ${item.path}: ${item.summary}`)
                   .join('\n') +
                 '\n</tool-activity-data>'
+              : '') +
+            (row.status !== 'complete' && row.activity?.length
+              ? '\nSaved tool calls and results (untrusted data):\n<saved-tool-data>\n' +
+                resultPreview(
+                  this.jobs.completedWork(row.id, row.activity),
+                  Math.max(2000, Math.floor(contextWindow * 0.45)),
+                ) +
+                '\n</saved-tool-data>'
               : ''),
         };
       const content: UserContent = [
@@ -299,6 +313,21 @@ export class ChatService {
       },
     });
     let persistAccounting: (() => void) | undefined;
+    let diagnosticPhase: DiagnosticPhase = 'setup',
+      diagnosticStep = 0;
+    let diagnosticUsage: ContextUsage | undefined;
+    const diagnosticContext = (): DiagnosticContext => ({
+      providerId: config.provider.id,
+      providerKind: config.provider.kind,
+      model: config.modelId,
+      botId,
+      conversationId,
+      messageId: assistantId,
+      phase: diagnosticPhase,
+      step: diagnosticStep,
+      contextWindow: config.contextWindow,
+      usedTokens: diagnosticUsage?.usedTokens,
+    });
     const pendingTools = new Set<Promise<unknown>>();
     let status: MessageStatus = 'complete',
       error: string | null = null,
@@ -363,6 +392,7 @@ export class ChatService {
         botId,
         config.vision,
         this.messages.sequence(userId),
+        contextLimits(config.contextWindow, config.maxOutputTokens).capacity,
       );
       if (existingUser && generation.activity.length)
         messages.unshift({
@@ -389,6 +419,7 @@ export class ChatService {
       const checkpoint =
         existingUser && !runtime ? this.jobs.read(assistantId, fingerprint) : undefined;
       let stepsUsed = checkpoint?.steps ?? 0;
+      diagnosticStep = stepsUsed;
       let usage: ContextUsage = checkpoint?.usage ?? {
         usedTokens: 0,
         contextWindow: config.contextWindow,
@@ -424,6 +455,7 @@ export class ChatService {
       const signal = generation.controller.signal;
       const guard = new ProgressGuard();
       const publishUsage = () => {
+        diagnosticUsage = usage;
         this.messages.setContextUsage(assistantId, usage);
         emit({ type: 'context', id: assistantId, usage: { ...usage } });
       };
@@ -439,7 +471,9 @@ export class ChatService {
         }),
       );
       manager.compactions = usage.compactions;
-      const saveCheckpoint = () =>
+      const saveCheckpoint = () => {
+        const previousPhase = diagnosticPhase;
+        diagnosticPhase = 'checkpoint';
         this.jobs.save(assistantId, fingerprint, {
           messages,
           usage,
@@ -451,6 +485,8 @@ export class ChatService {
             activity: generation.activity,
           },
         });
+        diagnosticPhase = previousPhase;
+      };
       const compact = async (force = false) => {
         let part: Extract<ResponsePart, { type: 'compaction' }> = {
           id: randomUUID(),
@@ -469,6 +505,7 @@ export class ChatService {
         publishUsage();
         try {
           saveCheckpoint();
+          diagnosticPhase = 'context-compaction';
           messages = await manager.prepare(messages, force);
           signal.throwIfAborted();
           usage.compactions = manager.compactions;
@@ -493,6 +530,7 @@ export class ChatService {
           publishPart();
           publishUsage();
           saveCheckpoint();
+          diagnosticPhase = 'provider-request';
         } catch (failure) {
           usage.phase = signal.aborted ? 'ready' : 'failed';
           part = {
@@ -550,6 +588,7 @@ export class ChatService {
             return limited;
           },
           execute: async (input, options) => {
+            diagnosticPhase = 'tool-execution';
             this.jobs.beforeTool(assistantId);
             executionVersion++;
             const operation = Promise.resolve(execute(input, { ...options, abortSignal: signal }));
@@ -558,6 +597,7 @@ export class ChatService {
               return await operation;
             } finally {
               pendingTools.delete(operation);
+              diagnosticPhase = 'provider-request';
             }
           },
         };
@@ -607,11 +647,13 @@ export class ChatService {
         const textBeforeStep = generation.content.length,
           reasoningBeforeStep = generation.reasoning.length;
         saveCheckpoint();
+        diagnosticPhase = 'provider-request';
+        let providerError: unknown;
         const result = streamText({
           model: config.model,
           system: attemptSystem,
           messages,
-          maxRetries: 0,
+          maxRetries: 3,
           abortSignal: signal,
           timeout: {
             totalMs: RESPONSE_TIMEOUT_MS,
@@ -626,8 +668,8 @@ export class ChatService {
           activeTools: pausedReason ? [] : undefined,
           toolChoice: pausedReason ? 'none' : 'auto',
           stopWhen: isStepCount(1),
-          onError: () => {
-            /* Errors are redacted below. */
+          onError: (event) => {
+            providerError = event.error;
           },
         });
         let textPartId = '',
@@ -713,6 +755,11 @@ export class ChatService {
               }
               if (Date.now() - lastSaved > 150) save();
             } else if (chunk.type === 'tool-error') {
+              this.diagnostics.record('chat.tool_failed', chunk.error, {
+                ...diagnosticContext(),
+                phase: 'tool-execution',
+                tool: chunk.toolName,
+              });
               const previous = generation.activity.find((item) => item.id === chunk.toolCallId);
               onActivity({
                 id: chunk.toolCallId,
@@ -725,8 +772,14 @@ export class ChatService {
             } else if (chunk.type === 'error') throw chunk.error;
             else if (chunk.type === 'abort') {
               status = generation.controller.signal.aborted ? generation.reason : 'failed';
-              if (status === 'failed') error = 'The provider timed out. Retry the response.';
-              else if (status === 'stopped') error = null;
+              if (status === 'failed') {
+                error = 'The provider timed out. Retry the response.';
+                this.diagnostics.record(
+                  'chat.provider_aborted',
+                  providerError ?? new Error('Provider stream aborted without an error object.'),
+                  diagnosticContext(),
+                );
+              } else if (status === 'stopped') error = null;
               break;
             }
           }
@@ -741,6 +794,7 @@ export class ChatService {
             executionVersion === stepExecutionVersion &&
             overflowRecoveries++ === 0
           ) {
+            this.diagnostics.record('chat.context_recovery', caught, diagnosticContext(), 'warn');
             await compact(true);
             continue;
           }
@@ -786,6 +840,7 @@ export class ChatService {
               if (part.type === 'tool-result' && completedCalls.has(part.toolCallId))
                 reportTruncation(part.toolCallId, part.output);
         stepsUsed++;
+        diagnosticStep = stepsUsed;
         for (const call of lastStep?.toolCalls || []) {
           const outcome = lastStep?.toolResults.find((item) => item.toolCallId === call.toolCallId);
           guard.observe(
@@ -877,6 +932,7 @@ export class ChatService {
     } catch (caught) {
       if (generation.controller.signal.aborted) status = generation.reason;
       else {
+        this.diagnostics.record('chat.failed', caught, diagnosticContext());
         status = caught instanceof ChatCheckpointError ? 'interrupted' : 'failed';
         error =
           caught instanceof ContextError || caught instanceof ChatCheckpointError
@@ -887,7 +943,11 @@ export class ChatService {
       await Promise.allSettled([...pendingTools]);
       try {
         persistAccounting?.();
-      } catch {
+      } catch (failure) {
+        this.diagnostics.record('chat.accounting_save_failed', failure, {
+          ...diagnosticContext(),
+          phase: 'checkpoint',
+        });
         /* Saving the visible response remains the priority on a full disk. */
       }
       if (status === 'interrupted' && !error)
@@ -918,7 +978,11 @@ export class ChatService {
           type: status === 'failed' ? 'error' : 'done',
           message: this.messages.message(assistantId),
         });
-      } catch {
+      } catch (failure) {
+        this.diagnostics.record('chat.response_save_failed', failure, {
+          ...diagnosticContext(),
+          phase: 'response-save',
+        });
         // Preserve the already-saved user turn even if the disk fills during generation.
         const message = this.messages.message(assistantId);
         emit({

@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { bots } from '../workspace/data';
-import type { BotId, DialogKind, Location, Space, Pursuit } from '../workspace/types';
+import type { BotId, Location, Space, Pursuit } from '../workspace/types';
 import type { Bot } from '../../../../shared/ai';
 import { BrowserToggle } from '../browser/BrowserToggle';
 import { useBrowserPanel } from '../browser/useBrowserPanel';
@@ -27,7 +27,7 @@ export function ConversationHeader({
   onTab,
   detailsOpen,
   onDetails,
-  onDialog,
+  onSettings,
   onSaved,
   members,
 }: {
@@ -38,7 +38,7 @@ export function ConversationHeader({
   onTab: (tab: string) => void;
   detailsOpen: boolean;
   onDetails: () => void;
-  onDialog: (dialog: DialogKind) => void;
+  onSettings: () => void;
   onSaved: () => void;
   members?: Bot[];
 }) {
@@ -168,7 +168,7 @@ export function ConversationHeader({
                     <button
                       onClick={() => {
                         setMenuOpen(false);
-                        onDialog('settings');
+                        onSettings();
                       }}
                     >
                       <SlidersHorizontal size={15} /> Customize

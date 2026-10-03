@@ -18,6 +18,35 @@ export class ChatCheckpointError extends Error {}
 // Checkpoints contain model context, never provider credentials or request headers.
 export class ChatJobRepository {
   constructor(private database: Database) {}
+  completedWork(id: string, activity: ChatActivity[]) {
+    const row = this.database.get('SELECT checkpoint_json FROM chat_jobs WHERE message_id=?', id);
+    if (!row) return [];
+    try {
+      const checkpoint = JSON.parse(String(row.checkpoint_json)) as ChatCheckpoint;
+      const ids = new Set(activity.map((item) => item.id));
+      const results = new Map<string, unknown>();
+      for (const message of checkpoint.messages) {
+        if (message.role !== 'tool') continue;
+        for (const part of message.content) {
+          if (part.type === 'tool-result' && ids.has(part.toolCallId))
+            results.set(part.toolCallId, part.output);
+        }
+      }
+      const work = checkpoint.messages.flatMap((message) =>
+        message.role === 'assistant' && Array.isArray(message.content)
+          ? message.content.flatMap((part) =>
+              part.type === 'tool-call' && ids.has(part.toolCallId) && results.has(part.toolCallId)
+                ? [{ tool: part.toolName, input: part.input, output: results.get(part.toolCallId) }]
+                : [],
+            )
+          : [],
+      );
+      return work;
+    } catch {
+      // Visible progress remains available if an old checkpoint is damaged.
+      return [];
+    }
+  }
   read(id: string, fingerprint: string): ChatCheckpoint | undefined {
     const row = this.database.get('SELECT * FROM chat_jobs WHERE message_id=?', id);
     if (!row || row.fingerprint !== fingerprint || row.in_flight) return;
