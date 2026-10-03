@@ -1,81 +1,40 @@
 .custom-capabilities {
   margin-top: 32px;
 }
-.capability-panel {
-  max-width: 840px;
+.capability-panel .provider-empty {
+  font-size: 12px;
+  line-height: 1.7;
 }
-.capability-panel > p,
-.capability-inspector > p {
-  color: var(--text-secondary);
-  line-height: 1.6;
+.capability-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
-.capability-heading,
-.capability-card,
-.capability-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.capability-sheet-body .capability-form,
+.capability-sheet-body .capability-import {
+  margin: 0;
+}
+.custom-capabilities .tool-family-name {
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
 }
 .capability-heading {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-}
-.capability-list {
-  display: grid;
-  gap: 10px;
-  margin: 16px 0;
-}
-.capability-card {
-  justify-content: space-between;
-  padding: 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-}
-.capability-card p {
-  margin: 6px 0;
-}
-.capability-open {
-  display: grid;
-  gap: 6px;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  flex: 1;
-  min-width: 0;
-}
-.capability-open span,
-.capability-card small {
-  color: var(--text-secondary);
+  gap: 12px;
 }
 .capability-form {
-  display: grid;
-  gap: 14px;
   margin: 20px 0;
 }
-.capability-form label,
-.capability-import label,
-.capability-inspector label {
-  display: grid;
-  gap: 8px;
+.capability-register {
+  margin: 20px 0;
 }
-.capability-form input,
-.capability-form select,
-.capability-import textarea,
-.capability-inspector textarea {
-  padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface-muted);
-  color: inherit;
-  width: 100%;
-  box-sizing: border-box;
-}
-.capability-import textarea,
-.capability-inspector textarea {
-  min-height: 130px;
-  font-family: monospace;
-  resize: vertical;
+.capability-form > .button {
+  justify-self: start;
+  align-self: flex-start;
 }
 .capability-import {
   margin: 24px 0;
@@ -84,33 +43,84 @@
 .capability-inspector summary {
   cursor: pointer;
   padding: 10px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
-.capability-inspector {
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  padding: 24px;
-  margin: 24px 0;
+.capability-panel .provider-card > div > strong {
+  font-size: 13px;
+}
+.capability-panel .provider-card p {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.capability-panel .provider-card small {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.capability-panel .provider-card .ai-form-actions {
+  margin-top: 16px;
+}
+.capability-inspector > p:not(.tool-detail-description) {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
 }
 .capability-inspector pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
+  line-height: 1.7;
   padding: 16px;
-  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
   max-height: 400px;
   overflow: auto;
 }
-.capability-url code {
-  overflow-wrap: anywhere;
-  display: block;
-  margin: 12px 0;
+.capability-inspector ul {
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-secondary);
 }
-@media (max-width: 700px) {
-  .capability-card {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .capability-inspector {
-    padding: 16px;
-  }
+.capability-url code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 16px 0;
+}
+.capability-actions {
+  margin: 20px 0;
+}
+
+.capability-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin: 24px 0;
+}
+.capability-metadata {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px 20px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.capability-metadata dt {
+  color: var(--text-muted);
+}
+.capability-metadata dd {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.capability-inspector [hidden] {
+  display: none;
+}
+.capability-inspector .ai-form > .button {
+  align-self: flex-start;
+}
+.capability-panel > .ai-form-actions {
+  margin: 20px 0;
 }

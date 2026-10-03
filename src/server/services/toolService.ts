@@ -40,9 +40,11 @@ export class ToolService {
       available:
         tool.id === 'manage_pursuit'
           ? Boolean(this.pursuits)
-          : tool.id === 'browser'
-            ? true
-            : Boolean(workspace.folder),
+          : tool.id.startsWith('register_custom_')
+            ? Boolean(this.capabilities)
+            : tool.id === 'browser'
+              ? true
+              : Boolean(workspace.folder),
       counts: counts[tool.id] || {},
     }));
   }

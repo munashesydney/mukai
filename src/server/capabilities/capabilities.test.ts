@@ -65,6 +65,40 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 describe('Custom capabilities', () => {
+  it('creates new tool and route registrations even when a suggested ID is supplied', async () => {
+    for (const kind of ['tool', 'route'] as const) {
+      const file = kind + '.js';
+      writeFileSync(
+        join(folder, file),
+        kind === 'tool'
+          ? toolSource('weather')
+          : `export default {name:'weather_route',method:'POST',path:'/custom/weather',auth:'public',handle:()=>({status:200,body:{ok:true}})};`,
+      );
+      const result = await request('/capabilities', 'POST', {
+        kind,
+        operation: 'register',
+        id: 'weather',
+        modulePath: file,
+        exportName: 'default',
+      });
+      expect(result.status, JSON.stringify(result.value)).toBe(200);
+      expect(result.value.id).not.toBe('weather');
+      const duplicate = await request('/capabilities', 'POST', {
+        kind,
+        operation: 'register',
+        id: result.value.id,
+        modulePath: file,
+      });
+      expect(duplicate.status).toBe(409);
+      expect(
+        api.capabilities.list('default').find((item) => item.id === result.value.id)?.version,
+      ).toBe(result.value.version);
+      expect(
+        (await request('/capabilities', 'POST', { kind, operation: 'update', id: 'weather' }))
+          .status,
+      ).toBe(404);
+    }
+  });
   it('loads actual TS/JS files and bundled local imports without invoking execute during registration', async () => {
     writeFileSync(join(folder, 'helper.ts'), 'export const suffix: string = "-compiled";');
     const item = await register(
@@ -347,9 +381,9 @@ describe('Custom capabilities', () => {
     await waitFor(() => wakes.length === 1);
     expect(wakes).toEqual(['scout:Process event']);
   });
-  it('registers and calls a new tool in the same model conversation turn', async () => {
+  it('registers with a suggested ID and calls the new tool in the same model conversation turn', async () => {
     writeFileSync(
-      join(folder, 'immediate.ts'),
+      join(folder, 'weather-tool.js'),
       toolSource('immediate', `return {value:args.value+'-done'};`),
     );
     const schemas: string[][] = [];
@@ -374,7 +408,12 @@ describe('Custom capabilities', () => {
                     name: step === 0 ? 'register_custom_tool' : 'immediate',
                     arguments: JSON.stringify(
                       step === 0
-                        ? { operation: 'register', modulePath: 'immediate.ts' }
+                        ? {
+                            operation: 'register',
+                            id: 'weather',
+                            modulePath: 'weather-tool.js',
+                            exportName: 'default',
+                          }
                         : { value: 'now' },
                     ),
                   },

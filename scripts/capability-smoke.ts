@@ -71,18 +71,54 @@ async function main() {
     evaluate(
       `(() => {const element=document.querySelector(${JSON.stringify(selector)});if(!element)throw new Error('Field not found');const prototype=element.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:element.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event(element.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`,
     );
+  const checkSheet = async (name: string) => {
+    await wait(
+      'Boolean(document.querySelector("dialog.sheet[open] .capability-sheet-body"))',
+      name + ' sheet',
+    );
+    assert(
+      await evaluate<boolean>(
+        `parseFloat(getComputedStyle(document.querySelector('.capability-sheet-body')).paddingLeft) >= 20`,
+      ),
+      name + ' sheet must have body padding',
+    );
+    await evaluate(
+      `Promise.all([...document.querySelector('dialog.sheet').getAnimations()].map(animation=>animation.finished))`,
+    );
+    mkdirSync(join(process.cwd(), 'artifacts'), { recursive: true });
+    writeFileSync(
+      join(process.cwd(), 'artifacts', 'capabilities-sheet-' + name + '.png'),
+      (await window.webContents.capturePage()).toPNG(),
+    );
+  };
   try {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await evaluate(
+      `localStorage.setItem('mukai.appearance.v1', JSON.stringify({mode:'dark',theme:'rose'}))`,
+    );
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".rail-links"))', 'renderer');
+    await click('[aria-label="Open settings"]');
+    await click('#settings-tab-environment');
+    await wait(
+      'Boolean(document.querySelector(".capability-panel .provider-empty"))',
+      'empty environment',
+    );
+    assert(
+      await evaluate<boolean>(
+        `parseFloat(getComputedStyle(document.querySelector('.capability-panel .provider-empty')).fontSize) <= 12`,
+      ),
+    );
     await click('.rail-link', 'Tools');
     await wait('Boolean(document.querySelector(".custom-capabilities"))', 'custom sections');
-    await wait('document.querySelectorAll(".tool-family-card").length === 4', 'built-in catalog');
+    await wait('document.querySelectorAll(".tool-family-card").length === 6', 'built-in catalog');
     assert.equal(
       await evaluate<number>('document.querySelectorAll(".tool-family-card").length'),
-      4,
+      6,
     );
-    await click('.capability-import summary', 'Register a saved module');
+    await click('.custom-capabilities > button', 'Register a saved module');
     await fill('.custom-capabilities .capability-form input', 'echo.ts');
+    await checkSheet('register');
     await click('.custom-capabilities .capability-form button', 'Validate & register');
     await wait(
       'document.querySelector(".custom-capabilities").textContent.includes("echo_custom")',
@@ -92,16 +128,19 @@ async function main() {
     await click('[aria-label="Open settings"]');
     await click('#settings-tab-environment');
     await wait('Boolean(document.querySelector(".capability-panel"))', 'environment page');
-    await fill('.capability-panel input:not([type=password])', 'SMOKE_KEY');
-    await fill('.capability-panel input[type=password]', 'ui-private-value');
-    await click('.capability-panel .capability-form button', 'Save variable');
+    await click('.capability-panel button', 'Add variable');
+    await fill('.modal input:not([type=password])', 'SMOKE_KEY');
+    await fill('.modal input[type=password]', 'ui-private-value');
+    await checkSheet('variable');
+    await click('.modal .capability-form button', 'Save variable');
     await wait(
       'document.querySelector(".capability-panel").textContent.includes("Configured")',
       'variable save',
     );
     assert(!(await evaluate<boolean>('document.body.innerText.includes("ui-private-value")')));
-    await click('.capability-import summary', 'Paste a .env block');
+    await click('.capability-panel button', 'Import .env');
     await fill('.capability-import textarea', 'SECOND_KEY=another-private-value');
+    await checkSheet('import');
     await click('.capability-import button', 'Preview import');
     await click('.capability-import button', 'Save 1 variables');
     await wait('document.body.innerText.includes("SECOND_KEY")', 'env import');
@@ -112,6 +151,16 @@ async function main() {
     );
     await click('.capability-open');
     await wait('Boolean(document.querySelector(".capability-inspector"))', 'inspect');
+    mkdirSync(join(process.cwd(), 'artifacts'), { recursive: true });
+    await evaluate(
+      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+    );
+    writeFileSync(
+      join(process.cwd(), 'artifacts', 'capabilities-detail.png'),
+      (await window.webContents.capturePage()).toPNG(),
+    );
+    assert(!(await evaluate<boolean>('Boolean(document.querySelector(".custom-capabilities"))')));
+    await click('.capability-tabs button', 'Test');
     await fill('.capability-inspector textarea', '{"value":"hello"}');
     await click('.capability-inspector button', 'Run test');
     await wait(
@@ -137,15 +186,16 @@ async function main() {
     );
     await click('.capability-actions button', 'Enable');
     await wait(
-      'document.querySelector(".capability-open").textContent.includes("ready")',
+      'document.querySelector(".capability-inspector").textContent.includes("ready")',
       'enable',
     );
-    await click('.capability-inspector button', 'Close');
-    await click('.capability-import summary', 'Register a saved module');
-    await fill('.custom-capabilities select', 'route');
+    await click('.tool-detail-back', 'All tools');
+    await click('.custom-capabilities > button', 'Register a saved module');
+    await click('.custom-capabilities [role=combobox]');
+    await click('.custom-capabilities [role=option]', 'Route');
     await fill('.custom-capabilities .capability-form input', 'route.js');
     await click('.custom-capabilities .capability-form button', 'Validate & register');
-    await wait('document.body.innerText.includes("smoke_route")', 'route registration');
+    await wait('document.body.textContent.includes("smoke_route")', 'route registration');
     await evaluate(
       `([...document.querySelectorAll('.capability-open')].find(e=>e.textContent.includes('smoke_route'))).click()`,
     );
@@ -160,7 +210,7 @@ async function main() {
       body: '{"ok":true}',
     });
     assert.deepEqual(await routed.json(), { received: { ok: true } });
-    await click('.capability-inspector button', 'Close');
+    await click('.tool-detail-back', 'All tools');
     const screenshot = join(process.cwd(), 'artifacts', 'capabilities-tools.png');
     await wait('document.querySelectorAll(".capability-open").length === 2', 'registered cards');
     await evaluate(

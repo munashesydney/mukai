@@ -26,6 +26,9 @@ import type {
 } from '../../shared/customCapabilities';
 import { CapabilityEnvironment, variableName } from './environment';
 import { workerSource } from './worker';
+import { registrationInput } from '../tools/custom-registration/shared';
+import { customRegistrationTools } from '../tools/registry';
+export { registrationInput } from '../tools/custom-registration/shared';
 
 const responseSchema = z.object({
   status: z.number().int().min(200).max(599),
@@ -67,15 +70,6 @@ const definitionSchema = z.object({
   path: z.string().max(512).optional(),
   auth: z.enum(['mukai', 'handler', 'public']).optional(),
   hasJobHandler: z.boolean(),
-});
-export const registrationInput = z.object({
-  operation: z.enum(['register', 'update', 'enable', 'disable', 'remove', 'list', 'inspect']),
-  id: z.string().max(100).optional(),
-  modulePath: z.string().min(1).max(512).optional(),
-  exportName: z
-    .string()
-    .regex(/^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/)
-    .default('default'),
 });
 
 export class CapabilityService {
@@ -278,7 +272,9 @@ export class CapabilityService {
     const input = registrationInput.parse(value);
     if (input.operation === 'list')
       return this.list(workspaceId).filter((item) => item.kind === kind);
-    const previous = input.id ? this.require(input.id, workspaceId) : undefined;
+    // Registration always creates an ID; a suggested ID must not trigger an existing-row lookup.
+    const previous =
+      input.operation !== 'register' && input.id ? this.require(input.id, workspaceId) : undefined;
     if (previous && (previous.kind !== kind || (ownerBotId && previous.ownerBotId !== ownerBotId)))
       throw new ApiError(403, 'Only the owner may change this registration.');
     if (input.operation === 'inspect') {
@@ -303,7 +299,7 @@ export class CapabilityService {
       );
       return this.require(previous.id);
     }
-    if ((input.operation === 'update' && !previous) || (input.operation === 'register' && previous))
+    if (input.operation === 'update' && !previous)
       throw new ApiError(400, 'Update requires an existing ID; register creates a new ID.');
     const workspace = this.workspaces.require(workspaceId);
     if (!workspace.folder) throw new ApiError(400, 'Connect a workspace folder first.');
@@ -778,35 +774,7 @@ export class CapabilityService {
     );
   }
   forBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void): ToolSet {
-    const tools: ToolSet = {};
-    for (const kind of ['tool', 'route'] as const)
-      tools['register_custom_' + kind] = tool({
-        description: `Manage custom ${kind} modules saved as .ts/.js files in this workspace. Use operation register/update after writing or editing a file. Modules export default objects. Tools: {name,description,inputSchema (JSON Schema object),requiredEnv:[],execute(args,context)}. Routes: {name,method,path:'/custom/...',auth:'mukai'|'handler'|'public',requiredEnv:[],handle(request,context),processJob?(payload,context)}. Read declared secrets only through context.env; never hard-code credentials or open a listener. Use context.signal with fetch. Return serializable results; routes return {status,headers?,body?}. Verify provider signatures against request.rawBody before work/enqueue. context.enqueue(provider,eventId,payload) durably deduplicates and queues processJob; context.wakeBot(message) explicitly queues a wake-up of the owner bot. Install dependencies in the workspace package setup before registration. Validation imports the module but never calls its handler; keep top-level code free of side effects. Code runs as trusted Node code with OS access. Names/configuration status are available; secret values are never available to you. Updates preserve the previous version on validation failure.`,
-        inputSchema: registrationInput,
-        execute: async (input, options) => {
-          const activity: ChatActivity = {
-            id: options.toolCallId,
-            tool: 'register_custom_' + kind,
-            action: input.operation,
-            path: input.modulePath || input.id || '',
-            status: 'running',
-            summary: 'Managing custom capability',
-          };
-          onActivity(activity);
-          try {
-            const result = await this.manage(bot.workspaceId, bot.id, kind, input, signal);
-            onActivity({
-              ...activity,
-              status: 'complete',
-              summary: 'Custom capability ' + input.operation + ' completed.',
-            });
-            return result;
-          } catch (error) {
-            onActivity({ ...activity, status: 'failed', summary: this.error(error) });
-            throw error;
-          }
-        },
-      });
+    const tools = customRegistrationTools({ bot, signal, onActivity, capabilities: this });
     for (const registration of this.list(bot.workspaceId).filter(
       (item) => item.kind === 'tool' && item.status === 'ready',
     )) {
