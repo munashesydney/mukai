@@ -148,6 +148,7 @@ export function createApiServer(options: ApiOptions = {}) {
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
+        providers.chatgpt.shutdown();
         await pursuits.shutdown();
         await chats.shutdown();
         await processes.shutdown();

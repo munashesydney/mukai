@@ -653,7 +653,7 @@ export class ChatService {
           model: config.model,
           system: attemptSystem,
           messages,
-          maxRetries: 3,
+          maxRetries: config.provider.kind === 'chatgpt' ? 0 : 3,
           abortSignal: signal,
           timeout: {
             totalMs: RESPONSE_TIMEOUT_MS,

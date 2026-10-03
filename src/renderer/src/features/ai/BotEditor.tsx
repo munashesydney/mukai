@@ -6,6 +6,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { botService } from '../../services/botService';
 import { errorText } from '../../utils/errors';
+import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
 
 export function BotEditor({
   bot,
@@ -175,26 +176,46 @@ export function BotEditor({
                       { value: '', label: 'Workspace default' },
                       ...providers.map((provider) => ({
                         value: provider.id,
-                        label: provider.name,
+                        label: provider.account
+                          ? `${provider.name} · ${provider.account.label}`
+                          : provider.name,
                       })),
                     ]}
                   />
                 </label>
                 <label>
                   Model
-                  <input
-                    maxLength={150}
-                    disabled={busy}
-                    placeholder={provider?.defaultModel || 'Provider default'}
-                    value={value.model || ''}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        model: event.target.value.trim() || null,
-                        contextWindowTokens: null,
-                      })
-                    }
-                  />
+                  {provider?.kind === 'chatgpt' ? (
+                    <ChatGPTModelSelect
+                      key={provider.id}
+                      providerId={provider.id}
+                      value={value.model || ''}
+                      disabled={busy}
+                      includeDefault
+                      onChange={(id, model) =>
+                        setValue({
+                          ...value,
+                          model: id || null,
+                          contextWindowTokens: model?.contextWindowTokens ?? null,
+                          supportsImages: model?.supportsImages ?? null,
+                        })
+                      }
+                    />
+                  ) : (
+                    <input
+                      maxLength={150}
+                      disabled={busy}
+                      placeholder={provider?.defaultModel || 'Provider default'}
+                      value={value.model || ''}
+                      onChange={(event) =>
+                        setValue({
+                          ...value,
+                          model: event.target.value.trim() || null,
+                          contextWindowTokens: null,
+                        })
+                      }
+                    />
+                  )}
                 </label>
               </div>
               <div className="ai-form-grid">
@@ -223,7 +244,9 @@ export function BotEditor({
                   <small>A different model needs its own context-window size.</small>
                 </label>
                 <label>
-                  Maximum output (tokens)
+                  {provider?.kind === 'chatgpt'
+                    ? 'Output reserve (tokens)'
+                    : 'Maximum output (tokens)'}
                   <input
                     type="number"
                     min={256}
@@ -239,6 +262,11 @@ export function BotEditor({
                       })
                     }
                   />
+                  {provider?.kind === 'chatgpt' && (
+                    <small>
+                      Used for context budgeting. ChatGPT determines the actual output limit.
+                    </small>
+                  )}
                 </label>
               </div>
               <label>

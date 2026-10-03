@@ -718,6 +718,7 @@
   color: var(--text-secondary);
 }
 .ai-form input:not([type='checkbox']),
+.ai-form select,
 .ai-form textarea {
   width: 100%;
   min-width: 0;

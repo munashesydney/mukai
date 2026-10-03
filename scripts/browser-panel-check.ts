@@ -5,6 +5,7 @@ import { startApiServer } from '../src/server/app';
 import { IPC } from '../src/shared/contracts';
 import type { MukaiBrowserHost } from '../src/main/embeddedBrowserHost';
 import { checkContextPanel } from './context-panel-check';
+import { checkChatGPTPanel } from './chatgpt-panel-check';
 
 // Exercise the production renderer and native view together, using only test data.
 export async function checkBrowserPanel(
@@ -36,6 +37,7 @@ export async function checkBrowserPanel(
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(() => evaluate<boolean>('Boolean(document.querySelector(".header-actions"))'));
     await checkContextPanel(window, api);
+    await checkChatGPTPanel(window);
     const owner = { workspaceId: 'default', botId: 'scout', conversationId: 'bot-scout' };
     await api.browsers.execute(
       owner,

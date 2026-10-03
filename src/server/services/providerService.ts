@@ -12,6 +12,8 @@ import { ProviderRepository } from '../repositories/providerRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { modelContextWindow } from '../../shared/modelLimits';
 import type { DiagnosticService } from './diagnosticService';
+import { ChatGPTService } from './chatgptService';
+import { chatGPTError } from './chatgptTransport';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -27,6 +29,21 @@ export function isContextOverflow(error: unknown) {
 }
 
 export function safeProviderError(error: unknown) {
+  if (error instanceof ApiError) return error.message;
+  const detail = error as {
+    code?: string;
+    data?: { error?: { code?: string } };
+    responseBody?: string;
+  };
+  let code = detail.code || detail.data?.error?.code;
+  if (!code && detail.responseBody) {
+    try {
+      code = JSON.parse(detail.responseBody).error?.code;
+    } catch {
+      /* Not every admission error is JSON. */
+    }
+  }
+  if (code && /^(subscription_sharing_|chatpass_v2_)/.test(code)) return chatGPTError(code);
   if (isContextOverflow(error))
     return 'The provider rejected the context size. Check the model’s context-window setting and retry; your saved history is preserved.';
   const status = (error as { statusCode?: number })?.statusCode;
@@ -44,6 +61,7 @@ export function safeProviderError(error: unknown) {
 }
 export class ProviderService {
   private key: Buffer;
+  readonly chatgpt: ChatGPTService;
   constructor(
     private providers: ProviderRepository,
     private bots: BotRepository,
@@ -51,9 +69,24 @@ export class ProviderService {
     private diagnostics: DiagnosticService,
   ) {
     this.key = privateSecret(dir, 'credentials.key', 32);
+    this.chatgpt = new ChatGPTService(
+      providers,
+      dir,
+      (value) => this.encrypt(value),
+      (value) => this.decrypt(value),
+      diagnostics,
+    );
   }
   list() {
-    return this.providers.list().map(publicProvider);
+    return this.providers.list().map((provider) => this.public(provider));
+  }
+  private public(provider: ProviderRecord) {
+    return {
+      ...publicProvider(provider),
+      ...(provider.kind === 'chatgpt'
+        ? { hasKey: false, account: this.chatgpt.describe(provider) }
+        : {}),
+    };
   }
   require(id: string) {
     const provider = this.providers.find(id);
@@ -80,6 +113,10 @@ export class ProviderService {
   save(input: ProviderInput, id?: string) {
     const value = { ...input };
     const existing = id ? this.require(id) : undefined;
+    if (value.kind === 'chatgpt' && !existing)
+      throw new ApiError(400, 'Use Continue with ChatGPT to add this provider.');
+    if (value.kind === 'chatgpt' && (value.apiKey || value.clearKey))
+      throw new ApiError(400, 'ChatGPT credentials are managed through sign-in.');
     const providerId = id || randomUUID();
     if (existing && existing.kind !== value.kind)
       throw new ApiError(400, 'Provider type cannot be changed. Add a new provider instead.');
@@ -135,16 +172,32 @@ export class ProviderService {
       maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? 8192,
     };
     this.providers.save(provider);
-    return publicProvider(provider);
+    return this.public(provider);
   }
-  remove(id: string) {
+  async remove(id: string) {
     this.require(id);
     if (this.bots.usesProvider(id))
       throw new ApiError(
         409,
         'A bot uses this provider. Edit its model settings before removing the provider.',
       );
+    const result =
+      this.require(id).kind === 'chatgpt'
+        ? await this.chatgpt.disconnect(id)
+        : { ok: true, message: 'Provider removed.' };
     this.providers.delete(id);
+    this.chatgpt.cancelForProvider(id);
+    return result;
+  }
+  async validateModel(id: string | null, model: string | null) {
+    const provider = id ? this.providers.find(id) : this.providers.default();
+    if (provider?.kind !== 'chatgpt') return;
+    const models = await this.chatgpt.models(provider.id);
+    if (!models.some((item) => item.id === (model || provider.defaultModel)))
+      throw new ApiError(
+        400,
+        'Choose a model available to this ChatGPT account. Refresh models in Settings.',
+      );
   }
   resolve(bot: BotRecord) {
     const provider = bot.providerId
@@ -152,6 +205,8 @@ export class ProviderService {
       : this.providers.default();
     if (!provider) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
     const modelId = String(bot.model || provider.defaultModel);
+    if (!modelId.trim())
+      throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
     return {
       provider,
       modelId,
@@ -167,7 +222,7 @@ export class ProviderService {
   }
   private reasoningOptions(provider: ProviderRecord, model: string) {
     const openai =
-      provider.kind === 'openai' && /^(o[1-9]|gpt-[5-9])/i.test(model)
+      ['openai', 'chatgpt'].includes(provider.kind) && /^(o[1-9]|gpt-[5-9])/i.test(model)
         ? { store: false, reasoningSummary: 'auto', reasoningEffort: 'medium' }
         : { store: false };
     const anthropic =
@@ -180,9 +235,18 @@ export class ProviderService {
       provider.kind === 'google' && /^gemini-(?:2\.5|[3-9])/i.test(model)
         ? { thinkingConfig: { includeThoughts: true } }
         : {};
-    return { openai, anthropic, google };
+    return {
+      openai: provider.kind === 'chatgpt' ? { ...openai, systemMessageMode: 'developer' } : openai,
+      anthropic,
+      google,
+    };
   }
   private model(provider: ProviderRecord, id: string) {
+    if (provider.kind === 'chatgpt')
+      return createOpenAI({
+        apiKey: 'chatgpt-oauth-managed',
+        fetch: this.chatgpt.fetch(provider.id),
+      }).responses(id);
     const apiKey = this.decrypt(provider.encryptedKey as string | null);
     const secureFetch: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' });
     switch (provider.kind) {
