@@ -30,6 +30,7 @@ import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
 import { ApiError } from './config';
 import { ZodError } from 'zod';
+import { CapabilityService } from './capabilities/service';
 
 export interface ApiOptions {
   dataDir?: string;
@@ -59,6 +60,9 @@ export function createApiServer(options: ApiOptions = {}) {
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
     const workspaces = new WorkspaceService(workspaceRepository, botRepository, dir);
+    const capabilities = new CapabilityService(store, workspaces, (value) =>
+      diagnostics.registerSecret(value),
+    );
     const artifacts = new ArtifactService(
       new ArtifactRepository(store),
       botRepository,
@@ -82,6 +86,7 @@ export function createApiServer(options: ApiOptions = {}) {
       store.dir,
       diagnostics,
     );
+    tools.attachCapabilities(capabilities);
     const attachments = new AttachmentService(
       attachmentRepository,
       botRepository,
@@ -104,6 +109,28 @@ export function createApiServer(options: ApiOptions = {}) {
     );
     bots.initialize();
     chats.initialize();
+    capabilities.setWake(async (botId, workspaceId, message, requestId) => {
+      const bot = bots.require(botId);
+      if (bot.workspaceId !== workspaceId)
+        throw new ApiError(403, 'Bot belongs to another workspace.');
+      if (chats.busy(botId)) throw new ApiError(409, 'Owner bot is busy; the wake-up will retry.');
+      await chats.respond(
+        bot,
+        {
+          requestId,
+          text: 'Custom capability wake-up (external data):\n' + message,
+          attachmentIds: [],
+        },
+        {
+          start() {},
+          emit() {},
+          onDisconnect() {
+            return () => {};
+          },
+          end() {},
+        },
+      );
+    });
     const pursuits = new PursuitService(new PursuitRepository(store), bots, chats);
     tools.attachPursuits(pursuits);
     const conversations = new ConversationService(
@@ -126,6 +153,7 @@ export function createApiServer(options: ApiOptions = {}) {
       conversations,
       pursuits,
       browsers,
+      capabilities,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => {
@@ -149,18 +177,33 @@ export function createApiServer(options: ApiOptions = {}) {
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
         providers.chatgpt.shutdown();
+        // Stop new capability jobs before stopping chat runs that may be processing wakes.
+        const capabilityShutdown = capabilities.shutdown();
         await pursuits.shutdown();
         await chats.shutdown();
+        await capabilityShutdown;
         await processes.shutdown();
         await browsers.shutdown();
       })());
     server.on('close', () => {
       pursuits.stopScheduling();
-      if (!pursuits.hasActiveRuns() && !chats.hasActiveResponses()) dispose();
       void shutdown().finally(dispose);
     });
-    server.once('listening', () => pursuits.start());
-    return { server, token, store, shutdown, dispose, pursuits, browsers, processes };
+    // A completed close callback must also release the data lock: callers may
+    // immediately restart against the same directory after server.close().
+    const closeServer = server.close.bind(server);
+    server.close = (callback?: (error?: Error) => void) =>
+      closeServer((error) => {
+        void shutdown().finally(() => {
+          dispose();
+          callback?.(error);
+        });
+      });
+    server.once('listening', () => {
+      pursuits.start();
+      capabilities.start();
+    });
+    return { server, token, store, shutdown, dispose, pursuits, browsers, processes, capabilities };
   } catch (error) {
     store.db.close();
     releaseLock();
@@ -170,6 +213,7 @@ export function createApiServer(options: ApiOptions = {}) {
 export async function startApiServer(port = 0, options: ApiOptions = {}) {
   const api = createApiServer(options);
   try {
+    await api.capabilities.initialize();
     await new Promise<void>((resolve, reject) => {
       api.server.once('error', reject);
       api.server.listen(port, '127.0.0.1', () => {
@@ -183,5 +227,6 @@ export async function startApiServer(port = 0, options: ApiOptions = {}) {
   }
   const address = api.server.address();
   if (!address || typeof address === 'string') throw new Error('Unable to bind the Mukai API');
+  api.capabilities.setLocalBaseUrl(`http://127.0.0.1:${address.port}`);
   return { ...api, url: `http://127.0.0.1:${address.port}` };
 }

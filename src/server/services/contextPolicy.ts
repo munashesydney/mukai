@@ -112,6 +112,9 @@ export class ContextManager {
     private overhead: number,
     private summarize: Summarizer,
   ) {}
+  setOverhead(value: number) {
+    this.overhead = value;
+  }
   estimate(messages: ModelMessage[]) {
     return Math.ceil((this.overhead + estimateTokens(messages)) * this.factor);
   }

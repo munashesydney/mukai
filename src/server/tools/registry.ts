@@ -12,6 +12,26 @@ import type { RuntimeToolContext } from './runtimeContext';
 import type { ProcessService } from '../services/processService';
 import type { BrowserService } from '../services/browserService';
 import { resultPreview } from '../services/toolResultPolicy';
+import { registerCustomToolDefinition } from './register-custom-tool/definition';
+import { executeRegisterCustomTool } from './register-custom-tool/execute';
+import { registerCustomRouteDefinition } from './register-custom-route/definition';
+import { executeRegisterCustomRoute } from './register-custom-route/execute';
+import type { RegistrationContext } from './custom-registration/shared';
+
+export function customRegistrationTools(context: RegistrationContext): ToolSet {
+  return {
+    [registerCustomToolDefinition.name]: tool({
+      description: registerCustomToolDefinition.description,
+      inputSchema: registerCustomToolDefinition.inputSchema,
+      execute: (input, options) => executeRegisterCustomTool(input, context, options.toolCallId),
+    }),
+    [registerCustomRouteDefinition.name]: tool({
+      description: registerCustomRouteDefinition.description,
+      inputSchema: registerCustomRouteDefinition.inputSchema,
+      execute: (input, options) => executeRegisterCustomRoute(input, context, options.toolCallId),
+    }),
+  };
+}
 
 export function runtimeTools(
   context: RuntimeToolContext & {
@@ -130,7 +150,12 @@ export function toolCatalog() {
       actions: pursuitDefinition.actions,
       scope: 'all-bots' as const,
     },
-    ...[terminalDefinition, browserDefinition].map((definition) => ({
+    ...[
+      terminalDefinition,
+      browserDefinition,
+      registerCustomToolDefinition,
+      registerCustomRouteDefinition,
+    ].map((definition) => ({
       id: definition.name,
       name: definition.title,
       description: definition.summary,

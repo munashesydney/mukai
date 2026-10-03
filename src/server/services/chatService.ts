@@ -570,10 +570,10 @@ export class ChatService {
       };
       messages = manager.boundTools(messages);
       let executionVersion = 0;
-      for (const [name, definition] of Object.entries(tools)) {
+      const guardTool = (name: string, definition: ToolSet[string]) => {
         const execute = definition.execute;
         const toModelOutput = definition.toModelOutput;
-        if (!execute) continue;
+        if (!execute) return;
         tools[name] = {
           ...definition,
           toModelOutput: async (
@@ -601,7 +601,9 @@ export class ChatService {
             }
           },
         };
-      }
+      };
+      for (const [name, definition] of Object.entries(tools)) guardTool(name, definition);
+      let customNames = Object.keys(this.tools.customForBot(bot, signal, onActivity));
       let malformedRecoveries = 0,
         outputContinuations = 0,
         overflowRecoveries = 0;
@@ -617,6 +619,13 @@ export class ChatService {
           status = generation.reason;
           break;
         }
+        // Registration can change within this turn. Refresh only custom tools, keeping
+        // built-in tool contexts, call budgets, and checkpoint guards intact.
+        for (const name of customNames) delete tools[name];
+        const custom = this.tools.customForBot(bot, signal, onActivity);
+        customNames = Object.keys(custom);
+        for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
+        manager.setOverhead(estimateTokens(system) + (await toolTokens(tools)));
         const capacity = contextLimits(config.contextWindow, config.maxOutputTokens);
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();

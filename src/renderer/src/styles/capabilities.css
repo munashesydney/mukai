@@ -1,0 +1,126 @@
+.custom-capabilities {
+  margin-top: 32px;
+}
+.capability-panel .provider-empty {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.capability-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.capability-sheet-body .capability-form,
+.capability-sheet-body .capability-import {
+  margin: 0;
+}
+.custom-capabilities .tool-family-name {
+  font-size: 15px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+}
+.capability-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.capability-form {
+  margin: 20px 0;
+}
+.capability-register {
+  margin: 20px 0;
+}
+.capability-form > .button {
+  justify-self: start;
+  align-self: flex-start;
+}
+.capability-import {
+  margin: 24px 0;
+}
+.capability-import summary,
+.capability-inspector summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.capability-panel .provider-card > div > strong {
+  font-size: 13px;
+}
+.capability-panel .provider-card p {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.capability-panel .provider-card small {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.capability-panel .provider-card .ai-form-actions {
+  margin-top: 16px;
+}
+.capability-inspector > p:not(.tool-detail-description) {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+.capability-inspector pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  max-height: 400px;
+  overflow: auto;
+}
+.capability-inspector ul {
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+.capability-url code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin: 16px 0;
+}
+.capability-actions {
+  margin: 20px 0;
+}
+
+.capability-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin: 24px 0;
+}
+.capability-metadata {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px 20px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.capability-metadata dt {
+  color: var(--text-muted);
+}
+.capability-metadata dd {
+  margin: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.capability-inspector [hidden] {
+  display: none;
+}
+.capability-inspector .ai-form > .button {
+  align-self: flex-start;
+}
+.capability-panel > .ai-form-actions {
+  margin: 20px 0;
+}

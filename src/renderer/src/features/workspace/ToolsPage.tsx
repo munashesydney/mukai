@@ -14,6 +14,8 @@ import type { ToolInfo } from '../../../../shared/ai';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
+import { CustomCapabilityPage } from './CustomCapabilityPage';
+import { CustomCapabilities } from './CustomCapabilities';
 
 function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'manage_pursuit') return <Target size={size} />;
@@ -109,6 +111,17 @@ export function ToolsPage({
     (tool.name + tool.description).toLowerCase().includes(query.toLowerCase()),
   );
   const selected = selectedToolId ? tools.find((tool) => tool.id === selectedToolId) : undefined;
+  if (selectedToolId?.startsWith('custom:'))
+    return (
+      <main className="tools-page">
+        <CustomCapabilityPage
+          key={workspaceId + selectedToolId}
+          workspaceId={workspaceId}
+          id={selectedToolId.slice(7)}
+          onBack={() => onSelectTool(null)}
+        />
+      </main>
+    );
   if (selectedToolId) {
     return (
       <main className="tools-page">
@@ -183,6 +196,11 @@ export function ToolsPage({
         </div>
       )}
       {!loading && !visible.length && <div className="tools-empty">No tools match “{query}”.</div>}
+      <CustomCapabilities
+        workspaceId={workspaceId}
+        query={query}
+        onSelect={(id) => onSelectTool('custom:' + id)}
+      />
       <div className="workspace-tools-folder">
         <FolderOpen size={18} />
         <div>

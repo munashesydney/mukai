@@ -180,7 +180,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         {location.section === 'settings' ? (
           <SettingsPage
             section={
-              location.item === 'appearance' || location.item === 'providers'
+              location.item === 'appearance' ||
+              location.item === 'providers' ||
+              location.item === 'environment'
                 ? location.item
                 : 'workspace'
             }

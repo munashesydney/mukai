@@ -165,6 +165,26 @@ export const migrations = [
   `ALTER TABLE bots DROP COLUMN run_time_limit_minutes;
    ALTER TABLE bots DROP COLUMN run_token_limit;
    UPDATE chat_jobs SET checkpoint_json=json_remove(checkpoint_json,'$.elapsedMs') WHERE json_valid(checkpoint_json);`,
+  `CREATE TABLE capability_env (
+     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+     name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(workspace_id,name));
+   CREATE TABLE capabilities (
+     id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+     owner_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL, kind TEXT NOT NULL,
+     name TEXT NOT NULL, module_path TEXT NOT NULL, export_name TEXT NOT NULL,
+     version TEXT NOT NULL, enabled INTEGER NOT NULL, definition_json TEXT NOT NULL,
+     method TEXT, path TEXT, UNIQUE(workspace_id,kind,name));
+   CREATE UNIQUE INDEX capability_route ON capabilities(method,path) WHERE kind='route';
+   CREATE TABLE capability_runs (
+     id TEXT PRIMARY KEY, capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+     version TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
+     duration_ms INTEGER, error TEXT);
+   CREATE INDEX capability_recent_runs ON capability_runs(capability_id,started_at);
+   CREATE TABLE capability_jobs (
+     id TEXT PRIMARY KEY, capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+     version TEXT NOT NULL, provider TEXT NOT NULL, event_id TEXT NOT NULL,
+     payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+     next_at INTEGER NOT NULL, error TEXT, UNIQUE(capability_id,provider,event_id));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -9,8 +9,16 @@ import { FileChangeService } from './fileChangeService';
 import type { BrowserService } from './browserService';
 import type { ProcessService } from './processService';
 import { FILE_TOOL_CALL_LIMIT, RUNTIME_TOOL_CALL_LIMIT } from './responsePolicy';
+import type { CapabilityService } from '../capabilities/service';
 
 export class ToolService {
+  private capabilities?: CapabilityService;
+  attachCapabilities(service: CapabilityService) {
+    this.capabilities = service;
+  }
+  customForBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void) {
+    return this.capabilities?.forBot(bot, signal, onActivity) || {};
+  }
   private pursuits?: PursuitService;
   attachPursuits(service: PursuitService) {
     this.pursuits = service;
@@ -32,9 +40,11 @@ export class ToolService {
       available:
         tool.id === 'manage_pursuit'
           ? Boolean(this.pursuits)
-          : tool.id === 'browser'
-            ? true
-            : Boolean(workspace.folder),
+          : tool.id.startsWith('register_custom_')
+            ? Boolean(this.capabilities)
+            : tool.id === 'browser'
+              ? true
+              : Boolean(workspace.folder),
       counts: counts[tool.id] || {},
     }));
   }
@@ -56,6 +66,7 @@ export class ToolService {
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
     return {
+      ...this.customForBot(bot, signal, onActivity),
       ...runtimeTools({
         owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
         signal,

@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:browser": "tsx scripts/run-browser-smoke.ts",
+    "test:capabilities": "tsx scripts/run-capability-smoke.ts",
     "build": "npm run typecheck && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
@@ -33,7 +34,9 @@
     "@ai-sdk/openai-compatible": "^3.0.62",
     "@fontsource/inter": "^5.2.6",
     "ai": "^7.0.127",
+    "ajv": "^8.20.0",
     "diff": "9.0.0",
+    "esbuild": "^0.25.12",
     "lucide-react": "^1.49.0",
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5",
@@ -55,7 +58,6 @@
     "electron": "^44.5.1",
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",
-    "esbuild": "^0.25.12",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.24",
@@ -79,6 +81,9 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": [
+      "node_modules/@esbuild/**/*"
+    ],
     "win": {
       "target": "nsis"
     },
