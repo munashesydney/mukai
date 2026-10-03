@@ -185,10 +185,6 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 : 'workspace'
             }
             onSection={(next) => navigate({ section: 'settings', item: next })}
-            onClose={() => {
-              if (workspace.canBack) workspace.back();
-              else select({ section: 'bots', item: bot?.id || 'scout' });
-            }}
             workspace={ai.workspace}
             onConnectFolder={() => {
               if (ai.workspace) setEditingWorkspace(ai.workspace);

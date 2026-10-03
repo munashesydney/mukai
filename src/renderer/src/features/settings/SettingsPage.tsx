@@ -1,6 +1,5 @@
-import { Check, Layers3, Palette, Settings2, KeyRound } from 'lucide-react';
+import { Layers3, Palette, KeyRound } from 'lucide-react';
 import { Brand } from '../../components/ui/Brand';
-import { useTheme } from '../appearance/useTheme';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
@@ -16,19 +15,16 @@ const sections = [
 export function SettingsPage({
   section,
   onSection,
-  onClose,
   onProvidersChanged = () => {},
   workspace,
   onConnectFolder,
 }: {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
-  onClose: () => void;
   onProvidersChanged?: () => void;
   workspace?: Workspace;
   onConnectFolder?: () => void;
 }) {
-  const { storageAvailable } = useTheme();
   return (
     <main className="settings-page" aria-label="Settings">
       <div className="settings-layout">
@@ -84,17 +80,6 @@ export function SettingsPage({
             <ProvidersPanel onChanged={onProvidersChanged} />
           )}
         </div>
-      </div>
-      <div className="modal-footer settings-footer">
-        <span>
-          {storageAvailable ? <Check size={13} /> : <Settings2 size={13} />}
-          {storageAvailable
-            ? 'Preferences are saved on this device'
-            : 'Changes apply to this session'}
-        </span>
-        <button className="button button--primary" onClick={onClose}>
-          Done
-        </button>
       </div>
     </main>
   );
