@@ -15,6 +15,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('logs structured extraction failures with output size while omitting generated memory content', () => {
+  const logger = new DiagnosticService(dir);
+  const error = Object.assign(new Error('No object generated: could not parse the response.'), {
+    name: 'AI_NoObjectGeneratedError',
+    text: 'PRIVATE MEMORY CONTENT',
+    finishReason: 'stop',
+  });
+  logger.record('memory.extraction_failed', error, {
+    phase: 'memory-extraction',
+    model: 'test-model',
+  });
+  const text = readFileSync(logger.path, 'utf8');
+  expect(JSON.parse(text)).toMatchObject({
+    event: 'memory.extraction_failed',
+    phase: 'memory-extraction',
+    error: { generatedTextBytes: 22, finishReason: 'stop' },
+  });
+  expect(text).not.toContain('PRIVATE MEMORY CONTENT');
+  expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(
+    'PRIVATE MEMORY CONTENT',
+  );
+});
+
 it('persists useful provider and network errors without SDK request bodies or credentials', () => {
   const logger = new DiagnosticService(dir);
   const key = 'private-test-key',

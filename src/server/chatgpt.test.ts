@@ -10,7 +10,7 @@ import {
   sign,
 } from 'node:crypto';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateText, streamText, tool } from 'ai';
+import { generateText, streamText, tool, Output } from 'ai';
 import { z } from 'zod';
 import { Database } from './db/database';
 import { ProviderRepository } from './repositories/providerRepository';
@@ -371,6 +371,55 @@ describe('ChatGPT Responses compatibility', () => {
     expect(inferenceCalls[0].input).toEqual(
       expect.arrayContaining([expect.objectContaining({ role: 'developer' })]),
     );
+  });
+  it('extracts structured memory when ChatGPT omits completed items from the terminal output', async () => {
+    const { result } = await login();
+    const text = JSON.stringify({ facts: [{ subject: 'User', preference: 'espresso' }] });
+    const response = complete(text);
+    const message = response.output[0];
+    const reasoning = { id: 'rs_test', type: 'reasoning', summary: [] };
+    inference = () =>
+      sse([
+        { type: 'response.output_item.done', output_index: 0, item: reasoning },
+        { type: 'response.output_text.delta', output_index: 1, delta: text },
+        { type: 'response.output_item.done', output_index: 1, item: message },
+        { type: 'response.completed', response: { ...response, output: [] } },
+      ]);
+    const model = createOpenAI({
+      apiKey: 'placeholder',
+      fetch: service.fetch(result.providerId!),
+    }).responses('gpt-4.1-mini');
+    const extracted = await generateText({
+      model,
+      prompt: 'Extract the durable preference.',
+      output: Output.object({
+        schema: z.object({
+          facts: z.array(z.object({ subject: z.string(), preference: z.string() })),
+        }),
+      }),
+      maxRetries: 0,
+      providerOptions: { openai: { store: false } },
+    });
+    expect(extracted.output).toEqual({ facts: [{ subject: 'User', preference: 'espresso' }] });
+    expect(extracted.usage.totalTokens).toBe(12);
+    const full = await collectChatGPTResponse(
+      sse([
+        { type: 'response.output_item.done', output_index: 0, item: message },
+        { type: 'response.completed', response },
+      ]),
+    );
+    expect((await full.json()).output).toEqual(response.output);
+    const partial = await collectChatGPTResponse(
+      sse([
+        { type: 'response.output_item.done', output_index: 0, item: reasoning },
+        { type: 'response.output_item.done', output_index: 1, item: message },
+        { type: 'response.completed', response: { ...response, output: [reasoning] } },
+      ]),
+    );
+    expect((await partial.json()).output.map((item: { id: string }) => item.id)).toEqual([
+      'rs_test',
+      'msg_test',
+    ]);
   });
   it('executes namespaced tool calls with the real SDK', async () => {
     const { result } = await login();

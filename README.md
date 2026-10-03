@@ -36,6 +36,8 @@ Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:114
 
 ## What works
 
+- Temporal graph memory lives in the independent [`mukai_memory`](mukai_memory/README.md) module. **Settings → Memory** provides a graph/list inspector, source evidence, corrections, forgetting, recall records, and import/export. New user statements are captured in the background using the configured AI, and relevant confirmed memories are supplied before each reply. Private chat memories stay private to their bot; spaces use workspace memory. Keyword/relationship retrieval works immediately; **Download & enable** installs local CPU BGE embeddings. Capture and recall can be disabled per workspace.
+
 - Create a workspace from a local folder using the workspace menu. The desktop has a native folder picker; browser development accepts an absolute local path. Each workspace has its own Scout, bots, and chats. Provider connections are shared across workspaces. Connect the original personal workspace to a folder from Settings without losing its chats.
 - Scout is created once on first setup and in each new workspace. Create, edit, and delete additional bots with their own name, description, instructions, provider, model, and identity.
 - Each bot has one continuous chat. SQLite saves user messages, assistant messages, partial responses, and file references. Switching bots does not stop an active stream.

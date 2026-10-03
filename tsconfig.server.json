@@ -7,9 +7,9 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "outDir": "dist/server",
-    "rootDir": "src",
+    "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["src/server/**/*.ts", "src/shared/**/*.ts"],
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts", "mukai_memory/src/**/*.ts"],
   "exclude": ["**/*.test.ts"]
 }

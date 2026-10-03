@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  Brain,
   ChevronRight,
   FileText,
   FolderOpen,
@@ -18,6 +19,7 @@ import { CustomCapabilityPage } from './CustomCapabilityPage';
 import { CustomCapabilities } from './CustomCapabilities';
 
 function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
+  if (toolId === 'memory') return <Brain size={size} />;
   if (toolId === 'manage_pursuit') return <Target size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
   if (toolId === 'terminal') return <Terminal size={size} />;
@@ -25,6 +27,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
 }
 
 function toolScopeNote(tool: ToolInfo, folder: string | null) {
+  if (tool.id === 'memory') return 'Workspace memories · Private memories stay with their bot';
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'terminal') return 'Local shell · Per-conversation processes';

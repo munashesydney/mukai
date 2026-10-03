@@ -1,9 +1,10 @@
-import { Layers3, Palette, KeyRound } from 'lucide-react';
+import { Layers3, Palette, KeyRound, Brain } from 'lucide-react';
 import { Brand } from '../../components/ui/Brand';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import { EnvironmentPanel } from './EnvironmentPanel';
+import { MemoryPanel } from './MemoryPanel';
 import type { Workspace } from '../../../../shared/ai';
 import type { SettingsSection } from '../workspace/types';
 
@@ -12,6 +13,7 @@ const sections = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'providers', label: 'Providers', icon: KeyRound },
   { id: 'environment', label: 'Environment variables', icon: KeyRound },
+  { id: 'memory', label: 'Memory', icon: Brain },
 ] as const;
 
 export function SettingsPage({
@@ -78,6 +80,11 @@ export function SettingsPage({
             <WorkspacePanel workspace={workspace} onConnectFolder={onConnectFolder} />
           ) : section === 'appearance' ? (
             <AppearancePanel />
+          ) : section === 'memory' ? (
+            <MemoryPanel
+              key={workspace?.id || 'default'}
+              workspaceId={workspace?.id || 'default'}
+            />
           ) : section === 'environment' ? (
             <EnvironmentPanel
               key={workspace?.id || 'default'}

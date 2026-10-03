@@ -31,11 +31,15 @@ import { DiagnosticService } from './services/diagnosticService';
 import { ApiError } from './config';
 import { ZodError } from 'zod';
 import { CapabilityService } from './capabilities/service';
+import { MemoryService } from './services/memoryService';
+import type { Extractor } from '../../mukai_memory/src';
 
 export interface ApiOptions {
   dataDir?: string;
   token?: string;
   embeddedBrowser?: EmbeddedBrowserHost;
+  /** Deterministic extractor for tests or a host-provided memory model. */
+  memoryExtractor?: Extractor;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -87,6 +91,17 @@ export function createApiServer(options: ApiOptions = {}) {
       diagnostics,
     );
     tools.attachCapabilities(capabilities);
+    const memory = new MemoryService(
+      store.db,
+      store.dir,
+      workspaces,
+      botRepository,
+      providers,
+      messageRepository,
+      options.memoryExtractor,
+      diagnostics,
+    );
+    tools.attachMemory(memory);
     const attachments = new AttachmentService(
       attachmentRepository,
       botRepository,
@@ -99,6 +114,7 @@ export function createApiServer(options: ApiOptions = {}) {
       tools,
       new ChatJobRepository(store),
       diagnostics,
+      memory,
     );
     const bots = new BotService(
       botRepository,
@@ -138,6 +154,7 @@ export function createApiServer(options: ApiOptions = {}) {
       messageRepository,
       bots,
       chats,
+      memory,
     );
     const route = createRoutes({
       token,
@@ -154,6 +171,7 @@ export function createApiServer(options: ApiOptions = {}) {
       pursuits,
       browsers,
       capabilities,
+      memory,
     });
     const server = createServer((request, response) => {
       void route(request, response).catch((error) => {
@@ -181,6 +199,7 @@ export function createApiServer(options: ApiOptions = {}) {
         const capabilityShutdown = capabilities.shutdown();
         await pursuits.shutdown();
         await chats.shutdown();
+        await memory.shutdown();
         await capabilityShutdown;
         await processes.shutdown();
         await browsers.shutdown();
@@ -202,8 +221,20 @@ export function createApiServer(options: ApiOptions = {}) {
     server.once('listening', () => {
       pursuits.start();
       capabilities.start();
+      memory.start();
     });
-    return { server, token, store, shutdown, dispose, pursuits, browsers, processes, capabilities };
+    return {
+      server,
+      token,
+      store,
+      shutdown,
+      dispose,
+      pursuits,
+      browsers,
+      processes,
+      capabilities,
+      memory,
+    };
   } catch (error) {
     store.db.close();
     releaseLock();

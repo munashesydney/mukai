@@ -10,8 +10,15 @@ import type { BrowserService } from './browserService';
 import type { ProcessService } from './processService';
 import { FILE_TOOL_CALL_LIMIT, RUNTIME_TOOL_CALL_LIMIT } from './responsePolicy';
 import type { CapabilityService } from '../capabilities/service';
+import type { MemoryService } from './memoryService';
+import { memoryTools } from '../tools/memory/execute';
+import { memoryDefinitions } from '../tools/memory/definition';
 
 export class ToolService {
+  private memory?: MemoryService;
+  attachMemory(service: MemoryService) {
+    this.memory = service;
+  }
   private capabilities?: CapabilityService;
   attachCapabilities(service: CapabilityService) {
     this.capabilities = service;
@@ -35,17 +42,24 @@ export class ToolService {
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
     const counts = this.messages.toolCounts(workspaceId);
+    const memoryCounts = Object.fromEntries(
+      memoryDefinitions.flatMap((definition) =>
+        definition.actions.map((action) => [action, counts[definition.name]?.[action] || 0]),
+      ),
+    );
     return toolCatalog().map((tool) => ({
       ...tool,
       available:
-        tool.id === 'manage_pursuit'
-          ? Boolean(this.pursuits)
-          : tool.id.startsWith('register_custom_')
-            ? Boolean(this.capabilities)
-            : tool.id === 'browser'
-              ? true
-              : Boolean(workspace.folder),
-      counts: counts[tool.id] || {},
+        tool.id === 'memory'
+          ? Boolean(this.memory)
+          : tool.id === 'manage_pursuit'
+            ? Boolean(this.pursuits)
+            : tool.id.startsWith('register_custom_')
+              ? Boolean(this.capabilities)
+              : tool.id === 'browser'
+                ? true
+                : Boolean(workspace.folder),
+      counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {
@@ -66,6 +80,16 @@ export class ToolService {
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
     return {
+      ...(this.memory
+        ? memoryTools({
+            bot,
+            conversationId: conversationId!,
+            messageId,
+            memory: this.memory,
+            signal,
+            onActivity,
+          })
+        : {}),
       ...this.customForBot(bot, signal, onActivity),
       ...runtimeTools({
         owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
