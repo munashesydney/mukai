@@ -130,9 +130,13 @@ export class MemoryEngine {
         .sort((a, b) => b.score - a.score)
         .slice(0, 60)
         .map(({ fact }) => fact);
-      const result = extractionSchema.parse(
-        await this.extractor({ episode, candidates: related, signal }),
-      );
+      const extracted = await this.extractor({ episode, candidates: related, signal });
+      // Older host adapters can omit references; native structured output requires
+      // all schema fields and expresses new entities with explicit null IDs.
+      const result = extractionSchema.parse({
+        ...extracted,
+        facts: extracted.facts.map((fact) => ({ subjectId: null, objectId: null, ...fact })),
+      });
       signal?.throwIfAborted();
       this.store.transaction(() => {
         if (
@@ -169,8 +173,29 @@ export class MemoryEngine {
     name: string,
     type: string,
     aliases: string[],
+    reference?: string | null,
+    candidates: MemoryFact[] = [],
   ) {
     const owner = ownerId || '';
+    if (reference) {
+      if (
+        !candidates.some(
+          (fact) =>
+            fact.workspaceId === workspaceId &&
+            fact.ownerId === ownerId &&
+            [fact.subjectId, fact.objectId].includes(reference),
+        )
+      )
+        throw new Error('Entity reference is not an authorized extraction candidate.');
+      const entity = this.store.get(
+        'SELECT id FROM memory_entities WHERE id=? AND workspace_id=? AND owner_key=?',
+        reference,
+        workspaceId,
+        owner,
+      );
+      if (!entity) throw new Error('Referenced memory entity is no longer available.');
+      return reference;
+    }
     const normalized = normalize(name);
     // Never merge via a guessed alias. A canonical name may match an existing alias.
     const existing =
@@ -233,6 +258,8 @@ export class MemoryEngine {
       fact.subject,
       fact.subjectType,
       fact.subjectAliases,
+      fact.subjectId,
+      candidates,
     );
     const objectId = this.entity(
       workspaceId,
@@ -240,6 +267,8 @@ export class MemoryEngine {
       fact.object,
       fact.objectType,
       fact.objectAliases,
+      fact.objectId,
+      candidates,
     );
     const relation = normalize(fact.relation)
       .replace(/[^\p{L}\p{N}]+/gu, '_')
@@ -262,7 +291,8 @@ export class MemoryEngine {
           row.state === (fact.disposition === 'uncertain' ? 'uncertain' : 'confirmed') &&
           (row.valid_to || null) === to,
       );
-    if (duplicate && fact.disposition !== 'replace') {
+    const replaces = fact.disposition === 'replace' || fact.disposition === 'correct';
+    if (duplicate && !replaces) {
       this.store.run(
         'INSERT OR IGNORE INTO memory_fact_sources VALUES(?,?)',
         String(duplicate.id),
@@ -271,40 +301,41 @@ export class MemoryEngine {
       return String(duplicate.id);
     }
     const allowed = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-    const targets =
-      fact.disposition === 'replace'
-        ? fact.supersedes
-            .map((id) => allowed.get(id))
-            .filter((target): target is MemoryFact =>
-              Boolean(
-                target &&
-                target.workspaceId === workspaceId &&
-                target.ownerId === ownerId &&
-                target.subjectId === subjectId &&
-                target.relation === relation &&
-                (explicitCorrection || target.state === 'confirmed'),
-              ),
-            )
-            .filter((target) => {
-              const current = this.store.get(
-                'SELECT valid_to,superseded_by,state FROM memory_facts WHERE id=?',
-                target.id,
-              );
-              return (
-                current &&
-                current.valid_to === target.validTo &&
-                current.superseded_by === target.supersededBy &&
-                current.state === target.state
-              );
-            })
-        : [];
+    const targets = replaces
+      ? fact.supersedes
+          .map((id) => allowed.get(id))
+          .filter((target): target is MemoryFact =>
+            Boolean(
+              target &&
+              target.workspaceId === workspaceId &&
+              target.ownerId === ownerId &&
+              target.subjectId === subjectId &&
+              target.relation === relation &&
+              (explicitCorrection || target.state === 'confirmed'),
+            ),
+          )
+          .filter((target) => {
+            const current = this.store.get(
+              'SELECT valid_to,superseded_by,state FROM memory_facts WHERE id=?',
+              target.id,
+            );
+            return (
+              current &&
+              current.valid_to === target.validTo &&
+              current.superseded_by === target.supersededBy &&
+              current.state === target.state
+            );
+          })
+      : [];
     const state =
-      fact.disposition === 'uncertain' || (fact.disposition === 'replace' && !targets.length)
-        ? 'uncertain'
-        : 'confirmed';
+      fact.disposition === 'uncertain' || (replaces && !targets.length) ? 'uncertain' : 'confirmed';
     let supersededBy: string | null = null;
     for (const target of targets) {
-      if (target.validFrom > from && (!to || target.validFrom < to)) {
+      if (
+        fact.disposition !== 'correct' &&
+        target.validFrom > from &&
+        (!to || target.validFrom < to)
+      ) {
         to = target.validFrom;
         supersededBy = target.id;
       }
@@ -332,6 +363,14 @@ export class MemoryEngine {
       `${fact.subject} ${relation} ${fact.object} ${fact.text}`,
     );
     for (const target of targets) {
+      if (fact.disposition === 'correct') {
+        this.store.run(
+          'UPDATE memory_facts SET valid_to=valid_from,superseded_by=? WHERE id=?',
+          id,
+          target.id,
+        );
+        continue;
+      }
       if (
         target.validFrom < from &&
         (!target.validTo || target.validTo > from) &&
@@ -400,7 +439,7 @@ export class MemoryEngine {
       .filter(
         (row) =>
           (options.includeUncertain || row.state === 'confirmed') &&
-          (options.includeHistory ||
+          ((!options.asOf && options.includeHistory) ||
             (String(row.valid_from) <= at && (!row.valid_to || String(row.valid_to) > at))),
       );
     const words = tokens(query).slice(0, 40);
@@ -533,16 +572,18 @@ export class MemoryEngine {
       facts: [
         {
           subject: old.subject,
+          subjectId: old.subjectId,
           subjectType: 'topic',
           subjectAliases: [],
           relation: old.relation,
           object: input.object,
+          objectId: null,
           objectType: 'topic',
           objectAliases: [],
           text: input.text,
           validFrom: input.validFrom || new Date().toISOString(),
           validTo: null,
-          disposition: 'replace',
+          disposition: 'correct',
           supersedes: [old.id],
         },
       ],
@@ -588,6 +629,8 @@ export class MemoryEngine {
           facts: [
             {
               ...fact,
+              subjectId: null,
+              objectId: null,
               subjectType: 'topic',
               objectType: 'topic',
               subjectAliases: [],

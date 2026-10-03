@@ -77,8 +77,10 @@ export class MemoryService {
             candidates: candidates.map((fact) => ({
               id: fact.id,
               subject: fact.subject,
+              subjectId: fact.subjectId,
               relation: fact.relation,
               object: fact.object,
+              objectId: fact.objectId,
               text: fact.text,
               validFrom: fact.validFrom,
               validTo: fact.validTo,

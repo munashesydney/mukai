@@ -8,13 +8,16 @@ import { startApiServer } from './app';
 import type { Bot, ChatEvent } from '../shared/ai';
 import type { MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
+import { memoryTools } from './tools/memory/execute';
 
 const coffee: ExtractedFact = {
   subject: 'User',
+  subjectId: null,
   subjectType: 'person',
   subjectAliases: [],
   relation: 'prefers_coffee',
   object: 'espresso',
+  objectId: null,
   objectType: 'preference',
   objectAliases: [],
   text: 'User prefers espresso every morning.',
@@ -136,6 +139,35 @@ afterEach(async () => {
 });
 
 describe('Mukai memory integration', () => {
+  it('allows a multi-scenario investigation to search more than twelve times and still write', async () => {
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
+    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const tools = memoryTools({
+      bot,
+      conversationId: 'bot-scout',
+      messageId: 'memory-budget-check',
+      memory: api.memory,
+      signal: new AbortController().signal,
+      onActivity: () => {},
+    });
+    for (let index = 0; index < 13; index++) {
+      expect(
+        await tools.memory_search.execute!(
+          { query: 'MEMTEST-03 investigation' },
+          { toolCallId: `search-${index}`, messages: [], context: {} },
+        ),
+      ).toMatchObject({ ok: true });
+    }
+    expect(
+      await tools.memory_add.execute!(
+        { content: 'MEMTEST-03 private investigation result.', scope: 'private' },
+        { toolCallId: 'write-after-searches', messages: [], context: {} },
+      ),
+    ).toMatchObject({ ok: true });
+    expect(search).toHaveBeenCalledTimes(13);
+    expect(add).toHaveBeenCalledOnce();
+  });
   it('captures private facts, automatically recalls them, and records actual supplied facts', async () => {
     await chat('I prefer espresso every morning.');
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));

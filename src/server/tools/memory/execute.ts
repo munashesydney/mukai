@@ -3,6 +3,7 @@ import type { Bot, ChatActivity } from '../../../shared/ai';
 import type { MemoryService } from '../../services/memoryService';
 import { executeRuntime } from '../runtimeContext';
 import { memoryAddDefinition, memorySearchDefinition, memoryForgetDefinition } from './definition';
+import { RUNTIME_TOOL_CALL_LIMIT } from '../../services/responsePolicy';
 
 export function memoryTools(context: {
   bot: Bot;
@@ -19,7 +20,7 @@ export function memoryTools(context: {
       botId: context.bot.id,
       conversationId: context.conversationId,
     },
-    budget: { remaining: 12 },
+    budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
   };
   return {
     memory_add: tool({

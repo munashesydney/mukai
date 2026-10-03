@@ -47,6 +47,114 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe('Temporal graph memory', () => {
+  it('retains a corrected historical period while excluding its retracted audit version', async () => {
+    const [old] = await add('open history', [fact('PostgreSQL')]);
+    const [period] = await add('refined history', [
+      fact('PostgreSQL', {
+        validFrom: old.validFrom,
+        validTo: '2026-03-01T00:00:00Z',
+        disposition: 'replace',
+        supersedes: [old.id],
+      }),
+    ]);
+    await add('new database', [fact('SQLite', { validFrom: '2026-03-01T00:00:00Z' })]);
+    expect(store.requireFact({ workspaceId: 'one' }, old.id)).toMatchObject({
+      validTo: old.validFrom,
+      supersededBy: period.id,
+    });
+    expect(
+      (
+        await engine.searchMemory({ workspaceId: 'one' }, 'database', {
+          asOf: '2026-02-15T12:00:00Z',
+          includeHistory: true,
+        })
+      ).map((hit) => hit.fact.id),
+    ).toEqual([period.id]);
+  });
+  it('honors asOf even with includeHistory and closes switches at the exclusive boundary', async () => {
+    const [old] = await add('initial', [fact('PostgreSQL')]);
+    const [current] = await add(
+      'switch',
+      [fact('SQLite', { disposition: 'replace', supersedes: [old.id] })],
+      { referenceTime: '2026-03-01T00:00:00Z' },
+    );
+    expect(store.requireFact({ workspaceId: 'one' }, old.id)).toMatchObject({
+      validTo: current.validFrom,
+      supersededBy: current.id,
+    });
+    expect(
+      (
+        await engine.searchMemory({ workspaceId: 'one' }, 'database', {
+          asOf: '2026-02-15T12:00:00Z',
+          includeHistory: true,
+        })
+      ).map((hit) => hit.fact.id),
+    ).toEqual([old.id]);
+    expect(
+      (
+        await engine.searchMemory({ workspaceId: 'one' }, 'database', {
+          asOf: current.validFrom,
+          includeHistory: true,
+        })
+      ).map((hit) => hit.fact.id),
+    ).toEqual([current.id]);
+    expect(
+      await engine.searchMemory({ workspaceId: 'one' }, 'database', { includeHistory: true }),
+    ).toHaveLength(2);
+  });
+  it('reuses authorized entity IDs when the extractor changes the displayed name', async () => {
+    const [current] = await add('current', [fact('SQLite', { subject: 'MEMTEST-02 Beacon' })], {
+      referenceTime: '2026-06-01T00:00:00Z',
+    });
+    const [earlier] = await add('earlier', [
+      fact('PostgreSQL', {
+        subject: 'Beacon',
+        subjectId: current.subjectId,
+        validTo: '2026-06-01T00:00:00Z',
+      }),
+    ]);
+    expect(earlier.subjectId).toBe(current.subjectId);
+    expect(earlier.subject).toBe('MEMTEST-02 Beacon');
+    expect(store.requireFact({ workspaceId: 'one' }, current.id).validTo).toBeNull();
+  });
+  it('rejects entity IDs from a different private scope without storing partial facts', async () => {
+    const [privateFact] = await add('private', [fact('SQLite')], { ownerId: 'bot-a' });
+    await expect(
+      add('public', [fact('PostgreSQL', { subjectId: privateFact.subjectId })]),
+    ).rejects.toThrow('authorized');
+    expect(store.facts({ workspaceId: 'one' })).toHaveLength(0);
+  });
+  it('retracts mistaken event dates rather than treating them as true until the correction date', async () => {
+    const [old] = await add('wrong date', [
+      fact('2026-04-10', {
+        subject: 'Cedar',
+        relation: 'launched_on',
+        validFrom: '2026-04-10T00:00:00Z',
+      }),
+    ]);
+    const [corrected] = await add('correct date', [
+      fact('2026-04-12', {
+        subject: 'Cedar',
+        relation: 'launched_on',
+        validFrom: '2026-04-12T00:00:00Z',
+        disposition: 'correct',
+        supersedes: [old.id],
+      }),
+    ]);
+    expect(store.requireFact({ workspaceId: 'one' }, old.id)).toMatchObject({
+      validTo: old.validFrom,
+      supersededBy: corrected.id,
+    });
+    expect(
+      await engine.searchMemory({ workspaceId: 'one' }, 'Cedar', { asOf: '2026-04-11T12:00:00Z' }),
+    ).toHaveLength(0);
+    expect(
+      (await engine.searchMemory({ workspaceId: 'one' }, 'Cedar')).map((hit) => hit.fact.object),
+    ).toEqual(['2026-04-12']);
+    expect(
+      await engine.searchMemory({ workspaceId: 'one' }, 'Cedar', { includeHistory: true }),
+    ).toHaveLength(2);
+  });
   it('keeps a paused workspace from starving capture in other workspaces', () => {
     for (let index = 0; index < 12; index++) engine.enqueue(input(`paused-${index}`));
     const active = engine.enqueue(input('active', { workspaceId: 'two' }));

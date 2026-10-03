@@ -14,8 +14,9 @@ A separate TypeScript module inside the Mukai repository. It imports no Mukai co
 ## Boundaries and behavior
 
 - Workspace facts are shared; private facts belong to a bot and are never recalled in shared spaces. The host authorizes access; this module also scopes every query.
-- `createdAt` is when a fact was recorded. `validFrom`/`validTo` describe event time. Superseded facts remain queryable. Unresolved conflicts are excluded from automatic recall.
-- Exact normalized entity names and explicit aliases resolve identities. Semantic similarity alone never merges people.
+- `createdAt` is when a fact was recorded. `validFrom`/`validTo` describe event time, with an exclusive end. A mistaken claim is retracted with a zero-length interval and linked to its correction; it remains visible in audit history, not point-in-time recall. Unresolved conflicts are excluded from automatic recall.
+- An explicit `asOf` always filters by validity, including when `includeHistory` is true. Use `includeHistory` without `asOf` for all recorded versions.
+- Exact normalized names, explicit aliases, and authorized candidate entity IDs resolve identities. Extraction preserves name qualifiers and project codes; semantic similarity alone never merges people. Existing split entities are not silently merged.
 - The model may nominate supersession only from supplied candidates, within the same owner, subject, and relationship. Different concurrent values can coexist. Explicit corrections use a transactional API.
 - Persistent episodes track pending, processing, complete, failed, and forgotten states. A source key makes retries idempotent. Forgetting removes source content, derived facts, vectors, and recall traces; a source-key tombstone prevents replay from reintroducing it. Original Mukai chat history is managed by Mukai separately.
 - BGE uses CLS pooling, normalized 384-dimensional vectors, and a retrieval query prefix. First setup downloads the quantized model to a host-supplied cache. Offline operation works once cached; keyword/graph retrieval remains available if embeddings are unavailable.

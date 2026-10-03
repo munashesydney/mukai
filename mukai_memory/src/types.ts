@@ -42,16 +42,18 @@ export interface MemoryFact {
 }
 export interface ExtractedFact {
   subject: string;
+  subjectId?: string | null;
   subjectType: string;
   subjectAliases: string[];
   relation: string;
   object: string;
+  objectId?: string | null;
   objectType: string;
   objectAliases: string[];
   text: string;
   validFrom: string | null;
   validTo: string | null;
-  disposition: 'assert' | 'replace' | 'uncertain';
+  disposition: 'assert' | 'replace' | 'correct' | 'uncertain';
   supersedes: string[];
 }
 export interface ExtractionRequest {
