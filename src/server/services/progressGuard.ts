@@ -1,16 +1,49 @@
 import { createHash } from 'node:crypto';
 
-function stable(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stable);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => !['ref', 'timestamp', 'createdAt', 'updatedAt', 'note'].includes(key))
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => [key, stable(item)]),
-  );
-}
 function hash(value: unknown) {
+  // Detection must not recursively serialize an unbounded or circular raw result.
+  let remaining = 128000,
+    nodes = 8192;
+  const seen = new Set<object>();
+  const stable = (item: unknown, depth = 0): unknown => {
+    if (--nodes < 0 || remaining <= 0 || depth >= 24) return '[Omitted]';
+    if (typeof item === 'string') {
+      const text = item.slice(0, Math.min(32768, remaining));
+      remaining -= text.length;
+      return text;
+    }
+    if (typeof item === 'bigint') return String(item);
+    if (!item || typeof item !== 'object') return item;
+    if (seen.has(item)) return '[Circular]';
+    seen.add(item);
+    let result: unknown;
+    if (Array.isArray(item)) result = item.slice(0, 1024).map((part) => stable(part, depth + 1));
+    else {
+      const keys: string[] = [];
+      for (const key in item) {
+        if (keys.length >= 1024) break;
+        if (
+          Object.hasOwn(item, key) &&
+          !['ref', 'timestamp', 'createdAt', 'updatedAt', 'note'].includes(key)
+        )
+          keys.push(key);
+      }
+      result = Object.fromEntries(
+        keys
+          .sort((a, b) => a.localeCompare(b))
+          .map((key) => {
+            remaining -= key.length;
+            try {
+              return [key, stable((item as Record<string, unknown>)[key], depth + 1)];
+            } catch {
+              return [key, '[Unreadable]'];
+            }
+          }),
+      );
+    }
+    seen.delete(item);
+    return result;
+  };
   return createHash('sha256')
     .update(JSON.stringify(stable(value)))
     .digest('hex');
@@ -40,8 +73,12 @@ export class ProgressGuard {
       for (const previous of this.refScopes.get(scope) || []) this.refs.delete(previous);
       const currentRefs = new Set<string>();
       for (const [index, control] of (
-        (result.controls || []) as Record<string, unknown>[]
+        (Array.isArray(result.controls) ? result.controls.slice(0, 1024) : []) as Record<
+          string,
+          unknown
+        >[]
       ).entries()) {
+        if (!control || typeof control !== 'object') continue;
         this.refs.set(
           String(control.ref),
           hash({ scope, url: result.url, role: control.role, name: control.name, index }),

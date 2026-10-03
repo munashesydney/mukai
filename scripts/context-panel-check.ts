@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
 import type { startApiServer } from '../src/server/app';
+import type { ResponsePart } from '../src/shared/ai';
 
 // Exercise the actual React forms and context meter without calling an AI provider.
 export async function checkContextPanel(
@@ -62,9 +63,10 @@ export async function checkContextPanel(
   const conversation = api.store.get(
     "SELECT id FROM conversations WHERE owner_bot_id='scout' AND kind='private' ORDER BY created_at LIMIT 1",
   )!;
+  const replyId = randomUUID();
   api.store.run(
     'INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at,context_usage_json) VALUES(?,?,?,?,?,?,?,?,?)',
-    randomUUID(),
+    replyId,
     'scout',
     String(conversation.id),
     randomUUID(),
@@ -96,6 +98,75 @@ export async function checkContextPanel(
     return meter.right < send.left && meter.left >= composer.left && meter.bottom <= composer.bottom;
   })()`);
   assert.equal(fits, true);
+  const boundary: Extract<ResponsePart, { type: 'compaction' }> = {
+    id: 'compaction-fixture',
+    type: 'compaction',
+    state: 'compacting',
+    startedAt: new Date().toISOString(),
+    tokensBefore: 24000,
+  };
+  const parts: ResponsePart[] = [
+    { id: 'before', type: 'text', text: 'Checking the project.' },
+    boundary,
+  ];
+  api.store.run('UPDATE messages SET parts_json=? WHERE id=?', JSON.stringify(parts), replyId);
+  await evaluate('window.dispatchEvent(new Event("focus"))');
+  await wait('Boolean(document.querySelector(".response-work"))', 'saved compaction activity');
+  assert.equal(await evaluate<boolean>('document.querySelector(".response-work").open'), false);
+  await evaluate('document.querySelector(".response-work > summary").click()');
+  await wait('document.querySelector(".response-work").open', 'expanded compaction activity');
+  assert.match(
+    await evaluate<string>('document.querySelector(".response-compaction").textContent'),
+    /Context compaction interrupted/,
+  );
+  boundary.state = 'complete';
+  boundary.tokensAfter = 5000;
+  boundary.finishedAt = new Date().toISOString();
+  parts.push({ id: 'after', type: 'text', text: 'Resuming the project.' });
+  api.store.run('UPDATE messages SET parts_json=? WHERE id=?', JSON.stringify(parts), replyId);
+  await evaluate('window.dispatchEvent(new Event("focus"))');
+  await wait(
+    'document.querySelector(".response-compaction")?.textContent.includes("Context compacted")',
+    'completed compaction divider',
+  );
+  assert.equal(
+    await evaluate<boolean>(`(() => {
+    const divider=document.querySelector('.response-compaction');
+    const before=document.querySelector('.response-transcript .ai-markdown');
+    const after=document.querySelector('.response-work').nextElementSibling;
+    return before.textContent.includes('Checking the project') && after.textContent.includes('Resuming the project') && Boolean(before.compareDocumentPosition(divider)&Node.DOCUMENT_POSITION_FOLLOWING) && Boolean(divider.compareDocumentPosition(after)&Node.DOCUMENT_POSITION_FOLLOWING);
+  })()`),
+    true,
+  );
+  api.store.run(
+    "UPDATE messages SET status='complete',finished_at=? WHERE id=?",
+    new Date().toISOString(),
+    replyId,
+  );
+  await evaluate('window.dispatchEvent(new Event("focus"))');
+  await wait(
+    'Boolean(document.querySelector(".response-work"))',
+    'collapsed work after compaction',
+  );
+  const loaded = new Promise<void>((resolve) =>
+    window.webContents.once('did-finish-load', () => resolve()),
+  );
+  window.reload();
+  await loaded;
+  await wait(
+    'Boolean(document.querySelector(".response-work"))',
+    'saved compaction timeline after reload',
+  );
+  assert.equal(await evaluate<boolean>('document.querySelector(".response-work").open'), false);
+  await evaluate('document.querySelector(".response-work > summary").click()');
+  await wait('document.querySelector(".response-work").open', 'expanded saved timeline');
+  assert.match(
+    await evaluate<string>('document.querySelector(".response-compaction").textContent'),
+    /Context compacted/,
+  );
+  console.log(
+    'PASS compaction timeline: interrupted and completed dividers, chronology, collapsed work, persisted after reload',
+  );
   await evaluate('document.querySelector(".context-meter").click()');
   await wait('Boolean(document.querySelector(".bot-editor"))', 'bot settings');
   await fill('.bot-editor label', 'Model', 'different-test-model');

@@ -48,6 +48,7 @@ export class ToolService {
     signal: AbortSignal,
     onActivity: (activity: ChatActivity) => void,
     vision = false,
+    resultBytes?: number,
   ) {
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
@@ -64,6 +65,7 @@ export class ToolService {
         browsers: this.browsers,
         folder: workspace.folder,
         vision,
+        resultBytes,
       }),
       ...(workspace.folder
         ? toolsForBot({

@@ -10,6 +10,8 @@ import {
   Target,
   Terminal,
   Globe,
+  Check,
+  Minimize2,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -179,6 +181,48 @@ function ReasoningPart({
   );
 }
 
+function CompactionPart({
+  part,
+  streaming,
+}: {
+  part: Extract<ResponsePart, { type: 'compaction' }>;
+  streaming: boolean;
+}) {
+  const state = part.state === 'compacting' && !streaming ? 'interrupted' : part.state;
+  const label =
+    state === 'compacting'
+      ? 'Compacting context…'
+      : state === 'complete'
+        ? 'Context compacted'
+        : state === 'failed'
+          ? 'Context compaction failed'
+          : 'Context compaction interrupted';
+  const Icon = state === 'compacting' ? LoaderCircle : state === 'complete' ? Check : CircleAlert;
+  const detail =
+    state === 'complete' && part.tokensAfter !== undefined
+      ? `${part.tokensBefore.toLocaleString()} → ${part.tokensAfter.toLocaleString()} estimated context tokens. Original messages are kept.`
+      : state === 'compacting'
+        ? 'Preserving working memory before continuing. Original messages are kept.'
+        : 'Original messages are kept. Retry to resume.';
+  return (
+    <div
+      className={`response-compaction response-compaction--${state}`}
+      role="status"
+      title={detail}
+    >
+      <span>
+        <Minimize2 size={13} aria-hidden="true" />
+        <span>{label}</span>
+        <Icon
+          size={13}
+          aria-hidden="true"
+          className={state === 'compacting' ? 'is-spinning' : undefined}
+        />
+      </span>
+    </div>
+  );
+}
+
 function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
   const groups: ResponsePart[][] = [];
   for (const part of parts) {
@@ -191,6 +235,10 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
       {groups.map((group) => {
         const part = group[0];
         if (part.type === 'text') return <MessageMarkdown key={part.id} text={part.text} />;
+        if (part.type === 'compaction')
+          return (
+            <CompactionPart key={part.id} part={part} streaming={message.status === 'streaming'} />
+          );
         if (part.type === 'reasoning') {
           const active =
             message.status === 'streaming' &&

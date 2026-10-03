@@ -1,10 +1,12 @@
 import type { ChatActivity } from '../../shared/ai';
+import { ACTIVITY_TRUNCATED, resultPreview } from '../services/toolResultPolicy';
 import type { RuntimeOwner } from '../../shared/runtime';
 export interface RuntimeToolContext {
   owner: RuntimeOwner;
   signal: AbortSignal;
   onActivity: (activity: ChatActivity) => void;
   budget: { remaining: number };
+  resultBytes?: number;
 }
 export async function executeRuntime<T>(
   context: RuntimeToolContext,
@@ -29,7 +31,7 @@ export async function executeRuntime<T>(
     context.onActivity({
       ...activity,
       status: 'complete',
-      summary: JSON.stringify(visible, null, 2).slice(0, 12000),
+      summary: resultPreview(visible, 12000, ACTIVITY_TRUNCATED),
     });
     return { ok: true, result };
   } catch (error) {

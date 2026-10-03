@@ -89,6 +89,15 @@ export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'i
 export type ResponsePart =
   | { id: string; type: 'text'; text: string; continuationOf?: string; final?: boolean }
   | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
+  | {
+      id: string;
+      type: 'compaction';
+      state: 'compacting' | 'complete' | 'failed' | 'interrupted';
+      startedAt: string;
+      finishedAt?: string;
+      tokensBefore: number;
+      tokensAfter?: number;
+    }
   | { id: string; type: 'tool'; activityId: string };
 export interface ChatMessage {
   id: string;

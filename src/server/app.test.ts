@@ -18,6 +18,7 @@ import type {
 } from '../shared/ai';
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
+import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
@@ -27,6 +28,7 @@ let calls: {
   messages: { role: string; content: unknown }[];
   max_tokens?: number;
   stream?: boolean;
+  thinking?: { type: string };
 }[];
 let mode:
   | 'normal'
@@ -40,11 +42,16 @@ let mode:
   | 'truncated-once'
   | 'usage'
   | 'compaction-fail'
+  | 'compaction-length'
+  | 'compaction-empty'
+  | 'compaction-filter'
+  | 'compaction-slow'
   | 'overflow'
   | 'checkpoint'
   | 'raw-tool-once'
   | 'raw-tool-always'
   | 'long-browser'
+  | 'oversized-results'
   | 'runtime-tools' = 'normal';
 let endpoint = '';
 let project = '';
@@ -212,6 +219,19 @@ beforeEach(async () => {
       return;
     }
     if (!body.stream) {
+      if (mode === 'compaction-slow') {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 20000);
+          res.once('close', () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        if (res.destroyed) return;
+      }
+      const firstSummary = calls.filter((call) => !call.stream).length === 1;
+      const truncated = mode === 'compaction-length' && firstSummary;
+      const empty = mode === 'compaction-fail' || (mode === 'compaction-empty' && firstSummary);
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({
           id: 'test',
@@ -224,13 +244,17 @@ beforeEach(async () => {
               message: {
                 role: 'assistant',
                 content:
-                  mode === 'compaction-fail'
+                  empty || truncated
                     ? ''
                     : JSON.stringify(body.messages).includes('Summarize working memory')
                       ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.'
                       : 'OK',
               },
-              finish_reason: 'stop',
+              finish_reason: truncated
+                ? 'length'
+                : mode === 'compaction-filter'
+                  ? 'content_filter'
+                  : 'stop',
             },
           ],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
@@ -239,6 +263,37 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'oversized-results') {
+      // Count generations independently of retained history: compaction may replace
+      // old calls/results while this fixture must continue, rather than replay them.
+      const step = calls.filter((call) => call.stream).length - 1;
+      const actions =
+        step === 0
+          ? [{ action: 'open', url: 'https://example.com' }]
+          : step === 1
+            ? [
+                { action: 'snapshot', sessionId: api.browsers.list('default')[0].id },
+                { action: 'snapshot', sessionId: api.browsers.list('default')[0].id },
+              ]
+            : step === 2
+              ? [{ action: 'screenshot', sessionId: api.browsers.list('default')[0].id }]
+              : [];
+      const delta = actions.length
+        ? {
+            tool_calls: actions.map((input, index) => ({
+              index,
+              id: `bounded-${step}-${index}`,
+              type: 'function',
+              function: { name: 'browser', arguments: JSON.stringify(input) },
+            })),
+          }
+        : { content: 'Large-result browser checks finished.' };
+      res.write(
+        `data: ${JSON.stringify({ id: 'bounded', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: actions.length ? 'tool_calls' : 'stop' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (['raw-tool-once', 'raw-tool-always', 'long-browser'].includes(mode)) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
@@ -565,6 +620,44 @@ describe('Mukai bots and AI API', () => {
     expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Earlier conversation notes');
     expect(JSON.stringify(calls.at(-1)?.messages)).not.toContain(evidence);
   });
+  it.each(['compaction-length', 'compaction-empty'] as const)(
+    'recovers %s and records an ordered compaction boundary',
+    async (failure) => {
+      const provider = await configure();
+      await request('/providers/' + provider.id, 'PUT', {
+        ...provider,
+        defaultModel: 'deepseek-flash',
+        contextWindowTokens: 32000,
+        maxOutputTokens: 8192,
+      });
+      await chat('Earlier finding');
+      const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+      const evidence = 'Keep verified evidence. '.repeat(3000);
+      api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
+      mode = failure;
+      const sent = await chat('Continue safely');
+      const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+      const reply = history.at(-1)!;
+      expect(reply.status).toBe('complete');
+      expect(history[0].content).toBe(evidence);
+      const summaries = calls.filter((call) => !call.stream);
+      expect(summaries.length).toBeGreaterThanOrEqual(2);
+      expect(summaries[1].max_tokens).toBeGreaterThan(summaries[0].max_tokens!);
+      expect(summaries.every((call) => call.thinking?.type === 'disabled')).toBe(true);
+      expect(JSON.stringify(reply)).not.toContain('private-test-key');
+      const boundary = reply.parts?.find((part) => part.type === 'compaction');
+      expect(boundary).toMatchObject({
+        state: 'complete',
+        tokensAfter: expect.any(Number),
+        finishedAt: expect.any(String),
+      });
+      expect(reply.parts?.at(-1)?.type).toBe('text');
+      const states = sent.events.flatMap((event) =>
+        event.type === 'part' && event.part.type === 'compaction' ? [event.part.state] : [],
+      );
+      expect(states).toEqual(['compacting', 'complete']);
+    },
+  );
   it('leaves usable context and original history intact when compaction fails, then permits retry', async () => {
     const provider = await configure();
     await request('/providers/' + provider.id, 'PUT', {
@@ -582,15 +675,59 @@ describe('Mukai bots and AI API', () => {
     expect(history.at(-1)?.status).toBe('failed');
     expect(history.at(-1)?.error).toContain('compaction did not finish');
     expect(history.at(-1)?.contextUsage?.phase).toBe('failed');
+    expect(history.at(-1)?.parts?.at(-1)).toMatchObject({ type: 'compaction', state: 'failed' });
+    expect(calls.filter((call) => !call.stream)).toHaveLength(3);
     expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
     expect(history[0].content).toBe(evidence);
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
     mode = 'normal';
     await chat('ignored replacement', sent.requestId);
     history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
     expect(history).toHaveLength(4);
     expect(history.at(-1)?.status).toBe('complete');
+    expect(
+      history
+        .at(-1)
+        ?.parts?.filter((part) => part.type === 'compaction')
+        .map((part) => part.state),
+    ).toEqual(['failed', 'complete']);
     expect(history[0].content).toBe(evidence);
   });
+  it.each(['compaction-filter', 'compaction-slow'] as const)(
+    'preserves history when %s interrupts compaction',
+    async (failure) => {
+      const provider = await configure();
+      await request('/providers/' + provider.id, 'PUT', {
+        ...provider,
+        contextWindowTokens: 16384,
+        maxOutputTokens: 1024,
+      });
+      await chat('Earlier finding');
+      const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+      const evidence = 'Original evidence. '.repeat(3000);
+      api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
+      mode = failure;
+      const running = chat('Continue safely');
+      if (failure === 'compaction-slow') {
+        await vi.waitFor(() => expect(calls.some((call) => !call.stream)).toBe(true));
+        const live = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+        expect(live.parts?.at(-1)).toMatchObject({ type: 'compaction', state: 'compacting' });
+        await request('/bots/scout/stop', 'POST');
+      }
+      await running;
+      const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+      expect(history[0].content).toBe(evidence);
+      expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
+      expect(calls.filter((call) => !call.stream)).toHaveLength(1);
+      expect(history.at(-1)?.parts?.at(-1)).toMatchObject({
+        type: 'compaction',
+        state: failure === 'compaction-slow' ? 'interrupted' : 'failed',
+      });
+      expect(history.at(-1)?.status).toBe(failure === 'compaction-slow' ? 'stopped' : 'failed');
+    },
+  );
   it('handles a provider context rejection with one safe compaction instead of exposing provider text', async () => {
     await configure();
     await chat('Prior context');
@@ -957,6 +1094,63 @@ describe('Mukai bots and AI API', () => {
       text: 'All browser checks finished.',
     });
   });
+  it.each([10000, 28000])(
+    'finishes with huge parallel results and an oversized screenshot at %i context',
+    async (contextWindowTokens) => {
+      const provider = await configure(true);
+      await request('/providers/' + provider.id, 'PUT', {
+        ...provider,
+        contextWindowTokens,
+        maxOutputTokens: 8192,
+      });
+      const original = api.browsers.execute.bind(api.browsers);
+      const header = Buffer.alloc(24);
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);
+      header.writeUInt32BE(16000, 16);
+      header.writeUInt32BE(16000, 20);
+      const image = Buffer.concat([header, Buffer.alloc(1024 * 1024)]).toString('base64');
+      vi.spyOn(api.browsers, 'execute').mockImplementation(async (owner, input, signal) => {
+        if (input.action === 'snapshot')
+          return {
+            title: 'Useful page findings',
+            url: 'https://example.com',
+            controls: [],
+            text: 'Useful page findings\n' + '资料🦊'.repeat(100000),
+          };
+        if (input.action === 'screenshot')
+          return {
+            summary: 'Captured screenshot.',
+            screenshotUrl: '/browser/fixture/screenshot',
+            image,
+          };
+        return original(owner, input, signal);
+      });
+      mode = 'oversized-results';
+      await chat('Read the page, take a screenshot, then give a final report.');
+      const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      expect(reply.status).toBe('complete');
+      expect(reply.parts?.at(-1)).toMatchObject({
+        type: 'text',
+        text: 'Large-result browser checks finished.',
+      });
+      expect(reply.activity).toHaveLength(4);
+      expect(
+        reply.activity?.filter((activity) => activity.summary.includes(RESULT_TRUNCATED)),
+      ).toHaveLength(3);
+      const streaming = calls.filter((call) => call.stream);
+      expect(streaming).toHaveLength(4);
+      for (const call of streaming)
+        expect(call.max_tokens).toBeLessThanOrEqual(Math.floor(contextWindowTokens / 8));
+      const afterSnapshots = JSON.stringify(streaming[2]);
+      expect(afterSnapshots).toContain('Useful page findings');
+      expect(afterSnapshots).toContain(RESULT_TRUNCATED);
+      expect(afterSnapshots.length).toBeLessThan(contextWindowTokens * 3);
+      expect(JSON.stringify(streaming[3])).toContain(IMAGE_OMITTED);
+      expect(JSON.stringify(streaming[3])).not.toContain(image);
+      const job = api.store.get('SELECT checkpoint_json FROM chat_jobs');
+      if (job) expect(String(job.checkpoint_json).length).toBeLessThan(contextWindowTokens * 4);
+    },
+  );
   it('recovers a textual tool request once while retaining real results and not executing markup', async () => {
     await configure();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

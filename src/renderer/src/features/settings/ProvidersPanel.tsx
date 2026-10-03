@@ -287,7 +287,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               />
               <small>
                 Per generation, including reasoning where the provider counts it. Mukai reserves up
-                to a quarter of the context for output.
+                to an eighth of the context for output, and adjusts it to available room.
               </small>
             </label>
           </div>

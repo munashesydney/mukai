@@ -11,6 +11,7 @@ import { executeBrowser } from './browser/execute';
 import type { RuntimeToolContext } from './runtimeContext';
 import type { ProcessService } from '../services/processService';
 import type { BrowserService } from '../services/browserService';
+import { resultPreview } from '../services/toolResultPolicy';
 
 export function runtimeTools(
   context: RuntimeToolContext & {
@@ -53,13 +54,19 @@ export function runtimeTools(
             ? {
                 type: 'content',
                 value: [
-                  { type: 'text', text: JSON.stringify({ ...output, result: rest }) },
+                  {
+                    type: 'text',
+                    text: resultPreview({ ...output, result: rest }, context.resultBytes ?? 96000),
+                  },
                   { type: 'file', mediaType: 'image/png', data: { type: 'data', data: image } },
                 ],
               }
-            : { type: 'text', value: JSON.stringify({ ...output, result: rest }) };
+            : {
+                type: 'text',
+                value: resultPreview({ ...output, result: rest }, context.resultBytes ?? 96000),
+              };
         }
-        return { type: 'text', value: JSON.stringify(output) };
+        return { type: 'text', value: resultPreview(output, context.resultBytes ?? 96000) };
       },
     }),
   };

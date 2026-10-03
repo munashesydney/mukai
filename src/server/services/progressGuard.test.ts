@@ -1,6 +1,19 @@
 import { expect, it } from 'vitest';
 import { ProgressGuard } from './progressGuard';
 
+it('handles huge circular results without crashing the run', () => {
+  const guard = new ProgressGuard();
+  const result: Record<string, unknown> = {
+    text: 'x'.repeat(2000000),
+    rows: Array(100000).fill('entry'),
+  };
+  result.self = result;
+  expect(() =>
+    guard.observe('file_operations', { action: 'read_file', path: 'large' }, result),
+  ).not.toThrow();
+  expect(guard.paused).toBe(false);
+});
+
 it('does not count new process IDs as progress for an identical command and output', () => {
   const guard = new ProgressGuard();
   for (let index = 0; index < 10; index++)

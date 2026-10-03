@@ -1,4 +1,5 @@
 import { asSchema, type ModelMessage, type ToolSet } from 'ai';
+import { limitToolGroups } from './toolResultPolicy';
 
 export class ContextError extends Error {}
 
@@ -14,7 +15,7 @@ export function estimateTokens(value: unknown): number {
       item.type === 'image' ||
       (item.type === 'file' && String(item.mediaType).startsWith('image/'))
     )
-      return 8192;
+      return imageTokens(item);
     return Object.entries(item).reduce(
       (sum, [key, part]) => sum + estimateTokens(key) + estimateTokens(part) + 4,
       0,
@@ -22,6 +23,39 @@ export function estimateTokens(value: unknown): number {
   }
   return value == null ? 0 : estimateTokens(String(value));
 }
+// A conservative pixel-based estimate for PNG screenshots, calibrated by provider
+// usage during a run. Unknown formats keep the previous conservative allowance.
+function imageTokens(item: Record<string, unknown>) {
+  const data = item.data;
+  let header: Buffer | undefined;
+  if (data instanceof Uint8Array) header = Buffer.from(data.subarray(0, 32));
+  else {
+    const raw =
+      typeof data === 'string'
+        ? data
+        : data && typeof data === 'object'
+          ? (data as { data?: unknown }).data
+          : undefined;
+    if (typeof raw === 'string') {
+      const prefix = raw.startsWith('data:')
+        ? raw.slice(raw.indexOf(',') + 1, raw.indexOf(',') + 49)
+        : raw.slice(0, 48);
+      header = Buffer.from(prefix, 'base64');
+    }
+  }
+  if (
+    header &&
+    header.length >= 24 &&
+    header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
+    const width = header.readUInt32BE(16),
+      height = header.readUInt32BE(20);
+    if (width > 0 && height > 0)
+      return Math.min(16384, 512 + Math.ceil(width / 512) * Math.ceil(height / 512) * 256);
+  }
+  return 8192;
+}
+
 export async function toolTokens(tools: ToolSet) {
   return estimateTokens(await toolDefinitions(tools));
 }
@@ -40,12 +74,13 @@ export function contextLimits(window: number | null, requestedOutput: number) {
   // Legacy models with unknown capacity use a conservative working budget while
   // the UI continues to say "unknown", rather than presenting an invented limit.
   const capacity = window ?? 32768;
-  const output = Math.min(requestedOutput, Math.floor(capacity / 4));
+  const output = Math.min(requestedOutput, Math.floor(capacity / 8));
   return {
     capacity,
     output,
-    input: Math.floor(capacity * 0.85) - output,
-    summary: Math.min(2048, Math.floor(capacity / 8)),
+    input: Math.floor(capacity * 0.9) - output,
+    hardInput: Math.floor(capacity * 0.9) - 256,
+    summary: Math.min(2048, Math.floor(capacity / 16)),
   };
 }
 
@@ -87,6 +122,30 @@ export class ContextManager {
         input / Math.max(1, this.overhead + estimateTokens(messages)),
       );
   }
+  toolAllowance(messages: ModelMessage[]) {
+    const limits = contextLimits(this.window, this.maxOutput);
+    const latest = [...messages].reverse().find((message) => message.role === 'user');
+    const available = (limits.input - this.estimate(latest ? [latest] : [])) / this.factor;
+    return Math.max(
+      256,
+      Math.floor(Math.min(limits.capacity * 0.45, Math.max(0, available) * 0.8)),
+    );
+  }
+  outputAllowance(messages: ModelMessage[], extraOverhead = 0) {
+    const limits = contextLimits(this.window, this.maxOutput);
+    const remaining =
+      Math.floor(limits.capacity * 0.9) -
+      this.estimate(messages) -
+      Math.ceil(extraOverhead * this.factor);
+    if (remaining < 256)
+      throw new ContextError(
+        'The current request or required instructions exceeds the model’s working context. Increase its context-window setting or send a smaller request.',
+      );
+    return Math.min(limits.output, remaining);
+  }
+  boundTools(messages: ModelMessage[]) {
+    return limitToolGroups(messages, this.toolAllowance(messages), estimateTokens);
+  }
   async prepare(messages: ModelMessage[], force = false): Promise<ModelMessage[]> {
     const limits = contextLimits(this.window, this.maxOutput);
     const budget = limits.input;
@@ -96,19 +155,37 @@ export class ContextManager {
     units.forEach((unit, index) => {
       if (unit.some((item) => item.role === 'user')) anchor = index;
     });
-    // Pin the user's exact latest request and its attachments; keep recent whole
-    // operation pairs, never half of a call/result pair or a partial document.
-    const pinned = new Set(
-      [anchor, units.length - 1, units.length - 2].filter((index) => index >= Math.max(0, anchor)),
-    );
+    // The exact request is mandatory; recent groups are retained only if they fit.
+    // Dropped operation groups are summarized whole, never replayed as orphan results.
+    const reserve = Math.ceil((limits.summary * 1.5 + 128) * this.factor);
+    const pinned = new Set<number>(anchor >= 0 ? [anchor] : []);
+    const mandatory = units.filter((_unit, index) => pinned.has(index)).flat();
+    if (this.estimate(mandatory) > limits.hardInput)
+      throw new ContextError(
+        'The current request, attachments, or required instructions exceeds the model’s working context. Increase its context-window setting or send a smaller request.',
+      );
+    for (
+      let index = units.length - 1;
+      index >= Math.max(0, anchor) && index >= units.length - 2;
+      index--
+    ) {
+      if (pinned.has(index)) continue;
+      const candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
+      if (this.estimate(candidate) + reserve <= budget) pinned.add(index);
+    }
     const retained = units.filter((_unit, index) => pinned.has(index)).flat();
     const removed = units.filter((_unit, index) => !pinned.has(index)).flat();
-    if (!removed.length || this.estimate(retained) + limits.summary > budget)
+    if (!removed.length) return messages;
+    const summaryRoom = Math.floor(
+      (limits.hardInput - this.estimate(retained)) / this.factor - 128,
+    );
+    const summaryTarget = Math.min(limits.summary, Math.floor(summaryRoom / 1.5));
+    if (summaryTarget < 128)
       throw new ContextError(
-        'The current request, attachments, or tool result exceeds the model’s working context. Increase its context-window setting or send a smaller request.',
+        'The current request leaves insufficient room for compaction. Increase its context-window setting or send a smaller request.',
       );
     // Summarize in bounded chunks so the compaction request itself also fits.
-    const chunkBudget = Math.floor(budget / this.factor - limits.summary * 1.5 - 600);
+    const chunkBudget = Math.floor(budget / this.factor - summaryTarget * 1.5 - 600);
     if (chunkBudget < 256)
       throw new ContextError(
         'This model’s working context leaves insufficient room for safe compaction. Increase its context-window setting.',
@@ -120,9 +197,9 @@ export class ContextManager {
       if (!chunk) return;
       const text = await this.summarize(
         `<previous-summary>\n${candidate}\n</previous-summary>\n<historical-data>\n${chunk}\n</historical-data>`,
-        limits.summary,
+        summaryTarget,
       );
-      if (!text.trim() || estimateTokens(text) > limits.summary * 1.5)
+      if (!text.trim() || estimateTokens(text) > summaryTarget * 1.5)
         throw new ContextError(
           'Context compaction returned an unusable summary. Your original history is saved; retry the response.',
         );
@@ -132,7 +209,20 @@ export class ContextManager {
     };
     // Splitting serialized data is safe here: it is summarized as untrusted text,
     // never replayed as tool messages. Retained messages remain structurally intact.
-    const serialized = JSON.stringify(removed);
+    const serialized = JSON.stringify(removed, (_key, value: unknown) => {
+      if (value && typeof value === 'object') {
+        const item = value as Record<string, unknown>;
+        if (
+          item.type === 'image' ||
+          (item.type === 'file' && String(item.mediaType).startsWith('image/'))
+        )
+          return {
+            type: 'image-note',
+            text: 'Earlier image pixels omitted from summary input. Preserve any recorded observations; do not invent visual findings. Retake a screenshot if necessary.',
+          };
+      }
+      return value;
+    });
     for (const character of serialized) {
       chunk += character;
       chunkBytes += Buffer.byteLength(character, 'utf8');
@@ -146,7 +236,7 @@ export class ContextManager {
       },
       ...retained,
     ];
-    if (this.estimate(compacted) > budget)
+    if (this.estimate(compacted) > limits.hardInput)
       throw new ContextError(
         'The compacted context still exceeds the model’s working budget. Your original history is saved.',
       );

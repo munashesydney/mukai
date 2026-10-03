@@ -134,8 +134,79 @@ describe('working context', () => {
     expect(() => contextUnits(results)).toThrow('missing their original calls');
   });
   it('reserves output space and treats unknown capacity conservatively', () => {
-    expect(contextLimits(4096, 8192).output).toBe(1024);
+    expect(contextLimits(4096, 8192).output).toBe(512);
     expect(contextLimits(null, 8192).capacity).toBe(32768);
     expect(estimateTokens('🦊资料')).toBeGreaterThan(estimateTokens('abc'));
+  });
+  it.each([10000, 28000, 128000, 1000000])(
+    'adapts output and result room to a %i-token context',
+    async (capacity) => {
+      const manager = new ContextManager(capacity, 8192, 4000, async () => 'Memory');
+      const messages: ModelMessage[] = [{ role: 'user', content: 'Inspect the workspace.' }];
+      const output = manager.outputAllowance(messages);
+      expect(output).toBeLessThanOrEqual(8192);
+      expect(manager.estimate(messages) + output).toBeLessThanOrEqual(capacity * 0.9);
+      const allowance = manager.toolAllowance(messages);
+      expect(allowance).toBeGreaterThan(256);
+      expect(allowance).toBeLessThanOrEqual(capacity * 0.45);
+      const bounded = manager.boundTools([
+        ...messages,
+        ...pair('huge', 'A useful finding.\n' + 'x'.repeat(capacity * 4)),
+      ]);
+      expect(estimateTokens(bounded.slice(1))).toBeLessThanOrEqual(allowance + 150);
+    },
+  );
+  it('summarizes recent oversized operation groups instead of pinning them indefinitely', async () => {
+    const summarize = vi.fn(
+      async () => 'Browser verified. Resume with session demo; do not repeat completed actions.',
+    );
+    const manager = new ContextManager(10000, 8192, 4000, summarize);
+    const user: ModelMessage = { role: 'user', content: 'Test the browser and report results.' };
+    const messages = [user, ...pair('recent', 'verified '.repeat(3000))];
+    const compacted = await manager.prepare(messages);
+    expect(compacted).toContainEqual(user);
+    expect(summarize).toHaveBeenCalled();
+    expect(JSON.stringify(compacted)).not.toContain('verified verified verified');
+    expect(manager.estimate(compacted) + manager.outputAllowance(compacted)).toBeLessThanOrEqual(
+      9000,
+    );
+    expect(contextUnits(compacted)).toHaveLength(2);
+  });
+  it('shrinks output for a large mandatory request without truncating it or inventing compaction', async () => {
+    const summarize = vi.fn(async () => 'Memory');
+    const manager = new ContextManager(10000, 8192, 4000, summarize);
+    const messages: ModelMessage[] = [{ role: 'user', content: 'x'.repeat(13000) }];
+    expect(await manager.prepare(messages)).toBe(messages);
+    expect(manager.outputAllowance(messages)).toBeLessThan(1250);
+    expect(
+      manager.estimate(messages) + manager.outputAllowance(messages, 50) + 50,
+    ).toBeLessThanOrEqual(9000);
+    expect(manager.compactions).toBe(0);
+    expect(summarize).not.toHaveBeenCalled();
+  });
+  it('estimates PNG screenshots by dimensions and excludes old pixels from summary requests', async () => {
+    const header = Buffer.alloc(24);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);
+    header.writeUInt32BE(1024, 16);
+    header.writeUInt32BE(768, 20);
+    const pixels = header.toString('base64') + 'base64-secret-pixels'.repeat(100000);
+    const image = { type: 'file' as const, mediaType: 'image/png', data: pixels };
+    expect(estimateTokens(image)).toBe(1536);
+    expect(estimateTokens({ ...image, data: 'unknown format' })).toBe(8192);
+    const summarize = vi.fn(async (data: string) => {
+      expect(data).toContain('<historical-data>');
+      return 'Page observations preserved; retake the screenshot if needed.';
+    });
+    const manager = new ContextManager(10000, 8192, 4000, summarize);
+    await manager.prepare(
+      [
+        { role: 'user', content: [image] },
+        { role: 'assistant', content: 'Page verified' },
+        { role: 'user', content: 'Continue' },
+      ],
+      true,
+    );
+    expect(summarize.mock.calls[0][0]).not.toContain('base64-secret-pixels');
+    expect(summarize.mock.calls[0][0]).toContain('do not invent visual findings');
   });
 });

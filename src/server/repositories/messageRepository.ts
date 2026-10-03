@@ -72,7 +72,8 @@ export class MessageRepository {
       ...(conversationId === undefined ? [] : [conversationId]),
     );
     for (const row of pending) {
-      const activity = (messageRecord(row).activity || []).map((item) =>
+      const message = messageRecord(row);
+      const activity = (message.activity || []).map((item) =>
         item.status === 'running'
           ? {
               ...item,
@@ -81,9 +82,20 @@ export class MessageRepository {
             }
           : item,
       );
+      const parts = (message.parts || []).map((part) =>
+        part.type === 'compaction' && part.state === 'compacting'
+          ? { ...part, state: 'interrupted', finishedAt: new Date().toISOString() }
+          : part,
+      );
+      const usage =
+        message.contextUsage?.phase === 'compacting'
+          ? { ...message.contextUsage, phase: 'ready' }
+          : message.contextUsage;
       this.database.run(
-        'UPDATE messages SET activity_json=? WHERE id=?',
+        'UPDATE messages SET activity_json=?,parts_json=?,context_usage_json=? WHERE id=?',
         JSON.stringify(activity),
+        JSON.stringify(parts),
+        usage ? JSON.stringify(usage) : null,
         row.id,
       );
     }

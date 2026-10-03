@@ -34,6 +34,59 @@ const message: ChatMessage = {
   ],
 };
 describe('Response activity disclosures', () => {
+  it.each(['compacting', 'complete', 'failed', 'interrupted'] as const)(
+    'shows an ordered %s context divider between activity and resumed work',
+    (state) => {
+      const parts: ChatMessage['parts'] = [
+        { id: 'before', type: 'text', text: 'Before compaction' },
+        {
+          id: 'boundary',
+          type: 'compaction',
+          state,
+          startedAt: message.createdAt,
+          tokensBefore: 24000,
+          tokensAfter: 5000,
+        },
+        { id: 'after', type: 'text', text: 'After compaction' },
+      ];
+      const html = renderToStaticMarkup(
+        createElement(ResponseActivity, { message: { ...message, status: 'streaming', parts } }),
+      );
+      const label =
+        state === 'compacting'
+          ? 'Compacting context…'
+          : state === 'complete'
+            ? 'Context compacted'
+            : state === 'failed'
+              ? 'Context compaction failed'
+              : 'Context compaction interrupted';
+      expect(html).toContain(label);
+      expect(html.indexOf('Before compaction')).toBeLessThan(html.indexOf('response-compaction'));
+      expect(html.indexOf(label)).toBeLessThan(html.indexOf('After compaction'));
+      expect(html).toContain('role="status"');
+    },
+  );
+  it('shows a stale compaction as interrupted after the run ends', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          status: 'interrupted',
+          parts: [
+            {
+              id: 'boundary',
+              type: 'compaction',
+              state: 'compacting',
+              startedAt: message.createdAt,
+              tokensBefore: 24000,
+            },
+          ],
+        },
+      }),
+    );
+    expect(html).toContain('Context compaction interrupted');
+    expect(html).not.toContain('Compacting context…');
+  });
   it('expands active reasoning and collapses it at reasoning-end while the response continues', () => {
     const thinking: ChatMessage = {
       ...message,

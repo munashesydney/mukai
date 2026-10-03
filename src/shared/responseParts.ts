@@ -14,13 +14,22 @@ export function appendResponseText(
   text: string,
 ): ResponsePart[] {
   const previous = parts.find((part) => part.id === id);
-  return upsertResponsePart(parts, {
-    ...(previous?.type === type ? previous : {}),
-    id,
-    type,
-    text: (previous && previous.type !== 'tool' ? previous.text : '') + text,
-    ...(type === 'reasoning' ? { state: 'streaming' as const } : {}),
-  });
+  return upsertResponsePart(
+    parts,
+    type === 'reasoning'
+      ? {
+          id,
+          type,
+          text: (previous?.type === 'reasoning' ? previous.text : '') + text,
+          state: 'streaming',
+        }
+      : {
+          ...(previous?.type === 'text' ? previous : {}),
+          id,
+          type,
+          text: (previous?.type === 'text' ? previous.text : '') + text,
+        },
+  );
 }
 
 export function responsePresentation(message: ChatMessage) {
