@@ -16,6 +16,7 @@ import { errorText } from '../../utils/errors';
 import { ContextMeter } from '../ai/ContextMeter';
 import { modelContextWindow } from '../../../../shared/modelLimits';
 import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
+import { AskComposer } from '../ai/AskComposer';
 
 export function SpaceChat({
   space,
@@ -194,111 +195,113 @@ export function SpaceChat({
                   </button>
                 </div>
               )}
-              <div className="composer space-composer">
-                <textarea
-                  ref={input}
-                  rows={2}
-                  maxLength={16000}
-                  aria-label={`Message ${space.name}`}
-                  placeholder={
-                    members.length
-                      ? `Message ${space.name} · @mention a bot…`
-                      : `Message ${space.name}…`
-                  }
-                  disabled={state.loading}
-                  value={state.text}
-                  onChange={(event) => {
-                    chatStore.draft(id, event.target.value);
-                    const cursor = event.target.selectionStart;
-                    const match = event.target.value
-                      .slice(0, cursor)
-                      .match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
-                    setMentionQuery(match ? match[1].toLowerCase() : null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape') setMentionQuery(null);
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      setMentionQuery(null);
-                      send();
+              <AskComposer conversationId={space.id} onCancel={() => void chatStore.stop(id)}>
+                <div className="composer space-composer">
+                  <textarea
+                    ref={input}
+                    rows={2}
+                    maxLength={16000}
+                    aria-label={`Message ${space.name}`}
+                    placeholder={
+                      members.length
+                        ? `Message ${space.name} · @mention a bot…`
+                        : `Message ${space.name}…`
                     }
-                  }}
-                />
-                {mentionQuery !== null && members.length > 0 && (
-                  <div className="space-mention-list" aria-label="Mention a bot">
-                    {members
-                      .filter((bot) => botHandle(bot).includes(mentionQuery))
-                      .map((bot) => (
-                        <button
-                          type="button"
-                          key={bot.id}
-                          onClick={() => {
-                            const cursor = input.current?.selectionStart ?? state.text.length;
-                            const before = state.text
-                              .slice(0, cursor)
-                              .replace(/@[\p{L}\p{N}_-]*$/u, '@' + botHandle(bot) + ' ');
-                            chatStore.draft(id, before + state.text.slice(cursor));
-                            setSelectedBot(bot.id);
-                            setMentionQuery(null);
-                            input.current?.focus();
-                          }}
-                        >
-                          <Avatar person={bot.avatar} size="xs" />
-                          <span>
-                            {bot.name}
-                            <small>{bot.role}</small>
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                )}
-                <div className="composer-toolbar">
-                  <div className="composer-actions">
-                    <ApprovalModePicker />
-                    <span className="ai-caption">
-                      {members.length
-                        ? 'Mention one bot to get a response'
-                        : 'No bots in this space'}
-                    </span>
-                    {respondingBot && (
-                      <ContextMeter
-                        usage={
-                          latestAssistant?.botId === respondingBot.id
-                            ? latestAssistant.contextUsage
-                            : undefined
-                        }
-                        window={modelContextWindow(respondingBot, provider)}
-                        onConfigure={onProviders}
-                      />
+                    disabled={state.loading}
+                    value={state.text}
+                    onChange={(event) => {
+                      chatStore.draft(id, event.target.value);
+                      const cursor = event.target.selectionStart;
+                      const match = event.target.value
+                        .slice(0, cursor)
+                        .match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
+                      setMentionQuery(match ? match[1].toLowerCase() : null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') setMentionQuery(null);
+                      if (
+                        event.key === 'Enter' &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing
+                      ) {
+                        event.preventDefault();
+                        setMentionQuery(null);
+                        send();
+                      }
+                    }}
+                  />
+                  {mentionQuery !== null && members.length > 0 && (
+                    <div className="space-mention-list" aria-label="Mention a bot">
+                      {members
+                        .filter((bot) => botHandle(bot).includes(mentionQuery))
+                        .map((bot) => (
+                          <button
+                            type="button"
+                            key={bot.id}
+                            onClick={() => {
+                              const cursor = input.current?.selectionStart ?? state.text.length;
+                              const before = state.text
+                                .slice(0, cursor)
+                                .replace(/@[\p{L}\p{N}_-]*$/u, '@' + botHandle(bot) + ' ');
+                              chatStore.draft(id, before + state.text.slice(cursor));
+                              setSelectedBot(bot.id);
+                              setMentionQuery(null);
+                              input.current?.focus();
+                            }}
+                          >
+                            <Avatar person={bot.avatar} size="xs" />
+                            <span>
+                              {bot.name}
+                              <small>{bot.role}</small>
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                  <div className="composer-toolbar">
+                    <div className="composer-actions">
+                      <ApprovalModePicker />
+                      <span className="ai-caption">
+                        {members.length
+                          ? 'Mention one bot to get a response'
+                          : 'No bots in this space'}
+                      </span>
+                      {respondingBot && (
+                        <ContextMeter
+                          usage={
+                            latestAssistant?.botId === respondingBot.id
+                              ? latestAssistant.contextUsage
+                              : undefined
+                          }
+                          window={modelContextWindow(respondingBot, provider)}
+                          onConfigure={onProviders}
+                        />
+                      )}
+                    </div>
+                    {state.busy ? (
+                      <button
+                        className="send-button ai-stop"
+                        aria-label="Stop generation"
+                        onClick={() => void chatStore.stop(id)}
+                      >
+                        <Square size={13} fill="currentColor" />
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        className="send-button"
+                        aria-label="Send message"
+                        disabled={state.loading || !state.text.trim()}
+                        onClick={send}
+                      >
+                        <Send size={16} />
+                        Send
+                      </button>
                     )}
                   </div>
-                  {state.busy ? (
-                    <button
-                      className="send-button ai-stop"
-                      aria-label="Stop generation"
-                      onClick={() => void chatStore.stop(id)}
-                    >
-                      <Square size={13} fill="currentColor" />
-                      Stop
-                    </button>
-                  ) : (
-                    <button
-                      className="send-button"
-                      aria-label="Send message"
-                      disabled={state.loading || !state.text.trim()}
-                      onClick={send}
-                    >
-                      <Send size={16} />
-                      Send
-                    </button>
-                  )}
                 </div>
-              </div>
-              <div className="composer-hint">Enter to send · Shift + Enter for a new line</div>
+                <div className="composer-hint">Enter to send · Shift + Enter for a new line</div>
+              </AskComposer>
             </div>
           )}
         </>

@@ -31,7 +31,9 @@ describe('Ask request cards', () => {
     expect(html).toContain('Reach a new audience.');
     expect(html.match(/class="ask-recommended"/g)).toHaveLength(1);
     expect(html).toContain('Type your answer');
-    expect(html).toContain('Submit answer');
+    expect(html).toContain('Submit');
+    expect(html).toContain('Skip');
+    expect(html.match(/class="ask-option-number"/g)).toHaveLength(3);
     expect(html).not.toContain('checked=""');
     expect(html).not.toContain('Approve tool call');
   });

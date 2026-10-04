@@ -16,6 +16,7 @@ import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
 import { ContextMeter } from '../ai/ContextMeter';
 import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
+import { AskComposer } from '../ai/AskComposer';
 export function PursuitRunView({
   run,
   bot,
@@ -188,7 +189,16 @@ export function PursuitRunView({
       )}
       <div className="composer-area ai-composer-area">
         <ToolApprovalCards conversationId={run.conversationId} />
-        <ApprovalModePicker />
+        <AskComposer
+          conversationId={run.conversationId}
+          onCancel={() => {
+            void chatService
+              .stop('space:' + run.conversationId)
+              .catch((caught) => setError(errorText(caught)));
+          }}
+        >
+          <ApprovalModePicker />
+        </AskComposer>
       </div>
     </>
   );

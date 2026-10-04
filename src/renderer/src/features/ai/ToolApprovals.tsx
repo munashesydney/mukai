@@ -2,7 +2,6 @@ import { PopupMenu } from '../../components/ui/PopupMenu';
 import { Check, ChevronDown, ChevronUp, Hand, ShieldAlert } from 'lucide-react';
 import { approvalStore, useApprovals } from './approvalStore';
 import type { ApprovalMode, ToolApproval } from '../../../../shared/approvals';
-import { AskRequestCard } from './AskRequestCard';
 
 const choices = [
   {
@@ -77,7 +76,7 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
   const state = useApprovals();
   const groups = new Map<string, ToolApproval[]>();
   for (const request of state.pending) {
-    if (request.conversationId !== conversationId) continue;
+    if (request.conversationId !== conversationId || request.ask) continue;
     const group = groups.get(request.batchId) || [];
     group.push(request);
     groups.set(request.batchId, group);
@@ -151,10 +150,6 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
 }
 
 function ToolApprovalCard({ request, deciding }: { request: ToolApproval; deciding: string[] }) {
-  if (request.ask)
-    return (
-      <AskRequestCard key={request.id} request={request} busy={deciding.includes(request.id)} />
-    );
   return (
     <section className="tool-approval-card" aria-label={`Approval for ${request.toolName}`}>
       <div className="tool-approval-heading">

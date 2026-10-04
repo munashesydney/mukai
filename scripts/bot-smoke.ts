@@ -617,7 +617,7 @@ async function main() {
     await fill('.composer textarea', 'Ask me who to focus on.');
     await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
     await wait('Boolean(document.querySelector(".ask-request-card"))');
-    assert.equal(await evaluate('document.querySelectorAll(".tool-approval-card").length'), 1);
+    assert.equal(await evaluate('document.querySelectorAll(".tool-approval-card").length'), 0);
     assert.equal(await evaluate('document.querySelectorAll(".ask-recommended").length'), 1);
     assert.equal(
       await evaluate('document.querySelectorAll(".ask-option input:checked").length'),
@@ -637,12 +637,13 @@ async function main() {
     await capture('ask-pending-page.png');
     await evaluate('document.querySelector(".pending-approval-tile").click()');
     await wait('Boolean(document.querySelector(".ask-request-card"))');
+    assert.equal(await evaluate('document.querySelector(".composer")'), null);
     await capture('ask-clarification-card.png');
     await evaluate(`document.documentElement.dataset.mode='dark'`);
     await capture('ask-clarification-card-dark.png');
     await evaluate(`document.documentElement.dataset.mode='light'`);
     await evaluate('document.querySelectorAll(".ask-option input")[1].click()');
-    await click('Submit answer');
+    await click('Submit');
     await wait(
       '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
     );
@@ -651,6 +652,7 @@ async function main() {
         'document.querySelector(".ai-message-feed").textContent.includes("Answered question")',
       ),
     );
+    assert(await evaluate('Boolean(document.querySelector(".composer textarea"))'));
     // A typed answer is also accepted after reloading the UI.
     await evaluate(
       `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
@@ -668,15 +670,55 @@ async function main() {
     await capture('ask-clarification-card-narrow.png');
     assert(
       await evaluate(
-        'document.querySelector(".ask-request-card button[type=submit]").getBoundingClientRect().bottom <= document.querySelector(".tool-approval-cards").getBoundingClientRect().bottom',
+        'document.querySelector(".ask-request-card button[type=submit]").getBoundingClientRect().bottom <= document.querySelector(".ask-composer").getBoundingClientRect().bottom',
       ),
     );
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     window.setSize(1480, 980);
-    await click('Submit answer');
+    await click('Submit');
     await wait(
       '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
     );
+    // Multiple questions replace the composer with a pager and preserve answers between pages.
+    parallelFixture = true;
+    await evaluate(
+      'document.querySelector(\'button[aria-label="New conversation with Mukai"]\').click()',
+    );
+    await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+    await fill('.composer textarea', 'Ask three questions.');
+    await evaluate('document.querySelector(\'button[aria-label="Send message"]\').click()');
+    await wait('document.querySelectorAll(".ask-request-card").length === 3');
+    const activeQuestion = '.ask-composer > div:not([hidden])';
+    assert.equal(await evaluate('document.querySelector(".composer")'), null);
+    await fill(activeQuestion + ' textarea', 'Keep my first answer.');
+    await evaluate('document.querySelector(\'button[aria-label="Collapse question"]\').click()');
+    assert.equal(await evaluate('document.querySelector(".ask-request-content").hidden'), true);
+    await evaluate('document.querySelector(\'button[aria-label="Expand question"]\').click()');
+    await evaluate('document.querySelector(\'button[aria-label="Next question"]\').click()');
+    assert.equal(await evaluate('document.querySelector(".ask-request-count").textContent'), '2/3');
+    await fill(activeQuestion + ' textarea', 'Keep my second answer.');
+    await evaluate('document.querySelector(\'button[aria-label="Previous question"]\').click()');
+    assert.equal(await evaluate('document.querySelector(".ask-request-count").textContent'), '1/3');
+    assert.equal(
+      await evaluate('document.querySelector(".ask-request-content textarea").value'),
+      'Keep my first answer.',
+    );
+    await capture('ask-questions-pager.png');
+    await click('Skip');
+    await wait('document.querySelectorAll(".ask-request-card").length === 2');
+    assert.equal(
+      await evaluate('document.querySelector(".ask-request-content textarea").value'),
+      'Keep my second answer.',
+    );
+    await click('Submit');
+    await wait('document.querySelectorAll(".ask-request-card").length === 1');
+    await evaluate('document.querySelectorAll(".ask-option input")[1].click()');
+    await click('Submit');
+    await wait(
+      '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+    );
+    assert(await evaluate('Boolean(document.querySelector(".composer textarea"))'));
+    parallelFixture = false;
     // Approval questions offer just Approve and Deny, and report both outcomes.
     askFixture = 'approval';
     for (const choice of ['Deny', 'Approve']) {
@@ -689,7 +731,7 @@ async function main() {
       await wait('Boolean(document.querySelector(".ask-request-card"))');
       assert.deepEqual(
         await evaluate(
-          'Array.from(document.querySelectorAll(".ask-request-card button")).map(button=>button.textContent)',
+          'Array.from(document.querySelectorAll(".ask-request-actions button")).map(button=>button.textContent)',
         ),
         ['Deny', 'Approve'],
       );
@@ -700,6 +742,19 @@ async function main() {
         '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
       );
     }
+    // The close control cancels the waiting response and restores the normal composer.
+    await evaluate(
+      'document.querySelector(\'button[aria-label="New conversation with Mukai"]\').click()',
+    );
+    await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+    await fill('.composer textarea', 'Ask, then cancel.');
+    await evaluate('document.querySelector(\'button[aria-label="Send message"]\').click()');
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    await evaluate('document.querySelector(\'button[aria-label="Stop response"]\').click()');
+    await wait(
+      '!document.querySelector(".ask-request-card") && Boolean(document.querySelector(".composer textarea"))',
+    );
+    assert.equal((await request<ApprovalState>('/approvals')).pending.length, 0);
     askFixture = null;
     const specialistInput = {
       name: 'Ada',

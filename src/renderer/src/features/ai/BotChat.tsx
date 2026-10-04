@@ -29,6 +29,7 @@ import { modelContextWindow } from '../../../../shared/modelLimits';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotModelPicker } from './BotModelPicker';
 import { ApprovalModePicker, ToolApprovalCards } from './ToolApprovals';
+import { AskComposer } from './AskComposer';
 
 export function BotChat({
   bot,
@@ -278,119 +279,124 @@ export function BotChat({
                   </button>
                 </div>
               )}
-              <div className="composer">
-                {!!state.files.length && (
-                  <div className="ai-attachments ai-pending-attachments">
-                    {state.files.map((file) => (
-                      <AttachmentCard
-                        key={file.id}
-                        attachment={file}
-                        onRemove={
-                          !state.busy && !state.uploading
-                            ? () => void chatStore.removeFile(chatId, file.id)
-                            : undefined
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-                <textarea
-                  rows={2}
-                  aria-label={`Message ${bot.name}`}
-                  placeholder={`Message ${bot.name}…`}
-                  value={state.text}
-                  maxLength={16000}
-                  disabled={state.loading || state.busy}
-                  onChange={(event) => chatStore.draft(chatId, event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      send();
-                    }
-                  }}
-                />
-                <div className="composer-toolbar">
-                  <div className="composer-actions">
-                    <ApprovalModePicker />
-                    <IconButton
-                      label="Attach images or files"
-                      disabled={state.busy || state.uploading || state.loading}
-                      onClick={() => fileInput.current?.click()}
-                    >
-                      <Paperclip size={18} />
-                    </IconButton>
-                    {state.uploading ? (
-                      <span className="ai-model-label">Uploading & reading…</span>
-                    ) : (
-                      <BotModelPicker
-                        bot={bot}
-                        providers={providers}
-                        disabled={state.busy || state.loading}
-                        onSelected={onBotChanged}
-                        onSaving={setChangingModel}
-                        onProviders={onProviders}
-                      />
-                    )}
-                    <ContextMeter
-                      usage={latestAssistant?.contextUsage}
-                      window={modelContextWindow(bot, provider)}
-                      onConfigure={onEdit}
-                    />
-                  </div>
-                  {state.busy ? (
-                    <button
-                      className="send-button ai-stop"
-                      aria-label="Stop generation"
-                      onClick={() => void chatStore.stop(chatId)}
-                    >
-                      <Square size={13} fill="currentColor" />
-                      Stop
-                    </button>
-                  ) : (
-                    <button
-                      className="send-button"
-                      aria-label="Send message"
-                      disabled={
-                        state.loading ||
-                        changingModel ||
-                        state.uploading ||
-                        blocked ||
-                        (!state.text.trim() && !state.files.length)
-                      }
-                      onClick={send}
-                    >
-                      <Send size={16} />
-                      <span>Send</span>
-                    </button>
+              <AskComposer
+                conversationId={conversation.id}
+                onCancel={() => void chatStore.stop(chatId)}
+              >
+                <div className="composer">
+                  {!!state.files.length && (
+                    <div className="ai-attachments ai-pending-attachments">
+                      {state.files.map((file) => (
+                        <AttachmentCard
+                          key={file.id}
+                          attachment={file}
+                          onRemove={
+                            !state.busy && !state.uploading
+                              ? () => void chatStore.removeFile(chatId, file.id)
+                              : undefined
+                          }
+                        />
+                      ))}
+                    </div>
                   )}
+                  <textarea
+                    rows={2}
+                    aria-label={`Message ${bot.name}`}
+                    placeholder={`Message ${bot.name}…`}
+                    value={state.text}
+                    maxLength={16000}
+                    disabled={state.loading || state.busy}
+                    onChange={(event) => chatStore.draft(chatId, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === 'Enter' &&
+                        !event.shiftKey &&
+                        !event.nativeEvent.isComposing
+                      ) {
+                        event.preventDefault();
+                        send();
+                      }
+                    }}
+                  />
+                  <div className="composer-toolbar">
+                    <div className="composer-actions">
+                      <ApprovalModePicker />
+                      <IconButton
+                        label="Attach images or files"
+                        disabled={state.busy || state.uploading || state.loading}
+                        onClick={() => fileInput.current?.click()}
+                      >
+                        <Paperclip size={18} />
+                      </IconButton>
+                      {state.uploading ? (
+                        <span className="ai-model-label">Uploading & reading…</span>
+                      ) : (
+                        <BotModelPicker
+                          bot={bot}
+                          providers={providers}
+                          disabled={state.busy || state.loading}
+                          onSelected={onBotChanged}
+                          onSaving={setChangingModel}
+                          onProviders={onProviders}
+                        />
+                      )}
+                      <ContextMeter
+                        usage={latestAssistant?.contextUsage}
+                        window={modelContextWindow(bot, provider)}
+                        onConfigure={onEdit}
+                      />
+                    </div>
+                    {state.busy ? (
+                      <button
+                        className="send-button ai-stop"
+                        aria-label="Stop generation"
+                        onClick={() => void chatStore.stop(chatId)}
+                      >
+                        <Square size={13} fill="currentColor" />
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        className="send-button"
+                        aria-label="Send message"
+                        disabled={
+                          state.loading ||
+                          changingModel ||
+                          state.uploading ||
+                          blocked ||
+                          (!state.text.trim() && !state.files.length)
+                        }
+                        onClick={send}
+                      >
+                        <Send size={16} />
+                        <span>Send</span>
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    ref={fileInput}
+                    className="visually-hidden"
+                    type="file"
+                    multiple
+                    accept={ACCEPTED_FILES}
+                    tabIndex={-1}
+                    aria-label="Upload chat attachments"
+                    onChange={(event) => {
+                      void chatStore.upload(chatId, Array.from(event.target.files || []));
+                      event.target.value = '';
+                    }}
+                  />
                 </div>
-                <input
-                  ref={fileInput}
-                  className="visually-hidden"
-                  type="file"
-                  multiple
-                  accept={ACCEPTED_FILES}
-                  tabIndex={-1}
-                  aria-label="Upload chat attachments"
-                  onChange={(event) => {
-                    void chatStore.upload(chatId, Array.from(event.target.files || []));
-                    event.target.value = '';
-                  }}
-                />
-              </div>
-              <div className="composer-hint ai-composer-hint">
-                <span>Enter to send · Shift + Enter for a new line</span>
-                <span>4 files · 10 MB each · {vision ? 'Images enabled' : 'Text only'}</span>
-              </div>
-              {!provider && (
-                <button className="text-button ai-configure-link" onClick={onProviders}>
-                  Set up a provider in Settings
-                </button>
-              )}
+                <div className="composer-hint ai-composer-hint">
+                  <span>Enter to send · Shift + Enter for a new line</span>
+                  <span>4 files · 10 MB each · {vision ? 'Images enabled' : 'Text only'}</span>
+                </div>
+                {!provider && (
+                  <button className="text-button ai-configure-link" onClick={onProviders}>
+                    Set up a provider in Settings
+                  </button>
+                )}
+              </AskComposer>
             </div>
           </>
         )}
