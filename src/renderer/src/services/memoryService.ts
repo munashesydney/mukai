@@ -2,6 +2,8 @@ import { api } from './http';
 import type { MemorySettings, MemorySnapshot } from '../../../shared/memory';
 const scope = (workspaceId: string) => '?workspaceId=' + encodeURIComponent(workspaceId);
 export const memoryService = {
+  retryRun: (workspaceId: string, id: string) =>
+    api('/memory/runs/retry' + scope(workspaceId), 'POST', { id }),
   snapshot: (workspaceId: string, query = '', history = false) =>
     api<MemorySnapshot>(
       '/memory' + scope(workspaceId) + '&q=' + encodeURIComponent(query) + '&history=' + history,

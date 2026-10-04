@@ -1033,7 +1033,7 @@ export class ChatService {
           generation.activity,
           generation.parts,
         );
-        if (!runtime) {
+        {
           try {
             this.memory?.capture(bot, conversationId, userId);
           } catch {

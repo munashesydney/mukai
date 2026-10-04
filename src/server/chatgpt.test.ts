@@ -19,6 +19,7 @@ import { chatGPTRequest, collectChatGPTResponse } from './services/chatgptTransp
 import { DiagnosticService } from './services/diagnosticService';
 import { safeProviderError } from './services/providerService';
 import { PROVIDER_MAX_RETRIES } from './services/responsePolicy';
+import { memoryReviewOutputSchema } from './services/memoryService';
 
 let dir: string, database: Database, providers: ProviderRepository, service: ChatGPTService;
 let authorization: URL;
@@ -496,6 +497,47 @@ describe('ChatGPT OAuth and accounts', () => {
 });
 
 describe('ChatGPT Responses compatibility', () => {
+  it('sends the memory review schema with every declared property required', async () => {
+    const { result } = await login();
+    inference = () => {
+      const body = inferenceCalls.at(-1)! as {
+        text: { format: { schema: Record<string, unknown>; strict: boolean } };
+      };
+      const validateStrict = (schema: Record<string, unknown>) => {
+        if (schema.type === 'object') {
+          const properties = schema.properties as Record<string, Record<string, unknown>>;
+          expect(schema.required).toEqual(Object.keys(properties));
+          expect(schema.additionalProperties).toBe(false);
+          Object.values(properties).forEach(validateStrict);
+        }
+        if (schema.items) validateStrict(schema.items as Record<string, unknown>);
+      };
+      expect(body.text.format.strict).toBe(true);
+      validateStrict(body.text.format.schema);
+      return sse([
+        {
+          type: 'response.completed',
+          response: complete(
+            JSON.stringify({ facts: [], reviewSummary: 'No durable information to retain.' }),
+          ),
+        },
+      ]);
+    };
+    const model = createOpenAI({
+      apiKey: 'placeholder',
+      fetch: service.fetch(result.providerId!),
+    }).responses('gpt-4.1-mini');
+    const response = await generateText({
+      model,
+      prompt: 'Review this exchange.',
+      output: Output.object({ schema: memoryReviewOutputSchema }),
+      maxRetries: 0,
+    });
+    expect(response.output).toEqual({
+      facts: [],
+      reviewSummary: 'No durable information to retain.',
+    });
+  });
   it('omits rejected fields, maps system messages, and namespaces local tools/history', () => {
     const body = chatGPTRequest({
       input: [

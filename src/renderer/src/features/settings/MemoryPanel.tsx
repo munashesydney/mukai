@@ -4,6 +4,7 @@ import { memoryService } from '../../services/memoryService';
 import type { MemoryFact, MemorySettings, MemorySnapshot } from '../../../../shared/memory';
 import { errorText } from '../../utils/errors';
 import { MemoryGraph } from './MemoryGraph';
+import { MemoryRuns } from './MemoryRuns';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { IconButton } from '../../components/ui/IconButton';
 
@@ -11,6 +12,7 @@ const memoryTabs = [
   ['graph', 'Graph'],
   ['list', 'Memories'],
   ['activity', 'Activity'],
+  ['runs', 'Runs'],
   ['preferences', 'Preferences'],
 ] as const;
 
@@ -54,6 +56,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     if (
       !snapshot?.episodes.some((episode) => ['pending', 'processing'].includes(episode.status)) &&
+      view !== 'runs' &&
       snapshot?.embedding.status !== 'loading'
     )
       return;
@@ -61,7 +64,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
       void refresh().catch(() => {});
     }, 3000);
     return () => clearInterval(timer);
-  }, [snapshot, refresh]);
+  }, [snapshot, refresh, view]);
   async function perform(action: () => Promise<unknown>, message: string) {
     setBusy(true);
     setError('');
@@ -407,6 +410,18 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                 </div>
               </>
             )}
+            {view === 'runs' && (
+              <MemoryRuns
+                key={workspaceId}
+                runs={snapshot.runs}
+                onRetry={(id) =>
+                  void perform(
+                    () => memoryService.retryRun(workspaceId, id),
+                    'Review queued for retry.',
+                  )
+                }
+              />
+            )}
             {view === 'activity' && (
               <div className="memory-activity">
                 <div className="memory-section-heading">
@@ -503,10 +518,10 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                       onChange={(event) => saveSettings({ automaticCapture: event.target.checked })}
                     />
                     <span>
-                      <strong>Remember useful statements</strong>
+                      <strong>Review conversations automatically</strong>
                       <small>
-                        Extract durable facts in the background using your configured AI. Private
-                        chats stay private to their bot.
+                        Review chats, spaces, and pursuit runs after one minute of inactivity using
+                        your configured AI. Private chats stay private to their bot.
                       </small>
                     </span>
                   </label>

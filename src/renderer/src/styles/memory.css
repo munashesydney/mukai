@@ -436,3 +436,48 @@
     flex-basis: 100%;
   }
 }
+.memory-run-detail {
+  display: grid;
+  gap: 16px;
+}
+.memory-run-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.memory-run-summary,
+.memory-run-operations {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+}
+.memory-run-detail h4 {
+  margin: 0 0 12px;
+}
+.memory-run-operations pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  padding: 12px;
+}
+.memory-run-operations summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.memory-panel .pursuit-run-row p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.memory-operation-chevron {
+  flex-shrink: 0;
+  transition: transform 150ms ease;
+}
+.memory-run-operations details[open] .memory-operation-chevron {
+  transform: rotate(90deg);
+}
+.memory-run-operations summary > span:first-of-type {
+  flex: 1;
+}

@@ -135,6 +135,7 @@ export function createRoutes({
     if (resource === 'skills') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
+
       if (!id && method === 'GET')
         return send(
           response,
@@ -174,6 +175,13 @@ export function createRoutes({
       throw new ApiError(404, 'Not found');
     }
     if (resource === 'memory') {
+      if (id === 'runs' && action === 'retry' && method === 'POST') {
+        const workspaceId = url.searchParams.get('workspaceId') || 'default';
+        workspaces.require(workspaceId);
+        const input = z.object({ id: z.string().uuid() }).parse(await jsonBody(request));
+        memory.retryRun(workspaceId, input.id);
+        return send(response, { ok: true });
+      }
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
       if (!id && method === 'GET')

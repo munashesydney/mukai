@@ -9,8 +9,11 @@ import { seedTestBot } from './testFixtures';
 import type { Bot, ChatEvent } from '../shared/ai';
 import type { MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
+import { MemoryEngine } from '../../mukai_memory/src';
 import { memoryTools } from './tools/memory/execute';
 import { memoryDefinition } from './tools/memory/definition';
+import { MemoryReviewService } from './services/memoryReviewService';
+import { BotRepository } from './repositories/botRepository';
 
 const coffee: ExtractedFact = {
   subject: 'User',
@@ -113,7 +116,12 @@ beforeEach(async () => {
               index: 0,
               message: {
                 role: 'assistant',
-                content: invalidSchema ? 'not json' : JSON.stringify({ facts: [coffee] }),
+                content: invalidSchema
+                  ? 'not json'
+                  : JSON.stringify({
+                      facts: [coffee],
+                      reviewSummary: 'Retain the explicitly stated coffee preference.',
+                    }),
               },
               finish_reason: 'stop',
             },
@@ -123,7 +131,11 @@ beforeEach(async () => {
       );
   });
   await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
-  api = await startApiServer(0, { dataDir: dir, memoryExtractor: extractor });
+  api = await startApiServer(0, {
+    dataDir: dir,
+    memoryExtractor: extractor,
+    memoryReviewIdleMs: 0,
+  });
   seedTestBot(api.store);
   await request('/providers', 'POST', {
     name: 'Memory fixture',
@@ -136,6 +148,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await close(api.server);
   await close(fixture);
   expect(dir.startsWith(join(tmpdir(), 'mukai-memory-test-'))).toBe(true);
@@ -143,6 +156,223 @@ afterEach(async () => {
 });
 
 describe('Mukai memory integration', () => {
+  it('serializes overlapping review requests across private and workspace conversations', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso.');
+    api.store.run(
+      "INSERT INTO conversations(id,workspace_id,kind,name,description,created_at,updated_at) VALUES('queue-space','default','space','Queue check','','now','now')",
+    );
+    api.store.run(
+      "INSERT INTO messages(id,conversation_id,request_id,role,content,status,created_at) VALUES('queue-message','queue-space','queue-request','user','Project finding','complete','2026-10-04T00:00:00Z')",
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const order: string[] = [];
+    let active = 0,
+      peak = 0;
+    const engine = new MemoryEngine(api.memory.store, async ({ episode }) => {
+      order.push(episode.conversationId!);
+      peak = Math.max(peak, ++active);
+      if (order.length === 1) await gate;
+      active--;
+      return { facts: [] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    worker.schedule('default', 'queue-space', 'scout');
+    const first = worker.drain(new AbortController().signal);
+    await vi.waitFor(() => expect(order).toEqual(['bot-scout']));
+    const overlapping = worker.drain(new AbortController().signal);
+    expect(overlapping).toBe(first);
+    expect(worker.list('default')).toHaveLength(1);
+    release();
+    await Promise.all([first, overlapping]);
+    expect(order).toEqual(['bot-scout', 'queue-space']);
+    expect(peak).toBe(1);
+    expect(worker.list('default')).toHaveLength(2);
+    expect(worker.list('default').every((run) => run.status === 'complete')).toBe(true);
+    await worker.drain(new AbortController().signal);
+    expect(order).toHaveLength(2);
+  });
+  it('indexes reviewed facts locally and respects semantic search opt-out', async () => {
+    api.memory.embedding.ready = true;
+    const embed = vi
+      .spyOn(api.memory.embedding, 'embed')
+      .mockImplementation(async (texts) => texts.map(() => [1, ...Array<number>(383).fill(0)]));
+    api.memory.saveSettings('default', { ...api.memory.settings('default'), semanticSearch: true });
+    await chat('I prefer espresso.');
+    await vi.waitFor(() =>
+      expect(
+        api.memory.store.get('SELECT vector_json FROM memory_facts LIMIT 1')?.vector_json,
+      ).toBeTruthy(),
+    );
+    expect(embed.mock.calls.some((call) => call[1] === 'document')).toBe(true);
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      semanticSearch: false,
+    });
+    embed.mockClear();
+    await chat('Espresso is still my preference.');
+    await vi.waitFor(() => expect(api.memory.reviews.list('default')).toHaveLength(2));
+    expect(embed).not.toHaveBeenCalled();
+  });
+  it('does not resurrect a source when memory is cleared during a review', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso.');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let extracting = false;
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      extracting = true;
+      await gate;
+      return { facts: [coffee] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    const running = worker.drain(new AbortController().signal);
+    await vi.waitFor(() => expect(extracting).toBe(true));
+    api.memory.clear('default');
+    release();
+    await running;
+    expect(api.memory.snapshot('default').facts).toHaveLength(0);
+    expect(worker.list('default')).toHaveLength(0);
+  });
+  it('holds a failed review checkpoint until retry succeeds', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso.');
+    let attempts = 0;
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      if (++attempts === 1) throw new Error('Fixture failure');
+      return { facts: [coffee] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(new AbortController().signal);
+    const failed = worker.list('default')[0];
+    expect(failed.status).toBe('failed');
+    expect(
+      api.memory.store.get(
+        "SELECT checkpoint FROM memory_review_jobs WHERE conversation_id='bot-scout'",
+      )?.checkpoint,
+    ).toBe(0);
+    await worker.drain(new AbortController().signal);
+    expect(attempts).toBe(1);
+    worker.retry('default', failed.id);
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')[0].status).toBe('complete');
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect(attempts).toBe(2);
+  });
+  it('debounces reviews, skips active responses, and checkpoints complete exchanges exactly once', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso every morning.');
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      api.memory.engine,
+      new BotRepository(api.store),
+      () => true,
+    );
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    worker.schedule('default', 'bot-scout', 'scout');
+    now.mockReturnValue(60000);
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')).toHaveLength(0);
+    worker.schedule('default', 'bot-scout', 'scout');
+    now.mockReturnValue(119999);
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')).toHaveLength(0);
+    now.mockReturnValue(120001);
+    api.store.run("UPDATE messages SET status='streaming' WHERE role='assistant'");
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')).toHaveLength(0);
+    api.store.run("UPDATE messages SET status='complete' WHERE role='assistant'");
+    await worker.drain(new AbortController().signal);
+    const run = worker.list('default')[0];
+    expect(run).toMatchObject({ status: 'complete', ownerId: 'scout', kind: 'private' });
+    expect(run.messageIds).toHaveLength(2);
+    expect(run.activity.map((activity) => activity.action)).toEqual(['review', 'search', 'add']);
+    const episode = api.memory.snapshot('default').episodes[0];
+    expect(
+      JSON.parse(episode.content).messages.map((message: { role: string }) => message.role),
+    ).toEqual(['user', 'assistant']);
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')).toHaveLength(1);
+    const restored = new MemoryReviewService(
+      api.memory.store,
+      api.memory.engine,
+      new BotRepository(api.store),
+      () => true,
+    );
+    restored.recover();
+    await restored.drain(new AbortController().signal);
+    expect(restored.list('default')).toHaveLength(1);
+    expect(
+      (await request('/memory/runs/retry?workspaceId=other', 'POST', { id: run.id })).response
+        .status,
+    ).toBe(404);
+  });
+  it('reviews pursuit findings in workspace scope and records no-change reviews', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('Hello');
+    api.store.run("UPDATE conversations SET kind='pursuit_run' WHERE id='bot-scout'");
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      api.memory.engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')[0]).toMatchObject({
+      ownerId: null,
+      kind: 'pursuit_run',
+      status: 'complete',
+      summary: 'No durable information needed saving.',
+    });
+    expect(api.memory.snapshot('default').facts).toHaveLength(0);
+    expect(worker.list('default')[0].activity.map((activity) => activity.action)).toEqual([
+      'review',
+      'search',
+    ]);
+  });
   it('exposes one memory function and dispatches actions with their required fields', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
@@ -308,7 +538,11 @@ describe('Mukai memory integration', () => {
       'Retrieved memory reference',
     );
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir, memoryExtractor: extractor });
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryExtractor: extractor,
+      memoryReviewIdleMs: 0,
+    });
     expect(api.memory.settings('default').automaticCapture).toBe(false);
     expect(api.memory.snapshot('default').facts).toHaveLength(1);
     const before = calls.length;
@@ -370,7 +604,7 @@ describe('Mukai memory integration', () => {
   });
   it('uses the configured provider for validated extraction and preserves schema failures for retry', async () => {
     await close(api.server);
-    api = await startApiServer(0, { dataDir: dir });
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 0 });
     await chat('I prefer espresso every morning.');
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const extractionCall = calls.find((call) => !call.stream)!;

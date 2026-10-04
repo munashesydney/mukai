@@ -15,6 +15,7 @@ async function main() {
   const api = await startApiServer(0, {
     dataDir: join(dir, 'api'),
     memoryExtractor: async () => ({ facts: [] }),
+    memoryReviewIdleMs: 0,
   });
   seedTestBot(api.store);
   const window = new BrowserWindow({
@@ -140,6 +141,33 @@ async function main() {
       ),
     );
     await capture('memory-activity.png');
+    api.store.run(
+      "INSERT INTO conversations(id,workspace_id,kind,name,description,owner_bot_id,created_at,updated_at) VALUES('memory-smoke-review','default','private','Project review','','scout','now','now')",
+    );
+    api.store.run(
+      "INSERT INTO conversation_bots(conversation_id,bot_id) VALUES('memory-smoke-review','scout')",
+    );
+    api.store.run(
+      "INSERT INTO messages(id,conversation_id,request_id,role,content,status,created_at) VALUES('memory-smoke-message','memory-smoke-review','memory-smoke-request','user','Hello','complete','2026-10-04T00:00:00Z')",
+    );
+    api.memory.reviews.schedule('default', 'memory-smoke-review', 'scout');
+    await api.memory.reviews.drain(new AbortController().signal);
+    await evaluate(`document.querySelector('#memory-tab-runs').click()`);
+    await wait('Boolean(document.querySelector(".pursuit-run-row"))');
+    await capture('memory-runs.png');
+    await evaluate(`document.querySelector('.pursuit-run-row').click()`);
+    await wait('Boolean(document.querySelector(".memory-run-detail"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".memory-run-summary").textContent.includes("No durable information")',
+      ),
+    );
+    assert(
+      await evaluate(
+        'document.querySelector(".memory-run-operations").textContent.includes("memory · search")',
+      ),
+    );
+    await capture('memory-run-detail.png');
     await evaluate(`document.querySelector('#settings-tab-appearance').click()`);
     await wait('Boolean(document.querySelector("input[name=color-mode][value=dark]"))');
     await evaluate(`document.querySelector('input[name=color-mode][value=dark]').click()`);
@@ -159,6 +187,18 @@ async function main() {
     assert(
       await evaluate(
         `document.querySelector('.memory-panel').scrollWidth <= document.querySelector('.memory-panel').clientWidth + 1`,
+      ),
+    );
+    await evaluate(`document.querySelector('#memory-tab-runs').click()`);
+    await wait('Boolean(document.querySelector(".pursuit-run-row"))');
+    await capture('memory-runs-dark-narrow.png');
+    await evaluate(`document.querySelector('.pursuit-run-row').click()`);
+    await wait('Boolean(document.querySelector(".memory-run-detail"))');
+    await evaluate(`document.querySelector('.memory-run-operations details').open = true`);
+    await capture('memory-run-detail-dark-narrow.png');
+    assert(
+      await evaluate(
+        'document.querySelector(".memory-panel").scrollWidth <= document.querySelector(".memory-panel").clientWidth + 1',
       ),
     );
     assert.deepEqual(errors, []);

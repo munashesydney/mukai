@@ -208,6 +208,19 @@ export const migrations = [
   `ALTER TABLE bots RENAME COLUMN description TO role;
    UPDATE bots SET role=CASE WHEN is_main=1 THEN 'Main Bot/Orchestrator'
      WHEN trim(role)='' THEN 'Assistant' ELSE substr(role,1,120) END;`,
+  `CREATE TABLE memory_review_jobs (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    actor_id TEXT NOT NULL, checkpoint INTEGER NOT NULL DEFAULT 0,
+    due_at INTEGER NOT NULL, blocked INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE memory_review_runs (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    conversation_name TEXT NOT NULL, kind TEXT NOT NULL, owner_id TEXT,
+    status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    summary TEXT NOT NULL, error TEXT, episode_id TEXT NOT NULL,
+    message_ids TEXT NOT NULL, activity_json TEXT NOT NULL);
+   CREATE INDEX memory_review_recent ON memory_review_runs(workspace_id,started_at);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

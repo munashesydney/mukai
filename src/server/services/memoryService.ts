@@ -24,6 +24,7 @@ import { ApiError } from '../config';
 import { contextLimits, estimateTokens } from './contextPolicy';
 import type { DiagnosticService } from './diagnosticService';
 import { PROVIDER_MAX_RETRIES } from './responsePolicy';
+import { MemoryReviewService } from './memoryReviewService';
 
 export const memorySettingsSchema = z.object({
   automaticCapture: z.boolean(),
@@ -37,11 +38,16 @@ const defaults: MemorySettings = {
   semanticSearch: false,
   contextTokens: 1600,
 };
+// Strict structured output requires every declared property to be required.
+export const memoryReviewOutputSchema = extractionSchema.extend({
+  reviewSummary: z.string().trim().min(1).max(3000),
+});
 
 export class MemoryService {
   readonly engine: MemoryEngine;
   readonly store: SQLiteMemoryStore;
   readonly embedding: BgeEmbedder;
+  readonly reviews: MemoryReviewService;
   private controller = new AbortController();
   private processing?: Promise<void>;
   private modelTask?: Promise<void>;
@@ -56,90 +62,119 @@ export class MemoryService {
     private messages: MessageRepository,
     extractor?: Extractor,
     private diagnostics?: DiagnosticService,
+    reviewIdleMs = 60000,
   ) {
     this.store = new SQLiteMemoryStore(connection);
     this.embedding = new BgeEmbedder(join(dataDir, 'memory-models'));
     this.engine = new MemoryEngine(
       this.store,
-      extractor ||
-        (async ({ episode, candidates, signal }) => {
-          const bot = episode.actorId ? this.bots.find(episode.actorId) : undefined;
-          if (episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
-          if (bot && bot.workspaceId !== episode.workspaceId)
-            throw new Error('Memory actor changed workspace.');
-          const actor = bot || this.bots.list(episode.workspaceId)[0];
-          if (!actor) throw new Error('A bot is required to resolve the memory model.');
-          const config = this.providers.resolve(actor);
-          const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
-          const data = {
-            content: episode.content,
-            referenceTime: episode.referenceTime,
-            recentContext: episode.context,
-            candidates: candidates.map((fact) => ({
-              id: fact.id,
-              subject: fact.subject,
-              subjectId: fact.subjectId,
-              relation: fact.relation,
-              object: fact.object,
-              objectId: fact.objectId,
-              text: fact.text,
-              validFrom: fact.validFrom,
-              validTo: fact.validTo,
-            })),
-          };
-          while (
-            data.candidates.length &&
-            estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
-              limits.input
-          )
-            data.candidates.pop();
-          if (
-            estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
-            limits.input
-          ) {
-            data.recentContext = '';
+      async (request) => {
+        const result = await (
+          extractor ||
+          (async ({ episode, candidates, signal }) => {
+            const bot = episode.actorId ? this.bots.find(episode.actorId) : undefined;
+            if (episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
+            if (bot && bot.workspaceId !== episode.workspaceId)
+              throw new Error('Memory actor changed workspace.');
+            const actor = bot || this.bots.list(episode.workspaceId)[0];
+            if (!actor) throw new Error('A bot is required to resolve the memory model.');
+            const config = this.providers.resolve(actor);
+            const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
+            const data = {
+              content: episode.content,
+              referenceTime: episode.referenceTime,
+              recentContext: episode.context,
+              candidates: candidates.map((fact) => ({
+                id: fact.id,
+                subject: fact.subject,
+                subjectId: fact.subjectId,
+                relation: fact.relation,
+                object: fact.object,
+                objectId: fact.objectId,
+                text: fact.text,
+                validFrom: fact.validFrom,
+                validTo: fact.validTo,
+              })),
+            };
+            while (
+              data.candidates.length &&
+              estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
+                limits.input
+            )
+              data.candidates.pop();
             if (
               estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
               limits.input
-            )
-              throw new Error('Memory episode exceeds model context.');
-          }
-          try {
-            const result = await generateText({
-              model: config.model,
-              output: Output.object({ schema: extractionSchema }),
-              system: extractionInstructions,
-              prompt: JSON.stringify(data),
-              abortSignal: signal,
-              timeout: { totalMs: 60000 },
-              maxRetries: PROVIDER_MAX_RETRIES,
-              maxOutputTokens:
-                config.provider.kind === 'chatgpt' ? undefined : Math.min(limits.output, 6000),
-              providerOptions: {
-                openai: {
-                  store: false,
-                  ...(config.provider.kind === 'chatgpt' ? { systemMessageMode: 'developer' } : {}),
+            ) {
+              data.recentContext = '';
+              if (
+                estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
+                limits.input
+              )
+                throw new Error('Memory episode exceeds model context.');
+            }
+            try {
+              const result = await generateText({
+                model: config.model,
+                output: Output.object({
+                  schema: memoryReviewOutputSchema,
+                }),
+                system:
+                  extractionInstructions +
+                  '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.',
+                prompt: JSON.stringify(data),
+                abortSignal: signal,
+                timeout: { totalMs: 60000 },
+                maxRetries: PROVIDER_MAX_RETRIES,
+                maxOutputTokens:
+                  config.provider.kind === 'chatgpt' ? undefined : Math.min(limits.output, 6000),
+                providerOptions: {
+                  openai: {
+                    store: false,
+                    ...(config.provider.kind === 'chatgpt'
+                      ? { systemMessageMode: 'developer' }
+                      : {}),
+                  },
+                  anthropic: { thinking: { type: 'disabled' } },
+                  google: { thinkingConfig: { includeThoughts: false } },
                 },
-                anthropic: { thinking: { type: 'disabled' } },
-                google: { thinkingConfig: { includeThoughts: false } },
-              },
-            });
-            return result.output;
-          } catch (error) {
-            if (!signal?.aborted)
-              this.diagnostics?.record('memory.extraction_failed', error, {
-                providerId: config.provider.id,
-                providerKind: config.provider.kind,
-                model: config.modelId,
-                botId: actor.id,
-                conversationId: episode.conversationId || undefined,
-                messageId: episode.messageId || undefined,
-                phase: 'memory-extraction',
               });
-            throw error;
-          }
-        }),
+              return result.output;
+            } catch (error) {
+              if (!signal?.aborted)
+                this.diagnostics?.record('memory.extraction_failed', error, {
+                  providerId: config.provider.id,
+                  providerKind: config.provider.kind,
+                  model: config.modelId,
+                  botId: actor.id,
+                  conversationId: episode.conversationId || undefined,
+                  messageId: episode.messageId || undefined,
+                  phase: 'memory-extraction',
+                });
+              throw error;
+            }
+          })
+        )(request);
+        this.reviews?.describe(
+          request.episode.id,
+          'reviewSummary' in result && typeof result.reviewSummary === 'string'
+            ? result.reviewSummary
+            : result.facts.length
+              ? `Selected ${result.facts.length} durable facts: ` +
+                result.facts.map((fact) => `${fact.disposition}: ${fact.text}`).join('\n')
+              : 'No durable information needed saving.',
+        );
+        return result;
+      },
       this.embedding,
+    );
+    this.reviews = new MemoryReviewService(
+      this.store,
+      this.engine,
+      this.bots,
+      (workspaceId) => this.settings(workspaceId).automaticCapture,
+      reviewIdleMs,
+      (scope, query) => this.searchScope(scope, query, { limit: 12 }),
     );
   }
   settings(workspaceId: string): MemorySettings {
@@ -190,6 +225,7 @@ export class MemoryService {
     return { ready: true };
   }
   start() {
+    this.reviews.recover();
     this.timer = setInterval(() => this.kick(), 3000);
     this.timer.unref();
     if (this.store.settingsValues().some((value) => JSON.parse(value).semanticSearch))
@@ -199,30 +235,23 @@ export class MemoryService {
   capture(bot: Bot, conversationId: string, messageId: string) {
     if (!this.settings(bot.workspaceId).automaticCapture || this.controller.signal.aborted) return;
     const message = this.messages.message(messageId);
-    if (message.role !== 'user' || !message.content.trim() || message.content.length > 24000)
-      return;
-    // Scheduled capability wakes are external payloads, not statements by the human.
-    if (/^(Custom capability wake-up|Pursuit run|Scheduled pursuit)/.test(message.content)) return;
-    const scope = this.scope(bot, conversationId);
-    const context = this.messages
-      .context(conversationId, 4, this.messages.sequence(messageId))
-      .filter((item) => item.role === 'user' && item.id !== messageId)
-      .map((item) => item.content)
-      .join('\n')
-      .slice(-6000);
-    this.engine.enqueue({
-      workspaceId: bot.workspaceId,
-      ownerId: scope.privateOwner || null,
-      actorId: bot.id,
-      sourceKey: `message:${messageId}`,
-      sourceType: 'user',
-      content: message.content,
-      referenceTime: message.createdAt,
-      conversationId,
-      messageId,
-      context,
-    });
+    if (message.role !== 'user') return;
+    this.reviews.schedule(bot.workspaceId, conversationId, bot.id);
     this.kick();
+  }
+  /* Explicit memory writes still use immediate extraction; automatic reviews batch messages. */
+  private async drainReviews() {
+    const updated = await this.reviews.drain(this.controller.signal);
+    for (const workspaceId of updated) {
+      if (this.embedding.ready && this.settings(workspaceId).semanticSearch) {
+        try {
+          await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
+        } catch {
+          this.modelError =
+            'Some memories could not be embedded. Keyword search remains available.';
+        }
+      }
+    }
   }
   private kick() {
     if (this.processing || this.controller.signal.aborted) return;
@@ -235,11 +264,19 @@ export class MemoryService {
       });
   }
   private async drain() {
+    await this.drainReviews();
     const allowed = this.workspaces
       .list()
       .filter((workspace) => this.settings(workspace.id).automaticCapture)
       .map((workspace) => workspace.id);
-    const rows = this.store.pendingEpisodes(8, allowed);
+    const rows = this.store
+      .all(
+        `SELECT * FROM memory_episodes WHERE status='pending' AND source_key NOT LIKE 'review:%'
+       AND (source_type!='user'${allowed.length ? ` OR workspace_id IN (${allowed.map(() => '?').join(',')})` : ''})
+       ORDER BY created_at LIMIT 8`,
+        ...allowed,
+      )
+      .map((row) => this.store.episode(row));
     for (const row of rows) {
       if (this.controller.signal.aborted) return;
       const workspaceId = row.workspaceId;
@@ -364,6 +401,7 @@ export class MemoryService {
       episodes: this.store.recentEpisodes(workspaceId),
       graph,
       recalls: this.store.recalls(scope),
+      runs: this.reviews.list(workspaceId),
       totalFacts: all.length,
       embedding: {
         status: this.modelTask ? 'loading' : this.embedding.ready ? 'ready' : 'unavailable',
@@ -386,11 +424,31 @@ export class MemoryService {
     this.engine.forgetEpisodes(this.admin(workspaceId), [id]);
   }
   clear(workspaceId: string) {
+    this.admin(workspaceId);
+    this.store.run('DELETE FROM memory_review_runs WHERE workspace_id=?', workspaceId);
+    this.store.run(
+      'UPDATE memory_review_jobs SET checkpoint=COALESCE((SELECT MAX(sequence) FROM messages WHERE conversation_id=memory_review_jobs.conversation_id),0),blocked=0 WHERE workspace_id=?',
+      workspaceId,
+    );
     this.engine.clear(this.admin(workspaceId));
   }
   retry(workspaceId: string, id: string) {
     this.admin(workspaceId);
+    const run = this.store.get(
+      "SELECT id FROM memory_review_runs WHERE workspace_id=? AND episode_id=? AND status='failed' ORDER BY started_at DESC LIMIT 1",
+      workspaceId,
+      id,
+    );
+    if (run) {
+      this.retryRun(workspaceId, String(run.id));
+      return;
+    }
     this.store.retryEpisode(workspaceId, id);
+    this.kick();
+  }
+  retryRun(workspaceId: string, id: string) {
+    this.admin(workspaceId);
+    this.reviews.retry(workspaceId, id);
     this.kick();
   }
   export(workspaceId: string) {

@@ -44,6 +44,7 @@ export interface ApiOptions {
   embeddedBrowser?: EmbeddedBrowserHost;
   /** Deterministic extractor for tests or a host-provided memory model. */
   memoryExtractor?: Extractor;
+  memoryReviewIdleMs?: number;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -106,6 +107,7 @@ export function createApiServer(options: ApiOptions = {}) {
       messageRepository,
       options.memoryExtractor,
       diagnostics,
+      options.memoryReviewIdleMs,
     );
     tools.attachMemory(memory);
     const attachments = new AttachmentService(
