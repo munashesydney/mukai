@@ -12,6 +12,8 @@ import { BotService } from './services/botService';
 import { ProviderService } from './services/providerService';
 import { AttachmentService } from './services/attachmentService';
 import { ChatService } from './services/chatService';
+import { ApprovalService } from './services/approvalService';
+import { ApprovalRepository } from './repositories/approvalRepository';
 import { createRoutes } from './http/routes';
 import { sendError } from './http/transport';
 import { WorkspaceRepository } from './repositories/workspaceRepository';
@@ -115,6 +117,7 @@ export function createApiServer(options: ApiOptions = {}) {
       botRepository,
       join(dir, 'uploads'),
     );
+    const approvals = new ApprovalService(new ApprovalRepository(store));
     const chats = new ChatService(
       messageRepository,
       providers,
@@ -123,6 +126,7 @@ export function createApiServer(options: ApiOptions = {}) {
       new ChatJobRepository(store),
       diagnostics,
       memory,
+      approvals,
     );
     const bots = new BotService(
       botRepository,
@@ -167,6 +171,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const botManagement = new BotManagementService(bots, chats, conversations, access, providers);
     tools.attachBotManagement(access, botManagement);
     const route = createRoutes({
+      approvals,
       token,
       startedAt,
       bots,

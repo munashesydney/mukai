@@ -6,6 +6,7 @@ import { createServer, type Server } from 'node:http';
 import { startApiServer } from '../src/server/app';
 import { IPC } from '../src/shared/contracts';
 import type { Bot } from '../src/shared/ai';
+import type { ApprovalState } from '../src/shared/approvals';
 
 async function main() {
   const dir = process.env.MUKAI_BOT_SMOKE_DIR;
@@ -45,6 +46,7 @@ async function main() {
       if (await evaluate<boolean>(code)) return;
       await new Promise((done) => setTimeout(done, 50));
     }
+    console.error('Bot UI did not settle: ' + code);
     throw new Error('Bot UI did not settle: ' + code);
   };
   const click = (label: string) =>
@@ -57,7 +59,7 @@ async function main() {
     );
   const capture = async (name: string) => {
     await evaluate(
-      'Promise.all(document.getAnimations().map(animation=>animation.finished.catch(()=>{})))',
+      'Promise.all(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{})))',
     );
     await evaluate(
       'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
@@ -215,11 +217,44 @@ async function main() {
     await capture('bot-assignments-narrow.png');
     window.setSize(1480, 980);
     const sentModels: string[] = [];
+    let approvalFixture = false;
     modelFixture = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk;
-      sentModels.push((JSON.parse(body) as { model: string }).model);
+      const input = JSON.parse(body) as { model: string; messages: { role: string }[] };
+      sentModels.push(input.model);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (approvalFixture) {
+        const completed = input.messages.some((message) => message.role === 'tool');
+        res.write(
+          `data: ${JSON.stringify({
+            id: 'approval-ui',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: input.model,
+            choices: [
+              {
+                index: 0,
+                delta: completed
+                  ? { content: 'Approval fixture finished.' }
+                  : {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: 'approval-ui-call',
+                          type: 'function',
+                          function: { name: 'echo', arguments: '{}' },
+                        },
+                      ],
+                    },
+                finish_reason: completed ? 'stop' : 'tool_calls',
+              },
+            ],
+          })}\n\n`,
+        );
+        res.end('data: [DONE]\n\n');
+        return;
+      }
       for (const [delta, finish_reason] of [
         [{ role: 'assistant', content: 'Fixture model switched.' }, null],
         [{}, 'stop'],
@@ -289,6 +324,84 @@ async function main() {
     assert.deepEqual(sentModels, ['fixture-alternate', 'fixture-default']);
     assert.equal((await request<Bot[]>('/bots')).find((bot) => bot.id === child.id)?.model, null);
     await capture('bot-name-only-sidebar.png');
+    // Exercise the global dropup and real custom-tool pause/approve/reject flow.
+    approvalFixture = true;
+    await wait('!document.querySelector(".approval-mode-trigger").disabled');
+    await evaluate('document.querySelector(".approval-mode-trigger").click()');
+    await wait('Boolean(document.querySelector(".approval-mode-menu"))');
+    assert.deepEqual(
+      await evaluate(
+        'Array.from(document.querySelectorAll(".approval-mode-menu strong")).map(e=>e.textContent)',
+      ),
+      ['Ask for approval', 'Full access'],
+    );
+    assert(
+      await evaluate(
+        'document.querySelector(".approval-mode-menu").getBoundingClientRect().bottom < document.querySelector(".approval-mode-trigger").getBoundingClientRect().top',
+      ),
+    );
+    await capture('tool-approval-menu.png');
+    await evaluate('document.querySelector(".approval-mode-menu [role=menuitemradio]").click()');
+    await wait(
+      'document.querySelector(".approval-mode-trigger").textContent.includes("Ask for approval") && !document.querySelector(".approval-mode-trigger").disabled',
+    );
+    assert.equal((await request<ApprovalState>('/approvals')).mode, 'ask-for-approval');
+    await fill('.composer textarea', 'Run the approval fixture.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait('Boolean(document.querySelector(".tool-approval-card"))');
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 0);
+    assert(
+      await evaluate(`Boolean(document.querySelector('button[aria-label="Stop generation"]'))`),
+    );
+    assert(
+      await evaluate(
+        'document.querySelector(".tool-approval-card").getBoundingClientRect().bottom <= document.querySelector(".composer").getBoundingClientRect().top',
+      ),
+    );
+    await evaluate('document.querySelector(".tool-approval-card details").open=true');
+    await capture('tool-approval-card.png');
+    window.setSize(900, 800);
+    await capture('tool-approval-card-narrow.png');
+    window.setSize(1480, 980);
+    window.reload();
+    await wait(
+      'Boolean(document.querySelector(".tool-approval-card")) && !document.querySelector(".approval-mode-trigger").disabled',
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 0);
+    await click('Approve tool call');
+    await wait(
+      `!document.querySelector('.tool-approval-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 1);
+    assert(
+      await evaluate(
+        'document.querySelector(".ai-message-feed").textContent.includes("Approval fixture finished.")',
+      ),
+    );
+    await fill('.composer textarea', 'Reject the next approval fixture.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait('Boolean(document.querySelector(".tool-approval-card"))');
+    await click('Reject');
+    await wait(
+      `!document.querySelector('.tool-approval-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 1);
+    await evaluate('document.querySelector(".approval-mode-trigger").click()');
+    await wait('Boolean(document.querySelector(".approval-mode-menu"))');
+    await evaluate(
+      'document.querySelectorAll(".approval-mode-menu [role=menuitemradio]")[1].click()',
+    );
+    await wait(
+      'document.querySelector(".approval-mode-trigger").textContent.includes("Full access") && !document.querySelector(".approval-mode-trigger").disabled',
+    );
+    await fill('.composer textarea', 'Run with full access.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait(
+      `document.querySelectorAll('.ai-message--assistant').length===5 && !document.querySelector('button[aria-label="Stop generation"]')`,
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 2);
+    assert.equal(await evaluate('document.querySelector(".tool-approval-card")'), null);
+    approvalFixture = false;
     const specialistInput = {
       name: 'Ada',
       role: 'Code architect',
@@ -407,11 +520,12 @@ async function main() {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, roles, assignments, model requests, hierarchy relationships/navigation, creator details, and narrow layout.',
+      'PASS bot UI: onboarding, roles, assignments, models, tool approval menu/cards, reload recovery, approve/reject/full access, hierarchy, and narrow layout.',
     );
   } finally {
     window.destroy();
     await api.shutdown();
+    api.server.closeAllConnections();
     await new Promise<void>((resolve) => api.server.close(() => resolve()));
     if (modelFixture) {
       modelFixture.closeAllConnections();

@@ -8,6 +8,7 @@ import { errorText } from '../../utils/errors';
 import type { ChatState, ChatDraft } from '../../models/chat';
 import { conversationService } from '../../services/conversationService';
 import { chatConversationId } from '../../services/chatTarget';
+import { approvalStore } from './approvalStore';
 
 const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
@@ -149,7 +150,9 @@ export const chatStore = {
     };
     try {
       const handle = (event: ChatEvent) => {
-        if (event.type === 'start') {
+        if (event.type === 'approval') {
+          void approvalStore.refresh();
+        } else if (event.type === 'start') {
           accept();
           const previous = get(id).messages.filter((message) => message.requestId !== requestId);
           update(id, { messages: [...previous, event.user, event.assistant] });

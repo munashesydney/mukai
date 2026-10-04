@@ -15,6 +15,7 @@ import { ArtifactsView } from '../ai/ArtifactsView';
 import { errorText } from '../../utils/errors';
 import { ContextMeter } from '../ai/ContextMeter';
 import { modelContextWindow } from '../../../../shared/modelLimits';
+import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
 
 export function SpaceChat({
   space,
@@ -184,6 +185,7 @@ export function SpaceChat({
           </div>
           {!savedOpen && (
             <div className="composer-area ai-composer-area">
+              <ToolApprovalCards conversationId={space.id} />
               {(state.error || mentionError) && (
                 <div className="ai-alert" role="alert">
                   {mentionError || state.error}
@@ -256,6 +258,7 @@ export function SpaceChat({
                 )}
                 <div className="composer-toolbar">
                   <div className="composer-actions">
+                    <ApprovalModePicker />
                     <span className="ai-caption">
                       {members.length
                         ? 'Mention one bot to get a response'

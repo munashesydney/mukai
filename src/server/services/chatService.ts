@@ -25,6 +25,8 @@ import { ProviderService, safeProviderError, isContextOverflow } from './provide
 import { AttachmentService } from './attachmentService';
 import { ApiError } from '../config';
 import { ToolService } from './toolService';
+import type { ApprovalService } from './approvalService';
+import { GenerationTimeout } from './generationTimeout';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
 import {
   ContextError,
@@ -83,6 +85,7 @@ export class ChatService {
     private jobs: ChatJobRepository,
     private diagnostics: DiagnosticService,
     private memory?: MemoryService,
+    private approvals?: ApprovalService,
   ) {}
   initialize() {
     this.messages.interruptStreaming(
@@ -606,6 +609,7 @@ export class ChatService {
       };
       messages = manager.boundTools(messages);
       let executionVersion = 0;
+      let stepSignal = signal;
       const guardTool = (name: string, definition: ToolSet[string]) => {
         const execute = definition.execute;
         const toModelOutput = definition.toModelOutput;
@@ -624,10 +628,39 @@ export class ChatService {
             return limited;
           },
           execute: async (input, options) => {
+            const approved = await this.approvals?.request(
+              {
+                toolCallId: options.toolCallId,
+                toolName: name,
+                input,
+                botId,
+                botName: bot.name,
+                conversationId,
+                messageId: assistantId,
+              },
+              stepSignal,
+              () => emit({ type: 'approval', id: assistantId }),
+            );
+            stepSignal.throwIfAborted();
+            if (approved === false) {
+              const summary =
+                'The user rejected this tool call. It was not executed. Do not retry it without a new user instruction.';
+              onActivity({
+                id: options.toolCallId,
+                tool: name,
+                action: 'rejected',
+                path: '',
+                status: 'failed',
+                summary,
+              });
+              return { rejected: true, message: summary };
+            }
             diagnosticPhase = 'tool-execution';
             this.jobs.beforeTool(assistantId);
             executionVersion++;
-            const operation = Promise.resolve(execute(input, { ...options, abortSignal: signal }));
+            const operation = Promise.resolve(
+              execute(input, { ...options, abortSignal: stepSignal }),
+            );
             pendingTools.add(operation);
             try {
               return await operation;
@@ -694,16 +727,14 @@ export class ChatService {
         saveCheckpoint();
         diagnosticPhase = 'provider-request';
         let providerError: unknown;
+        const stepController = new AbortController();
+        stepSignal = AbortSignal.any([signal, stepController.signal]);
         const result = streamText({
           model: config.model,
           system: attemptSystem,
           messages: memoryMessage ? [memoryMessage, ...messages] : messages,
           maxRetries: PROVIDER_MAX_RETRIES,
-          abortSignal: signal,
-          timeout: {
-            totalMs: RESPONSE_TIMEOUT_MS,
-            chunkMs: 45000,
-          },
+          abortSignal: stepSignal,
           maxOutputTokens: manager.outputAllowance(
             messages,
             Math.max(0, estimateTokens(attemptSystem) - estimateTokens(currentSystem)),
@@ -717,11 +748,18 @@ export class ChatService {
             providerError = event.error;
           },
         });
+        const timeout = new GenerationTimeout(
+          () => this.approvals?.waiting(assistantId) || false,
+          stepController,
+          RESPONSE_TIMEOUT_MS,
+          45000,
+        );
         let textPartId = '',
           reasoningPartId = '';
         const finalTextParts = new Set<string>();
         try {
           for await (const chunk of result.fullStream) {
+            timeout.chunk();
             if (chunk.type === 'start-step') finalTextParts.clear();
             if (chunk.type === 'text-start' && generation.content && !continuationOf) {
               generation.content += '\n\n';
@@ -844,6 +882,10 @@ export class ChatService {
             continue;
           }
           throw caught;
+        } finally {
+          timeout.dispose();
+          // A failed provider stream must also cancel any pending human decisions.
+          stepController.abort();
         }
         if (generation.controller.signal.aborted || status !== 'complete') {
           if (generation.controller.signal.aborted) status = generation.reason;

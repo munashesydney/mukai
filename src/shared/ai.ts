@@ -160,6 +160,7 @@ export interface ContextUsage {
   phase: 'ready' | 'compacting' | 'failed';
 }
 export type ChatEvent =
+  | { type: 'approval'; id: string }
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
   | { type: 'delta'; id: string; text: string; partId?: string }
   | { type: 'reasoning'; id: string; text: string; partId?: string }

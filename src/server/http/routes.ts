@@ -9,6 +9,7 @@ import type { BotService } from '../services/botService';
 import type { ProviderService } from '../services/providerService';
 import type { AttachmentService } from '../services/attachmentService';
 import type { ChatService } from '../services/chatService';
+import type { ApprovalService } from '../services/approvalService';
 import {
   botSchema,
   botModelSchema,
@@ -44,6 +45,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  approvals,
   token,
   startedAt,
   bots,
@@ -61,6 +63,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  approvals: ApprovalService;
   token: string;
   startedAt: number;
   bots: BotService;
@@ -120,7 +123,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills)(\/|$)/.test(
+      !/^\/(approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills)(\/|$)/.test(
         path,
       )
     )
@@ -132,6 +135,24 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'approvals') {
+      if (!id && method === 'GET') return send(response, approvals.state());
+      if (!id && method === 'PUT') {
+        const input = z
+          .object({ mode: z.enum(['ask-for-approval', 'full-access']) })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, approvals.setMode(input.mode));
+      }
+      if (id && !action && method === 'POST') {
+        const input = z
+          .object({ approved: z.boolean() })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, approvals.decide(id, input.approved));
+      }
+      throw new ApiError(404, 'Not found');
+    }
     if (resource === 'skills') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);

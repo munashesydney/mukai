@@ -5,6 +5,142 @@
   padding: 40px;
   text-align: center;
 }
+.approval-mode-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+.approval-mode-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.approval-mode-trigger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.approval-mode-picker .full-access {
+  color: #ca7331;
+}
+.approval-mode-menu {
+  position: absolute;
+  z-index: 50;
+  bottom: calc(100% + 10px);
+  left: 0;
+  width: min(370px, calc(100vw - 48px));
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+.approval-mode-menu > p {
+  margin: 2px 7px 9px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.approval-mode-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.approval-mode-menu > button:hover,
+.approval-mode-menu > button:focus-visible {
+  background: var(--surface-muted);
+}
+.approval-mode-menu > button > span {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+.approval-mode-menu strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.approval-mode-menu small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.approval-mode-menu > small {
+  display: block;
+  margin: 8px 7px 2px;
+  color: var(--text-muted);
+}
+.tool-approval-cards {
+  display: grid;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.tool-approval-cards:not(:empty) {
+  margin-bottom: 10px;
+}
+.tool-approval-card {
+  padding: 14px 16px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 12px;
+}
+.tool-approval-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.tool-approval-heading svg {
+  flex-shrink: 0;
+  color: var(--teal);
+}
+.tool-approval-card p {
+  color: var(--text-secondary);
+  margin: 8px 0;
+  line-height: 1.5;
+}
+.tool-approval-card summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.tool-approval-card pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  font-size: 11px;
+}
+.tool-approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ai-composer-area .composer-actions {
+  flex-wrap: wrap;
+  row-gap: 5px;
+  min-width: 0;
+}
 .context-meter {
   display: inline-flex;
   align-items: center;

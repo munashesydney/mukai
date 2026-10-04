@@ -28,6 +28,7 @@ import { ContextMeter } from './ContextMeter';
 import { modelContextWindow } from '../../../../shared/modelLimits';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotModelPicker } from './BotModelPicker';
+import { ApprovalModePicker, ToolApprovalCards } from './ToolApprovals';
 
 export function BotChat({
   bot,
@@ -252,6 +253,7 @@ export function BotChat({
               ))}
             </div>
             <div className="composer-area ai-composer-area">
+              <ToolApprovalCards conversationId={conversation.id} />
               {newChatError && (
                 <p className="ai-alert" role="alert">
                   {newChatError}
@@ -313,6 +315,7 @@ export function BotChat({
                 />
                 <div className="composer-toolbar">
                   <div className="composer-actions">
+                    <ApprovalModePicker />
                     <IconButton
                       label="Attach images or files"
                       disabled={state.busy || state.uploading || state.loading}

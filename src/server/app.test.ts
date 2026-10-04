@@ -21,6 +21,7 @@ import type {
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
+import type { ApprovalState } from '../shared/approvals';
 
 function inputBot() {
   return {
@@ -67,7 +68,8 @@ let mode:
   | 'raw-tool-always'
   | 'long-browser'
   | 'oversized-results'
-  | 'runtime-tools' = 'normal';
+  | 'runtime-tools'
+  | 'approval-custom' = 'normal';
 let endpoint = '';
 let project = '';
 async function close(server: Server) {
@@ -302,6 +304,37 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'approval-custom') {
+      const completed = body.messages.some((message: { role: string }) => message.role === 'tool');
+      res.write(
+        `data: ${JSON.stringify({
+          id: 'approval-custom',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: body.model,
+          choices: [
+            {
+              index: 0,
+              delta: completed
+                ? { content: 'Custom call resolved.' }
+                : {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: 'custom-call-1',
+                        type: 'function',
+                        function: { name: 'approval_echo', arguments: '{"value":"approved"}' },
+                      },
+                    ],
+                  },
+              finish_reason: completed ? 'stop' : 'tool_calls',
+            },
+          ],
+        })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (mode === 'oversized-results') {
       // Count generations independently of retained history: compaction may replace
       // old calls/results while this fixture must continue, rather than replay them.
@@ -586,6 +619,139 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  async function pendingApproval(toolCallId?: string) {
+    return vi.waitFor(
+      async () => {
+        const state = (await request<ApprovalState>('/approvals')).data;
+        const item = state.pending.find((item) => !toolCallId || item.toolCallId === toolCallId);
+        expect(item).toBeDefined();
+        return item!;
+      },
+      { timeout: 5000, interval: 20 },
+    );
+  }
+
+  it('authenticates approval endpoints and accepts exactly the two V1 modes', async () => {
+    expect((await fetch(api.url + '/approvals')).status).toBe(401);
+    expect((await request('/approvals', 'PUT', { mode: 'approve-for-me' })).response.status).toBe(
+      400,
+    );
+    expect((await request('/approvals', 'PUT', { mode: 'ask-for-approval' })).response.status).toBe(
+      200,
+    );
+    expect((await request<ApprovalState>('/approvals')).data.mode).toBe('ask-for-approval');
+    expect(
+      (await request('/approvals/nonexistent', 'POST', { approved: true })).response.status,
+    ).toBe(409);
+  });
+
+  it('pauses before every workspace call, resumes one at a time and never writes before approval', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    writeFileSync(join(project, 'notes.txt'), 'Useful notes.');
+    await request('/workspaces/default', 'PUT', { name: 'Approval workspace', folder: project });
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'tools';
+    const response = chat('Create a draft with approval');
+    const observed: string[] = [];
+    for (let index = 0; index < 5; index++) {
+      const approval = await pendingApproval(`file-call-${index}`);
+      observed.push((approval.input as { action: string }).action);
+      const before = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      expect(before.status).toBe('streaming');
+      expect(before.activity?.length || 0).toBe(index);
+      expect(calls).toHaveLength(index + 1);
+      if (index === 2) expect(() => readFileSync(join(project, 'draft.md'))).toThrow();
+      if (index === 3)
+        expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('First version.');
+      expect(
+        (await request(`/approvals/${approval.id}`, 'POST', { approved: true })).response.status,
+      ).toBe(200);
+      expect(
+        (await request(`/approvals/${approval.id}`, 'POST', { approved: true })).response.status,
+      ).toBe(409);
+    }
+    const result = await response;
+    expect(result.events.filter((event) => event.type === 'approval')).toHaveLength(10);
+    expect(observed).toEqual(['list', 'read_file', 'write_file', 'patch', 'search_files']);
+    expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+  });
+
+  it('gates real custom tools and returns rejection without invoking their code', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Custom approvals', folder: project });
+    writeFileSync(
+      join(project, 'approval-echo.ts'),
+      `export default {name:'approval_echo',description:'Echo a value',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
+    );
+    expect(
+      (
+        await request('/capabilities', 'POST', {
+          kind: 'tool',
+          operation: 'register',
+          modulePath: 'approval-echo.ts',
+          ownerBotId: 'scout',
+        })
+      ).response.status,
+    ).toBe(200);
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'approval-custom';
+    const rejected = chat('Use my custom tool');
+    let approval = await pendingApproval('custom-call-1');
+    expect(approval).toMatchObject({ toolName: 'approval_echo', input: { value: 'approved' } });
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+    await request(`/approvals/${approval.id}`, 'POST', { approved: false });
+    await rejected;
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+    expect(
+      (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity?.[0],
+    ).toMatchObject({ action: 'rejected', status: 'failed' });
+
+    // A conversation created after selection inherits the same system policy.
+    const conversation = (await request<Conversation>('/bots/scout/conversations', 'POST', {}))
+      .data;
+    const approved = privateChat(conversation.id, 'Use the custom tool here');
+    approval = await pendingApproval('custom-call-1');
+    expect(approval.conversationId).toBe(conversation.id);
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+    await request(`/approvals/${approval.id}`, 'POST', { approved: true });
+    await approved;
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1);
+  });
+
+  it('recovers a pending request after UI disconnect and cancels it on Stop', async () => {
+    await configure();
+    mode = 'raw-tool-once';
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    const controller = new AbortController();
+    const response = await fetch(`${api.url}/bots/scout/chat`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: randomUUID(),
+        text: 'Check runtime tools',
+        attachmentIds: [],
+      }),
+    });
+    const approval = await pendingApproval();
+    controller.abort();
+    await response.body?.cancel().catch(() => {});
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([approval]);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity || []).toEqual(
+      [],
+    );
+    await request('/bots/scout/stop', 'POST');
+    await vi.waitFor(async () => {
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
+    });
+    expect(
+      (await request(`/approvals/${approval.id}`, 'POST', { approved: true })).response.status,
+    ).toBe(409);
+  });
   it('persists the actual provider failure with chat identifiers and redacts credentials', async () => {
     const provider = await configure();
     vi.spyOn(console, 'error').mockImplementation(() => {});

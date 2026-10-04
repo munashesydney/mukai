@@ -15,6 +15,7 @@ import { MessageActions } from '../chat/MessageActions';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
 import { ContextMeter } from '../ai/ContextMeter';
+import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
 export function PursuitRunView({
   run,
   bot,
@@ -185,6 +186,10 @@ export function PursuitRunView({
           onClose={() => setReview(null)}
         />
       )}
+      <div className="composer-area ai-composer-area">
+        <ToolApprovalCards conversationId={run.conversationId} />
+        <ApprovalModePicker />
+      </div>
     </>
   );
 }
