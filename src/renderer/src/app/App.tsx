@@ -261,6 +261,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             <BotChat
               key={botConversation.id}
               bot={bot}
+              bots={ai.bots}
               conversation={botConversation}
               onNewConversation={() => createBotConversation(bot.id)}
               providers={ai.providers}

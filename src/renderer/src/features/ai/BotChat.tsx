@@ -31,6 +31,7 @@ import { BotModelPicker } from './BotModelPicker';
 
 export function BotChat({
   bot,
+  bots,
   conversation,
   onNewConversation,
   providers,
@@ -39,6 +40,7 @@ export function BotChat({
   onBotChanged,
 }: {
   bot: Bot;
+  bots: Bot[];
   conversation: Conversation;
   onNewConversation: () => Promise<void>;
   providers: ProviderSettings[];
@@ -412,6 +414,12 @@ export function BotChat({
           <dl>
             <dt>Workspace role</dt>
             <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
+            <dt>Created by</dt>
+            <dd>
+              {bot.createdBy
+                ? bots.find((parent) => parent.id === bot.createdBy)?.name || 'Unavailable bot'
+                : 'You'}
+            </dd>
             <dt>Provider</dt>
             <dd>{provider?.name || 'Not configured'}</dd>
             <dt>Model</dt>
