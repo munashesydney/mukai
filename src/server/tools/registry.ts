@@ -21,6 +21,9 @@ import type { RegistrationContext } from './custom-registration/shared';
 import { memoryDefinition } from './memory/definition';
 import { botManagementDefinition } from './bots/definition';
 import { executeBotManagement } from './bots/execute';
+import { webSearchDefinition } from './web-search/definition';
+import { executeWebSearch } from './web-search/execute';
+import type { WebSearchService } from '../services/webSearchService';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
   return {
@@ -51,11 +54,31 @@ export function runtimeTools(
   context: RuntimeToolContext & {
     processes: ProcessService;
     browsers: BrowserService;
+    webSearch: WebSearchService;
     folder: string | null;
     vision: boolean;
   },
 ): ToolSet {
   return {
+    web_search: tool({
+      description: webSearchDefinition.description,
+      inputSchema: webSearchDefinition.inputSchema,
+      execute: (input, options) =>
+        executeWebSearch(
+          input,
+          {
+            ...context,
+            signal: options.abortSignal
+              ? AbortSignal.any([context.signal, options.abortSignal])
+              : context.signal,
+          },
+          options.toolCallId,
+        ),
+      toModelOutput: ({ output }) => ({
+        type: 'text',
+        value: resultPreview(output, context.resultBytes ?? 96000),
+      }),
+    }),
     ...(context.folder
       ? {
           terminal: tool({
@@ -168,6 +191,7 @@ export function toolCatalog() {
       terminalDefinition,
       botManagementDefinition,
       browserDefinition,
+      webSearchDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
       memoryDefinition,

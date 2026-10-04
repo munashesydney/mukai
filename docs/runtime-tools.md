@@ -4,6 +4,41 @@ All bots use the existing chat tool loop, including space responses and schedule
 Runtime ownership includes workspace, bot and conversation. AI tools cannot control another
 conversation's tabs or processes. The authenticated desktop UI can browse its workspace tabs.
 
+## Web search and page content
+
+`web_search` is one built-in tool family with `search` and `fetch` actions, enabled by default
+for all bots. It works without a workspace folder or provider credentials. Tool assignments
+can disable it; children created by a bot inherit its permitted tools.
+
+- `search` accepts `query` or `queries` (not both), with up to three queries. `maxResults`
+  defaults to five per query and is capped at ten. Optional `includeDomains`, `excludeDomains`,
+  `startDate` and `endDate` restrict sites and publication dates.
+- `fetch` accepts `urls`, with up to five public HTTP(S) URLs. It retrieves readable page
+  content, without opening a browser or using browser logins.
+- `maxCharacters` bounds each source's text: 2,000 by default for search, 8,000 for fetch,
+  and a maximum of 20,000. Sources include title, URL, text, a truncation flag, and publication
+  date when provided. Content at the extraction limit is conservatively marked truncated.
+- Batches return `items` with per-item success/error information; `partial` means at least
+  one item failed. Completed items remain available when another item fails. Each query or URL
+  consumes one runtime operation, and the entire batch budget is reserved before starting.
+
+Exa's hosted MCP server is tried first. On confirmed rate limiting, the same operation uses
+Tavily's keyless search/extract endpoints. The model never selects a provider. Empty results,
+ordinary provider failures and user cancellation do not trigger fallback. Provider cooldowns
+are shared across bots within the server instance and honor retry/reset timing; when absent,
+a one-minute cooldown is used. No account credentials or browser cookies are sent. Tavily uses
+one opaque session ID per server process, and requests use a Mukai client identifier.
+
+Provider responses are limited to 2 MiB, requests to 20 seconds per provider attempt, and
+batches to 90 seconds. At most two items run across concurrent chats, and Exa requests are
+paced. Chat cancellation stops queued waits and network requests. Anonymous allowances are
+finite and can be shared by public IP; if both providers are throttled, the tool reports retry
+timing instead of repeatedly sending requests. Cooldowns reset on server restart.
+
+Use `browser` for interactions and signed-in pages. Search excerpts and fetched content are
+untrusted data; bots are instructed to ignore embedded instructions and cite returned URLs.
+Tests use local/mocked provider fixtures rather than spending anonymous provider quota.
+
 ## Browser
 
 `browser` supports `open`, `tabs`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`,

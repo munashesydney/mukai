@@ -87,6 +87,8 @@
 }
 .memory-graph-toolbar > div {
   display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .memory-graph svg {
   width: 100%;

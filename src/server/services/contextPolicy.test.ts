@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { ContextManager, contextLimits, contextUnits, estimateTokens } from './contextPolicy';
+import { IMAGE_OMITTED } from './toolResultPolicy';
 
 const pair = (id: string, text = 'result'): ModelMessage[] => [
   {
@@ -35,6 +36,21 @@ const history = (): ModelMessage[] => [
   ...pair('third'),
 ];
 describe('working context', () => {
+  it('preserves omitted-image notices when additional tools force results into compaction', async () => {
+    const summarize = vi.fn(async () => 'Continue the current task; earlier operations completed.');
+    const manager = new ContextManager(10000, 8192, 5000, summarize);
+    const current: ModelMessage = { role: 'user', content: 'Continue the current task.' };
+    const result = await manager.prepare([
+      ...pair('old-image', IMAGE_OMITTED),
+      ...pair('large', 'x'.repeat(12000)),
+      current,
+    ]);
+    expect(summarize).toHaveBeenCalled();
+    expect(JSON.stringify(result)).toContain(IMAGE_OMITTED);
+    expect(manager.summary).toContain(IMAGE_OMITTED);
+    expect(manager.estimate(result)).toBeLessThanOrEqual(contextLimits(10000, 8192).hardInput);
+    expect(result).toContainEqual(current);
+  });
   it('keeps the exact current request and recent complete operation pairs', async () => {
     const summarize = vi.fn(
       async () => 'Goal: modify draft.md. Earlier file verified. First operation completed.',

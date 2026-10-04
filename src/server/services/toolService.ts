@@ -24,8 +24,10 @@ import type { CapabilityService } from '../capabilities/service';
 import type { MemoryService } from './memoryService';
 import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
+import { WebSearchService } from './webSearchService';
 
 export class ToolService {
+  private webSearch = new WebSearchService();
   private access?: ToolAccessService;
   private management?: BotManagementService;
   attachBotManagement(access: ToolAccessService, management: BotManagementService) {
@@ -126,7 +128,7 @@ export class ToolService {
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
                   ? Boolean(this.capabilities)
-                  : tool.id === 'browser'
+                  : ['browser', 'web_search'].includes(tool.id)
                     ? true
                     : Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
@@ -181,6 +183,7 @@ export class ToolService {
           budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
           processes: this.processes,
           browsers: this.browsers,
+          webSearch: this.webSearch,
           folder: workspace.folder,
           vision,
           resultBytes,

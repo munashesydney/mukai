@@ -27,6 +27,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'manage_pursuit') return <Target size={size} />;
   if (toolId === 'manage_bot') return <Users size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
+  if (toolId === 'web_search') return <Search size={size} />;
   if (toolId === 'terminal') return <Terminal size={size} />;
   return <FileText size={size} />;
 }
@@ -37,6 +38,7 @@ function toolScopeNote(tool: ToolInfo, folder: string | null) {
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
   if (tool.id === 'manage_bot') return 'Creates child bots · Delegates work to descendants';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
+  if (tool.id === 'web_search') return 'Public web search and page content · No API key required';
   if (tool.id === 'terminal') return 'Local shell · Per-conversation processes';
   return folder ? 'Within this workspace folder' : 'Connect a folder to start';
 }

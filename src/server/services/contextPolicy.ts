@@ -1,5 +1,5 @@
 import { asSchema, type ModelMessage, type ToolSet } from 'ai';
-import { limitToolGroups } from './toolResultPolicy';
+import { IMAGE_OMITTED, limitToolGroups, utf8Prefix } from './toolResultPolicy';
 
 export class ContextError extends Error {}
 
@@ -261,6 +261,18 @@ export class ContextManager {
       if (chunkBytes >= chunkBudget * 3) await fold();
     }
     await fold();
+    // Smaller contexts may summarize recent screenshots after adding default tools.
+    // Keep their omission notice even when a summary chunk splits its wording.
+    if (
+      (serialized.includes(IMAGE_OMITTED) || this.summary.includes(IMAGE_OMITTED)) &&
+      !candidate.includes(IMAGE_OMITTED)
+    ) {
+      const room = Math.max(
+        0,
+        Math.floor(summaryTarget * 1.5) * 3 - Buffer.byteLength(IMAGE_OMITTED, 'utf8') - 1,
+      );
+      candidate = utf8Prefix(candidate, room) + '\n' + IMAGE_OMITTED;
+    }
     const compacted: ModelMessage[] = [
       {
         role: 'user',

@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
 import type { Bot, BotInput, ChatMessage } from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
+import { WebSearchService } from './services/webSearchService';
+import type { ToolInfo } from '../shared/ai';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
@@ -14,7 +16,7 @@ let calls: {
   tools: { function: { name: string } }[];
   messages: { role: string; content: string }[];
 }[];
-let mode: 'normal' | 'slow' | 'revoke' | 'delegate';
+let mode: 'normal' | 'slow' | 'revoke' | 'delegate' | 'web-search' | 'web-revoke';
 let delegatedId: string;
 const input = (name = 'Mukai'): BotInput => ({
   name,
@@ -78,7 +80,30 @@ beforeEach(async () => {
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
-    if (mode === 'revoke' && !call.messages.some((item) => item.role === 'tool')) {
+    if (
+      ['web-search', 'web-revoke'].includes(mode) &&
+      !call.messages.some((item) => item.role === 'tool')
+    ) {
+      if (mode === 'web-revoke') {
+        const main = (await request<Bot[]>('/bots')).data.find((item) => item.isMain)!;
+        api.access.set('default', main.id, 'web_search', false);
+      }
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'web-search-call',
+            type: 'function',
+            function: {
+              name: 'web_search',
+              arguments: JSON.stringify({ action: 'search', query: 'official docs' }),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+    } else if (mode === 'revoke' && !call.messages.some((item) => item.role === 'tool')) {
       const main = (await request<Bot[]>('/bots')).data.find((item) => item.isMain)!;
       api.access.set('default', main.id, 'browser', false);
       send({
@@ -138,6 +163,64 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it('offers web search without a folder, runs it in the SDK loop, records usage, and enforces revocation', async () => {
+    const main = await bot();
+    const child = await bot('Ada');
+    const execute = vi.spyOn(WebSearchService.prototype, 'execute').mockResolvedValue({
+      items: [
+        {
+          target: 'official docs',
+          ok: true,
+          provider: 'exa',
+          fallback: false,
+          sources: [
+            {
+              title: 'Docs',
+              url: 'https://example.com/',
+              text: 'Public documentation',
+              truncated: false,
+            },
+          ],
+        },
+      ],
+      partial: false,
+    });
+    expect(api.access.allowed(main, 'web_search')).toBe(true);
+    expect(api.access.allowed(child, 'web_search')).toBe(true);
+    const catalog = (await request<ToolInfo[]>('/tools')).data;
+    expect(catalog.find((item) => item.id === 'web_search')).toMatchObject({
+      available: true,
+      actions: ['search', 'fetch'],
+    });
+    await provider();
+    mode = 'web-search';
+    await chat(child);
+    expect(calls[0].tools.map((item) => item.function.name)).toContain('web_search');
+    expect(calls[0].messages[0].content).toContain('Cite returned source URLs');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Public documentation');
+    expect(execute).toHaveBeenCalledTimes(1);
+    const messages = (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data;
+    expect(messages.flatMap((message) => message.activity || [])).toContainEqual(
+      expect.objectContaining({
+        tool: 'web_search',
+        action: 'search',
+        status: 'complete',
+      }),
+    );
+    expect(
+      (await request<ToolInfo[]>('/tools')).data.find((item) => item.id === 'web_search')?.counts
+        .search,
+    ).toBe(1);
+    mode = 'web-revoke';
+    await chat(main);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('not assigned web_search');
+    mode = 'normal';
+    await chat(main);
+    expect(calls.at(-1)!.tools.map((item) => item.function.name)).not.toContain('web_search');
+    const denied = await api.botManagement.create(main, { ...input('Nova'), role: 'Researcher' });
+    expect(api.access.allowed(denied, 'web_search')).toBe(false);
+  });
   it('requires roles in the API and AI tool, keeps the main role fixed, and supplies names/roles in prompts', async () => {
     for (const role of [undefined, '', '  ']) {
       expect((await request('/bots', 'POST', { ...input('Ada'), role })).status).toBe(400);

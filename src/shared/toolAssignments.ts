@@ -2,6 +2,7 @@ export const workspaceToolIds = [
   'file_operations',
   'terminal',
   'browser',
+  'web_search',
   'memory',
   'manage_pursuit',
   'manage_bot',

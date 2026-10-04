@@ -22,6 +22,10 @@ export function utf8Prefix(text: string, bytes: number) {
 
 export function limitResultText(text: string, bytes: number, notice = RESULT_TRUNCATED) {
   if (text.length <= bytes && Buffer.byteLength(text, 'utf8') <= bytes) return text;
+  if (notice === RESULT_TRUNCATED && text.includes(IMAGE_OMITTED)) {
+    const combined = RESULT_TRUNCATED + '\n' + IMAGE_OMITTED;
+    notice = Buffer.byteLength(combined, 'utf8') + 32 <= bytes ? combined : IMAGE_OMITTED;
+  }
   const marker = '\n\n' + notice;
   return utf8Prefix(text, Math.max(0, bytes - Buffer.byteLength(marker))) + marker;
 }
@@ -113,7 +117,17 @@ export function limitToolOutput(
     let remaining = Math.max(128, tokens - 32);
     for (const [index, block] of output.value.entries()) {
       if (remaining < 128) {
-        value.push({ type: 'text', text: RESULT_TRUNCATED });
+        value.push({
+          type: 'text',
+          text: output.value
+            .slice(index)
+            .some(
+              (part) =>
+                part.type === 'file' || (part.type === 'text' && part.text.includes(IMAGE_OMITTED)),
+            )
+            ? IMAGE_OMITTED
+            : RESULT_TRUNCATED,
+        });
         break;
       }
       const size = estimate(block) + 4;

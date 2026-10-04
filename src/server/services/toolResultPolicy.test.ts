@@ -11,6 +11,28 @@ import {
 } from './toolResultPolicy';
 
 describe('bounded tool results', () => {
+  it('preserves omitted-image notices when an added default tool leaves very little result room', () => {
+    const output = {
+      type: 'content' as const,
+      value: [
+        { type: 'text' as const, text: 'Screenshot recorded at /browser/fixture/screenshot.' },
+        {
+          type: 'file' as const,
+          mediaType: 'image/png',
+          data: { type: 'data' as const, data: 'unseen-image' },
+        },
+      ],
+    };
+    const limited = limitToolOutput(output, 128, estimateTokens);
+    expect(JSON.stringify(limited)).toContain(IMAGE_OMITTED);
+    expect(JSON.stringify(limited)).not.toContain('unseen-image');
+    expect(estimateTokens(limited)).toBeLessThanOrEqual(128);
+    const repeated = limitToolOutput(output, 256, estimateTokens);
+    expect(JSON.stringify(limitToolOutput(repeated, 128, estimateTokens))).toContain(IMAGE_OMITTED);
+    expect(limitResultText('Long prefix '.repeat(100) + IMAGE_OMITTED, 256)).toContain(
+      IMAGE_OMITTED,
+    );
+  });
   it('preserves ordinary structured results and UTF-8 text', () => {
     const result = { ok: true, files: ['notes.md', '资料🦊'], count: 2 };
     expect(JSON.parse(resultPreview(result, 4096))).toEqual(result);

@@ -55,6 +55,7 @@ const reserved = new Set([
   'terminal',
   'process',
   'browser',
+  'web_search',
   'manage_pursuit',
   'manage_bot',
   'report_pursuit',

@@ -96,7 +96,7 @@ export function MemoryRuns({
           </button>
         ))
       ) : (
-        <p>No runs yet.</p>
+        <p className="ai-caption">No runs yet.</p>
       )}
     </section>
   );
