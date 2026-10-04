@@ -3,7 +3,7 @@ import type { AskInput } from './ask';
 export type ApprovalMode = 'ask-for-approval' | 'full-access';
 
 export interface ApprovalTarget {
-  kind: 'private' | 'space' | 'pursuit_run';
+  kind: 'private' | 'space' | 'pursuit_run' | 'bot';
   workspaceId: string;
   name: string;
   pursuitId?: string;

@@ -282,7 +282,7 @@ export const chatStore = {
     }
   },
 };
-export function useChat(id: string) {
+export function useChat(id: string, readOnly = false) {
   const state = useSyncExternalStore(
     (callback) => {
       listeners.add(callback);
@@ -293,7 +293,7 @@ export function useChat(id: string) {
   useEffect(() => {
     void chatStore.load(id);
     const timer = window.setInterval(() => {
-      if (!active.has(id) && get(id).busy) void chatStore.load(id);
+      if (!active.has(id) && (get(id).busy || readOnly)) void chatStore.load(id);
     }, 1000);
     const refresh = () => {
       if (!active.has(id)) void chatStore.load(id);
@@ -303,6 +303,6 @@ export function useChat(id: string) {
       window.clearInterval(timer);
       window.removeEventListener('focus', refresh);
     };
-  }, [id]);
+  }, [id, readOnly]);
   return state;
 }

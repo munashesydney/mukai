@@ -5,7 +5,7 @@ import { MessageRepository } from '../repositories/messageRepository';
 import { BotService } from './botService';
 import { ChatService, type ChatOutput } from './chatService';
 import type { SpaceInput, SpaceChatInput } from '../../shared/conversations';
-import type { ChatInput } from '../../shared/ai';
+import type { Bot, ChatInput } from '../../shared/ai';
 
 export class ConversationService {
   constructor(
@@ -31,6 +31,28 @@ export class ConversationService {
   createPrivate(botId: string) {
     const bot = this.bots.require(botId);
     return this.conversations.createPrivate(bot.workspaceId, bot.id);
+  }
+  botChats(workspaceId: string) {
+    this.bots.list(workspaceId);
+    return this.conversations.botChats(workspaceId);
+  }
+  botChat(caller: Bot, target: Bot, message: string, id?: string) {
+    if (id) {
+      const conversation = this.require(id);
+      if (
+        conversation.kind !== 'bot' ||
+        conversation.workspaceId !== caller.workspaceId ||
+        conversation.botIds.length !== 2 ||
+        !conversation.botIds.includes(caller.id) ||
+        !conversation.botIds.includes(target.id)
+      )
+        throw new ApiError(
+          403,
+          'Choose a bot conversation between you and the target bot in this workspace.',
+        );
+      return conversation;
+    }
+    return this.conversations.createBotChat(caller.workspaceId, caller.id, target.id, message);
   }
   privateBot(id: string) {
     const conversation = this.require(id);
@@ -74,6 +96,8 @@ export class ConversationService {
   }
   async send(id: string, input: SpaceChatInput, output: ChatOutput) {
     const conversation = this.require(id);
+    if (conversation.kind === 'bot')
+      throw new ApiError(403, 'Bot conversations are read-only for users.');
     if (conversation.kind !== 'space')
       throw new ApiError(400, 'Use the private bot chat endpoint.');
     if (input.botId) {

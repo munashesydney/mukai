@@ -44,6 +44,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const spaceState = useSpaces(ai.workspaceId);
   const pursuitState = usePursuits(ai.workspaceId);
   const botChats = useBotConversations(ai.workspaceId);
+  const botPairs = useBotConversations(ai.workspaceId, 'bot');
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -78,6 +79,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     [navigate, hasBots],
   );
   const space = spaceState.spaces.find((s) => s.id === location.item);
+  const botPair = botPairs.conversations.find((chat) => chat.id === location.conversationId);
+  const pairBot = ai.bots.find((bot) => bot.id === botPair?.botIds[1]);
   const pursuit =
     pursuitState.pursuits.find((p) => p.id === location.item) || pursuitState.pursuits[0];
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
@@ -200,6 +203,10 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             collapsed={sidebarCollapsed}
             bots={ai.bots}
             botConversations={botChats.conversations}
+            botPairConversations={botPairs.conversations}
+            botPairLoading={botPairs.loading}
+            botPairError={botPairs.error}
+            onRefreshBotPairs={botPairs.refresh}
             onCreateConversation={createBotConversation}
             onDialog={openDialog}
             onSettings={() => openSettings('workspace')}
@@ -315,6 +322,34 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 <br />
                 You can connect an AI provider after creating it.
               </small>
+            </main>
+          )
+        ) : location.section === 'spaces' && location.item === 'bot-conversations' ? (
+          botPair && pairBot ? (
+            <BotChat
+              key={botPair.id}
+              bot={pairBot}
+              bots={ai.bots}
+              conversation={botPair}
+              providers={ai.providers}
+              onNewConversation={() => createBotConversation(pairBot.id)}
+              onEdit={() => setEditingBot(pairBot)}
+              onProviders={() => openSettings('providers')}
+              onBotChanged={ai.updateBot}
+            />
+          ) : (
+            <main className="conversation ai-main-state">
+              <p role={botPairs.error ? 'alert' : undefined}>
+                {botPairs.error ||
+                  (botPairs.loading
+                    ? 'Loading bot conversations…'
+                    : 'Choose a conversation between two bots.')}
+              </p>
+              {botPairs.error && (
+                <button className="button" onClick={botPairs.refresh}>
+                  Try again
+                </button>
+              )}
             </main>
           )
         ) : location.section === 'spaces' ? (

@@ -30,6 +30,14 @@ describe('Pending approval destinations', () => {
       }),
     ).toEqual({ section: 'spaces', item: 'exact-chat' });
   });
+  it('opens the exact bot pair thread in Spaces', () => {
+    expect(
+      approvalLocation({
+        ...request,
+        target: { kind: 'bot', workspaceId: 'default', name: 'Bot review' },
+      }),
+    ).toEqual({ section: 'spaces', item: 'bot-conversations', conversationId: 'exact-chat' });
+  });
   it('opens the exact pursuit run rather than its overview or latest run', () => {
     expect(
       approvalLocation({

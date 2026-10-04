@@ -18,12 +18,13 @@ export class BotManagementService {
   ) {}
   list(caller: Bot) {
     this.access.require(caller, 'manage_bot');
-    return this.bots.list(caller.workspaceId).map(({ id, name, role, createdBy, isMain }) => ({
-      id,
-      name,
-      role,
-      createdBy,
-      isMain,
+    return this.bots.list(caller.workspaceId).map((bot) => ({
+      id: bot.id,
+      name: bot.name,
+      role: bot.role,
+      createdBy: bot.createdBy,
+      isMain: bot.isMain,
+      hierarchyLevel: this.level(bot),
     }));
   }
   async create(caller: Bot, input: BotInput, toolIds?: string[]) {
@@ -35,30 +36,48 @@ export class BotManagementService {
       this.access.initializeChild(caller, child, toolIds);
     });
   }
-  private subordinate(caller: Bot, target: Bot) {
-    if (caller.workspaceId !== target.workspaceId || caller.id === target.id) return false;
+  private level(bot: Bot) {
     const visited = new Set<string>();
-    let parent = target.createdBy;
-    while (parent && !visited.has(parent)) {
-      if (parent === caller.id) return true;
-      visited.add(parent);
-      parent = this.bots.require(parent).createdBy;
+    let current = bot,
+      level = 0;
+    while (current.createdBy) {
+      if (visited.has(current.id)) throw new ApiError(409, 'The bot hierarchy contains a cycle.');
+      visited.add(current.id);
+      const parent = this.bots.require(current.createdBy);
+      if (parent.workspaceId !== bot.workspaceId)
+        throw new ApiError(409, 'The bot hierarchy crosses workspaces.');
+      current = parent;
+      level++;
     }
-    return false;
+    return level;
   }
-  async spawn(caller: Bot, botId: string, message: string, signal: AbortSignal) {
+  async sendMessage(
+    caller: Bot,
+    botId: string,
+    message: string,
+    signal: AbortSignal,
+    conversationId?: string,
+  ) {
     signal.throwIfAborted();
     this.access.require(caller, 'manage_bot');
+    caller = this.bots.require(caller.id);
     const target = this.bots.require(botId);
-    if (!this.subordinate(caller, target))
-      throw new ApiError(403, 'You may spawn only bots below you in this workspace’s hierarchy.');
+    if (
+      caller.workspaceId !== target.workspaceId ||
+      caller.id === target.id ||
+      this.level(target) < this.level(caller)
+    )
+      throw new ApiError(
+        403,
+        'You may message only peers or lower-level bots in this workspace’s hierarchy, never yourself or higher-level bots.',
+      );
     if (this.reserved.has(target.id) || this.chats.busy(target.id))
       throw new ApiError(
         409,
         'That bot is already working. Try again after its response finishes.',
       );
     this.providers.resolve(target);
-    const conversation = this.conversations.createPrivate(target.id);
+    const conversation = this.conversations.botChat(caller, target, message, conversationId);
     const abort = () => this.chats.stopConversation(conversation.id);
     signal.addEventListener('abort', abort, { once: true });
     this.reserved.add(target.id);
@@ -68,7 +87,7 @@ export class BotManagementService {
         target,
         {
           requestId: randomUUID(),
-          text: `Work delegated by ${caller.name} (bot ${caller.id}):\n${message}`,
+          text: message,
           attachmentIds: [],
         },
         {
@@ -82,6 +101,8 @@ export class BotManagementService {
           end() {},
         },
         conversation.id,
+        undefined,
+        caller,
       );
       signal.throwIfAborted();
       if (!response) throw new ApiError(500, 'The bot did not return a saved response.');

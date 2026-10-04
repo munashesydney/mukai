@@ -1817,7 +1817,7 @@ describe('Mukai bots and AI API', () => {
       mode = 'oversized-results';
       await chat('Read the page, take a screenshot, then give a final report.');
       const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
-      expect(reply.status).toBe('complete');
+      expect(reply.status, reply.error || undefined).toBe('complete');
       expect(reply.parts?.at(-1)).toMatchObject({
         type: 'text',
         text: 'Large-result browser checks finished.',

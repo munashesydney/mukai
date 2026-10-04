@@ -9,6 +9,8 @@ import type { Bot, BotInput, ChatMessage } from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
 import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
+import type { Conversation } from '../shared/conversations';
+import { botManagementDefinition } from './tools/bots/definition';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
@@ -121,19 +123,21 @@ beforeEach(async () => {
     } else if (
       mode === 'delegate' &&
       !call.messages.some((item) => item.role === 'tool') &&
-      !call.messages.some((item) => item.content?.includes('Work delegated by'))
+      !call.messages.some((item) =>
+        item.content?.includes('This message is coming from another bot'),
+      )
     ) {
       send({
         role: 'assistant',
         tool_calls: [
           {
             index: 0,
-            id: 'spawn-call',
+            id: 'send-message-call',
             type: 'function',
             function: {
               name: 'manage_bot',
               arguments: JSON.stringify({
-                action: 'spawn',
+                action: 'send_message',
                 botId: delegatedId,
                 message: 'Review the notes.',
               }),
@@ -377,7 +381,7 @@ describe('Bot architecture', () => {
       ]),
     );
     expect(names(1)).not.toContain('manage_pursuit');
-    expect(names(1)).not.toContain('manage_bot');
+    expect(names(1)).toContain('manage_bot');
     expect(names(1)).toEqual(
       expect.arrayContaining(['memory', 'browser', 'skills', 'register_custom_route']),
     );
@@ -476,6 +480,7 @@ describe('Bot architecture', () => {
   it('creates children through manage_bot, bounds their grants, and retains nested creator relationships', async () => {
     const main = await bot(),
       peer = await bot('Peer');
+    api.access.set('default', peer.id, 'manage_bot', false);
     await expect(api.botManagement.create(peer, input('Denied'))).rejects.toThrow(
       'not assigned manage_bot',
     );
@@ -508,15 +513,15 @@ describe('Bot architecture', () => {
     expect(grandchild.createdBy).toBe(child.id);
     expect(api.access.allowed(grandchild, 'browser')).toBe(true);
     expect(api.access.allowed(grandchild, 'memory')).toBe(false);
-    expect(api.access.allowed(grandchild, 'manage_bot')).toBe(false);
+    expect(api.access.allowed(grandchild, 'manage_bot')).toBe(true);
     expect((await request<Bot[]>('/bots')).data).toHaveLength(4);
-    for (const target of [main, peer, child]) {
+    for (const target of [main, child]) {
       await expect(
-        api.botManagement.spawn(child, target.id, 'Work', new AbortController().signal),
-      ).rejects.toThrow('only bots below');
+        api.botManagement.sendMessage(child, target.id, 'Work', new AbortController().signal),
+      ).rejects.toThrow('only peers or lower-level');
     }
   });
-  it('spawns real child work through the SDK tool and returns its saved response to the caller', async () => {
+  it('sends real child work through the SDK tool and returns its saved response to the caller', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Researcher'));
@@ -524,33 +529,185 @@ describe('Bot architecture', () => {
     mode = 'delegate';
     await chat(main);
     const childCall = calls.find((call) =>
-      call.messages.some((item) => item.content?.includes('Work delegated by')),
+      call.messages.some((item) =>
+        item.content?.includes('This message is coming from another bot'),
+      ),
     )!;
     expect(JSON.stringify(childCall.messages)).toContain('Review the notes.');
-    expect(childCall.tools.map((item) => item.function.name)).not.toContain('manage_bot');
+    expect(childCall.tools.map((item) => item.function.name)).toContain('manage_bot');
+    expect(JSON.stringify(childCall.messages)).toContain(main.name);
+    expect(JSON.stringify(childCall.messages)).toContain(main.role);
+    expect(JSON.stringify(childCall.messages)).toContain('final reply will be sent directly back');
     expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Reviewed the notes successfully.');
-    const saved = (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data;
+    const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
+    expect(conversations).toHaveLength(1);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain(conversations[0].id);
+    const saved = (await request<ChatMessage[]>(`/conversations/${conversations[0].id}/messages`))
+      .data;
+    expect(saved[0]).toMatchObject({
+      botId: main.id,
+      authorName: main.name,
+      content: 'Review the notes.',
+    });
     expect(saved.at(-1)).toMatchObject({
       status: 'complete',
       content: 'Reviewed the notes successfully.',
     });
   });
-  it('rejects cross-workspace and simultaneous spawns, propagates cancellation, and releases the child', async () => {
+  it('continues only the requested pair thread, preserves history, and keeps the viewer read-only', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    const other = await api.botManagement.create(main, input('Nova'));
+    const signal = new AbortController().signal;
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Remember the blue folder.',
+      signal,
+    );
+    const second = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Which folder?',
+      signal,
+      first.conversationId,
+    );
+    expect(second.conversationId).toBe(first.conversationId);
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) => message.content?.includes('Remember the blue folder.')),
+    ).toBe(true);
+    const history = (
+      await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)
+    ).data;
+    expect(history).toHaveLength(4);
+    expect(history.map((message) => message.botId)).toEqual([main.id, child.id, main.id, child.id]);
+    expect(history.map((message) => message.authorName)).toEqual([
+      main.name,
+      child.name,
+      main.name,
+      child.name,
+    ]);
+    const fresh = await api.botManagement.sendMessage(main, child.id, 'Start afresh.', signal);
+    expect(fresh.conversationId).not.toBe(first.conversationId);
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) => message.content?.includes('Remember the blue folder.')),
+    ).toBe(false);
+    await expect(
+      api.botManagement.sendMessage(main, other.id, 'Wrong pair', signal, first.conversationId),
+    ).rejects.toThrow('between you and the target');
+    await expect(
+      api.botManagement.sendMessage(other, child.id, 'Not my thread', signal, first.conversationId),
+    ).rejects.toThrow('between you and the target');
+    await expect(
+      api.botManagement.sendMessage(main, child.id, 'Private chat', signal, 'bot-' + child.id),
+    ).rejects.toThrow('between you and the target');
+    expect(
+      (
+        await request(`/conversations/${first.conversationId}/chat`, 'POST', {
+          requestId: randomUUID(),
+          text: 'Human message',
+          attachmentIds: [],
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await request(`/conversations/${first.conversationId}/attachments`, 'POST')).status,
+    ).toBe(400);
+    const pairChats = (await request<Conversation[]>('/conversations?kind=bot')).data;
+    expect(pairChats).toHaveLength(2);
+    expect(pairChats[0]).toMatchObject({
+      kind: 'bot',
+      workspaceId: 'default',
+      botIds: [main.id, child.id],
+    });
+    expect(
+      (await request<Conversation[]>('/conversations?kind=private')).data.every(
+        (chat) => !pairChats.some((pair) => pair.id === chat.id),
+      ),
+    ).toBe(true);
+    expect((await request<Conversation[]>('/conversations')).data).toEqual([]);
+    expect(botManagementDefinition.inputSchema.safeParse({ action: 'spawn' }).success).toBe(false);
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
+    const main = await bot();
+    await provider();
+    const ada = await api.botManagement.create(main, input('Ada'));
+    const nova = await api.botManagement.create(main, input('Nova'));
+    const junior = await api.botManagement.create(ada, input('Junior'));
+    const colleague = await api.botManagement.create(nova, input('Colleague'));
+    const signal = new AbortController().signal;
+    for (const target of [main, ada, nova])
+      await expect(
+        api.botManagement.sendMessage(junior, target.id, 'Upward', signal),
+      ).rejects.toThrow('higher-level');
+    const peer = await api.botManagement.sendMessage(ada, nova.id, 'Hello peer', signal);
+    await api.botManagement.sendMessage(
+      nova,
+      ada.id,
+      'Continue from the other side',
+      signal,
+      peer.conversationId,
+    );
+    const reverseHistory = (
+      await request<ChatMessage[]>(`/conversations/${peer.conversationId}/messages`)
+    ).data;
+    expect(reverseHistory.map((message) => message.botId)).toEqual([
+      ada.id,
+      nova.id,
+      nova.id,
+      ada.id,
+    ]);
+    const reverseCall = calls.at(-1)!;
+    expect(
+      reverseCall.messages.find((message) => message.content?.includes('Hello peer'))?.role,
+    ).toBe('assistant');
+    expect(
+      await api.botManagement.sendMessage(ada, colleague.id, 'Lower other branch', signal),
+    ).toMatchObject({ status: 'complete' });
+    expect(
+      await api.botManagement.sendMessage(junior, colleague.id, 'Same depth', signal),
+    ).toMatchObject({ status: 'complete' });
+    expect(api.botManagement.list(main)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: main.id, hierarchyLevel: 0 }),
+        expect.objectContaining({ id: ada.id, hierarchyLevel: 1 }),
+        expect.objectContaining({ id: junior.id, createdBy: ada.id, hierarchyLevel: 2 }),
+      ]),
+    );
+    expect(api.access.allowed(junior, 'manage_bot')).toBe(true);
+    const noTools = await api.botManagement.create(ada, input('Restricted'), []);
+    expect(api.access.allowed(noTools, 'manage_bot')).toBe(false);
+    await expect(
+      api.botManagement.sendMessage(noTools, colleague.id, 'Denied', signal),
+    ).rejects.toThrow('not assigned manage_bot');
+  });
+  it('rejects cross-workspace and simultaneous messages, propagates cancellation, and releases the child', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Child'));
     mode = 'slow';
     const controller = new AbortController();
-    const pending = api.botManagement.spawn(main, child.id, 'Wait for work', controller.signal);
+    const pending = api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Wait for work',
+      controller.signal,
+    );
     const stopped = expect(pending).rejects.toThrow();
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     await expect(
-      api.botManagement.spawn(main, child.id, 'Other work', new AbortController().signal),
+      api.botManagement.sendMessage(main, child.id, 'Other work', new AbortController().signal),
     ).rejects.toThrow('already working');
     controller.abort();
     await stopped;
     mode = 'normal';
-    const completed = await api.botManagement.spawn(
+    const completed = await api.botManagement.sendMessage(
       main,
       child.id,
       'Try again',
@@ -566,7 +723,7 @@ describe('Bot architecture', () => {
     ).data;
     const foreign = await bot('Foreign', workspace.id);
     await expect(
-      api.botManagement.spawn(main, foreign.id, 'Work', new AbortController().signal),
-    ).rejects.toThrow('only bots below');
+      api.botManagement.sendMessage(main, foreign.id, 'Work', new AbortController().signal),
+    ).rejects.toThrow('only peers or lower-level');
   });
 });

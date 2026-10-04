@@ -226,7 +226,30 @@ export const migrations = [
      request_json TEXT NOT NULL);
    CREATE INDEX pending_approval_message ON pending_tool_approvals(message_id);
    ALTER TABLE chat_jobs ADD COLUMN approval_step_json TEXT;`,
+  `DROP TRIGGER bot_conversation;
+   DROP TRIGGER conversation_activity;
+   DROP TRIGGER conversation_finished;
+   CREATE TABLE conversations_next (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    kind TEXT NOT NULL CHECK(kind IN ('private','space','pursuit_run','bot')), name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', owner_bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+   INSERT INTO conversations_next SELECT * FROM conversations;
+   DROP TABLE conversations;
+   ALTER TABLE conversations_next RENAME TO conversations;
+   CREATE INDEX bot_conversations ON conversations(owner_bot_id,kind,updated_at);
+   CREATE INDEX workspace_conversations ON conversations(workspace_id,kind,updated_at);
+   CREATE TRIGGER bot_conversation AFTER INSERT ON bots BEGIN
+    INSERT INTO conversations VALUES('bot-'||NEW.id,NEW.workspace_id,'private','New conversation','',NEW.id,NEW.created_at,NEW.created_at);
+    INSERT INTO conversation_bots VALUES('bot-'||NEW.id,NEW.id);
+   END;
+   CREATE TRIGGER conversation_activity AFTER INSERT ON messages BEGIN
+    UPDATE conversations SET updated_at=NEW.created_at WHERE id=NEW.conversation_id;
+   END;
+   CREATE TRIGGER conversation_finished AFTER UPDATE OF finished_at ON messages WHEN NEW.finished_at IS NOT NULL BEGIN
+    UPDATE conversations SET updated_at=NEW.finished_at WHERE id=NEW.conversation_id;
+   END;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.
-export const rebuildMigrations = new Set([5, 6, 7]);
+export const rebuildMigrations = new Set([5, 6, 7, 17]);

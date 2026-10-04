@@ -18,7 +18,7 @@ export async function executeBotManagement(
     action: input.action,
     path: input.botId || input.name || '',
     status: 'running',
-    summary: input.action === 'spawn' ? 'Delegating work to a bot…' : 'Managing bots…',
+    summary: input.action === 'send_message' ? 'Sending a message to a bot…' : 'Managing bots…',
   };
   context.onActivity(activity);
   try {
@@ -45,12 +45,14 @@ export async function executeBotManagement(
         input.toolIds,
       );
     } else {
-      if (!input.botId || !input.message) throw new Error('Spawn requires botId and message.');
-      result = await context.management.spawn(
+      if (!input.botId || !input.message)
+        throw new Error('send_message requires botId and message.');
+      result = await context.management.sendMessage(
         context.bot,
         input.botId,
         input.message,
         context.signal,
+        input.conversationId,
       );
     }
     context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });

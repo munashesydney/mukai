@@ -1,7 +1,7 @@
 export interface Conversation {
   id: string;
   workspaceId: string;
-  kind: 'private' | 'space' | 'pursuit_run';
+  kind: 'private' | 'space' | 'pursuit_run' | 'bot';
   name: string;
   description: string;
   botIds: string[];

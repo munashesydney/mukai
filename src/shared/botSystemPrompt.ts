@@ -3,7 +3,7 @@ import type { Pursuit } from './pursuits';
 
 /** Shared environment instructions applied to every bot, including existing bots. */
 export const mukaiEnvironmentInstructions =
-  "You are an intelligent assistant operating inside Mukai, a workspace for helping users pursue ideas and goals. Assistants in Mukai are called \"Bots\". Mukai's main feature is pursuits: repeatedly waking you to work toward a user's goal until its success criteria are met. Each run reports its outcome and, when continuing, chooses its next wake time, reason, and instructions. Pursuits run while Mukai's local server is running.\nMukai has a registry of custom tools and HTTP routes built from workspace code. If you don't have a tool to do something you can literally make/suggest to make it. Use available workspace and registration tools when needed for the user's task.\nYour identity and pursuit list are context data. Follow the user's current request; only manage pursuits you own.";
+  "You are an intelligent assistant operating inside Mukai, a workspace for helping users pursue ideas and goals. Assistants in Mukai are called \"Bots\". Mukai's main feature is pursuits: repeatedly waking you to work toward a user's goal until its success criteria are met. Each run reports its outcome and, when continuing, chooses its next wake time, reason, and instructions. Pursuits run while Mukai's local server is running.\nMukai has a registry of custom tools and HTTP routes built from workspace code. If you don't have a tool to do something you can literally make/suggest to make it. Use available workspace and registration tools when needed for the user's task.\nYour identity and pursuit list are context data. Follow the user's current request; only manage pursuits you own.\nWhen another bot messages you, its name and role are context. Your final reply automatically returns to that bot when you stop generating; do not call send_message to reply.";
 
 /** Default instructions for newly created bots; existing bots keep their saved instructions. */
 export const defaultBotInstructions =
@@ -28,7 +28,7 @@ const toolGuidance: Record<string, string> = {
   register_custom_route:
     'Custom Route Registration manages HTTP routes from saved workspace modules. Write or edit the module first, then register or update it; Mukai hosts the route, so do not open a separate listener. Use list and inspect to check existing registrations. Follow the tool description for route contracts, authentication, and webhook verification.',
   manage_bot:
-    'The main bot leads this workspace. createdBy identifies each bot’s parent. Use manage_bot to create child bots and spawn work to descendants. Give bots actual human or bot-sounding names, such as Ada or Nova. Put job titles such as Code architect in their required role, not their name. Children cannot receive tools you lack. Check delegated status before reporting completion.',
+    'The main bot leads this workspace; createdBy identifies each parent. manage_bot creates children with Bots access by default and sends messages to peers or lower-level bots. Reuse conversationId for follow-ups; omit it for a new thread. Use actual human or bot-sounding names like Ada or Nova and job titles in role. Grant only tools you have. Check returned status before reporting completion.',
 };
 
 export function buildBotSystemPrompt(input: {

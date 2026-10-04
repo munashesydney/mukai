@@ -66,6 +66,21 @@ export class MessageRepository {
   privateConversation(id: string) {
     return this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'private';
   }
+  persistentConversation(id: string) {
+    return this.privateConversation(id) || this.botConversation(id);
+  }
+  botConversation(id: string) {
+    return this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'bot';
+  }
+  botSender(conversationId: string, requestId: string) {
+    if (!this.botConversation(conversationId)) return undefined;
+    const row = this.database.get(
+      "SELECT b.id,b.name,b.role FROM messages m JOIN bots b ON b.id=m.bot_id WHERE m.conversation_id=? AND m.request_id=? AND m.role='user'",
+      conversationId,
+      requestId,
+    );
+    return row ? { id: String(row.id), name: String(row.name), role: String(row.role) } : undefined;
+  }
   interruptStreaming(error: string, conversationId?: string) {
     const pending = this.database.all(
       `SELECT * FROM messages WHERE status='streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
@@ -213,6 +228,7 @@ export class MessageRepository {
     assistantId: string;
     text: string;
     attachmentIds: string[];
+    sender?: { id: string; name: string };
   }) {
     this.database.transaction(() => {
       const now = new Date().toISOString();
@@ -227,7 +243,7 @@ export class MessageRepository {
         this.database.run(
           'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name) VALUES (?,?,?,?,?,?,?,?,?,?)',
           role === 'user' ? input.userId : input.assistantId,
-          input.botId,
+          role === 'user' && input.sender ? input.sender.id : input.botId,
           input.requestId,
           role,
           role === 'user' ? input.text : '',
@@ -235,7 +251,7 @@ export class MessageRepository {
           now,
           role === 'assistant' ? now : null,
           input.conversationId,
-          role === 'user' ? 'You' : input.authorName,
+          role === 'user' ? input.sender?.name || 'You' : input.authorName,
         );
       }
       for (const id of input.attachmentIds) {

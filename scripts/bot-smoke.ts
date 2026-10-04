@@ -872,9 +872,116 @@ async function main() {
     window.setSize(720, 900);
     await capture('bot-hierarchy-narrow.png');
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    window.setSize(1480, 980);
+    console.log('Bot UI: checking pair conversations and their read-only viewer.');
+    assert(api.access.allowed(engineer, 'manage_bot'));
+    const pairSignal = new AbortController().signal;
+    const pairThread = await api.botManagement.sendMessage(
+      main,
+      engineer.id,
+      'Review the architecture.',
+      pairSignal,
+    );
+    await api.botManagement.sendMessage(
+      main,
+      engineer.id,
+      'Continue the architecture review.',
+      pairSignal,
+      pairThread.conversationId,
+    );
+    await api.botManagement.sendMessage(main, engineer.id, 'Start a separate review.', pairSignal);
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,
+    );
+    await wait(
+      'document.querySelector(".workspace-sidebar").textContent.includes("Bot conversations")',
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".workspace-sidebar").textContent.includes("Your bots")',
+      ),
+      false,
+    );
+    const pairTitle = [main, engineer]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((bot) => bot.name)
+      .join('/');
+    await wait(
+      `Boolean(document.querySelector('button[aria-label=${JSON.stringify(pairTitle)}]'))`,
+    );
+    await evaluate(
+      `document.querySelector('button[aria-label=${JSON.stringify(pairTitle)}]').click()`,
+    );
+    await wait('document.querySelectorAll(".bot-conversation-row").length===2');
+    await evaluate(`document.querySelector('button[title="Review the architecture."]').click()`);
+    await wait('document.querySelectorAll(".ai-message").length===4');
+    assert.equal(await evaluate('document.querySelector(".composer")'), null);
+    assert.equal(await evaluate('document.querySelector("textarea")'), null);
+    assert.equal(
+      await evaluate('document.querySelector(\'button[aria-label="Send message"]\')'),
+      null,
+    );
+    assert.equal(
+      await evaluate('document.querySelector(".conversation-heading h1").textContent'),
+      pairTitle,
+    );
+    assert.deepEqual(
+      await evaluate(
+        'Array.from(document.querySelectorAll(".ai-message-meta strong")).map(e=>e.textContent)',
+      ),
+      ['Mukai', 'Nova', 'Mukai', 'Nova'],
+    );
+    assert.equal(
+      await evaluate('document.querySelectorAll(".ai-message-meta .bot-badge").length'),
+      4,
+    );
+    assert.equal(
+      await evaluate('document.querySelectorAll(".heading-identity .avatar").length'),
+      2,
+    );
+    await capture('bot-pair-conversation.png');
+    await api.botManagement.sendMessage(
+      main,
+      engineer.id,
+      'Follow up while the viewer is open.',
+      pairSignal,
+      pairThread.conversationId,
+    );
+    await wait('document.querySelectorAll(".ai-message").length===6');
+    await evaluate(`document.querySelector('button[title="Start a separate review."]').click()`);
+    await wait('document.querySelectorAll(".ai-message").length===2');
+    askFixture = 'approval';
+    const pairApproval = api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Review with approval required.',
+      pairSignal,
+    );
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait('Boolean(document.querySelector(".bot-pending-approvals"))');
+    const pendingPairRequest = (await request<ApprovalState>('/approvals')).pending[0];
+    assert.equal(pendingPairRequest.target?.kind, 'bot');
+    await evaluate('document.querySelector(".bot-pending-approvals").click()');
+    await wait('Boolean(document.querySelector(".pending-approval-tile"))');
+    await evaluate('document.querySelector(".pending-approval-tile").click()');
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    assert.equal(await evaluate('document.querySelector(".composer")'), null);
+    assert.equal(
+      await evaluate('document.querySelector(\'button[aria-label="Send message"]\')'),
+      null,
+    );
+    await click('Approve');
+    assert.equal((await pairApproval).status, 'complete');
+    askFixture = null;
+    await wait('!document.querySelector(".ask-request-card")');
+    window.setSize(720, 900);
+    await capture('bot-pair-conversation-narrow.png');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, assignments, models, pending approvals, clarification choices and typed answers, explicit approve/deny, exact chat and pursuit links, reload recovery, shared pickers, hierarchy, and narrow layout.',
+      'PASS bot UI: onboarding, assignments, models, pending approvals, clarification choices and typed answers, explicit approve/deny, exact chat and pursuit links, reload recovery, shared pickers, nested hierarchy, read-only bot pair threads, live follow-ups, and narrow layout.',
     );
   } catch (error) {
     console.error('Bot UI failed before cleanup:', error);

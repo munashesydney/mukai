@@ -16,10 +16,10 @@ import { useState } from 'react';
 import type { Bot, Workspace } from '../../../../shared/ai';
 import type { Location, Space, DialogKind } from '../../features/workspace/types';
 import type { Pursuit } from '../../../../shared/pursuits';
-import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
+import { BotPairConversationsSidebar } from '../../features/ai/BotPairConversationsSidebar';
 import { PopupMenu } from '../ui/PopupMenu';
 
 export function WorkspaceSidebar({
@@ -34,6 +34,10 @@ export function WorkspaceSidebar({
   collapsed,
   bots,
   botConversations,
+  botPairConversations,
+  botPairLoading,
+  botPairError,
+  onRefreshBotPairs,
   onCreateConversation,
   workspace,
   workspaces,
@@ -51,6 +55,10 @@ export function WorkspaceSidebar({
   collapsed: boolean;
   bots: Bot[];
   botConversations: Conversation[];
+  botPairConversations: Conversation[];
+  botPairLoading: boolean;
+  botPairError: string;
+  onRefreshBotPairs: () => void;
   onCreateConversation: (botId: string) => Promise<void>;
   workspace?: Workspace;
   workspaces: Workspace[];
@@ -64,16 +72,6 @@ export function WorkspaceSidebar({
   const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
   const inMotion = pursuits.filter(
     (pursuit) => pursuit.status !== 'paused' && pursuit.status !== 'completed',
-  );
-  const botRow = (bot: (typeof bots)[number]) => (
-    <button
-      key={bot.id}
-      className={`sidebar-row bot-row ${isSelected(bot.id) ? 'is-selected' : ''}`}
-      onClick={() => onSelect({ section: 'bots', item: bot.id })}
-    >
-      <Avatar person={bot.avatar} size="xs" />
-      <span>{bot.name}</span>
-    </button>
   );
   return (
     <aside
@@ -182,10 +180,20 @@ export function WorkspaceSidebar({
             <div className="sidebar-section-heading">
               <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
                 {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>Your bots</span>
+                <span>Bot conversations</span>
               </button>
             </div>
-            {directOpen && <div className="sidebar-group">{bots.map(botRow)}</div>}
+            {directOpen && (
+              <BotPairConversationsSidebar
+                bots={bots}
+                conversations={botPairConversations}
+                location={location}
+                onSelect={onSelect}
+                loading={botPairLoading}
+                error={botPairError}
+                onRefresh={onRefreshBotPairs}
+              />
+            )}
             {!!inMotion.length && (
               <>
                 <div className="sidebar-section-heading plain-heading">

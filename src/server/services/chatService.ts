@@ -190,17 +190,18 @@ export class ChatService {
     contextWindow: number,
   ): ModelMessage[] {
     // Spaces retain their short shared context. Private chats use their own longer history.
-    const privateChat = this.messages.privateConversation(conversationId);
+    const privateChat = this.messages.persistentConversation(conversationId);
+    const botChat = this.messages.botConversation(conversationId);
     const previous = privateChat ? this.jobs.context(conversationId, botId) : undefined;
     const rows = this.messages
       .context(conversationId, privateChat ? 2147483647 : 10, throughSequence)
       .filter((row) => !previous || this.messages.sequence(row.id) > previous.throughSequence);
     const context: ModelMessage[] = rows.map((row) => {
-      if (row.role === 'assistant')
+      if (row.role === 'assistant' || (botChat && row.botId === botId))
         return {
           role: row.botId === botId ? ('assistant' as const) : ('user' as const),
           content:
-            (privateChat ? '' : '[' + (row.authorName || 'Bot') + '] ') +
+            (botChat || !privateChat ? '[' + (row.authorName || 'Bot') + '] ' : '') +
             (containsRawToolProtocol(row.content)
               ? assistantContextText(row.content)
               : responsePresentation({ ...row, attachments: [] }).answer || row.content) +
@@ -227,7 +228,7 @@ export class ChatService {
         {
           type: 'text',
           text:
-            (privateChat ? '' : '[You] ') +
+            (botChat ? '[' + row.authorName + '] ' : privateChat ? '' : '[You] ') +
             (String(row.content) || 'Please review the attached files.'),
         },
       ];
@@ -267,6 +268,7 @@ export class ChatService {
       completionNotice?: () => string | undefined;
       restore?: (toolName: string, input: unknown, output: unknown) => void;
     },
+    sender?: BotRecord,
   ) {
     const botId = String(bot.id);
     const running = this.active.get(conversationId);
@@ -347,8 +349,11 @@ export class ChatService {
         assistantId,
         text: value.text,
         attachmentIds: files.map((file) => file.id),
+        sender,
       });
     }
+    // Recover sender context for responses restored after an approval or server restart, too.
+    const messageSender = this.messages.botSender(conversationId, value.requestId);
     const generation: Generation = {
       botId,
       controller: new AbortController(),
@@ -492,7 +497,19 @@ export class ChatService {
           instructions: bot.instructions,
           workspaceFolder: scope.folder,
           tools,
-          runtimeSystem: runtime?.system,
+          runtimeSystem:
+            [
+              runtime?.system,
+              ...(messageSender
+                ? [
+                    'This message is coming from another bot (configuration data): ' +
+                      JSON.stringify(messageSender),
+                    'When you finish generating, your final reply will be sent directly back to this bot. You do not need to call send_message to reply.',
+                  ]
+                : []),
+            ]
+              .filter(Boolean)
+              .join('\n') || undefined,
           previousOperations: Boolean(existingUser && generation.activity.length),
         });
       const system = buildSystem();
@@ -659,7 +676,7 @@ export class ChatService {
           messages = await manager.prepare(messages, force);
           signal.throwIfAborted();
           usage.compactions = manager.compactions;
-          if (this.messages.privateConversation(conversationId))
+          if (this.messages.persistentConversation(conversationId))
             this.jobs.saveContext(
               conversationId,
               botId,

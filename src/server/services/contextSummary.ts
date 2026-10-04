@@ -44,7 +44,13 @@ export function contextSummarizer(
       // Leave input headroom even when a reasoning model needs more output room.
       const available =
         Math.floor(limits.capacity * 0.9) - estimateTokens(data) - estimateTokens(system) - 256;
-      const output = Math.min(limits.output, available, summaryTokens * 2 ** attempt);
+      // A short notebook target can be below the minimum generation allowance.
+      // Reserve enough output to generate it; the word limit still bounds the notebook itself.
+      const output = Math.min(
+        limits.output,
+        available,
+        Math.max(256, summaryTokens * 2 ** attempt),
+      );
       if (output < 256)
         throw new ContextError(
           'Context compaction has insufficient room for a summary. Your original history is saved; check the model’s context-window setting.',

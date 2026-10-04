@@ -2,12 +2,12 @@ import { z } from 'zod';
 export const botManagementDefinition = {
   name: 'manage_bot',
   title: 'Bots',
-  summary: 'Create specialist bots and delegate work down your bot hierarchy.',
-  actions: ['create', 'list', 'spawn'],
+  summary: 'Create specialist bots and message peers or bots below you in the hierarchy.',
+  actions: ['create', 'list', 'send_message'],
   description:
-    'Create and coordinate bots in your workspace. list returns bot IDs, roles, and creator relationships. create requires name, role, and instructions. Give the bot an actual human or bot-sounding name (Ada, Nova); put job titles (Code architect) in role. Avatar and toolIds are optional. Omitted toolIds grants ordinary tools you have, excluding pursuits and bot management. You can grant only assigned tools; skills and routes stay shared. A child inherits your provider/model. You are its creator, above it in the hierarchy. spawn requires botId and message: sends work to a descendant in a saved conversation and waits for its response. You cannot spawn yourself, ancestors, peers, or other workspaces. Report completion only when returned status is complete.',
+    'list returns IDs, roles, createdBy and hierarchyLevel (main=0). create requires name, role, instructions; children inherit your provider/model and record you as creator. Omitted toolIds grants your ordinary tools including Bots, excluding pursuits; explicit toolIds replaces defaults. Grant only assigned tools; skills/routes stay shared. send_message requires botId,message; waits and returns response,status,conversationId. Reuse conversationId to continue that pair’s thread; omit for a new one. Message only workspace peers or lower-level bots, never yourself or higher-level bots. Final replies return automatically to the caller; no send_message back. Report completion only for status complete.',
   inputSchema: z.object({
-    action: z.enum(['create', 'list', 'spawn']),
+    action: z.enum(['create', 'list', 'send_message']),
     name: z.string().trim().min(1).max(60).optional(),
     role: z
       .string()
@@ -27,5 +27,11 @@ export const botManagementDefinition = {
       ),
     botId: z.string().min(1).max(80).optional(),
     message: z.string().trim().min(1).max(16000).optional(),
+    conversationId: z
+      .string()
+      .min(1)
+      .max(80)
+      .optional()
+      .describe('Continue this two-bot thread; omit for a new one.'),
   }),
 };

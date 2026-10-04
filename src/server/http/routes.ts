@@ -401,7 +401,9 @@ export function createRoutes({
           response,
           url.searchParams.get('kind') === 'private'
             ? conversations.privateChats(workspaceId)
-            : conversations.list(workspaceId),
+            : url.searchParams.get('kind') === 'bot'
+              ? conversations.botChats(workspaceId)
+              : conversations.list(workspaceId),
         );
       }
       if (!id && method === 'POST') {
@@ -417,6 +419,8 @@ export function createRoutes({
         if (action === 'messages' && method === 'GET')
           return send(response, conversations.history(id));
         if (action === 'chat' && method === 'POST') {
+          if (conversation.kind === 'bot')
+            throw new ApiError(403, 'Bot conversations are read-only for users.');
           if (conversation.kind === 'private')
             return conversations.sendPrivate(
               id,

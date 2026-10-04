@@ -42,6 +42,31 @@ export class ConversationRepository {
       )
       .map((row) => this.project(row));
   }
+  botChats(workspaceId: string) {
+    return this.database
+      .all(
+        "SELECT * FROM conversations WHERE workspace_id=? AND kind='bot' ORDER BY updated_at DESC,rowid DESC",
+        workspaceId,
+      )
+      .map((row) => this.project(row));
+  }
+  createBotChat(workspaceId: string, callerId: string, targetId: string, message: string) {
+    return this.database.transaction(() => {
+      const id = randomUUID(),
+        now = new Date().toISOString();
+      this.database.run(
+        "INSERT INTO conversations(id,workspace_id,kind,name,created_at,updated_at) VALUES(?,?,'bot',?,?,?)",
+        id,
+        workspaceId,
+        message.replace(/\s+/g, ' ').trim().slice(0, 60),
+        now,
+        now,
+      );
+      for (const botId of [callerId, targetId])
+        this.database.run('INSERT INTO conversation_bots VALUES(?,?)', id, botId);
+      return this.find(id)!;
+    });
+  }
   createPrivate(workspaceId: string, botId: string) {
     return this.database.transaction(() => {
       const empty = this.database.get(
