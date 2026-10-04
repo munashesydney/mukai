@@ -29,7 +29,7 @@ export function SpaceDetails({
       </div>
       <div className="context-section-label">BOTS IN THIS SPACE</div>
       <ContextBotList
-        bots={members.map((bot) => ({ ...bot, subtitle: bot.description }))}
+        bots={members.map((bot) => ({ ...bot, subtitle: bot.role }))}
         onSelect={onSelectBot}
       />
       {!members.length && <p className="context-description">No bots belong to this space.</p>}

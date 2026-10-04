@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { startApiServer } from '../src/server/app';
+import { seedTestBot } from '../src/server/testFixtures';
 import { IPC } from '../src/shared/contracts';
 import { BgeEmbedder } from '../mukai_memory/src';
 
@@ -15,6 +16,7 @@ async function main() {
     dataDir: join(dir, 'api'),
     memoryExtractor: async () => ({ facts: [] }),
   });
+  seedTestBot(api.store);
   const window = new BrowserWindow({
     show: false,
     width: 1480,

@@ -4,13 +4,10 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import type { WorkspaceInput } from '../../shared/ai';
 import { ApiError } from '../config';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
-import { BotRepository } from '../repositories/botRepository';
-import { scoutBot } from './botService';
 
 export class WorkspaceService {
   constructor(
     private workspaces: WorkspaceRepository,
-    private bots: BotRepository,
     private dataDir: string,
   ) {}
   list() {
@@ -49,7 +46,7 @@ export class WorkspaceService {
       folder,
       createdAt: new Date().toISOString(),
     };
-    this.workspaces.create(workspace, () => this.bots.create(scoutBot(workspace.id, randomUUID())));
+    this.workspaces.create(workspace);
     return workspace;
   }
   update(id: string, input: WorkspaceInput) {

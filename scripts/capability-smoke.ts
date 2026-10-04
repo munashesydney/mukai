@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startApiServer } from '../src/server/app';
+import { seedTestBot } from '../src/server/testFixtures';
 import { IPC } from '../src/shared/contracts';
 
 async function main() {
@@ -14,6 +15,7 @@ async function main() {
   const folder = join(root, 'workspace');
   mkdirSync(folder);
   const api = await startApiServer(0, { dataDir: join(root, 'data') });
+  seedTestBot(api.store);
   const request = async (path: string, method = 'GET', body?: unknown) => {
     const response = await fetch(api.url + path, {
       method,

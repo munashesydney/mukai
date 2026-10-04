@@ -54,63 +54,65 @@ export function BotConversationsSidebar({
           {error}
         </p>
       )}
-      {bots.map((bot) => {
-        const open = expanded[bot.id] ?? location.item === bot.id;
-        const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
-        return (
-          <section className="bot-conversation-group" key={bot.id}>
-            <div className="bot-conversation-heading">
-              <button
-                className="sidebar-row bot-row bot-conversation-parent"
-                aria-expanded={open}
-                onClick={() => {
-                  setExpanded((previous) => ({ ...previous, [bot.id]: !open }));
-                }}
-              >
-                <span className="bot-conversation-toggle">
-                  <Avatar person={bot.avatar} size="xs" />
-                  {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                </span>
-                <span>{bot.name}</span>
-              </button>
-              <IconButton
-                label={`New conversation with ${bot.name}`}
-                disabled={Boolean(creating)}
-                onClick={() => void create(bot.id)}
-              >
-                <MessageCirclePlus size={17} />
-              </IconButton>
-            </div>
-            {open && (
-              <div className="bot-conversation-list">
-                {chats.map((chat) => (
-                  <button
-                    key={chat.id}
-                    className={`sidebar-row bot-conversation-row ${location.item === bot.id && location.conversationId === chat.id ? 'is-selected' : ''}`}
-                    aria-current={
-                      location.item === bot.id && location.conversationId === chat.id
-                        ? 'page'
-                        : undefined
-                    }
-                    title={chat.name}
-                    onClick={() =>
-                      onSelect({ section: 'bots', item: bot.id, conversationId: chat.id })
-                    }
-                  >
-                    <span>{chat.name}</span>
-                    <time
-                      dateTime={chat.updatedAt}
-                      title={new Date(chat.updatedAt).toLocaleString()}
-                    >
-                      {age(chat.updatedAt)}
-                    </time>
-                  </button>
-                ))}
+      {[...bots]
+        .sort((a, b) => Number(b.isMain) - Number(a.isMain))
+        .map((bot) => {
+          const open = expanded[bot.id] ?? location.item === bot.id;
+          const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
+          return (
+            <section className="bot-conversation-group" key={bot.id}>
+              <div className="bot-conversation-heading">
+                <button
+                  className="sidebar-row bot-row bot-conversation-parent"
+                  aria-expanded={open}
+                  onClick={() => {
+                    setExpanded((previous) => ({ ...previous, [bot.id]: !open }));
+                  }}
+                >
+                  <span className="bot-conversation-toggle">
+                    <Avatar person={bot.avatar} size="xs" />
+                    {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </span>
+                  <span>{bot.name}</span>
+                </button>
+                <IconButton
+                  label={`New conversation with ${bot.name}`}
+                  disabled={Boolean(creating)}
+                  onClick={() => void create(bot.id)}
+                >
+                  <MessageCirclePlus size={17} />
+                </IconButton>
               </div>
-            )}
-          </section>
-        );
-      })}
+              {open && (
+                <div className="bot-conversation-list">
+                  {chats.map((chat) => (
+                    <button
+                      key={chat.id}
+                      className={`sidebar-row bot-conversation-row ${location.item === bot.id && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                      aria-current={
+                        location.item === bot.id && location.conversationId === chat.id
+                          ? 'page'
+                          : undefined
+                      }
+                      title={chat.name}
+                      onClick={() =>
+                        onSelect({ section: 'bots', item: bot.id, conversationId: chat.id })
+                      }
+                    >
+                      <span>{chat.name}</span>
+                      <time
+                        dateTime={chat.updatedAt}
+                        title={new Date(chat.updatedAt).toLocaleString()}
+                      >
+                        {age(chat.updatedAt)}
+                      </time>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
     </div>
   );
 }

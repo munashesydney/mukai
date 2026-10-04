@@ -5,21 +5,18 @@ export const bots: Bot[] = [
     id: 'atlas',
     name: 'Atlas',
     role: 'Your strategist',
-    description: 'Keeps the big picture in focus and your pursuits moving forward.',
     color: 'teal',
   },
   {
     id: 'nova',
     name: 'Nova',
     role: 'Your builder',
-    description: 'Turns the next good idea into something you can actually use.',
     color: 'purple',
   },
   {
     id: 'scout',
     name: 'Scout',
     role: 'Your explorer',
-    description: 'Finds opportunities, connects the dots, and brings back the useful bits.',
     color: 'amber',
   },
 ];

@@ -1417,3 +1417,144 @@
     animation: none;
   }
 }
+.workspace-onboarding {
+  max-width: none;
+  gap: 18px;
+  text-align: center;
+  padding: 48px 28px;
+}
+.workspace-onboarding h2 {
+  font-family: Georgia, serif;
+  font-weight: 400;
+  font-size: clamp(28px, 3vw, 38px);
+  letter-spacing: -1px;
+  color: var(--ink);
+}
+.workspace-onboarding > p {
+  max-width: 390px;
+  line-height: 1.8;
+}
+.workspace-onboarding > small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.9;
+}
+.first-bot-intro {
+  border: 1px solid var(--line);
+  background: var(--theme-soft);
+  padding: 16px;
+  border-radius: 12px;
+}
+.first-bot-intro p {
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+.bot-name-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.bot-name-suggestions > span {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-right: 4px;
+}
+.bot-name-suggestions button {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.bot-name-suggestions button.is-selected {
+  color: var(--theme-text);
+  border-color: var(--theme-accent);
+  background: var(--theme-soft);
+}
+.assignment-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.ai-model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ai-model-picker:hover {
+  color: var(--theme-text);
+}
+.ai-model-picker:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.ai-model-picker > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-model-picker > svg {
+  flex-shrink: 0;
+}
+.bot-model-sheet > .ai-form {
+  flex: 1;
+  overflow-y: auto;
+}
+.assignment-heading h2 {
+  margin: 0;
+}
+.assignment-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+.assignment-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.assignment-row.is-assigned {
+  background: var(--theme-soft);
+}
+.assignment-identity {
+  flex: 1;
+  min-width: 0;
+}
+.assignment-identity strong {
+  display: block;
+  font-size: 13px;
+}
+.assignment-identity small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.assignment-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.assignment-row input {
+  accent-color: var(--theme-accent);
+  width: 17px;
+  height: 17px;
+}
+.rail-link:disabled,
+.rail-settings:disabled,
+.workspace-menu button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}

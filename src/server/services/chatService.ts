@@ -382,7 +382,13 @@ export class ChatService {
         ),
         ...runtime?.tools,
       };
-      const botIdentity = { id: bot.id, name: bot.name, description: bot.description };
+      const botIdentity = {
+        id: bot.id,
+        name: bot.name,
+        role: bot.role,
+        isMain: bot.isMain,
+        createdBy: bot.createdBy,
+      };
       const buildSystem = () =>
         buildBotSystemPrompt({
           bot: botIdentity,

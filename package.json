@@ -28,7 +28,8 @@
     "dist": "npm run build && electron-builder",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:skills-ui": "tsx scripts/run-skills-smoke.ts"
+    "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
+    "test:bots-ui": "tsx scripts/run-bot-smoke.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.71",

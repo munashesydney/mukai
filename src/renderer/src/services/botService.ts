@@ -1,4 +1,4 @@
-import type { Bot, BotInput } from '../../../shared/ai';
+import type { Bot, BotInput, BotModelInput } from '../../../shared/ai';
 import { api } from './http';
 
 export const botService = {
@@ -9,4 +9,6 @@ export const botService = {
   update: (id: string, value: BotInput) =>
     api<Bot>(`/bots/${encodeURIComponent(id)}`, 'PUT', value),
   remove: (id: string) => api<{ ok: boolean }>(`/bots/${encodeURIComponent(id)}`, 'DELETE'),
+  setModel: (id: string, value: BotModelInput) =>
+    api<Bot>(`/bots/${encodeURIComponent(id)}/model`, 'PUT', value),
 };

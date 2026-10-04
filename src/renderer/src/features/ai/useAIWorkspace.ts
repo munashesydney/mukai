@@ -46,6 +46,32 @@ export function useAIWorkspace() {
     void refresh();
   }, [refresh]);
   useEffect(() => {
+    let alive = true,
+      pending = false;
+    const timer = window.setInterval(async () => {
+      if (pending) return;
+      pending = true;
+      const current = revision.current;
+      try {
+        const bots = await botService.list(workspaceId);
+        if (alive && current === revision.current)
+          setData((previous) =>
+            JSON.stringify(previous.bots) === JSON.stringify(bots)
+              ? previous
+              : { ...previous, bots },
+          );
+      } catch {
+        /* The main refresh reports connection errors. */
+      } finally {
+        pending = false;
+      }
+    }, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [workspaceId]);
+  useEffect(() => {
     try {
       localStorage.setItem('mukai.active-workspace', workspaceId);
     } catch {
@@ -66,6 +92,13 @@ export function useAIWorkspace() {
     loading,
     error,
     refresh,
+    updateBot: (bot: Bot) => {
+      revision.current++;
+      setData((previous) => ({
+        ...previous,
+        bots: previous.bots.map((item) => (item.id === bot.id ? bot : item)),
+      }));
+    },
     selectWorkspace,
   };
 }

@@ -6,7 +6,6 @@ export interface Bot {
   id: BotId;
   name: string;
   role: string;
-  description: string;
   color: string;
 }
 export interface Space {

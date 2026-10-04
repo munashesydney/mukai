@@ -49,7 +49,7 @@ export function ContextPanel({
             <Avatar person={bot.id} size="lg" />
             <h3>{bot.name}</h3>
             <span>{bot.role}</span>
-            <p>{bot.description}</p>
+            <p>{bot.role}</p>
             <div className="bot-available">
               <i /> Available when you are
             </div>

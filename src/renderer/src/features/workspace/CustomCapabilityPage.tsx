@@ -2,14 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, FileCode2, Webhook } from 'lucide-react';
 import { capabilityService, type CapabilityDetail } from '../../services/capabilityService';
 import { errorText } from '../../utils/errors';
+import type { Bot } from '../../../../shared/ai';
+import { ToolAssignments } from './ToolAssignments';
 export function CustomCapabilityPage({
   workspaceId,
   id,
   onBack,
+  bots,
 }: {
   workspaceId: string;
   id: string;
   onBack: () => void;
+  bots: Bot[];
 }) {
   const [tab, setTab] = useState('Overview');
   const [detail, setDetail] = useState<CapabilityDetail | null>(null),
@@ -155,7 +159,12 @@ export function CustomCapabilityPage({
               <dt>Environment</dt>
               <dd>{detail.registration.definition.requiredEnv?.join(', ') || 'None required'}</dd>
             </dl>
-            <p>Available within this workspace.</p>
+            <ToolAssignments
+              workspaceId={workspaceId}
+              bots={bots}
+              toolId={'custom:' + id}
+              shared={detail.registration.kind === 'route'}
+            />
             {detail.registration.kind === 'route' && (
               <div className="capability-url">
                 <code>{detail.registration.url}</code>

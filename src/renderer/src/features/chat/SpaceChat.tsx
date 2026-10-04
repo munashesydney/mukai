@@ -248,7 +248,7 @@ export function SpaceChat({
                           <Avatar person={bot.avatar} size="xs" />
                           <span>
                             {bot.name}
-                            <small>{bot.description}</small>
+                            <small>{bot.role}</small>
                           </span>
                         </button>
                       ))}

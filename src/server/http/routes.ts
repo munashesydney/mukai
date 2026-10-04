@@ -11,6 +11,7 @@ import type { AttachmentService } from '../services/attachmentService';
 import type { ChatService } from '../services/chatService';
 import {
   botSchema,
+  botModelSchema,
   createBotSchema,
   providerSchema,
   chatSchema,
@@ -420,6 +421,16 @@ export function createRoutes({
           response,
           workspaces.update(id, workspaceSchema.parse(await jsonBody(request))),
         );
+    } else if (resource === 'tools' && id === 'assignments') {
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      if (method === 'GET') return send(response, tools.assignments(workspaceId));
+      if (method === 'PUT') {
+        const value = z
+          .object({ botId: z.string().min(1), toolId: z.string().min(1), enabled: z.boolean() })
+          .parse(await jsonBody(request));
+        return send(response, tools.assign(workspaceId, value.botId, value.toolId, value.enabled));
+      }
+      throw new ApiError(405, 'Method not allowed.');
     } else if (resource === 'tools' && !id && method === 'GET') {
       return send(response, tools.list(url.searchParams.get('workspaceId') || 'default'));
     } else if (resource === 'artifacts' && id && !action && method === 'GET') {
@@ -479,6 +490,11 @@ export function createRoutes({
         return send(response, bots.save(value, undefined, value.workspaceId), 201);
       }
       const bot = bots.require(id || '');
+      if (action === 'model' && method === 'PUT') {
+        const input = botModelSchema.parse(await jsonBody(request));
+        await providers.validateModel(input.providerId, input.model);
+        return send(response, bots.setModel(bot.id, input));
+      }
       if (action === 'conversations' && method === 'POST')
         return send(response, conversations.createPrivate(bot.id), 201);
       if (method === 'PUT' && !action) {

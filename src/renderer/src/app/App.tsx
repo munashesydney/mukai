@@ -1,5 +1,5 @@
 import { SkillsPage } from '../features/workspace/SkillsPage';
-import { Target } from 'lucide-react';
+import { Target, Plus } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
@@ -48,6 +48,11 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth <= 760);
   const [savedOpen, setSavedOpen] = useState(false);
   const { location, navigate, replace } = workspace;
+  const hasBots = ai.bots.length > 0;
+  useEffect(() => {
+    if (!ai.loading && !hasBots && location.section !== 'bots')
+      replace({ section: 'bots', item: 'empty' });
+  }, [ai.loading, hasBots, location.section, replace]);
   useEffect(() => {
     const narrow = window.matchMedia('(max-width: 760px)');
     const onResize = (event: MediaQueryListEvent) => {
@@ -59,12 +64,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   }, []);
   const select = useCallback(
     (next: Location) => {
+      if (!hasBots && next.section !== 'bots') return;
       navigate(next);
       setTab('Messages');
       setSavedOpen(false);
       if (window.innerWidth <= 760) setSidebarCollapsed(true);
     },
-    [navigate],
+    [navigate, hasBots],
   );
   const space = spaceState.spaces.find((s) => s.id === location.item);
   const pursuit =
@@ -146,6 +152,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       <div className="app-body">
         <NavigationRail
+          hasBots={hasBots}
           workspaceName={ai.workspace?.name}
           section={location.section}
           onNavigate={navigateSection}
@@ -206,6 +213,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           />
         ) : location.section === 'tools' ? (
           <ToolsPage
+            bots={ai.bots}
             workspaceId={ai.workspaceId}
             folder={ai.workspace?.folder || null}
             onConnectFolder={() => {
@@ -258,14 +266,24 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               providers={ai.providers}
               onEdit={() => setEditingBot(bot)}
               onProviders={() => openSettings('providers')}
+              onBotChanged={ai.updateBot}
             />
           ) : (
-            <main className="conversation ai-main-state">
-              <h2>Make room for a new bot.</h2>
-              <p>Create a companion with its own instructions and model.</p>
+            <main className="conversation ai-main-state workspace-onboarding">
+              <span className="context-section-label">YOUR WORKSPACE STARTS HERE</span>
+              <h2>Meet your first bot.</h2>
+              <p>
+                A thinking partner for your ideas, pursuits, and the work ahead. Give it a name and
+                make it yours.
+              </p>
               <button className="button button--primary" onClick={() => setEditingBot('new')}>
-                Create a bot
+                <Plus size={17} /> Add your first bot
               </button>
+              <small>
+                Your first bot leads the workspace and starts with all tools.
+                <br />
+                You can connect an AI provider after creating it.
+              </small>
             </main>
           )
         ) : location.section === 'spaces' ? (
@@ -388,6 +406,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       {editingBot && (
         <BotEditor
+          isFirst={!hasBots}
           workspaceId={ai.workspaceId}
           bot={editingBot === 'new' ? undefined : editingBot}
           providers={ai.providers}

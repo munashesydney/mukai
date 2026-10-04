@@ -24,10 +24,12 @@ const toolGuidance: Record<string, string> = {
     'Custom Tool Registration manages callable tools from saved workspace modules. Write or edit the module first, then register or update it. Use list and inspect to check existing registrations, and use returned registration IDs for subsequent changes. Follow the tool description for the module contract and environment requirements.',
   register_custom_route:
     'Custom Route Registration manages HTTP routes from saved workspace modules. Write or edit the module first, then register or update it; Mukai hosts the route, so do not open a separate listener. Use list and inspect to check existing registrations. Follow the tool description for route contracts, authentication, and webhook verification.',
+  manage_bot:
+    'The main bot leads this workspace. createdBy identifies each bot’s parent. Use manage_bot to create child bots and spawn work to descendants. Give bots actual human or bot-sounding names, such as Ada or Nova. Put job titles such as Code architect in their required role, not their name. Children cannot receive tools you lack. Check delegated status before reporting completion.',
 };
 
 export function buildBotSystemPrompt(input: {
-  bot: Pick<Bot, 'id' | 'name' | 'description'>;
+  bot: Pick<Bot, 'id' | 'name' | 'role' | 'isMain' | 'createdBy'>;
   pursuits: Pick<Pursuit, 'name'>[];
   instructions: string;
   workspaceFolder?: string | null;

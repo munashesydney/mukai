@@ -25,7 +25,7 @@ export class WorkspaceRepository {
     );
     return row ? workspaceRecord(row) : undefined;
   }
-  create(workspace: Workspace, seed: () => void) {
+  create(workspace: Workspace) {
     this.database.transaction(() => {
       this.database.run(
         'INSERT INTO workspaces VALUES (?,?,?,?)',
@@ -34,7 +34,6 @@ export class WorkspaceRepository {
         workspace.folder,
         workspace.createdAt,
       );
-      seed();
     });
   }
   update(workspace: Workspace) {

@@ -1,7 +1,16 @@
 import type { SkillService } from '../skills/service';
 import { skillTools } from '../tools/skills/execute';
 import type { Bot, ChatActivity, ToolInfo } from '../../shared/ai';
-import { toolCatalog, toolsForBot, pursuitTools, runtimeTools } from '../tools/registry';
+import {
+  toolCatalog,
+  toolsForBot,
+  pursuitTools,
+  runtimeTools,
+  botManagementTools,
+} from '../tools/registry';
+import type { ToolSet } from 'ai';
+import type { ToolAccessService } from './toolAccessService';
+import type { BotManagementService } from './botManagementService';
 import type { PursuitService } from './pursuitService';
 import { MessageRepository } from '../repositories/messageRepository';
 import { WorkspaceService } from './workspaceService';
@@ -17,6 +26,41 @@ import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
 
 export class ToolService {
+  private access?: ToolAccessService;
+  private management?: BotManagementService;
+  attachBotManagement(access: ToolAccessService, management: BotManagementService) {
+    this.access = access;
+    this.management = management;
+  }
+  assignments(workspaceId: string) {
+    this.workspaces.require(workspaceId);
+    return this.access?.list(workspaceId) || [];
+  }
+  assign(workspaceId: string, botId: string, toolId: string, enabled: boolean) {
+    this.workspaces.require(workspaceId);
+    if (!this.access) throw new Error('Tool assignments are unavailable.');
+    return this.access.set(workspaceId, botId, toolId, enabled);
+  }
+  private assigned(bot: Bot, tools: ToolSet, ids: Record<string, string> = {}) {
+    const assigned: ToolSet = {};
+    for (const [name, definition] of Object.entries(tools)) {
+      const id = ids[name] || name;
+      if (this.access && !this.access.allowed(bot, id)) continue;
+      const execute = definition.execute;
+      assigned[name] = {
+        ...definition,
+        ...(execute
+          ? {
+              execute: (input, options) => {
+                this.access?.require(bot, id);
+                return execute(input, options);
+              },
+            }
+          : {}),
+      };
+    }
+    return assigned;
+  }
   private skills?: SkillService;
   attachSkills(service: SkillService) {
     this.skills = service;
@@ -33,7 +77,12 @@ export class ToolService {
     this.capabilities = service;
   }
   customForBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void) {
-    return this.capabilities?.forBot(bot, signal, onActivity) || {};
+    const ids = Object.fromEntries(
+      (this.capabilities?.list(bot.workspaceId) || [])
+        .filter((item) => item.kind === 'tool')
+        .map((item) => [item.definition.name, 'custom:' + item.id]),
+    );
+    return this.assigned(bot, this.capabilities?.forBot(bot, signal, onActivity) || {}, ids);
   }
   private pursuits?: PursuitService;
   attachPursuits(service: PursuitService) {
@@ -65,18 +114,21 @@ export class ToolService {
     );
     return toolCatalog().map((tool) => ({
       ...tool,
+      scope: ['skills', 'register_custom_route'].includes(tool.id) ? 'all-bots' : 'selected-bots',
       available:
         tool.id === 'skills'
           ? Boolean(this.skills)
           : tool.id === 'memory'
             ? Boolean(this.memory)
-            : tool.id === 'manage_pursuit'
-              ? Boolean(this.pursuits)
-              : tool.id.startsWith('register_custom_')
-                ? Boolean(this.capabilities)
-                : tool.id === 'browser'
-                  ? true
-                  : Boolean(workspace.folder),
+            : tool.id === 'manage_bot'
+              ? Boolean(this.management)
+              : tool.id === 'manage_pursuit'
+                ? Boolean(this.pursuits)
+                : tool.id.startsWith('register_custom_')
+                  ? Boolean(this.capabilities)
+                  : tool.id === 'browser'
+                    ? true
+                    : Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
     }));
   }
@@ -98,54 +150,65 @@ export class ToolService {
     const scheduledRun = Boolean(
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
-    return {
-      ...(this.skills
-        ? skillTools({
-            bot,
-            conversationId: conversationId!,
-            skills: this.skills,
-            maxContextBytes: skillContextBytes,
-            signal,
-            onActivity,
-          })
-        : {}),
-      ...(this.memory
-        ? memoryTools({
-            bot,
-            conversationId: conversationId!,
-            messageId,
-            memory: this.memory,
-            signal,
-            onActivity,
-          })
-        : {}),
-      ...this.customForBot(bot, signal, onActivity),
-      ...runtimeTools({
-        owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
-        signal,
-        onActivity,
-        budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
-        processes: this.processes,
-        browsers: this.browsers,
-        folder: workspace.folder,
-        vision,
-        resultBytes,
-      }),
-      ...(workspace.folder
-        ? toolsForBot({
-            botId: bot.id,
-            signal,
-            files: new WorkspaceFileService(workspace.folder, this.dataDir, (snapshot) =>
-              this.changes.record(bot.id, messageId, snapshot),
-            ),
-            onActivity,
-            onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
-            callBudget: { remaining: FILE_TOOL_CALL_LIMIT },
-          })
-        : {}),
-      ...(this.pursuits
-        ? pursuitTools({ bot, pursuits: this.pursuits, onActivity, signal, scheduledRun })
-        : {}),
-    };
+    return this.assigned(
+      bot,
+      {
+        ...(this.skills
+          ? skillTools({
+              bot,
+              conversationId: conversationId!,
+              skills: this.skills,
+              maxContextBytes: skillContextBytes,
+              signal,
+              onActivity,
+            })
+          : {}),
+        ...(this.memory
+          ? memoryTools({
+              bot,
+              conversationId: conversationId!,
+              messageId,
+              memory: this.memory,
+              signal,
+              onActivity,
+            })
+          : {}),
+        ...this.customForBot(bot, signal, onActivity),
+        ...runtimeTools({
+          owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
+          signal,
+          onActivity,
+          budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
+          processes: this.processes,
+          browsers: this.browsers,
+          folder: workspace.folder,
+          vision,
+          resultBytes,
+        }),
+        ...(workspace.folder
+          ? toolsForBot({
+              botId: bot.id,
+              signal,
+              files: new WorkspaceFileService(workspace.folder, this.dataDir, (snapshot) =>
+                this.changes.record(bot.id, messageId, snapshot),
+              ),
+              onActivity,
+              onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
+              callBudget: { remaining: FILE_TOOL_CALL_LIMIT },
+            })
+          : {}),
+        ...(this.pursuits
+          ? pursuitTools({ bot, pursuits: this.pursuits, onActivity, signal, scheduledRun })
+          : {}),
+        ...(this.management
+          ? botManagementTools({ bot, management: this.management, signal, onActivity })
+          : {}),
+      },
+      Object.fromEntries(
+        (this.capabilities?.list(bot.workspaceId) || [])
+          .filter((item) => item.kind === 'tool')
+          .map((item) => [item.definition.name, 'custom:' + item.id]),
+      ),
+    );
   }
 }

@@ -117,6 +117,7 @@ export function WorkspaceSidebar({
               Create workspace
             </button>
             <button
+              disabled={!bots.length}
               onClick={() => {
                 setWorkspaceMenu(false);
                 onSettings();
@@ -196,6 +197,15 @@ export function WorkspaceSidebar({
                 <Plus size={18} />
               </IconButton>
             </div>
+            {!bots.length && (
+              <div className="sidebar-empty">
+                <strong>No bots yet</strong>
+                <p>Add your first bot to start a conversation and lead your workspace.</p>
+                <button className="sidebar-empty-action" onClick={() => onDialog('create-bot')}>
+                  Add your first bot <ArrowUpRight size={14} />
+                </button>
+              </div>
+            )}
             <BotConversationsSidebar
               bots={bots}
               conversations={botConversations}

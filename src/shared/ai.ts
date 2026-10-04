@@ -50,17 +50,24 @@ export interface Bot {
   id: string;
   workspaceId: string;
   name: string;
-  description: string;
+  role: string;
   instructions: string;
   providerId: string | null;
   model: string | null;
   supportsImages: boolean | null;
   avatar: 'scout' | 'nova' | 'atlas';
   createdAt: string;
+  isMain: boolean;
+  createdBy: string | null;
   contextWindowTokens?: number | null;
   maxOutputTokens?: number | null;
 }
-export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId'>;
+export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId' | 'isMain' | 'createdBy'>;
+export type BotModelInput = Pick<
+  Bot,
+  'providerId' | 'model' | 'supportsImages' | 'contextWindowTokens'
+>;
+export const mainBotRole = 'Main Bot/Orchestrator';
 export interface Workspace {
   id: string;
   name: string;

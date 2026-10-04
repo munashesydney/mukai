@@ -27,6 +27,7 @@ import { BrowserToggle } from '../browser/BrowserToggle';
 import { ContextMeter } from './ContextMeter';
 import { modelContextWindow } from '../../../../shared/modelLimits';
 import type { Conversation } from '../../../../shared/conversations';
+import { BotModelPicker } from './BotModelPicker';
 
 export function BotChat({
   bot,
@@ -35,6 +36,7 @@ export function BotChat({
   providers,
   onEdit,
   onProviders,
+  onBotChanged,
 }: {
   bot: Bot;
   conversation: Conversation;
@@ -42,6 +44,7 @@ export function BotChat({
   providers: ProviderSettings[];
   onEdit: () => void;
   onProviders: () => void;
+  onBotChanged: (bot: Bot) => void;
 }) {
   const chatId = 'private:' + conversation.id;
   const state = useChat(chatId);
@@ -62,7 +65,8 @@ export function BotChat({
     }
   }
   const [filesOpen, setFilesOpen] = useState(false),
-    [detailsOpen, setDetailsOpen] = useState(false);
+    [detailsOpen, setDetailsOpen] = useState(false),
+    [changingModel, setChangingModel] = useState(false);
   const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
     null,
   );
@@ -83,6 +87,11 @@ export function BotChat({
     if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
   }, [state.messages, state.loading, bot.id]);
   function send() {
+    if (changingModel) return;
+    if (!provider) {
+      onProviders();
+      return;
+    }
     if (provider && !blocked) {
       follow.current = true;
       void chatStore.send(chatId);
@@ -159,7 +168,7 @@ export function BotChat({
                     <p>
                       {provider
                         ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
-                        : 'Connect a provider, then start a conversation with Scout or your own bot.'}
+                        : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
                     </p>
                     {!provider && (
                       <button className="button button--primary" onClick={onProviders}>
@@ -309,13 +318,18 @@ export function BotChat({
                     >
                       <Paperclip size={18} />
                     </IconButton>
-                    <span className="ai-model-label" title={model}>
-                      {state.uploading
-                        ? 'Uploading & reading…'
-                        : provider
-                          ? model
-                          : 'No provider configured'}
-                    </span>
+                    {state.uploading ? (
+                      <span className="ai-model-label">Uploading & reading…</span>
+                    ) : (
+                      <BotModelPicker
+                        bot={bot}
+                        providers={providers}
+                        disabled={state.busy || state.loading}
+                        onSelected={onBotChanged}
+                        onSaving={setChangingModel}
+                        onProviders={onProviders}
+                      />
+                    )}
                     <ContextMeter
                       usage={latestAssistant?.contextUsage}
                       window={modelContextWindow(bot, provider)}
@@ -337,9 +351,9 @@ export function BotChat({
                       aria-label="Send message"
                       disabled={
                         state.loading ||
+                        changingModel ||
                         state.uploading ||
                         blocked ||
-                        !provider ||
                         (!state.text.trim() && !state.files.length)
                       }
                       onClick={send}
@@ -394,8 +408,10 @@ export function BotChat({
           </div>
           <Avatar person={bot.avatar} size="lg" />
           <h3>{bot.name}</h3>
-          <p>{bot.description}</p>
+          <p>{bot.role}</p>
           <dl>
+            <dt>Workspace role</dt>
+            <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
             <dt>Provider</dt>
             <dd>{provider?.name || 'Not configured'}</dd>
             <dt>Model</dt>

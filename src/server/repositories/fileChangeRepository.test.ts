@@ -10,7 +10,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'mukai-changes-'));
   database = new Database(dir);
   database.run(
-    "INSERT INTO bots(id,name,description,instructions,avatar,created_at,workspace_id) VALUES('bot','Bot','','','scout','2026-10-02','default')",
+    "INSERT INTO bots(id,name,role,instructions,avatar,created_at,workspace_id) VALUES('bot','Bot','Assistant','','scout','2026-10-02','default')",
   );
   for (const id of ['turn', 'later'])
     database.run(

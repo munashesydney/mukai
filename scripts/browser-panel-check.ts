@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow, type WebContentsView } from 'electron';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { startApiServer } from '../src/server/app';
+import { seedTestBot } from '../src/server/testFixtures';
 import { IPC } from '../src/shared/contracts';
 import type { MukaiBrowserHost } from '../src/main/embeddedBrowserHost';
 import { checkContextPanel } from './context-panel-check';
@@ -15,6 +16,7 @@ export async function checkBrowserPanel(
   fixtureUrl: string,
 ) {
   const api = await startApiServer(0, { dataDir: join(dir, 'panel-api'), embeddedBrowser: host });
+  seedTestBot(api.store);
   const evaluate = <T>(code: string): Promise<T> => window.webContents.executeJavaScript(code);
   const wait = async (predicate: () => Promise<boolean> | boolean, name = 'browser panel') => {
     for (let attempt = 0; attempt < 100; attempt++) {

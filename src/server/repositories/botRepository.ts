@@ -18,10 +18,10 @@ export class BotRepository {
   }
   create(bot: BotRecord) {
     this.database.run(
-      'INSERT INTO bots(id,name,description,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO bots(id,name,role,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens,is_main,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       bot.id,
       bot.name,
-      bot.description,
+      bot.role,
       bot.instructions,
       bot.providerId,
       bot.model,
@@ -31,13 +31,15 @@ export class BotRepository {
       bot.workspaceId,
       bot.contextWindowTokens ?? null,
       bot.maxOutputTokens ?? null,
+      Number(bot.isMain),
+      bot.createdBy,
     );
   }
   update(bot: BotRecord) {
     this.database.run(
-      'UPDATE bots SET name=?,description=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=?,context_window_tokens=?,max_output_tokens=? WHERE id=?',
+      'UPDATE bots SET name=?,role=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=?,context_window_tokens=?,max_output_tokens=? WHERE id=?',
       bot.name,
-      bot.description,
+      bot.role,
       bot.instructions,
       bot.providerId,
       bot.model,
@@ -51,12 +53,16 @@ export class BotRepository {
   delete(id: string) {
     this.database.run('DELETE FROM bots WHERE id = ?', id);
   }
-  seedScout(bot: BotRecord) {
-    this.database.transaction(() => {
-      if (!this.database.get("SELECT value FROM metadata WHERE key = 'scout_seeded'")) {
-        this.create(bot);
-        this.database.run("INSERT INTO metadata VALUES ('scout_seeded','1')");
-      }
+  insertNew(
+    build: (existing: BotRecord[]) => BotRecord,
+    workspaceId: string,
+    configure?: (bot: BotRecord) => void,
+  ) {
+    return this.database.transaction(() => {
+      const bot = build(this.list(workspaceId));
+      this.create(bot);
+      configure?.(bot);
+      return bot;
     });
   }
 }

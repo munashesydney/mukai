@@ -1,13 +1,14 @@
 import { defaultBotInstructions } from '../../../../shared/botSystemPrompt';
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import type { Bot, BotInput, ProviderSettings } from '../../../../shared/ai';
+import { mainBotRole, type Bot, type BotInput, type ProviderSettings } from '../../../../shared/ai';
 import { Sheet } from '../../components/ui/Sheet';
 import { Avatar } from '../../components/ui/Avatar';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { botService } from '../../services/botService';
 import { errorText } from '../../utils/errors';
 import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
+import { botNameSuggestions } from '../../../../shared/toolAssignments';
 
 export function BotEditor({
   bot,
@@ -16,6 +17,7 @@ export function BotEditor({
   onSaved,
   onDeleted,
   workspaceId = 'default',
+  isFirst = false,
 }: {
   bot?: Bot;
   providers: ProviderSettings[];
@@ -23,11 +25,12 @@ export function BotEditor({
   onSaved: (bot: Bot) => void;
   onDeleted: () => void;
   workspaceId?: string;
+  isFirst?: boolean;
 }) {
   const [value, setValue] = useState<BotInput>(
     bot || {
-      name: '',
-      description: '',
+      name: isFirst ? 'Mukai' : '',
+      role: isFirst ? mainBotRole : '',
       instructions: defaultBotInstructions,
       providerId: null,
       model: null,
@@ -67,7 +70,7 @@ export function BotEditor({
   }
   return (
     <Sheet
-      title={bot ? `Edit ${bot.name}` : 'Create a bot'}
+      title={bot ? `Edit ${bot.name}` : isFirst ? 'Add your first bot' : 'Create a bot'}
       className="bot-editor"
       onClose={() => {
         if (!busy) onClose();
@@ -108,6 +111,15 @@ export function BotEditor({
             </div>
           ) : (
             <>
+              {isFirst && (
+                <div className="first-bot-intro">
+                  <strong>Your main bot</strong>
+                  <p>
+                    This bot leads your workspace. It can use all tools, manage pursuits, and create
+                    other bots.
+                  </p>
+                </div>
+              )}
               <div className="bot-avatar-options" role="group" aria-label="Bot identity">
                 {(['scout', 'nova', 'atlas'] as const).map((avatar) => (
                   <button
@@ -134,15 +146,38 @@ export function BotEditor({
                   onChange={(event) => setValue({ ...value, name: event.target.value })}
                 />
               </label>
+              {!bot && (
+                <div className="bot-name-suggestions" role="group" aria-label="Suggested bot names">
+                  <span>Try a name</span>
+                  {botNameSuggestions.map((name) => (
+                    <button
+                      type="button"
+                      key={name}
+                      disabled={busy}
+                      className={value.name === name ? 'is-selected' : ''}
+                      onClick={() => setValue({ ...value, name })}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <label>
-                Description <span>(optional)</span>
+                Role
                 <input
-                  maxLength={400}
+                  required
+                  maxLength={120}
                   disabled={busy}
-                  value={value.description}
-                  placeholder="A little about this bot"
-                  onChange={(event) => setValue({ ...value, description: event.target.value })}
+                  readOnly={isFirst || bot?.isMain}
+                  value={value.role}
+                  placeholder="e.g. Code architect"
+                  onChange={(event) => setValue({ ...value, role: event.target.value })}
                 />
+                <small>
+                  {isFirst || bot?.isMain
+                    ? 'Your main bot coordinates the workspace.'
+                    : 'Give the bot a name; put its job title here.'}
+                </small>
               </label>
               <label>
                 Instructions
@@ -158,7 +193,7 @@ export function BotEditor({
               </label>
               <div className="ai-form-grid">
                 <label>
-                  Provider
+                  Provider <span>(optional)</span>
                   <Dropdown
                     label="Provider"
                     disabled={busy}
@@ -174,7 +209,7 @@ export function BotEditor({
                       })
                     }
                     options={[
-                      { value: '', label: 'Workspace default' },
+                      { value: '', label: providers.length ? 'Workspace default' : 'Set up later' },
                       ...providers.map((provider) => ({
                         value: provider.id,
                         label: provider.account
@@ -298,6 +333,12 @@ export function BotEditor({
                   You can create this bot now. Add a provider in Settings before chatting.
                 </p>
               )}
+              {!bot && !isFirst && (
+                <p className="ai-caption">
+                  Pursuits and bot management start unassigned. Change access in Tools → Workspace
+                  tools.
+                </p>
+              )}
             </>
           )}
         </div>
@@ -323,7 +364,9 @@ export function BotEditor({
               <button
                 type="submit"
                 className="button button--primary"
-                disabled={busy || !value.name.trim() || !value.instructions.trim()}
+                disabled={
+                  busy || !value.name.trim() || !value.role.trim() || !value.instructions.trim()
+                }
               >
                 {busy ? 'Saving…' : bot ? 'Save changes' : 'Create bot'}
               </button>

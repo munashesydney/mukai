@@ -14,18 +14,20 @@ export function NavigationRail({
   onSettings,
   onCreate,
   workspaceName = 'Munashe’s workspace',
+  hasBots = true,
 }: {
   section: Section;
   onNavigate: (section: Section) => void;
   onSettings: () => void;
   onCreate: () => void;
   workspaceName?: string;
+  hasBots?: boolean;
 }) {
   return (
     <nav className="navigation-rail" aria-label="Main navigation">
       <button
         className="workspace-emblem"
-        onClick={() => onNavigate('spaces')}
+        onClick={() => onNavigate(hasBots ? 'spaces' : 'bots')}
         aria-label={workspaceName}
       >
         {workspaceName[0]?.toUpperCase() || 'M'}
@@ -36,6 +38,8 @@ export function NavigationRail({
           <button
             className={`rail-link ${section === id ? 'is-active' : ''}`}
             key={id}
+            disabled={!hasBots && id !== 'bots'}
+            title={!hasBots && id !== 'bots' ? 'Add your first bot to unlock this' : undefined}
             onClick={() => onNavigate(id)}
             aria-current={section === id ? 'page' : undefined}
           >
@@ -63,7 +67,13 @@ export function NavigationRail({
             <Plus size={21} />
           </button>
         )}
-        <button className="rail-settings" onClick={onSettings} aria-label="Open settings">
+        <button
+          className="rail-settings"
+          onClick={onSettings}
+          aria-label="Open settings"
+          disabled={!hasBots}
+          title={!hasBots ? 'Add your first bot to unlock settings' : undefined}
+        >
           <Settings size={21} strokeWidth={1.6} />
         </button>
       </div>

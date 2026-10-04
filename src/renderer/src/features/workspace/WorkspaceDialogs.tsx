@@ -161,7 +161,7 @@ function CreateSpaceDialog({
                 <Avatar person={bot.avatar} size="xs" />
                 <span>
                   {bot.name}
-                  <small>{bot.description}</small>
+                  <small>{bot.role}</small>
                 </span>
               </label>
             ))}

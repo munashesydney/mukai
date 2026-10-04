@@ -25,6 +25,9 @@ import { ConversationRepository } from './repositories/conversationRepository';
 import { ConversationService } from './services/conversationService';
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
+import { ToolAccessService } from './services/toolAccessService';
+import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
+import { BotManagementService } from './services/botManagementService';
 import { ProcessService } from './services/processService';
 import { BrowserService } from './services/browserService';
 import type { EmbeddedBrowserHost } from './browser/types';
@@ -64,7 +67,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
-    const workspaces = new WorkspaceService(workspaceRepository, botRepository, dir);
+    const workspaces = new WorkspaceService(workspaceRepository, dir);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
       diagnostics.registerSecret(value),
     );
@@ -126,7 +129,6 @@ export function createApiServer(options: ApiOptions = {}) {
       (id) => chats.busy(id),
       workspaceRepository,
     );
-    bots.initialize();
     chats.initialize();
     capabilities.setWake(async (botId, workspaceId, message, requestId) => {
       const bot = bots.require(botId);
@@ -159,6 +161,9 @@ export function createApiServer(options: ApiOptions = {}) {
       chats,
       memory,
     );
+    const access = new ToolAccessService(new ToolAssignmentRepository(store));
+    const botManagement = new BotManagementService(bots, chats, conversations, access, providers);
+    tools.attachBotManagement(access, botManagement);
     const route = createRoutes({
       token,
       startedAt,
@@ -228,6 +233,8 @@ export function createApiServer(options: ApiOptions = {}) {
       memory.start();
     });
     return {
+      access,
+      botManagement,
       server,
       token,
       store,

@@ -32,11 +32,11 @@ export function SearchDialog({
         icon: <Layers3 size={19} />,
       })),
     ...bots
-      .filter((a) => matches(a.name + a.description))
+      .filter((a) => matches(a.name + a.role))
       .map((a) => ({
         id: a.id,
         name: a.name,
-        detail: a.description || 'Bot',
+        detail: a.role,
         location: { section: 'bots', item: a.id } as Location,
         icon: <Avatar person={a.avatar} size="xs" />,
       })),

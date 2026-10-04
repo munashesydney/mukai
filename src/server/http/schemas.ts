@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const botSchema = z.object({
   name: z.string().trim().min(1).max(60),
-  description: z.string().trim().max(400),
+  role: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(12000),
   providerId: z.string().uuid().nullable(),
   model: z.string().trim().min(1).max(150).nullable(),
@@ -32,6 +32,12 @@ export const chatSchema = z.object({
 });
 export const createBotSchema = botSchema.extend({
   workspaceId: z.string().min(1).max(80).optional(),
+});
+export const botModelSchema = botSchema.pick({
+  providerId: true,
+  model: true,
+  supportsImages: true,
+  contextWindowTokens: true,
 });
 export const workspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),

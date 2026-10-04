@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { randomUUID, createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { startApiServer } from '../app';
+import { seedTestBot } from '../testFixtures';
 import type { CapabilityRegistration } from '../../shared/customCapabilities';
 import type { ChatEvent } from '../../shared/ai';
 
@@ -49,6 +50,7 @@ beforeEach(async () => {
   folder = join(root, 'workspace');
   mkdirSync(folder);
   api = await startApiServer(0, { dataDir: join(root, 'data') });
+  seedTestBot(api.store);
   const result = await request('/workspaces/default', 'PUT', { name: 'Personal', folder });
   expect(result.status).toBe(200);
 });

@@ -2,7 +2,7 @@
 
 **Wake up to what’s possible.** Mukai means “wake up” in Shona. An Electron workspace built with React and TypeScript.
 
-Bots, chats, workspaces, artifacts, and file tools use a real local Node backend, SQLite, and the Vercel AI SDK. Spaces and Pursuits retain their earlier UI prototype behavior; autonomous work and integrations are outside this feature.
+Bots, chats, spaces, pursuits, workspaces, artifacts, and tools use a local Node backend, SQLite, and the Vercel AI SDK. Bots can create specialists and delegate work within their workspace hierarchy.
 
 ## Run
 
@@ -13,7 +13,7 @@ npm ci
 npm run dev
 ```
 
-The Electron app starts its backend on a random loopback port. Go to **Settings → Providers**, add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the workspace default; Scout uses that default unless you edit its model settings. Connection tests make a small billable request for paid providers.
+The Electron app starts its backend on a random loopback port. Add your first bot from the empty workspace; suggested names start with **Mukai** and **Scout**. Provider setup can wait until after bot creation. Sending without a provider opens **Settings → Providers**. Add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the default used by bots without an explicit connection. Connection tests make a small billable request for paid providers.
 
 To use a ChatGPT plan, add **ChatGPT subscription** and choose **Continue with ChatGPT**. Complete sign-in and authorize plan usage in your system browser. Eligible Plus and Pro accounts can use their included usage through the official Sign in with ChatGPT flow; it shares their ChatGPT Work/Codex and per-app limits. Identity-only sign-in is retained, but requires enabling plan usage before inference. Choose an account-specific model, set its documented context window when OpenAI does not supply it, confirm image support, and save. The same grouped model picker is available in bot settings. Families are GPT, Codex, o-series Reasoning, and Other; missing capabilities are not guessed. Refresh the catalog when account permissions or available models change.
 
@@ -38,16 +38,19 @@ Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:114
 
 - Temporal graph memory lives in the independent [`mukai_memory`](mukai_memory/README.md) module. **Settings → Memory** provides a graph/list inspector, source evidence, corrections, forgetting, recall records, and import/export. New user statements are captured in the background using the configured AI, and relevant confirmed memories are supplied before each reply. Private chat memories stay private to their bot; spaces use workspace memory. Keyword/relationship retrieval works immediately; **Download & enable** installs local CPU BGE embeddings. Capture and recall can be disabled per workspace.
 
-- Create a workspace from a local folder using the workspace menu. The desktop has a native folder picker; browser development accepts an absolute local path. Each workspace has its own Scout, bots, and chats. Provider connections are shared across workspaces. Connect the original personal workspace to a folder from Settings without losing its chats.
-- Scout is created once on first setup and in each new workspace. Create, edit, and delete additional bots with their own name, description, instructions, provider, model, and identity.
-- Each bot has one continuous chat. SQLite saves user messages, assistant messages, partial responses, and file references. Switching bots does not stop an active stream.
+- Create a workspace from a local folder using the workspace menu. The desktop has a native folder picker; browser development accepts an absolute local path. Each workspace starts with no bots. Pursuits, spaces, tools, and settings unlock after its first bot is created. Provider connections are shared across workspaces.
+- The first bot is the main bot and starts with every tool. Later bots start without pursuit or bot-management access. **Tools → Workspace tools** and **Custom tools** offer per-bot assignments; skills and routes stay shared. Revocations are checked when a tool executes, including during an active response.
+- Every bot has a required role; the main bot uses **Main Bot/Orchestrator**. Give specialists names such as Ada or Nova and put job titles such as Code architect in their role. The bot editor and `manage_bot` creation both require a role, and the Bots sidebar displays names only.
+- Select the model beside the chat composer to change that bot's saved provider/model for its next response. ChatGPT connections offer their account model catalog; other providers accept an exact model ID and context window. Selecting the provider default clears the bot's model override without changing the provider's settings.
+- The `manage_bot` workspace tool has `create`, `list`, and `spawn` actions. Creation stores `createdBy`, inherits provider/model settings, and grants only tools the caller can use. `spawn` sends a task to a descendant in a saved private conversation and returns its actual response and status. A bot cannot spawn itself, ancestors, peers, or another workspace’s bots. Stopping the parent stops delegated work. Delete children before their parent.
+- Each bot can have multiple private conversations. SQLite saves user messages, assistant messages, partial responses, and file references. Switching bots does not stop an active stream.
 - Private conversations use their own history and compact older context when needed. Spaces supply their latest **10 usable messages, including the current user message**. Bot instructions and the exact current request remain intact. Original history stays visible after compaction.
 - Streaming Markdown, stop generation, and retry of the latest failed, stopped, or interrupted response. Backend-owned runs survive switching chats, refreshing, and disconnected UI streams. Reconnecting the same request attaches to its existing run. Stop explicitly cancels it. Closing the backend interrupts work; Retry resumes a compatible completed-step checkpoint. Uncertain operations are never automatically replayed.
 - The composer shows provider-reported input/output usage when available and clearly labels estimates otherwise. Context capacity is supplied in model settings; custom bot models can override it. Automatic compaction preserves complete tool-call/result pairs and retains a working notebook. Failed summaries leave usable context and original history untouched.
 - Provider settings, encrypted keys, connection tests, workspace defaults, and explicit model/image capability settings. Saved key values are never sent back to the UI or written to logs.
 - Persistent image previews, file downloads, and an Artifacts view for uploaded files and drafts created by bots. Pending uploads are recovered after refresh. Generated artifacts preview/download the current workspace file; moving or editing that file outside Mukai affects what is available.
 - Model-provided reasoning streams into a collapsible Thinking card and persists with the response. It is available only when the selected provider/model returns reasoning or a reasoning summary; Mukai does not invent private model thoughts.
-- File Operations is available to every bot with a connected workspace folder. Bots can list, read, write, patch, search, and create directories. Tool activity and action counts are visible in chat and Tools. Stop replaces Send during generation and cancels further work; completed file changes remain on disk.
+- File Operations is available to assigned bots with a connected workspace folder. Bots can list, read, write, patch, search, and create directories. Tool activity and action counts are visible in chat and Tools. Stop replaces Send during generation and cancels further work; completed file changes remain on disk.
 - Unsent text drafts and their retry IDs survive refresh in device storage; accepted messages remain authoritative in SQLite.
 - Existing themes, navigation, bot search, native window controls, and the current Mukai design.
 
@@ -149,4 +152,4 @@ npm run package     # Unpacked desktop app in release/
 npm run dist        # Platform installer
 ```
 
-Public distribution still needs signing/notarization, updates, and release CI. No cloud sync, user accounts, OCR, autonomous scheduling, Pursuits backend, or advanced bot tools are included.
+Public distribution still needs signing/notarization, updates, and release CI. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling runs while the local backend is running.

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
+import { seedTestBot } from './testFixtures';
 import type { Bot, ChatEvent } from '../shared/ai';
 import type { MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
@@ -123,6 +124,7 @@ beforeEach(async () => {
   });
   await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
   api = await startApiServer(0, { dataDir: dir, memoryExtractor: extractor });
+  seedTestBot(api.store);
   await request('/providers', 'POST', {
     name: 'Memory fixture',
     kind: 'compatible',
@@ -252,9 +254,10 @@ describe('Mukai memory integration', () => {
         ?.filter((tool) => tool.function.name.startsWith('memory'))
         .map((tool) => tool.function.name),
     ).toEqual(['memory']);
-    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action add proactively');
-    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action search');
-    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action forget');
+    // Memory guidance lives in the assigned tool description, avoiding duplicate system context.
+    expect(JSON.stringify(latest.tools)).toContain('add requires content and scope');
+    expect(JSON.stringify(latest.tools)).toContain('search requires query');
+    expect(JSON.stringify(latest.tools)).toContain('forget requires memoryId');
     const snapshot = (await request<MemorySnapshot>('/memory')).data;
     expect(snapshot.recalls[0].facts[0].text).toContain('espresso');
     expect(snapshot.recalls[0].characters).toBeGreaterThan(0);

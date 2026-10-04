@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { startApiServer } from '../app';
+import { seedTestBot } from '../testFixtures';
 import { validateBundle } from './bundle';
 import { importGithub } from './github';
 import { skillTools } from '../tools/skills/execute';
@@ -45,6 +46,7 @@ async function setup() {
     dataDir: join(dir, 'data'),
     memoryExtractor: async () => ({ facts: [] }),
   });
+  seedTestBot(api.store);
   return api;
 }
 async function request(path: string, method = 'GET', value?: unknown) {

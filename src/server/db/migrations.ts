@@ -198,6 +198,16 @@ export const migrations = [
     PRIMARY KEY(conversation_id,bot_id,skill_id));`,
   `ALTER TABLE pursuits ADD COLUMN next_run_instructions TEXT NOT NULL DEFAULT '';
    UPDATE pursuits SET next_run_instructions=objective;`,
+  `ALTER TABLE bots ADD COLUMN is_main INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE bots ADD COLUMN created_by TEXT REFERENCES bots(id) ON DELETE RESTRICT;
+   CREATE UNIQUE INDEX one_main_bot ON bots(workspace_id) WHERE is_main=1;
+   CREATE TABLE bot_tool_assignments (
+     bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+     tool_id TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+     PRIMARY KEY(bot_id,tool_id));`,
+  `ALTER TABLE bots RENAME COLUMN description TO role;
+   UPDATE bots SET role=CASE WHEN is_main=1 THEN 'Main Bot/Orchestrator'
+     WHEN trim(role)='' THEN 'Assistant' ELSE substr(role,1,120) END;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

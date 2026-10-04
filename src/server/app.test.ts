@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 import { startApiServer } from './app';
+import { seedTestBot } from './testFixtures';
 import { migrations } from './db/migrations';
 import type {
   Bot,
@@ -20,6 +21,18 @@ import type {
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
+
+function inputBot() {
+  return {
+    name: 'Mukai',
+    role: 'Assistant',
+    instructions: 'Help the user.',
+    providerId: null,
+    model: null,
+    supportsImages: null,
+    avatar: 'nova' as const,
+  };
+}
 
 // A test-only OpenAI protocol server exercises the actual SDK, HTTP streaming,
 // persistence, and error handling without a cloud key or billable requests.
@@ -268,7 +281,12 @@ beforeEach(async () => {
                   empty || truncated
                     ? ''
                     : JSON.stringify(body.messages).includes('Summarize working memory')
-                      ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.'
+                      ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.' +
+                        (mode === 'oversized-results'
+                          ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED]
+                              .filter((finding) => JSON.stringify(body.messages).includes(finding))
+                              .join(' ')
+                          : '')
                       : 'OK',
               },
               finish_reason: truncated
@@ -552,6 +570,7 @@ beforeEach(async () => {
       shutdown: async () => {},
     },
   });
+  seedTestBot(api.store);
 });
 afterEach(async () => {
   await api.shutdown();
@@ -859,7 +878,9 @@ describe('Mukai bots and AI API', () => {
       const workspace = (
         await request<Workspace>('/workspaces', 'POST', { name: 'Checkpoint', folder: project })
       ).data;
-      const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+      const bot = (
+        await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id })
+      ).data;
       mode = 'checkpoint';
       const sent = await chat('Write once, then report.', randomUUID(), bot.id);
       expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
@@ -889,7 +910,8 @@ describe('Mukai bots and AI API', () => {
     const workspace = (
       await request<Workspace>('/workspaces', 'POST', { name: 'History', folder: project })
     ).data;
-    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    const bot = (await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id }))
+      .data;
     mode = 'checkpoint';
     await chat('Write once, then report.', randomUUID(), bot.id);
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1].status).toBe(
@@ -960,7 +982,9 @@ describe('Mukai bots and AI API', () => {
       const workspace = (
         await request<Workspace>('/workspaces', 'POST', { name: 'Uncertain', folder: project })
       ).data;
-      const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+      const bot = (
+        await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id })
+      ).data;
       mode = 'checkpoint';
       const sent = await chat('Write once, then report.', randomUUID(), bot.id);
       if (change === 'uncertain operation') api.store.run('UPDATE chat_jobs SET in_flight=1');
@@ -1198,7 +1222,8 @@ describe('Mukai bots and AI API', () => {
     const workspace = (
       await request<Workspace>('/workspaces', 'POST', { name: 'Step limit', folder: project })
     ).data;
-    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    const bot = (await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id }))
+      .data;
     mode = 'tool-limit';
     const sent = await chat('Work until the limit', randomUUID(), bot.id);
     expect(calls).toHaveLength(10);
@@ -1354,7 +1379,8 @@ describe('Mukai bots and AI API', () => {
     const workspace = (
       await request<Workspace>('/workspaces', 'POST', { name: 'Invalid tool', folder: project })
     ).data;
-    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    const bot = (await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id }))
+      .data;
     mode = 'invalid-tool';
     await chat('Create a draft', randomUUID(), bot.id);
     const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
@@ -1380,8 +1406,9 @@ describe('Mukai bots and AI API', () => {
     expect(created.data.folder).toBe(project);
     const workspaceId = created.data.id;
     const bots = (await request<Bot[]>(`/bots?workspaceId=${workspaceId}`)).data;
-    expect(bots).toHaveLength(1);
-    expect(bots[0].name).toBe('Scout');
+    expect(bots).toHaveLength(0);
+    bots.push((await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId })).data);
+    expect(bots[0].name).toBe('Mukai');
     expect(bots[0].id).not.toBe('scout');
     expect(bots[0].workspaceId).toBe(workspaceId);
     await chat('Only this workspace', randomUUID(), bots[0].id);
@@ -1409,7 +1436,8 @@ describe('Mukai bots and AI API', () => {
     const workspace = (
       await request<Workspace>('/workspaces', 'POST', { name: 'Writing', folder: project })
     ).data;
-    const bot = (await request<Bot[]>(`/bots?workspaceId=${workspace.id}`)).data[0];
+    const bot = (await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id }))
+      .data;
     mode = 'tools';
     const sent = await chat('Create a useful draft from my notes', randomUUID(), bot.id);
     expect(sent.events.some((event) => event.type === 'reasoning')).toBe(true);
@@ -1460,7 +1488,7 @@ describe('Mukai bots and AI API', () => {
     const tools = (await request<ToolInfo[]>(`/tools?workspaceId=${workspace.id}`)).data;
     expect(tools[0]).toMatchObject({
       id: 'file_operations',
-      scope: 'all-bots',
+      scope: 'selected-bots',
       available: true,
       counts: { write_file: 1, patch: 1 },
     });
@@ -1560,13 +1588,13 @@ describe('Mukai bots and AI API', () => {
     expect(failure.data.error).not.toContain('private-test-key');
     expect(failure.data.error).toContain('credentials');
   });
-  it('creates Scout once, persists independent chats, and honors each bot’s instructions and model', async () => {
+  it('persists manually created bots and independent chats, and honors each bot’s instructions and model', async () => {
     const provider = await configure();
     expect((await request<Bot[]>('/bots')).data.map((bot) => bot.name)).toEqual(['Scout']);
     const bot = (
       await request<Bot>('/bots', 'POST', {
         name: 'Writer',
-        description: 'Clear writing',
+        role: 'Writer',
         instructions: 'Write in short sentences.',
         providerId: provider.id,
         model: 'writer-model',
@@ -1584,7 +1612,13 @@ describe('Mukai bots and AI API', () => {
     const writerSystem = String(calls[1].messages[0].content);
     expect(writerSystem).toContain('You are an intelligent assistant operating inside Mukai');
     expect(writerSystem).toContain(
-      JSON.stringify({ id: bot.id, name: 'Writer', description: 'Clear writing' }),
+      JSON.stringify({
+        id: bot.id,
+        name: 'Writer',
+        role: 'Writer',
+        isMain: false,
+        createdBy: 'scout',
+      }),
     );
     expect(writerSystem).toContain('Write in short sentences.\nCurrent UTC time: ');
     expect(writerSystem).toContain(
@@ -1602,12 +1636,14 @@ describe('Mukai bots and AI API', () => {
     expect(api.store.all('SELECT version FROM schema_migrations ORDER BY version')).toEqual(
       migrations.map((_sql, index) => ({ version: index + 1 })),
     );
+    expect((await request('/bots/scout', 'DELETE')).response.status).toBe(409);
+    await request(`/bots/${bot.id}`, 'DELETE');
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
     await close(api.server);
     await new Promise((resolve) => setTimeout(resolve, 10));
     api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
-    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.name)).toEqual(['Writer']);
+    expect((await request<Bot[]>('/bots')).data).toEqual([]);
   });
   it('uses private conversation history beyond ten messages while keeping the full history visible', async () => {
     await configure();
@@ -1810,7 +1846,7 @@ describe('Mukai bots and AI API', () => {
     const bot = (
       await request<Bot>('/bots', 'POST', {
         name: 'Temporary',
-        description: '',
+        role: 'Assistant',
         instructions: 'Be useful.',
         providerId: provider.id,
         model: null,

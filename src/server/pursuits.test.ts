@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { migrations } from './db/migrations';
 import { startApiServer } from './app';
+import { seedTestBot } from './testFixtures';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import {
   type Pursuit,
@@ -210,6 +211,7 @@ beforeEach(async () => {
   const address = fixture.address();
   if (!address || typeof address === 'string') throw new Error('Fixture failed');
   api = await startApiServer(0, { dataDir: dir });
+  seedTestBot(api.store);
   await request('/providers', 'POST', {
     name: 'Fixture',
     kind: 'compatible',
@@ -273,7 +275,7 @@ describe('AI-owned pursuits and scheduled runs', () => {
     const other = (
       await request<Bot>('/bots', 'POST', {
         name: 'Other',
-        description: '',
+        role: 'Assistant',
         instructions: 'Help.',
         providerId: null,
         model: null,
@@ -509,7 +511,11 @@ describe('AI-owned pursuits and scheduled runs', () => {
     try {
       legacy.exec(`CREATE TABLE pursuits(id TEXT PRIMARY KEY, objective TEXT NOT NULL, interval_minutes INTEGER NOT NULL, next_run_at TEXT, next_run_reason TEXT NOT NULL);
         INSERT INTO pursuits VALUES('legacy','Validate the export',90,'2026-11-01T09:00:00.000Z','Scheduled wake-up');`);
-      legacy.exec(migrations.at(-1)!);
+      legacy.exec(
+        migrations.find((sql) =>
+          sql.includes('ALTER TABLE pursuits ADD COLUMN next_run_instructions'),
+        )!,
+      );
       expect(legacy.prepare('SELECT * FROM pursuits').get()).toMatchObject({
         id: 'legacy',
         interval_minutes: 90,
@@ -559,7 +565,7 @@ describe('AI-owned pursuits and scheduled runs', () => {
     const other = (
       await request<Bot>('/bots', 'POST', {
         name: 'Other',
-        description: '',
+        role: 'Assistant',
         instructions: 'Help.',
         providerId: null,
         model: null,

@@ -11,8 +11,10 @@ import {
   Search,
   Target,
   Terminal,
+  Users,
 } from 'lucide-react';
-import type { ToolInfo } from '../../../../shared/ai';
+import type { Bot, ToolInfo } from '../../../../shared/ai';
+import { ToolAssignments } from './ToolAssignments';
 import { toolService } from '../../services/toolService';
 import { errorText } from '../../utils/errors';
 import { BrowserToggle } from '../browser/BrowserToggle';
@@ -23,6 +25,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'skills') return <BookOpen size={size} />;
   if (toolId === 'memory') return <Brain size={size} />;
   if (toolId === 'manage_pursuit') return <Target size={size} />;
+  if (toolId === 'manage_bot') return <Users size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
   if (toolId === 'terminal') return <Terminal size={size} />;
   return <FileText size={size} />;
@@ -32,6 +35,7 @@ function toolScopeNote(tool: ToolInfo, folder: string | null) {
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
   if (tool.id === 'memory') return 'Workspace memories · Private memories stay with their bot';
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
+  if (tool.id === 'manage_bot') return 'Creates child bots · Delegates work to descendants';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'terminal') return 'Local shell · Per-conversation processes';
   return folder ? 'Within this workspace folder' : 'Connect a folder to start';
@@ -41,10 +45,14 @@ function ToolDetail({
   tool,
   folder,
   onBack,
+  workspaceId,
+  bots,
 }: {
   tool: ToolInfo;
   folder: string | null;
   onBack: () => void;
+  workspaceId: string;
+  bots: Bot[];
 }) {
   return (
     <div className="tool-detail">
@@ -76,14 +84,21 @@ function ToolDetail({
       </section>
       <section className="tool-detail-section">
         <h2>Availability</h2>
-        <p>{tool.scope === 'all-bots' ? 'Available to every bot' : 'Available to selected bots'}</p>
+        <p>{tool.scope === 'all-bots' ? 'Shared with every bot' : 'Available to assigned bots'}</p>
         <small>{toolScopeNote(tool, folder)}</small>
       </section>
+      <ToolAssignments
+        workspaceId={workspaceId}
+        bots={bots}
+        toolId={tool.id}
+        shared={tool.scope === 'all-bots'}
+      />
     </div>
   );
 }
 
 export function ToolsPage({
+  bots,
   workspaceId,
   folder,
   onConnectFolder,
@@ -91,6 +106,7 @@ export function ToolsPage({
   capabilitySection,
   onSelectTool,
 }: {
+  bots: Bot[];
   workspaceId: string;
   folder: string | null;
   onConnectFolder: () => void;
@@ -127,6 +143,7 @@ export function ToolsPage({
           workspaceId={workspaceId}
           id={selectedToolId.slice(7)}
           onBack={() => onSelectTool(null)}
+          bots={bots}
         />
       </main>
     );
@@ -136,7 +153,13 @@ export function ToolsPage({
         {loading ? (
           <p className="ai-caption">Loading tool…</p>
         ) : selected ? (
-          <ToolDetail tool={selected} folder={folder} onBack={() => onSelectTool(null)} />
+          <ToolDetail
+            tool={selected}
+            folder={folder}
+            onBack={() => onSelectTool(null)}
+            workspaceId={workspaceId}
+            bots={bots}
+          />
         ) : (
           <div className="tool-detail">
             <button className="tool-detail-back" onClick={() => onSelectTool(null)}>
@@ -174,7 +197,7 @@ export function ToolsPage({
       <p className="tools-intro">
         {capabilitySection
           ? 'Saved workspace modules, ready for your bots.'
-          : 'Small, useful capabilities. A little more room to do.'}
+          : 'Your main bot starts with every tool. Open a tool to choose which bots can use it.'}
       </p>
       <div className="tools-filter">
         <span>

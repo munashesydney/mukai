@@ -19,6 +19,18 @@ import { registerCustomRouteDefinition } from './register-custom-route/definitio
 import { executeRegisterCustomRoute } from './register-custom-route/execute';
 import type { RegistrationContext } from './custom-registration/shared';
 import { memoryDefinition } from './memory/definition';
+import { botManagementDefinition } from './bots/definition';
+import { executeBotManagement } from './bots/execute';
+
+export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
+  return {
+    [botManagementDefinition.name]: tool({
+      description: botManagementDefinition.description,
+      inputSchema: botManagementDefinition.inputSchema,
+      execute: (input, options) => executeBotManagement(input, context, options.toolCallId),
+    }),
+  };
+}
 
 export function customRegistrationTools(context: RegistrationContext): ToolSet {
   return {
@@ -154,6 +166,7 @@ export function toolCatalog() {
     },
     ...[
       terminalDefinition,
+      botManagementDefinition,
       browserDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
