@@ -65,6 +65,16 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 describe('Custom capabilities', () => {
+  it('prevents custom registrations from replacing the built-in memory family', async () => {
+    writeFileSync(join(folder, 'memory.ts'), toolSource('memory'));
+    const result = await request('/capabilities', 'POST', {
+      kind: 'tool',
+      operation: 'register',
+      modulePath: 'memory.ts',
+    });
+    expect(result.status).toBe(409);
+    expect(api.capabilities.list('default')).toHaveLength(0);
+  });
   it('creates new tool and route registrations even when a suggested ID is supplied', async () => {
     for (const kind of ['tool', 'route'] as const) {
       const file = kind + '.js';

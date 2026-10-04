@@ -60,6 +60,7 @@ const reserved = new Set([
   'register_custom_tool',
   'register_custom_route',
   'skills',
+  'memory',
 ]);
 const definitionSchema = z.object({
   name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/),

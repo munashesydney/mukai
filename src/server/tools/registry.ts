@@ -18,7 +18,7 @@ import { executeRegisterCustomTool } from './register-custom-tool/execute';
 import { registerCustomRouteDefinition } from './register-custom-route/definition';
 import { executeRegisterCustomRoute } from './register-custom-route/execute';
 import type { RegistrationContext } from './custom-registration/shared';
-import { memoryFamilyDefinition } from './memory/definition';
+import { memoryDefinition } from './memory/definition';
 
 export function customRegistrationTools(context: RegistrationContext): ToolSet {
   return {
@@ -157,7 +157,7 @@ export function toolCatalog() {
       browserDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
-      memoryFamilyDefinition,
+      memoryDefinition,
       skillsDefinition,
     ].map((definition) => ({
       id: definition.name,

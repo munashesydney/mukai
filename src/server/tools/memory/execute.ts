@@ -2,7 +2,7 @@ import { tool } from 'ai';
 import type { Bot, ChatActivity } from '../../../shared/ai';
 import type { MemoryService } from '../../services/memoryService';
 import { executeRuntime } from '../runtimeContext';
-import { memoryAddDefinition, memorySearchDefinition, memoryForgetDefinition } from './definition';
+import { memoryDefinition } from './definition';
 import { RUNTIME_TOOL_CALL_LIMIT } from '../../services/responsePolicy';
 
 export function memoryTools(context: {
@@ -23,46 +23,50 @@ export function memoryTools(context: {
     budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
   };
   return {
-    memory_add: tool({
-      description: memoryAddDefinition.description,
-      inputSchema: memoryAddDefinition.inputSchema,
-      execute: (input, options) =>
-        executeRuntime(runtime, options.toolCallId, 'memory_add', 'add', input.scope, () =>
-          context.memory.add(
-            context.bot,
-            context.conversationId,
-            context.messageId,
-            input.content,
-            input.scope === 'workspace',
-            `tool:${context.messageId}:${options.toolCallId}`,
-            context.signal,
-          ),
-        ),
-    }),
-    memory_search: tool({
-      description: memorySearchDefinition.description,
-      inputSchema: memorySearchDefinition.inputSchema,
-      execute: (input, options) =>
-        executeRuntime(runtime, options.toolCallId, 'memory_search', 'search', input.query, () =>
-          context.memory.search(context.bot, context.conversationId, input.query, input),
-        ),
-    }),
-    memory_forget: tool({
-      description: memoryForgetDefinition.description,
-      inputSchema: memoryForgetDefinition.inputSchema,
+    memory: tool({
+      description: memoryDefinition.description,
+      inputSchema: memoryDefinition.inputSchema,
       execute: (input, options) =>
         executeRuntime(
           runtime,
           options.toolCallId,
-          'memory_forget',
-          'forget',
-          input.memoryId,
-          () => {
-            context.memory.engine.forgetMemory(
-              context.memory.scope(context.bot, context.conversationId),
-              input.memoryId,
-            );
-            return { forgotten: true };
+          'memory',
+          input.action,
+          input.action === 'add'
+            ? input.scope || ''
+            : input.action === 'search'
+              ? input.query || ''
+              : input.memoryId || '',
+          async () => {
+            switch (input.action) {
+              case 'add':
+                if (!input.content || !input.scope)
+                  throw new Error('Memory add requires content and scope.');
+                return context.memory.add(
+                  context.bot,
+                  context.conversationId,
+                  context.messageId,
+                  input.content,
+                  input.scope === 'workspace',
+                  `tool:${context.messageId}:${options.toolCallId}`,
+                  context.signal,
+                );
+              case 'search':
+                if (!input.query) throw new Error('Memory search requires query.');
+                return context.memory.search(context.bot, context.conversationId, input.query, {
+                  limit: input.limit,
+                  asOf: input.asOf,
+                  includeHistory: input.includeHistory,
+                });
+              case 'forget':
+                if (!input.memoryId)
+                  throw new Error('Memory forget requires memoryId from search.');
+                context.memory.engine.forgetMemory(
+                  context.memory.scope(context.bot, context.conversationId),
+                  input.memoryId,
+                );
+                return { forgotten: true };
+            }
           },
         ),
     }),

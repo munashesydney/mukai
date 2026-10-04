@@ -9,6 +9,7 @@ import type { Bot, ChatEvent } from '../shared/ai';
 import type { MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
 import { memoryTools } from './tools/memory/execute';
+import { memoryDefinition } from './tools/memory/definition';
 
 const coffee: ExtractedFact = {
   subject: 'User',
@@ -34,6 +35,7 @@ let calls: {
   messages: { role: string; content: unknown }[];
   stream?: boolean;
   response_format?: unknown;
+  tools?: { function: { name: string } }[];
 }[];
 let invalidSchema = false;
 async function close(server: Server) {
@@ -139,6 +141,75 @@ afterEach(async () => {
 });
 
 describe('Mukai memory integration', () => {
+  it('exposes one memory function and dispatches actions with their required fields', async () => {
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
+    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const forget = vi.spyOn(api.memory.engine, 'forgetMemory').mockImplementation(() => {});
+    const activities: { tool: string; action: string; status: string }[] = [];
+    const tools = memoryTools({
+      bot,
+      conversationId: 'bot-scout',
+      messageId: 'memory-action-check',
+      memory: api.memory,
+      signal: new AbortController().signal,
+      onActivity: (activity) => activities.push(activity),
+    });
+    expect(Object.keys(tools)).toEqual(['memory']);
+    const invoke = (input: Parameters<NonNullable<typeof tools.memory.execute>>[0]) =>
+      tools.memory.execute!(input, { toolCallId: randomUUID(), messages: [], context: {} });
+    for (const action of ['add', 'search', 'forget'] as const) {
+      expect(await invoke({ action })).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('requires'),
+      });
+    }
+    expect(add).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(forget).not.toHaveBeenCalled();
+    for (const scope of ['private', 'workspace'] as const) {
+      expect(
+        await invoke({ action: 'add', content: 'User prefers espresso.', scope }),
+      ).toMatchObject({ ok: true });
+      expect(add.mock.calls.at(-1)?.[4]).toBe(scope === 'workspace');
+    }
+    const asOf = '2026-02-15T12:00:00Z';
+    expect(
+      await invoke({ action: 'search', query: 'espresso', limit: 7, asOf, includeHistory: true }),
+    ).toMatchObject({ ok: true });
+    expect(search).toHaveBeenCalledWith(bot, 'bot-scout', 'espresso', {
+      limit: 7,
+      asOf,
+      includeHistory: true,
+    });
+    const memoryId = randomUUID();
+    expect(await invoke({ action: 'forget', memoryId })).toMatchObject({
+      ok: true,
+      result: { forgotten: true },
+    });
+    expect(forget).toHaveBeenCalledWith(api.memory.scope(bot, 'bot-scout'), memoryId);
+    expect(
+      activities
+        .filter((activity) => activity.status === 'complete')
+        .map((activity) => [activity.tool, activity.action]),
+    ).toEqual([
+      ['memory', 'add'],
+      ['memory', 'add'],
+      ['memory', 'search'],
+      ['memory', 'forget'],
+    ]);
+    expect(
+      memoryDefinition.inputSchema.safeParse({ action: 'forget', memoryId: 'invalid' }).success,
+    ).toBe(false);
+    expect(
+      memoryDefinition.inputSchema.safeParse({ action: 'search', query: 'espresso', limit: 31 })
+        .success,
+    ).toBe(false);
+    const catalog = (await request<{ id: string; actions: string[] }[]>('/tools')).data;
+    expect(catalog.filter((tool) => tool.id.startsWith('memory'))).toEqual([
+      expect.objectContaining({ id: 'memory', actions: ['add', 'search', 'forget'] }),
+    ]);
+  });
   it('allows a multi-scenario investigation to search more than twelve times and still write', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
@@ -153,15 +224,15 @@ describe('Mukai memory integration', () => {
     });
     for (let index = 0; index < 13; index++) {
       expect(
-        await tools.memory_search.execute!(
-          { query: 'MEMTEST-03 investigation' },
+        await tools.memory.execute!(
+          { action: 'search', query: 'MEMTEST-03 investigation' },
           { toolCallId: `search-${index}`, messages: [], context: {} },
         ),
       ).toMatchObject({ ok: true });
     }
     expect(
-      await tools.memory_add.execute!(
-        { content: 'MEMTEST-03 private investigation result.', scope: 'private' },
+      await tools.memory.execute!(
+        { action: 'add', content: 'MEMTEST-03 private investigation result.', scope: 'private' },
         { toolCallId: 'write-after-searches', messages: [], context: {} },
       ),
     ).toMatchObject({ ok: true });
@@ -176,9 +247,40 @@ describe('Mukai memory integration', () => {
     const latest = calls.filter((call) => call.stream).at(-1)!;
     expect(JSON.stringify(latest.messages)).toContain('User prefers espresso every morning.');
     expect(latest.messages[0].role).toBe('system');
+    expect(
+      latest.tools
+        ?.filter((tool) => tool.function.name.startsWith('memory'))
+        .map((tool) => tool.function.name),
+    ).toEqual(['memory']);
+    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action add proactively');
+    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action search');
+    expect(JSON.stringify(latest.messages[0])).toContain('Use memory with action forget');
     const snapshot = (await request<MemorySnapshot>('/memory')).data;
     expect(snapshot.recalls[0].facts[0].text).toContain('espresso');
     expect(snapshot.recalls[0].characters).toBeGreaterThan(0);
+  });
+  it('combines historical and new memory activity counts in the same family', async () => {
+    await chat('Hello');
+    const activity = [
+      { tool: 'memory_add', action: 'add', status: 'complete' },
+      { tool: 'memory_search', action: 'search', status: 'complete' },
+      { tool: 'memory_forget', action: 'forget', status: 'complete' },
+      { tool: 'memory', action: 'add', status: 'complete' },
+      { tool: 'memory', action: 'search', status: 'complete' },
+      { tool: 'memory', action: 'forget', status: 'complete' },
+      { tool: 'memory', action: 'add', status: 'failed' },
+    ];
+    api.store.run(
+      "UPDATE messages SET activity_json=? WHERE bot_id='scout' AND role='assistant'",
+      JSON.stringify(activity),
+    );
+    const catalog = (await request<{ id: string; counts: Record<string, number> }[]>('/tools'))
+      .data;
+    expect(catalog.find((tool) => tool.id === 'memory')?.counts).toEqual({
+      add: 2,
+      search: 2,
+      forget: 2,
+    });
   });
   it('does not inject private memories into shared spaces or another workspace', async () => {
     await chat('I prefer espresso every morning.');
