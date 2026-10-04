@@ -68,7 +68,7 @@ export class MessageRepository {
   }
   interruptStreaming(error: string, conversationId?: string) {
     const pending = this.database.all(
-      `SELECT * FROM messages WHERE status='streaming'${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
+      `SELECT * FROM messages WHERE status='streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
       ...(conversationId === undefined ? [] : [conversationId]),
     );
     for (const row of pending) {
@@ -100,12 +100,19 @@ export class MessageRepository {
       );
     }
     this.database.run(
-      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming'${conversationId === undefined ? '' : ' AND conversation_id = ?'}`,
+      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)${conversationId === undefined ? '' : ' AND conversation_id = ?'}`,
       error,
       ...(conversationId === undefined ? [] : [conversationId]),
     );
   }
-  reset(id: string) {
+  reset(id: string, preservePending = false) {
+    if (preservePending) {
+      this.database.run(
+        "UPDATE messages SET status='streaming',finished_at=NULL,error=NULL WHERE id=?",
+        id,
+      );
+      return;
+    }
     this.database.run(
       "UPDATE messages SET content = '', reasoning = '', parts_json = '[]', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), finished_at = NULL, status = 'streaming', error = NULL WHERE id = ?",
       id,

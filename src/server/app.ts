@@ -213,8 +213,9 @@ export function createApiServer(options: ApiOptions = {}) {
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.
         const capabilityShutdown = capabilities.shutdown();
-        await pursuits.shutdown();
+        pursuits.stopScheduling();
         await chats.shutdown();
+        await pursuits.shutdown();
         await memory.shutdown();
         await capabilityShutdown;
         await processes.shutdown();
@@ -235,6 +236,7 @@ export function createApiServer(options: ApiOptions = {}) {
         });
       });
     server.once('listening', () => {
+      chats.restorePending((id) => bots.require(id));
       pursuits.start();
       capabilities.start();
       memory.start();

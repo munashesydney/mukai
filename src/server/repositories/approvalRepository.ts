@@ -1,8 +1,24 @@
-import type { ApprovalMode, ApprovalTarget } from '../../shared/approvals';
+import type { ApprovalMode, ApprovalTarget, ToolApproval } from '../../shared/approvals';
 import type { Database } from '../db/database';
 
 export class ApprovalRepository {
   constructor(private store: Database) {}
+  pending(): ToolApproval[] {
+    return this.store
+      .all('SELECT request_json FROM pending_tool_approvals ORDER BY rowid')
+      .map((row) => JSON.parse(String(row.request_json)) as ToolApproval);
+  }
+  save(request: ToolApproval) {
+    this.store.run(
+      'INSERT OR REPLACE INTO pending_tool_approvals VALUES(?,?,?)',
+      request.id,
+      request.messageId,
+      JSON.stringify(request),
+    );
+  }
+  remove(id: string) {
+    this.store.run('DELETE FROM pending_tool_approvals WHERE id=?', id);
+  }
   target(conversationId: string): ApprovalTarget | undefined {
     const row = this.store.get(
       `SELECT c.kind,c.workspace_id,c.name,r.pursuit_id,r.id AS run_id

@@ -13,7 +13,13 @@ export function PendingApprovalsPage({
 }) {
   const state = useApprovals();
   const pending = state.pending.filter((request) => request.botId === bot.id);
-  const chats = new Set(pending.map((request) => request.conversationId)).size;
+  const groups = new Map<string, ToolApproval[]>();
+  for (const request of pending) {
+    const group = groups.get(request.conversationId) || [];
+    group.push(request);
+    groups.set(request.conversationId, group);
+  }
+  const chats = groups.size;
   return (
     <main className="conversation pending-approvals-page">
       <header className="pending-approvals-header">
@@ -50,7 +56,9 @@ export function PendingApprovalsPage({
           </div>
         ) : (
           <div className="pending-approval-grid">
-            {pending.map((request) => {
+            {[...groups.values()].map((requests) => {
+              const request = requests[0];
+              const grouped = requests.length > 1;
               const pursuit = request.target?.kind === 'pursuit_run';
               const Icon = pursuit ? Target : MessageCircle;
               const input =
@@ -65,21 +73,33 @@ export function PendingApprovalsPage({
               return (
                 <button
                   className="pending-approval-tile"
-                  key={request.id}
+                  key={request.conversationId}
                   onClick={() => onOpen(request)}
-                  aria-label={`Open approval for ${request.toolName} in ${request.target?.name || 'conversation'}`}
+                  aria-label={`Open ${requests.length} ${grouped ? 'approvals' : 'approval'} in ${request.target?.name || 'conversation'}`}
                 >
                   <Hand size={17} className="pending-approval-tile-icon" />
                   <div className="pending-approval-tile-body">
                     <div className="pending-approval-tile-title">
-                      <h2>{request.toolName.replaceAll('_', ' ')}</h2>
-                      <span>{action}</span>
+                      <h2>
+                        {grouped
+                          ? request.target?.name || 'Conversation'
+                          : request.toolName.replaceAll('_', ' ')}
+                      </h2>
+                      <span>{grouped ? `${requests.length} approvals` : action}</span>
                     </div>
-                    {detail && <code title={detail}>{detail}</code>}
+                    {grouped ? (
+                      <div className="pending-approval-tools">
+                        {requests.map((item) => (
+                          <span key={item.id}>{item.toolName.replaceAll('_', ' ')}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      detail && <code title={detail}>{detail}</code>
+                    )}
                     <div className="pending-approval-tile-context">
                       <Icon size={15} />
                       <span>
-                        {request.target?.name || 'Conversation'}
+                        {grouped ? 'Pending tool calls' : request.target?.name || 'Conversation'}
                         <small>
                           {pursuit
                             ? 'Pursuit run'

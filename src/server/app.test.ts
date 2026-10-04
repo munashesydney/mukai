@@ -661,9 +661,26 @@ describe('Mukai bots and AI API', () => {
         conversationId: space.id,
         target: { kind: 'space', name: 'Approval space', workspaceId: 'default' },
       });
+      if (i === 0) {
+        await api.shutdown();
+        await result;
+        await close(api.server);
+        api = await startApiServer(0, {
+          dataDir: dir,
+          memoryExtractor: async () => ({ facts: [] }),
+        });
+        expect((await request<ApprovalState>('/approvals')).data.pending).toContainEqual(item);
+        expect(
+          (await request<ChatMessage[]>(`/conversations/${space.id}/messages`)).data[1].status,
+        ).toBe('streaming');
+      }
       await request(`/approvals/${item.id}`, 'POST', { approved: true });
     }
-    await result;
+    await vi.waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/conversations/${space.id}/messages`)).data[1].status,
+      ).toBe('complete'),
+    );
   });
   async function pendingApproval(toolCallId?: string) {
     return vi.waitFor(
@@ -767,64 +784,108 @@ describe('Mukai bots and AI API', () => {
     expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1);
   });
 
-  it('groups real parallel custom calls and bulk approves only a validated conversation snapshot', async () => {
-    await configure();
-    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
-    await request('/workspaces/default', 'PUT', { name: 'Parallel approvals', folder: project });
-    writeFileSync(
-      join(project, 'approval-echo.ts'),
-      `export default {name:'approval_echo',description:'Echo',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
-    );
-    await request('/capabilities', 'POST', {
-      kind: 'tool',
-      operation: 'register',
-      modulePath: 'approval-echo.ts',
-      ownerBotId: 'scout',
-    });
-    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
-    mode = 'approval-parallel';
-    const result = chat('Run three parallel tools');
-    await pendingApproval('custom-call-3');
-    const pending = (await request<ApprovalState>('/approvals')).data.pending;
-    expect(pending).toHaveLength(3);
-    expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
-    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
-    const batch = {
-      conversationId: pending[0].conversationId,
-      batchId: pending[0].batchId,
-      ids: pending.map((item) => item.id),
-      approved: true,
-    };
-    expect(
-      (
-        await fetch(api.url + '/approvals/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(batch),
-        })
-      ).status,
-    ).toBe(401);
-    expect(
-      (await request('/approvals/batch', 'POST', { ...batch, conversationId: 'other-chat' }))
-        .response.status,
-    ).toBe(409);
-    expect(
-      (await request('/approvals/batch', 'POST', { ...batch, ids: [pending[0].id, pending[0].id] }))
-        .response.status,
-    ).toBe(400);
-    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
-    await request(`/approvals/${pending[0].id}`, 'POST', { approved: true });
-    await vi.waitFor(() => expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1));
-    expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(409);
-    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(2);
-    expect(
-      (await request('/approvals/batch', 'POST', { ...batch, ids: batch.ids.slice(1) })).response
-        .status,
-    ).toBe(200);
-    await result;
-    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(3);
-    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
-  });
+  it.each(['complete', 'uncertain'] as const)(
+    'restores parallel approvals with a %s sibling result and bulk approves only a validated snapshot',
+    async (savedState) => {
+      await configure();
+      project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+      await request('/workspaces/default', 'PUT', { name: 'Parallel approvals', folder: project });
+      writeFileSync(
+        join(project, 'approval-echo.ts'),
+        `export default {name:'approval_echo',description:'Echo',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
+      );
+      await request('/capabilities', 'POST', {
+        kind: 'tool',
+        operation: 'register',
+        modulePath: 'approval-echo.ts',
+        ownerBotId: 'scout',
+      });
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      mode = 'approval-parallel';
+      const result = chat('Run three parallel tools');
+      await pendingApproval('custom-call-3');
+      const pending = (await request<ApprovalState>('/approvals')).data.pending;
+      expect(pending).toHaveLength(3);
+      expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
+      expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+      const batch = {
+        conversationId: pending[0].conversationId,
+        batchId: pending[0].batchId,
+        ids: pending.map((item) => item.id),
+        approved: true,
+      };
+      expect(
+        (
+          await fetch(api.url + '/approvals/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batch),
+          })
+        ).status,
+      ).toBe(401);
+      expect(
+        (await request('/approvals/batch', 'POST', { ...batch, conversationId: 'other-chat' }))
+          .response.status,
+      ).toBe(409);
+      expect(
+        (
+          await request('/approvals/batch', 'POST', {
+            ...batch,
+            ids: [pending[0].id, pending[0].id],
+          })
+        ).response.status,
+      ).toBe(400);
+      expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+      await request(`/approvals/${pending[0].id}`, 'POST', { approved: true });
+      await vi.waitFor(() =>
+        expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1),
+      );
+      const startedAt = (await request<ChatMessage[]>('/bots/scout/messages')).data[1].startedAt;
+      await api.shutdown();
+      await result;
+      if (savedState === 'uncertain') {
+        // Simulate a crash after a side effect but before its output was saved.
+        const row = api.store.get(
+          'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',
+          pending[0].messageId,
+        )!;
+        const saved = JSON.parse(String(row.approval_step_json));
+        saved[0].state = 'running';
+        delete saved[0].output;
+        api.store.run(
+          'UPDATE chat_jobs SET approval_step_json=? WHERE message_id=?',
+          JSON.stringify(saved),
+          pending[0].messageId,
+        );
+      }
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1]).toMatchObject({
+        status: 'streaming',
+        error: null,
+        finishedAt: null,
+      });
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual(pending.slice(1));
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].startedAt).toBe(
+        startedAt,
+      );
+      expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1);
+      expect(calls.filter((call) => call.stream)).toHaveLength(1);
+      expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(409);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(2);
+      expect(
+        (await request('/approvals/batch', 'POST', { ...batch, ids: batch.ids.slice(1) })).response
+          .status,
+      ).toBe(200);
+      await vi.waitFor(async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'complete',
+        ),
+      );
+      expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(3);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    },
+  );
 
   it('recovers a pending request after UI disconnect and cancels it on Stop', async () => {
     await configure();

@@ -25,6 +25,14 @@ const details = {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'mukai-approvals-'));
   store = new Database(dir);
+  seedTestBot(store);
+  for (const id of ['message-1', 'message-2'])
+    store.run(
+      "INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,conversation_id) VALUES(?,'scout',?,'assistant','','streaming',?,'bot-scout')",
+      id,
+      id,
+      new Date().toISOString(),
+    );
   service = new ApprovalService(new ApprovalRepository(store));
 });
 afterEach(() => {
@@ -48,7 +56,6 @@ describe('Global tool approvals', () => {
   });
 
   it('attaches the exact private chat, space, and pursuit run destination to requests', async () => {
-    seedTestBot(store);
     service.setMode('ask-for-approval');
     const conversations = new ConversationRepository(store);
     const privateChat = conversations.createPrivate('default', 'scout');
@@ -193,7 +200,29 @@ describe('Global tool approvals', () => {
     expect(await service.request(details, controller.signal, () => {})).toBe(true);
   });
 
-  it('cancels pending approvals on Stop or shutdown and rejects late decisions', async () => {
+  it('persists exact pending cards through shutdown and reattaches them even if the mode changed', async () => {
+    service.setMode('ask-for-approval');
+    const controller = new AbortController();
+    const original = service.request(details, controller.signal, () => {});
+    const pending = service.state().pending;
+    service.setMode('full-access');
+    service.suspend();
+    const assertion = expect(original).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await assertion;
+    store.db.close();
+    store = new Database(dir);
+    service = new ApprovalService(new ApprovalRepository(store));
+    expect(service.state().pending).toEqual(pending);
+    expect(() => service.decide(pending[0].id, true)).toThrow('restoring');
+    const restored = service.request(details, new AbortController().signal, () => {});
+    expect(service.state().pending).toEqual(pending);
+    service.decide(pending[0].id, true);
+    expect(await restored).toBe(true);
+    expect(new ApprovalRepository(store).pending()).toEqual([]);
+  });
+
+  it('cancels pending approvals on Stop and rejects late decisions', async () => {
     service.setMode('ask-for-approval');
     const controller = new AbortController();
     const pending = service.request(details, controller.signal, () => {});
@@ -202,6 +231,7 @@ describe('Global tool approvals', () => {
     controller.abort();
     await assertion;
     expect(service.state().pending).toEqual([]);
+    expect(new ApprovalRepository(store).pending()).toEqual([]);
     expect(() => service.decide(id, true)).toThrow('no longer pending');
     await expect(service.request(details, controller.signal, () => {})).rejects.toMatchObject({
       name: 'AbortError',

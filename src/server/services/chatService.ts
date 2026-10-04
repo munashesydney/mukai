@@ -98,6 +98,50 @@ export class ChatService {
   hasActiveResponses() {
     return this.active.size > 0;
   }
+  pendingRequest(conversationId: string) {
+    const request = this.approvals
+      ?.state()
+      .pending.find((item) => item.conversationId === conversationId);
+    return request ? this.messages.message(request.messageId).requestId : undefined;
+  }
+  suspended(conversationId: string) {
+    return Boolean(this.pendingRequest(conversationId));
+  }
+  restorePending(requireBot: (id: string) => BotRecord) {
+    const seen = new Set<string>();
+    for (const request of this.approvals?.state().pending || []) {
+      if (request.target?.kind === 'pursuit_run' || seen.has(request.conversationId)) continue;
+      seen.add(request.conversationId);
+      const requestId = this.messages.message(request.messageId).requestId;
+      void Promise.resolve()
+        .then(() =>
+          this.respond(
+            requireBot(request.botId),
+            { requestId, text: '', attachmentIds: [] },
+            {
+              start() {},
+              emit() {},
+              end() {},
+              onDisconnect() {
+                return () => {};
+              },
+            },
+            request.conversationId,
+          ),
+        )
+        .catch((error) => {
+          this.approvals?.discard(request.messageId);
+          this.messages.interruptStreaming(
+            'The pending response could not be restored. You can retry.',
+            request.conversationId,
+          );
+          this.diagnostics.record('chat.approval_restore_failed', error, {
+            phase: 'setup',
+            messageId: request.messageId,
+          });
+        });
+    }
+  }
   history(id: string) {
     return this.conversationHistory('bot-' + id);
   }
@@ -114,9 +158,25 @@ export class ChatService {
     if (active) {
       active.reason = 'stopped';
       active.controller.abort();
+    } else {
+      const request = this.approvals?.state().pending.find((item) => item.conversationId === id);
+      if (request && !this.approvals?.suspending(request.messageId)) {
+        const message = this.messages.message(request.messageId);
+        this.approvals?.discard(request.messageId);
+        this.messages.finish(
+          message.id,
+          message.content,
+          'stopped',
+          null,
+          message.reasoning || '',
+          message.activity || [],
+          message.parts || [],
+        );
+      }
     }
   }
   async shutdown() {
+    this.approvals?.suspend();
     for (const active of this.active.values()) {
       active.controller.abort();
     }
@@ -201,7 +261,12 @@ export class ChatService {
     value: ChatInput,
     output: ChatOutput,
     conversationId = 'bot-' + bot.id,
-    runtime?: { system: string; tools: ToolSet; completionNotice?: () => string | undefined },
+    runtime?: {
+      system: string;
+      tools: ToolSet;
+      completionNotice?: () => string | undefined;
+      restore?: (toolName: string, input: unknown, output: unknown) => void;
+    },
   ) {
     const botId = String(bot.id);
     const running = this.active.get(conversationId);
@@ -229,6 +294,7 @@ export class ChatService {
     const existingUser = this.messages.forRequest(conversationId, value.requestId, 'user');
     let userId: string, assistantId: string;
     let retryMessage: ChatMessage | undefined;
+    let recoveringApproval = false;
     if (existingUser) {
       userId = String(existingUser.id);
       const assistant = this.messages.forRequest(conversationId, value.requestId, 'assistant')!;
@@ -239,6 +305,7 @@ export class ChatService {
         );
       if (assistant.botId !== botId) throw new ApiError(409, 'Retry with the original bot.');
       assistantId = String(assistant.id);
+      recoveringApproval = Boolean(this.approvals?.waiting(assistantId));
       if (assistant.status === 'complete') {
         output.start();
         output.emit({
@@ -259,7 +326,7 @@ export class ChatService {
       if (!config.vision && previousFiles.some((file) => file.kind === 'image'))
         throw new ApiError(400, 'Choose a vision model before retrying this image message.');
       retryMessage = this.messages.message(assistantId);
-      this.messages.reset(assistantId);
+      this.messages.reset(assistantId, recoveringApproval);
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
@@ -285,13 +352,15 @@ export class ChatService {
     const generation: Generation = {
       botId,
       controller: new AbortController(),
-      content: '',
-      reasoning: '',
-      parts: (this.messages.message(assistantId).activity || []).map((item) => ({
-        id: `previous-${item.id}`,
-        type: 'tool',
-        activityId: item.id,
-      })),
+      content: recoveringApproval ? retryMessage?.content || '' : '',
+      reasoning: recoveringApproval ? retryMessage?.reasoning || '' : '',
+      parts: recoveringApproval
+        ? retryMessage?.parts || []
+        : (this.messages.message(assistantId).activity || []).map((item) => ({
+            id: `previous-${item.id}`,
+            type: 'tool',
+            activityId: item.id,
+          })),
       activity: (this.messages.message(assistantId).activity || []).map((activity) =>
         activity.status === 'running'
           ? { ...activity, status: 'interrupted', summary: 'Previous attempt interrupted.' }
@@ -434,8 +503,17 @@ export class ChatService {
           }),
         )
         .digest('hex');
+      const recoveryCalls = recoveringApproval ? this.jobs.approvalStep(assistantId) : [];
       const checkpoint =
-        existingUser && !runtime ? this.jobs.read(assistantId, fingerprint) : undefined;
+        existingUser && (!runtime || recoveringApproval)
+          ? this.jobs.read(assistantId, fingerprint, recoveringApproval)
+          : undefined;
+      if (recoveringApproval && (!checkpoint || !recoveryCalls.length)) {
+        this.approvals?.discard(assistantId);
+        throw new ChatCheckpointError(
+          'The tools or model changed since approval was requested. Retry to review fresh calls.',
+        );
+      }
       let stepsUsed = checkpoint?.steps ?? 0;
       diagnosticStep = stepsUsed;
       let usage: ContextUsage = checkpoint?.usage ?? {
@@ -450,19 +528,28 @@ export class ChatService {
         phase: 'ready',
       };
       if (checkpoint && retryMessage) {
+        if (runtime?.restore) {
+          const completed = new Map<string, unknown>();
+          for (const message of checkpoint.messages)
+            if (message.role === 'tool')
+              for (const part of message.content)
+                if (part.type === 'tool-result') completed.set(part.toolCallId, part.output);
+          for (const message of checkpoint.messages)
+            if (message.role === 'assistant' && Array.isArray(message.content))
+              for (const part of message.content)
+                if (part.type === 'tool-call' && completed.has(part.toolCallId))
+                  runtime.restore(part.toolName, part.input, completed.get(part.toolCallId));
+        }
         messages = checkpoint.messages;
-        generation.content = checkpoint.response?.content ?? retryMessage.content;
-        generation.reasoning = checkpoint.response?.reasoning ?? retryMessage.reasoning ?? '';
-        generation.parts = (
-          checkpoint.response?.parts ??
-          retryMessage.parts ??
-          generation.parts
-        ).map((part) =>
+        const saved = recoveringApproval ? retryMessage : checkpoint.response;
+        generation.content = saved?.content ?? retryMessage.content;
+        generation.reasoning = saved?.reasoning ?? retryMessage.reasoning ?? '';
+        generation.parts = (saved?.parts ?? retryMessage.parts ?? generation.parts).map((part) =>
           part.type === 'compaction' && part.state === 'compacting'
             ? { ...part, state: 'interrupted', finishedAt: new Date().toISOString() }
             : part,
         );
-        generation.activity = checkpoint.response?.activity ?? generation.activity;
+        generation.activity = saved?.activity ?? generation.activity;
         save();
         emit({
           type: 'start',
@@ -610,7 +697,7 @@ export class ChatService {
       messages = manager.boundTools(messages);
       let executionVersion = 0;
       let stepSignal = signal;
-      let approvalBatchId = randomUUID();
+      let approvalBatchId: string = randomUUID();
       const guardTool = (name: string, definition: ToolSet[string]) => {
         const execute = definition.execute;
         const toModelOutput = definition.toModelOutput;
@@ -625,10 +712,18 @@ export class ChatService {
               ? await toModelOutput(params)
               : { type: 'text' as const, value: resultPreview(params.output, allowance * 3 - 96) };
             const limited = limitToolOutput(output, allowance, estimateTokens);
+            this.jobs.approvalResult(assistantId, params.toolCallId, limited);
             reportTruncation(params.toolCallId, limited);
             return limited;
           },
           execute: async (input, options) => {
+            this.jobs.approvalCall(assistantId, {
+              toolCallId: options.toolCallId,
+              toolName: name,
+              input,
+              batchId: approvalBatchId,
+              state: 'pending',
+            });
             const approved = await this.approvals?.request(
               {
                 toolCallId: options.toolCallId,
@@ -658,7 +753,7 @@ export class ChatService {
               return { rejected: true, message: summary };
             }
             diagnosticPhase = 'tool-execution';
-            this.jobs.beforeTool(assistantId);
+            this.jobs.beforeTool(assistantId, options.toolCallId);
             executionVersion++;
             const operation = Promise.resolve(
               execute(input, { ...options, abortSignal: stepSignal }),
@@ -674,6 +769,80 @@ export class ChatService {
         };
       };
       for (const [name, definition] of Object.entries(tools)) guardTool(name, definition);
+      if (recoveringApproval) {
+        const results = await Promise.all(
+          recoveryCalls.map(async (call) => {
+            let output = call.output;
+            if (call.state === 'resolved') runtime?.restore?.(call.toolName, call.input, output);
+            else if (call.state === 'running')
+              output = {
+                type: 'error-text',
+                value:
+                  'This operation was interrupted after starting. Its result is uncertain. Verify state before repeating it.',
+              };
+            else {
+              approvalBatchId = call.batchId;
+              const part: ResponsePart = {
+                id: `tool-${call.toolCallId}`,
+                type: 'tool',
+                activityId: call.toolCallId,
+              };
+              generation.parts = upsertResponsePart(generation.parts, part);
+              save();
+              try {
+                const definition = tools[call.toolName];
+                if (!definition?.execute) throw new Error('This tool is no longer available.');
+                const value = await definition.execute(call.input, {
+                  toolCallId: call.toolCallId,
+                  messages,
+                  abortSignal: signal,
+                  context: undefined,
+                });
+                output = definition.toModelOutput
+                  ? await definition.toModelOutput({
+                      toolCallId: call.toolCallId,
+                      input: call.input,
+                      output: value,
+                    })
+                  : {
+                      type: 'text',
+                      value: resultPreview(value, manager.toolAllowance(messages) * 3 - 96),
+                    };
+              } catch (error) {
+                signal.throwIfAborted();
+                output = { type: 'error-text', value: safeProviderError(error) };
+              }
+            }
+            output ||= {
+              type: 'error-text',
+              value: 'The saved tool result is unavailable. Verify state before repeating it.',
+            };
+            this.jobs.approvalResult(assistantId, call.toolCallId, output);
+            return {
+              type: 'tool-result' as const,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              output,
+            };
+          }),
+        );
+        messages = manager.boundTools([
+          ...messages,
+          {
+            role: 'assistant',
+            content: recoveryCalls.map((call) => ({
+              type: 'tool-call',
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              input: call.input,
+            })),
+          },
+          { role: 'tool', content: results },
+        ]);
+        stepsUsed++;
+        save();
+        saveCheckpoint();
+      }
       let customNames = Object.keys(this.tools.customForBot(bot, signal, onActivity));
       let malformedRecoveries = 0,
         completionRecoveries = 0,
@@ -1054,14 +1223,16 @@ export class ChatService {
         });
         /* Saving the visible response remains the priority on a full disk. */
       }
-      if (status === 'interrupted' && !error)
+      const suspended = Boolean(this.approvals?.suspending(assistantId));
+      if (!suspended) this.approvals?.discard(assistantId);
+      if (status === 'interrupted' && !error && !suspended)
         error = 'Mukai stopped before this response finished. You can resume from saved progress.';
       try {
         generation.parts = generation.parts.map((part) =>
-          part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
+          !suspended && part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
         );
         generation.activity = generation.activity.map((item) =>
-          item.status === 'running'
+          !suspended && item.status === 'running'
             ? {
                 ...item,
                 status: 'interrupted',
@@ -1069,15 +1240,20 @@ export class ChatService {
               }
             : item,
         );
-        this.messages.finish(
-          assistantId,
-          generation.content,
-          status,
-          error,
-          generation.reasoning,
-          generation.activity,
-          generation.parts,
-        );
+        if (suspended) {
+          status = 'streaming';
+          error = null;
+          save();
+        } else
+          this.messages.finish(
+            assistantId,
+            generation.content,
+            status,
+            error,
+            generation.reasoning,
+            generation.activity,
+            generation.parts,
+          );
         {
           try {
             this.memory?.capture(bot, conversationId, userId);

@@ -221,6 +221,11 @@ export const migrations = [
     summary TEXT NOT NULL, error TEXT, episode_id TEXT NOT NULL,
     message_ids TEXT NOT NULL, activity_json TEXT NOT NULL);
    CREATE INDEX memory_review_recent ON memory_review_runs(workspace_id,started_at);`,
+  `CREATE TABLE pending_tool_approvals (
+     id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+     request_json TEXT NOT NULL);
+   CREATE INDEX pending_approval_message ON pending_tool_approvals(message_id);
+   ALTER TABLE chat_jobs ADD COLUMN approval_step_json TEXT;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -235,6 +235,19 @@
   font-size: 11px;
   color: var(--text-muted);
 }
+.pending-approval-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.pending-approval-tools > span + span::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--text-muted);
+}
 .pending-approval-tile h2 {
   margin: 0;
   font-size: 13px;
@@ -635,6 +648,13 @@
 }
 .is-spinning {
   animation: ai-spin 1.2s linear infinite;
+}
+.response-spinner {
+  display: inline-flex;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  overflow: clip;
 }
 .ai-composer-area {
   flex-shrink: 0;

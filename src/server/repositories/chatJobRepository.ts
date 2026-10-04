@@ -15,9 +15,48 @@ export interface ChatCheckpoint {
 }
 export class ChatCheckpointError extends Error {}
 
+export interface ApprovalStepCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  batchId: string;
+  state: 'pending' | 'running' | 'resolved';
+  output?: Extract<
+    Extract<ModelMessage, { role: 'tool' }>['content'][number],
+    { type: 'tool-result' }
+  >['output'];
+}
+
 // Checkpoints contain model context, never provider credentials or request headers.
 export class ChatJobRepository {
   constructor(private database: Database) {}
+  approvalStep(id: string): ApprovalStepCall[] {
+    const row = this.database.get(
+      'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',
+      id,
+    );
+    return row?.approval_step_json ? JSON.parse(String(row.approval_step_json)) : [];
+  }
+  private saveApprovalStep(id: string, calls: ApprovalStepCall[]) {
+    this.database.run(
+      'UPDATE chat_jobs SET approval_step_json=? WHERE message_id=?',
+      JSON.stringify(calls),
+      id,
+    );
+  }
+  approvalCall(id: string, call: ApprovalStepCall) {
+    const calls = this.approvalStep(id);
+    if (!calls.some((item) => item.toolCallId === call.toolCallId))
+      this.saveApprovalStep(id, [...calls, call]);
+  }
+  approvalResult(id: string, toolCallId: string, output: ApprovalStepCall['output']) {
+    this.saveApprovalStep(
+      id,
+      this.approvalStep(id).map((call) =>
+        call.toolCallId === toolCallId ? { ...call, state: 'resolved', output } : call,
+      ),
+    );
+  }
   completedWork(id: string, activity: ChatActivity[]) {
     const row = this.database.get('SELECT checkpoint_json FROM chat_jobs WHERE message_id=?', id);
     if (!row) return [];
@@ -47,9 +86,14 @@ export class ChatJobRepository {
       return [];
     }
   }
-  read(id: string, fingerprint: string): ChatCheckpoint | undefined {
+  read(id: string, fingerprint: string, recoverApproval = false): ChatCheckpoint | undefined {
     const row = this.database.get('SELECT * FROM chat_jobs WHERE message_id=?', id);
-    if (!row || row.fingerprint !== fingerprint || row.in_flight) return;
+    if (
+      !row ||
+      row.fingerprint !== fingerprint ||
+      (row.in_flight && !(recoverApproval && row.approval_step_json))
+    )
+      return;
     try {
       const value = JSON.parse(String(row.checkpoint_json)) as ChatCheckpoint;
       if (Array.isArray(value.messages) && value.usage && Number.isFinite(value.steps))
@@ -68,16 +112,23 @@ export class ChatJobRepository {
       );
     this.database.run(
       `INSERT INTO chat_jobs(message_id,checkpoint_json,fingerprint,in_flight,updated_at) VALUES(?,?,?,0,?)
-       ON CONFLICT(message_id) DO UPDATE SET checkpoint_json=excluded.checkpoint_json,fingerprint=excluded.fingerprint,in_flight=0,updated_at=excluded.updated_at`,
+       ON CONFLICT(message_id) DO UPDATE SET checkpoint_json=excluded.checkpoint_json,fingerprint=excluded.fingerprint,in_flight=0,updated_at=excluded.updated_at,approval_step_json=NULL`,
       id,
       json,
       fingerprint,
       new Date().toISOString(),
     );
   }
-  beforeTool(id: string) {
+  beforeTool(id: string, toolCallId?: string) {
     // Mark uncertainty BEFORE a side effect. A crash cannot cause an automatic replay.
     this.database.run('UPDATE chat_jobs SET in_flight=1 WHERE message_id=?', id);
+    if (toolCallId)
+      this.saveApprovalStep(
+        id,
+        this.approvalStep(id).map((call) =>
+          call.toolCallId === toolCallId ? { ...call, state: 'running' } : call,
+        ),
+      );
   }
   accounting(id: string, usage: ContextUsage) {
     const row = this.database.get('SELECT checkpoint_json FROM chat_jobs WHERE message_id=?', id);

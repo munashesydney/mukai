@@ -26,6 +26,14 @@ const actionLabels: Record<string, string> = {
   search_files: 'Searched',
 };
 
+function ActivitySpinner() {
+  return (
+    <span className="response-spinner">
+      <LoaderCircle size={14} className="is-spinning" />
+    </span>
+  );
+}
+
 function ToolRow({ activity }: { activity: ChatActivity }) {
   const pursuitLabels: Record<string, string> = {
     create: 'Created pursuit',
@@ -52,7 +60,7 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
   return (
     <details className={`response-tool response-tool--${activity.status}`}>
       <summary>
-        {running ? <LoaderCircle size={14} className="is-spinning" /> : <Icon size={14} />}
+        {running ? <ActivitySpinner /> : <Icon size={14} />}
         <span className="response-tool-label">
           {running
             ? `Running ${activity.action.replaceAll('_', ' ')}`
@@ -149,7 +157,7 @@ function ToolPart({
     <ToolRow activity={activity} />
   ) : (
     <div className="response-tool-pending">
-      {message.status === 'streaming' && <LoaderCircle size={14} className="is-spinning" />}
+      {message.status === 'streaming' && <ActivitySpinner />}
       {message.status === 'streaming' ? 'Calling tool…' : 'Tool result unavailable.'}
     </div>
   );
@@ -170,7 +178,7 @@ function ReasoningPart({
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        {active ? <LoaderCircle size={14} className="is-spinning" /> : <Brain size={14} />}
+        {active ? <ActivitySpinner /> : <Brain size={14} />}
         <span>{active ? 'Thinking' : 'Reasoning'}</span>
         <ChevronDown size={13} className="response-chevron" />
       </summary>

@@ -537,6 +537,28 @@ async function main() {
       false,
     );
     assert.equal(api.store.all('SELECT * FROM capability_runs').length, runsBeforeBatch);
+    // Rotating icons must not alter scroll bounds on any animation frame.
+    const scrollSizes = await evaluate<number[]>(`new Promise(resolve=>{
+      const values=[]; let start;
+      function sample(time) {
+        start ??= time;
+        const e=document.querySelector('.response-tool-group-content');
+        values.push(e.scrollHeight);
+        if(time-start<1400) requestAnimationFrame(sample); else resolve(values);
+      }
+      requestAnimationFrame(sample);
+    })`);
+    assert.equal(new Set(scrollSizes).size, 1);
+    await evaluate('document.querySelector(".bot-pending-approvals").click()');
+    await wait('Boolean(document.querySelector(".pending-approvals-page"))');
+    assert.equal(await evaluate('document.querySelectorAll(".pending-approval-tile").length'), 1);
+    assert.equal(
+      await evaluate('document.querySelectorAll(".pending-approval-tools > span").length'),
+      3,
+    );
+    await capture('pending-approvals-grouped.png');
+    await evaluate('document.querySelector(".pending-approval-tile").click()');
+    await wait('Boolean(document.querySelector(".tool-approval-batch"))');
     await capture('parallel-approvals-collapsed.png');
     await evaluate('document.querySelector(".tool-approval-batch > details > summary").click()');
     await evaluate('document.querySelector(".tool-approval-card details").open=true');

@@ -16,6 +16,7 @@ import {
   type PursuitInput,
 } from '../shared/pursuits';
 import type { Bot, ChatMessage, ToolInfo } from '../shared/ai';
+import type { ApprovalState } from '../shared/approvals';
 import { pursuitActionSchema, pursuitDefinition } from './tools/pursuits/definition';
 import { z } from 'zod';
 import { pursuitReportProblem, pursuitReportSchema } from './tools/pursuits/report';
@@ -537,6 +538,43 @@ describe('AI-owned pursuits and scheduled runs', () => {
     expect(result.pursuit.status).toBe('waiting_for_you');
     expect(result.pursuit.nextRunAt).toBeNull();
   });
+  it('restores the exact pursuit run and pending approval after app shutdown', async () => {
+    const pursuit = await createWithAI();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'completed';
+    const run = api.pursuits.runNow(pursuit.id);
+    const pending = await vi.waitFor(async () => {
+      const value = (await request<ApprovalState>('/approvals')).data.pending;
+      expect(value).toHaveLength(1);
+      return value[0];
+    });
+    expect(pending.conversationId).toBe(run.conversationId);
+    expect(pending.toolName).toBe('report_pursuit');
+    await api.shutdown();
+    expect(api.pursuits.detail(pursuit.id).runs[0].status).toBe('running');
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([pending]);
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${run.conversationId}/messages`)).data[1]
+        .status,
+    ).toBe('streaming');
+    await vi.waitFor(async () =>
+      expect(
+        (await request(`/approvals/${pending.id}`, 'POST', { approved: true })).response.status,
+      ).toBe(200),
+    );
+    const detail = await settled(pursuit.id);
+    expect(detail.runs).toHaveLength(1);
+    expect(detail.runs[0]).toMatchObject({
+      id: run.id,
+      conversationId: run.conversationId,
+      status: 'complete',
+      error: null,
+    });
+    expect(detail.pursuit.status).toBe('completed');
+  });
+
   it('preserves the AI-selected continuation across a restart', async () => {
     const p = await createWithAI();
     mode = 'waiting';
