@@ -185,6 +185,12 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.pursuit-next-instructions {
+  margin-top: 16px;
+}
+.pursuit-info-card > .ai-markdown {
+  margin-top: 12px;
+}
 .pursuit-policy {
   display: flex;
   align-items: center;

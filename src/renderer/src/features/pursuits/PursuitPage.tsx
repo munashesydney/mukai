@@ -74,6 +74,13 @@ export function PursuitPage({
   const { pursuit: p, runs } = detail,
     owner = bots.find((b) => b.id === p.ownerBotId),
     run = runs.find((item) => item.id === selectedRun);
+  const scheduledFrom = runs.reduce(
+    (latest, item) =>
+      item.finishedAt && Date.parse(item.finishedAt) > Date.parse(latest)
+        ? item.finishedAt
+        : latest,
+    p.createdAt,
+  );
   if (run)
     return (
       <main className="conversation pursuit-page">
@@ -130,7 +137,7 @@ export function PursuitPage({
         ) : (
           <>
             <section className="pursuit-runtime">
-              <WakeCountdown pursuit={p} />
+              <WakeCountdown pursuit={p} scheduledFrom={scheduledFrom} />
               {p.status !== 'completed' && (
                 <div className="pursuit-controls">
                   <button
@@ -177,7 +184,7 @@ export function PursuitPage({
               </section>
             </div>
             {scheduledStatus(p.status) && p.nextRunInstructions && !p.currentRunId && (
-              <section className="pursuit-info-card">
+              <section className="pursuit-info-card pursuit-next-instructions">
                 <span className="context-section-label">NEXT RUN INSTRUCTIONS</span>
                 <MessageMarkdown text={p.nextRunInstructions} />
               </section>

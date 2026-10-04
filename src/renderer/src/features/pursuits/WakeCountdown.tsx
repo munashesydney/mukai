@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Check, Clock3, LoaderCircle } from 'lucide-react';
 import { pursuitStatusLabels, scheduledStatus, type Pursuit } from '../../../../shared/pursuits';
-export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
+export function WakeCountdown({
+  pursuit,
+  scheduledFrom = pursuit.createdAt,
+}: {
+  pursuit: Pursuit;
+  scheduledFrom?: string;
+}) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -12,9 +18,25 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
     scheduled && pursuit.nextRunAt
       ? Math.max(0, Math.ceil((Date.parse(pursuit.nextRunAt) - now) / 1000))
       : null;
+  const nextWake = pursuit.nextRunAt ? Date.parse(pursuit.nextRunAt) : NaN;
+  const waitStarted = Date.parse(scheduledFrom);
+  const progress =
+    scheduled && !pursuit.currentRunId && Number.isFinite(nextWake) && Number.isFinite(waitStarted)
+      ? nextWake <= waitStarted
+        ? now >= nextWake
+          ? 1
+          : 0
+        : Math.max(0, Math.min(1, (now - waitStarted) / (nextWake - waitStarted)))
+      : 0;
   return (
     <div className={`pursuit-wake ${pursuit.currentRunId ? 'is-running' : ''}`}>
-      <div className="pursuit-wake-dial" style={{ background: 'var(--line)' }} aria-hidden="true">
+      <div
+        className="pursuit-wake-dial"
+        style={{
+          background: `conic-gradient(var(--theme-accent) ${progress * 360}deg, var(--line) 0deg)`,
+        }}
+        aria-hidden="true"
+      >
         <span>
           {pursuit.currentRunId ? (
             <LoaderCircle className="is-spinning" size={24} />
