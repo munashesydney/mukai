@@ -69,7 +69,9 @@ let mode:
   | 'long-browser'
   | 'oversized-results'
   | 'runtime-tools'
-  | 'approval-custom' = 'normal';
+  | 'approval-custom'
+  | 'approval-parallel'
+  | 'approval-memory' = 'normal';
 let endpoint = '';
 let project = '';
 async function close(server: Server) {
@@ -304,7 +306,7 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    if (mode === 'approval-custom') {
+    if (mode === 'approval-custom' || mode === 'approval-memory' || mode === 'approval-parallel') {
       const completed = body.messages.some((message: { role: string }) => message.role === 'tool');
       res.write(
         `data: ${JSON.stringify({
@@ -318,14 +320,21 @@ beforeEach(async () => {
               delta: completed
                 ? { content: 'Custom call resolved.' }
                 : {
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: 'custom-call-1',
+                    tool_calls: Array.from(
+                      { length: mode === 'approval-parallel' ? 3 : 1 },
+                      (_, index) => ({
+                        index,
+                        id: `custom-call-${index + 1}`,
                         type: 'function',
-                        function: { name: 'approval_echo', arguments: '{"value":"approved"}' },
-                      },
-                    ],
+                        function: {
+                          name: mode === 'approval-memory' ? 'memory' : 'approval_echo',
+                          arguments:
+                            mode === 'approval-memory'
+                              ? '{"action":"search","query":"user preferences"}'
+                              : '{"value":"approved"}',
+                        },
+                      }),
+                    ),
                   },
               finish_reason: completed ? 'stop' : 'tool_calls',
             },
@@ -619,6 +628,43 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('executes built-in memory without approval while ask-for-approval is selected', async () => {
+    await configure();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'approval-memory';
+    const result = await chat('Search your memory');
+    expect(result.events.some((event) => event.type === 'approval')).toBe(false);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    expect(
+      (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity?.[0],
+    ).toMatchObject({ tool: 'memory', action: 'search', status: 'complete' });
+  });
+
+  it('starts a space mention normally and gates its tool calls with the correct space destination', async () => {
+    await configure();
+    const space = (
+      await request<Conversation>('/conversations', 'POST', {
+        workspaceId: 'default',
+        name: 'Approval space',
+        description: '',
+        botIds: ['scout'],
+      })
+    ).data;
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'raw-tool-once';
+    const result = spaceChat(space.id, '@scout check the browser', 'scout');
+    for (let i = 0; i < 2; i++) {
+      const item = await pendingApproval(`browser-${i}`);
+      expect(item).toMatchObject({
+        toolName: 'browser',
+        botId: 'scout',
+        conversationId: space.id,
+        target: { kind: 'space', name: 'Approval space', workspaceId: 'default' },
+      });
+      await request(`/approvals/${item.id}`, 'POST', { approved: true });
+    }
+    await result;
+  });
   async function pendingApproval(toolCallId?: string) {
     return vi.waitFor(
       async () => {
@@ -719,6 +765,65 @@ describe('Mukai bots and AI API', () => {
     await request(`/approvals/${approval.id}`, 'POST', { approved: true });
     await approved;
     expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1);
+  });
+
+  it('groups real parallel custom calls and bulk approves only a validated conversation snapshot', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Parallel approvals', folder: project });
+    writeFileSync(
+      join(project, 'approval-echo.ts'),
+      `export default {name:'approval_echo',description:'Echo',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
+    );
+    await request('/capabilities', 'POST', {
+      kind: 'tool',
+      operation: 'register',
+      modulePath: 'approval-echo.ts',
+      ownerBotId: 'scout',
+    });
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'approval-parallel';
+    const result = chat('Run three parallel tools');
+    await pendingApproval('custom-call-3');
+    const pending = (await request<ApprovalState>('/approvals')).data.pending;
+    expect(pending).toHaveLength(3);
+    expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+    const batch = {
+      conversationId: pending[0].conversationId,
+      batchId: pending[0].batchId,
+      ids: pending.map((item) => item.id),
+      approved: true,
+    };
+    expect(
+      (
+        await fetch(api.url + '/approvals/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (await request('/approvals/batch', 'POST', { ...batch, conversationId: 'other-chat' }))
+        .response.status,
+    ).toBe(409);
+    expect(
+      (await request('/approvals/batch', 'POST', { ...batch, ids: [pending[0].id, pending[0].id] }))
+        .response.status,
+    ).toBe(400);
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+    await request(`/approvals/${pending[0].id}`, 'POST', { approved: true });
+    await vi.waitFor(() => expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1));
+    expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(409);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(2);
+    expect(
+      (await request('/approvals/batch', 'POST', { ...batch, ids: batch.ids.slice(1) })).response
+        .status,
+    ).toBe(200);
+    await result;
+    expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(3);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
   });
 
   it('recovers a pending request after UI disconnect and cancels it on Stop', async () => {

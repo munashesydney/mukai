@@ -18,6 +18,9 @@ import { usePursuits } from '../features/pursuits/usePursuits';
 import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
 import { BotHierarchyPage } from '../features/ai/BotHierarchyPage';
+import { PendingApprovalsPage } from '../features/ai/PendingApprovalsPage';
+import { useApprovals } from '../features/ai/approvalStore';
+import { approvalLocation } from '../features/ai/approvalLocation';
 import { useBotConversations } from '../features/ai/useBotConversations';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsPage } from '../features/settings/SettingsPage';
@@ -36,6 +39,7 @@ export function App() {
   );
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
+  const approvals = useApprovals();
   const workspace = useWorkspace(ai.workspaceId);
   const spaceState = useSpaces(ai.workspaceId);
   const pursuitState = usePursuits(ai.workspaceId);
@@ -92,12 +96,21 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     if (
       location.section === 'bots' &&
       location.item !== 'hierarchy' &&
+      location.view !== 'pending-approvals' &&
       bot &&
       botConversation &&
       location.conversationId !== botConversation.id
     )
       replace({ section: 'bots', item: bot.id, conversationId: botConversation.id });
-  }, [location.section, location.item, location.conversationId, bot, botConversation, replace]);
+  }, [
+    location.section,
+    location.item,
+    location.conversationId,
+    location.view,
+    bot,
+    botConversation,
+    replace,
+  ]);
   async function createBotConversation(botId: string) {
     const conversation = await botChats.create(botId);
     select({ section: 'bots', item: botId, conversationId: conversation.id });
@@ -154,6 +167,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       <div className="app-body">
         <NavigationRail
+          hasPendingApprovals={approvals.pending.length > 0}
           hasBots={hasBots}
           workspaceName={ai.workspace?.name}
           section={location.section}
@@ -249,6 +263,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             onOpen={(id) => select({ section: 'bots', item: id })}
             onCreate={() => setEditingBot('new')}
           />
+        ) : location.section === 'bots' && location.view === 'pending-approvals' && bot ? (
+          <PendingApprovalsPage bot={bot} onOpen={(request) => select(approvalLocation(request))} />
         ) : location.section === 'bots' ? (
           ai.loading || botChats.loading ? (
             <main className="conversation ai-main-state">
@@ -378,8 +394,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           </main>
         ) : pursuit ? (
           <PursuitPage
-            key={pursuit.id}
+            key={`${pursuit.id}:${location.runId || ''}`}
             id={pursuit.id}
+            runId={location.runId}
             bots={ai.bots}
             onOwner={(id) => select({ section: 'bots', item: id })}
           />

@@ -15,6 +15,7 @@ export function NavigationRail({
   onCreate,
   workspaceName = 'Munashe’s workspace',
   hasBots = true,
+  hasPendingApprovals = false,
 }: {
   section: Section;
   onNavigate: (section: Section) => void;
@@ -22,6 +23,7 @@ export function NavigationRail({
   onCreate: () => void;
   workspaceName?: string;
   hasBots?: boolean;
+  hasPendingApprovals?: boolean;
 }) {
   return (
     <nav className="navigation-rail" aria-label="Main navigation">
@@ -45,7 +47,9 @@ export function NavigationRail({
           >
             <span className="rail-icon">
               {Icon ? <Icon size={22} strokeWidth={1.8} /> : <TriangleMark />}
-              {id === 'spaces' && <i className="rail-notification" />}
+              {id === 'bots' && hasPendingApprovals && (
+                <i className="rail-notification" aria-label="Pending approvals" />
+              )}
             </span>
             <span>{label}</span>
           </button>

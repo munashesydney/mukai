@@ -144,6 +144,21 @@ export function createRoutes({
           .parse(await jsonBody(request));
         return send(response, approvals.setMode(input.mode));
       }
+      if (id === 'batch' && !action && method === 'POST') {
+        const input = z
+          .object({
+            conversationId: z.string().min(1),
+            batchId: z.string().min(1),
+            ids: z.array(z.string().uuid()).min(1).max(100),
+            approved: z.boolean(),
+          })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(
+          response,
+          approvals.decideBatch(input.conversationId, input.batchId, input.ids, input.approved),
+        );
+      }
       if (id && !action && method === 'POST') {
         const input = z
           .object({ approved: z.boolean() })

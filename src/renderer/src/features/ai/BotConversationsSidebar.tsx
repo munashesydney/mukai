@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, MessageCirclePlus } from 'lucide-react';
+import { ChevronDown, ChevronRight, MessageCirclePlus, Hand } from 'lucide-react';
+import { useApprovals } from './approvalStore';
 import type { Bot } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { Location } from '../workspace/types';
@@ -31,6 +32,7 @@ export function BotConversationsSidebar({
   onSelect: (location: Location) => void;
   onCreate: (botId: string) => Promise<void>;
 }) {
+  const approvals = useApprovals();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [creating, setCreating] = useState<string | null>(null),
     [error, setError] = useState('');
@@ -59,6 +61,7 @@ export function BotConversationsSidebar({
         .map((bot) => {
           const open = expanded[bot.id] ?? location.item === bot.id;
           const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
+          const count = approvals.pending.filter((request) => request.botId === bot.id).length;
           return (
             <section className="bot-conversation-group" key={bot.id}>
               <div className="bot-conversation-heading">
@@ -83,14 +86,33 @@ export function BotConversationsSidebar({
                   <MessageCirclePlus size={17} />
                 </IconButton>
               </div>
+              {count > 0 && (
+                <button
+                  className={`bot-pending-approvals ${location.item === bot.id && location.view === 'pending-approvals' ? 'is-selected' : ''}`}
+                  aria-current={
+                    location.item === bot.id && location.view === 'pending-approvals'
+                      ? 'page'
+                      : undefined
+                  }
+                  onClick={() =>
+                    onSelect({ section: 'bots', item: bot.id, view: 'pending-approvals' })
+                  }
+                >
+                  <Hand size={13} />
+                  <span>Pending Approvals</span>
+                  <span className="pending-approval-count">{count}</span>
+                </button>
+              )}
               {open && (
                 <div className="bot-conversation-list">
                   {chats.map((chat) => (
                     <button
                       key={chat.id}
-                      className={`sidebar-row bot-conversation-row ${location.item === bot.id && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                      className={`sidebar-row bot-conversation-row ${location.item === bot.id && !location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
                       aria-current={
-                        location.item === bot.id && location.conversationId === chat.id
+                        location.item === bot.id &&
+                        !location.view &&
+                        location.conversationId === chat.id
                           ? 'page'
                           : undefined
                       }

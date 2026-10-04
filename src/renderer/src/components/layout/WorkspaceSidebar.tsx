@@ -20,6 +20,7 @@ import { Avatar } from '../ui/Avatar';
 import { IconButton } from '../ui/IconButton';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
+import { PopupMenu } from '../ui/PopupMenu';
 
 export function WorkspaceSidebar({
   location,
@@ -58,7 +59,6 @@ export function WorkspaceSidebar({
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
   const [directOpen, setDirectOpen] = useState(true);
-  const [workspaceMenu, setWorkspaceMenu] = useState(false);
   const isSelected = (item: string) => location.item === item;
   const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');
   const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
@@ -80,54 +80,71 @@ export function WorkspaceSidebar({
       className={`workspace-sidebar ${collapsed ? 'is-collapsed' : ''}`}
       aria-label="Workspace navigation"
     >
-      <div className="workspace-switcher">
-        <button onClick={() => setWorkspaceMenu(!workspaceMenu)} aria-expanded={workspaceMenu}>
-          <span>
-            {workspace?.name || 'Your workspace'}
-            <span className="workspace-subtitle">A little momentum, every day.</span>
-          </span>
-          <ChevronDown size={16} />
-        </button>
-        {workspaceMenu && (
-          <div className="workspace-menu">
+      <PopupMenu
+        className="workspace-switcher"
+        menuClassName="workspace-picker-menu"
+        label="Choose workspace"
+        title="Your workspaces"
+        footer="A little momentum, every day."
+        trigger={
+          <>
+            <span>
+              {workspace?.name || 'Your workspace'}
+              <span className="workspace-subtitle">A little momentum, every day.</span>
+            </span>
+            <ChevronDown size={16} />
+          </>
+        }
+      >
+        {(close) => (
+          <>
             {workspaces.map((item) => (
               <button
                 key={item.id}
                 className="workspace-choice"
+                role="menuitemradio"
+                aria-checked={item.id === workspace?.id}
                 onClick={() => {
-                  setWorkspaceMenu(false);
+                  close();
                   onWorkspace(item.id);
                 }}
               >
                 <span className="workspace-mini">{item.name[0]?.toUpperCase()}</span>
                 <span>
-                  {item.name}
+                  <strong>{item.name}</strong>
                   <small>{item.folder ? 'Folder workspace' : 'Personal workspace'}</small>
                 </span>
                 {item.id === workspace?.id && <Check size={15} />}
               </button>
             ))}
             <button
+              role="menuitem"
               onClick={() => {
-                setWorkspaceMenu(false);
+                close();
                 onCreateWorkspace();
               }}
             >
               <Plus size={15} />
-              Create workspace
+              <span>
+                <strong>Create workspace</strong>
+              </span>
             </button>
             <button
+              role="menuitem"
               disabled={!bots.length}
               onClick={() => {
-                setWorkspaceMenu(false);
+                close();
                 onSettings();
               }}
             >
-              Workspace settings <ArrowUpRight size={14} />
+              <span>
+                <strong>Workspace settings</strong>
+              </span>
+              <ArrowUpRight size={14} />
             </button>
-          </div>
+          </>
         )}
-      </div>
+      </PopupMenu>
       <div className="sidebar-scroll">
         {location.section === 'spaces' && (
           <>

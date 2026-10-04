@@ -56,7 +56,9 @@ export function useWorkspace(workspaceId = 'default') {
       if (
         current.section === next.section &&
         current.item === next.item &&
-        current.conversationId === next.conversationId
+        current.conversationId === next.conversationId &&
+        current.view === next.view &&
+        current.runId === next.runId
       )
         return previous;
       const entries = [...previous.entries.slice(0, previous.index + 1), next];

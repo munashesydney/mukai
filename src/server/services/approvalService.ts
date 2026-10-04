@@ -38,15 +38,36 @@ export class ApprovalService {
     return this.state();
   }
 
+  decideBatch(conversationId: string, batchId: string, ids: string[], approved: boolean) {
+    // Validate the entire snapshot before granting anything. Calls arriving later
+    // still require their own decision, even when they belong to this step.
+    if (!ids.length || new Set(ids).size !== ids.length)
+      throw new ApiError(400, 'Select distinct pending tool approvals.');
+    const items = ids.map((id) => {
+      const item = this.pending.get(id);
+      if (!item) throw new ApiError(409, 'This tool approval is no longer pending.');
+      if (item.request.conversationId !== conversationId || item.request.batchId !== batchId)
+        throw new ApiError(
+          409,
+          'These approvals do not belong to the same conversation and batch.',
+        );
+      return item;
+    });
+    for (const item of items) item.settle(approved);
+    return this.state();
+  }
+
   async request(
     details: Omit<ToolApproval, 'id' | 'createdAt'>,
     signal: AbortSignal,
     onChange: () => void,
   ): Promise<boolean> {
     signal.throwIfAborted();
-    if (this.mode() === 'full-access') return true;
+    if (details.toolName === 'memory' || this.mode() === 'full-access') return true;
+    const target = this.repository.target(details.conversationId);
     const request: ToolApproval = {
       ...details,
+      ...(target ? { target } : {}),
       id: randomUUID(),
       createdAt: new Date().toISOString(),
     };

@@ -35,5 +35,7 @@ export interface Location {
   section: Section;
   item: string;
   conversationId?: string;
+  view?: 'pending-approvals';
+  runId?: string;
 }
 export type DialogKind = 'draft' | 'details' | 'create-bot' | 'create-space' | null;

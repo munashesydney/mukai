@@ -610,6 +610,7 @@ export class ChatService {
       messages = manager.boundTools(messages);
       let executionVersion = 0;
       let stepSignal = signal;
+      let approvalBatchId = randomUUID();
       const guardTool = (name: string, definition: ToolSet[string]) => {
         const execute = definition.execute;
         const toModelOutput = definition.toModelOutput;
@@ -637,6 +638,7 @@ export class ChatService {
                 botName: bot.name,
                 conversationId,
                 messageId: assistantId,
+                batchId: approvalBatchId,
               },
               stepSignal,
               () => emit({ type: 'approval', id: assistantId }),
@@ -728,6 +730,7 @@ export class ChatService {
         diagnosticPhase = 'provider-request';
         let providerError: unknown;
         const stepController = new AbortController();
+        approvalBatchId = randomUUID();
         stepSignal = AbortSignal.any([signal, stepController.signal]);
         const result = streamText({
           model: config.model,

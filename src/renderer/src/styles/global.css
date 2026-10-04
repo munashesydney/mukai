@@ -378,35 +378,6 @@ p {
   color: var(--text-secondary);
   margin-top: 8px;
 }
-.workspace-menu {
-  position: absolute;
-  left: 0;
-  top: 78px;
-  width: 270px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: 0 8px 30px #17372718;
-  border-radius: 9px;
-  padding: 9px;
-  z-index: 8;
-}
-.workspace-menu > div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  padding: 7px;
-}
-.workspace-menu small {
-  display: block;
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-.workspace-menu > div > svg {
-  margin-left: auto;
-  color: var(--teal);
-}
 .workspace-mini {
   display: grid;
   place-items: center;
@@ -415,16 +386,6 @@ p {
   background: var(--teal-soft);
   border-radius: 7px;
   font-weight: 600;
-}
-.workspace-menu > button {
-  width: 100%;
-  padding: 10px 7px;
-  text-align: left;
-  border-top: 1px solid var(--line);
-  margin-top: 8px;
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
 }
 .sidebar-scroll {
   overflow: auto;

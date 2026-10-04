@@ -18,16 +18,18 @@ export function PursuitPage({
   id,
   bots,
   onOwner,
+  runId,
 }: {
   id: string;
   bots: Bot[];
   onOwner: (id: string) => void;
+  runId?: string;
 }) {
   const [detail, setDetail] = useState<PursuitDetail | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [tab, setTab] = useState('Overview'),
-    [selectedRun, setSelectedRun] = useState<string | null>(null);
+    [selectedRun, setSelectedRun] = useState<string | null>(runId || null);
   useEffect(() => {
     let alive = true,
       pending = false;

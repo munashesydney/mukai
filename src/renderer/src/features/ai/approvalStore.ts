@@ -67,6 +67,20 @@ export const approvalStore = {
       update({ deciding: state.deciding.filter((item) => item !== id) });
     }
   },
+  async decideBatch(conversationId: string, batchId: string, ids: string[]) {
+    if (ids.some((id) => state.deciding.includes(id))) return;
+    version++;
+    update({ deciding: [...state.deciding, ...ids], error: '' });
+    try {
+      const result = await approvalService.decideBatch(conversationId, batchId, ids, true);
+      version++;
+      update({ ...result, loaded: true });
+    } catch (caught) {
+      update({ error: errorText(caught) });
+    } finally {
+      update({ deciding: state.deciding.filter((id) => !ids.includes(id)) });
+    }
+  },
 };
 function subscribe(listener: () => void) {
   listeners.add(listener);

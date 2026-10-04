@@ -218,6 +218,7 @@ async function main() {
     window.setSize(1480, 980);
     const sentModels: string[] = [];
     let approvalFixture = false;
+    let parallelFixture = false;
     modelFixture = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk;
@@ -238,14 +239,12 @@ async function main() {
                 delta: completed
                   ? { content: 'Approval fixture finished.' }
                   : {
-                      tool_calls: [
-                        {
-                          index: 0,
-                          id: 'approval-ui-call',
-                          type: 'function',
-                          function: { name: 'echo', arguments: '{}' },
-                        },
-                      ],
+                      tool_calls: Array.from({ length: parallelFixture ? 3 : 1 }, (_, index) => ({
+                        index,
+                        id: `approval-ui-call-${index}`,
+                        type: 'function',
+                        function: { name: 'echo', arguments: '{}' },
+                      })),
                     },
                 finish_reason: completed ? 'stop' : 'tool_calls',
               },
@@ -349,6 +348,73 @@ async function main() {
     await fill('.composer textarea', 'Run the approval fixture.');
     await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
     await wait('Boolean(document.querySelector(".tool-approval-card"))');
+    await wait('Boolean(document.querySelector(".bot-pending-approvals"))');
+    assert.equal(
+      await evaluate(
+        `document.querySelector('.rail-link:nth-child(1) .rail-notification') !== null`,
+      ),
+      true,
+    );
+    assert.equal(
+      await evaluate(`document.querySelector('.rail-link:nth-child(3) .rail-notification')`),
+      null,
+    );
+    assert.equal(
+      await evaluate(
+        `getComputedStyle(document.querySelector('.bot-pending-approvals')).animationName`,
+      ),
+      'approval-border-orbit',
+    );
+    const pendingChat = (await request<ApprovalState>('/approvals')).pending[0];
+    // Background cards must never leak into another bot or another chat of the same bot.
+    await evaluate(
+      `document.querySelector('button[aria-label="New conversation with Scout"]').click()`,
+    );
+    await wait('document.querySelector(".conversation-header h1")?.textContent==="Scout"');
+    assert.equal(await evaluate('document.querySelector(".tool-approval-card")'), null);
+    await evaluate(
+      `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
+    );
+    await wait('document.querySelector(".conversation-header h1")?.textContent==="Mukai"');
+    assert.equal(await evaluate('document.querySelector(".tool-approval-card")'), null);
+    await evaluate('document.querySelector(".bot-pending-approvals").click()');
+    await wait('Boolean(document.querySelector(".pending-approvals-page"))');
+    assert.equal(await evaluate('document.querySelectorAll(".pending-approval-tile").length'), 1);
+    assert.equal(
+      await evaluate(
+        'getComputedStyle(document.querySelector(".pending-approvals-header h1")).fontSize',
+      ),
+      '22px',
+    );
+    assert.equal(
+      await evaluate(
+        'getComputedStyle(document.querySelector(".pending-approvals-header")).backgroundImage',
+      ),
+      'none',
+    );
+    assert.equal(
+      await evaluate(
+        'getComputedStyle(document.querySelector(".pending-approval-tile")).backgroundImage',
+      ),
+      'none',
+    );
+    assert(
+      await evaluate(
+        'document.querySelector(".pending-approval-tile").getBoundingClientRect().height < 100',
+      ),
+    );
+    await capture('pending-approvals-page.png');
+    await evaluate(`document.documentElement.dataset.mode='dark'`);
+    await capture('pending-approvals-page-dark.png');
+    await evaluate(`document.documentElement.dataset.mode='light'`);
+    await evaluate('document.querySelector(".pending-approval-tile").click()');
+    await wait(
+      'Boolean(document.querySelector(".tool-approval-card")) && Boolean(document.querySelector(".composer"))',
+    );
+    assert.equal(
+      await evaluate(`localStorage.getItem('mukai.active-conversation.${main.id}')`),
+      pendingChat.conversationId,
+    );
     assert.equal(api.store.all('SELECT * FROM capability_runs').length, 0);
     assert(
       await evaluate(`Boolean(document.querySelector('button[aria-label="Stop generation"]'))`),
@@ -373,6 +439,9 @@ async function main() {
       `!document.querySelector('.tool-approval-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
     );
     assert.equal(api.store.all('SELECT * FROM capability_runs').length, 1);
+    await wait(
+      '!document.querySelector(".bot-pending-approvals") && !document.querySelector(".rail-link:nth-child(1) .rail-notification")',
+    );
     assert(
       await evaluate(
         'document.querySelector(".ai-message-feed").textContent.includes("Approval fixture finished.")',
@@ -401,6 +470,90 @@ async function main() {
     );
     assert.equal(api.store.all('SELECT * FROM capability_runs').length, 2);
     assert.equal(await evaluate('document.querySelector(".tool-approval-card")'), null);
+    // Pending pursuit approvals must open the exact run, not its overview.
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    const pursuit = api.pursuits.create(main, {
+      name: 'Approval navigation',
+      objective: 'Check the custom tool',
+      successCriteria: 'Verified result',
+      firstRunAt: null,
+      deadline: null,
+    });
+    const pendingRun = api.pursuits.runNow(pursuit.id);
+    await wait('Boolean(document.querySelector(".bot-pending-approvals"))');
+    await evaluate('document.querySelector(".bot-pending-approvals").click()');
+    await wait('Boolean(document.querySelector(".pending-approval-tile"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".pending-approval-tile").textContent.includes("Pursuit run")',
+      ),
+    );
+    await evaluate('document.querySelector(".pending-approval-tile").click()');
+    await wait(
+      'Boolean(document.querySelector("button")) && document.querySelector(".pursuit-title h1")?.textContent==="Approval navigation" && Boolean(document.querySelector(".tool-approval-card"))',
+    );
+    assert(
+      (await request<ApprovalState>('/approvals')).pending.some(
+        (item) => item.target?.runId === pendingRun.id,
+      ),
+    );
+    await capture('pending-approval-pursuit-run.png');
+    await click('Stop run');
+    await wait('!document.querySelector(".tool-approval-card")');
+    await request('/approvals', 'PUT', { mode: 'full-access' });
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait('Boolean(document.querySelector(".composer"))');
+    // Workspace and approval pickers use the same native floating surface.
+    await evaluate('document.querySelector(".workspace-switcher > button").click()');
+    await wait('Boolean(document.querySelector(".workspace-picker-menu"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".workspace-picker-menu").classList.contains("popup-menu")',
+      ),
+    );
+    await capture('workspace-picker-menu.png');
+    await evaluate(
+      `document.querySelector('.workspace-picker-menu [role=menuitemradio]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`,
+    );
+    await wait('!document.querySelector(".workspace-picker-menu")');
+    // Three simultaneous calls share one compact accordion, with individual and bulk grants.
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    parallelFixture = true;
+    await evaluate(
+      `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
+    );
+    await wait(
+      'document.querySelectorAll(".ai-message--assistant").length===0 && Boolean(document.querySelector(".composer textarea"))',
+    );
+    const runsBeforeBatch = api.store.all('SELECT * FROM capability_runs').length;
+    await fill('.composer textarea', 'Run parallel approval tools.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait('document.querySelectorAll(".tool-approval-batch .tool-approval-card").length===3');
+    assert.equal(await evaluate('document.querySelectorAll(".tool-approval-batch").length'), 1);
+    assert.equal(
+      await evaluate('document.querySelector(".tool-approval-batch > details").open'),
+      false,
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, runsBeforeBatch);
+    await capture('parallel-approvals-collapsed.png');
+    await evaluate('document.querySelector(".tool-approval-batch > details > summary").click()');
+    await evaluate('document.querySelector(".tool-approval-card details").open=true');
+    await capture('parallel-approvals-expanded.png');
+    await evaluate('document.querySelector(".tool-approval-card .button--primary").click()');
+    await wait('document.querySelectorAll(".tool-approval-batch .tool-approval-card").length===2');
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, runsBeforeBatch + 1);
+    assert(
+      await evaluate('Boolean(document.querySelector(\'button[aria-label="Stop generation"]\'))'),
+    );
+    await click('Approve all');
+    await wait(
+      '!document.querySelector(".tool-approval-batch") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+    );
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, runsBeforeBatch + 3);
+    parallelFixture = false;
+    await request('/approvals', 'PUT', { mode: 'full-access' });
     approvalFixture = false;
     const specialistInput = {
       name: 'Ada',
@@ -520,7 +673,7 @@ async function main() {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, roles, assignments, models, tool approval menu/cards, reload recovery, approve/reject/full access, hierarchy, and narrow layout.',
+      'PASS bot UI: onboarding, assignments, models, approval menus/cards/page, exact chat and pursuit links, badges, shared workspace picker, reload recovery, approve/reject/full access, hierarchy, and narrow layout.',
     );
   } finally {
     window.destroy();
