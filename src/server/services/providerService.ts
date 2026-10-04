@@ -14,6 +14,7 @@ import { modelContextWindow } from '../../shared/modelLimits';
 import type { DiagnosticService } from './diagnosticService';
 import { ChatGPTService } from './chatgptService';
 import { chatGPTError } from './chatgptTransport';
+import { PROVIDER_MAX_RETRIES } from './responsePolicy';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -323,7 +324,7 @@ export class ProviderService {
         model: this.model(provider, String(provider.defaultModel)),
         prompt: 'Reply with OK.',
         maxOutputTokens: 64,
-        maxRetries: 0,
+        maxRetries: PROVIDER_MAX_RETRIES,
         abortSignal: AbortSignal.timeout(20000),
         providerOptions: { openai: { store: false } },
       });

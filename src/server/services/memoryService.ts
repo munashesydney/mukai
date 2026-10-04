@@ -23,6 +23,7 @@ import type { ProviderService } from './providerService';
 import { ApiError } from '../config';
 import { contextLimits, estimateTokens } from './contextPolicy';
 import type { DiagnosticService } from './diagnosticService';
+import { PROVIDER_MAX_RETRIES } from './responsePolicy';
 
 export const memorySettingsSchema = z.object({
   automaticCapture: z.boolean(),
@@ -111,7 +112,7 @@ export class MemoryService {
               prompt: JSON.stringify(data),
               abortSignal: signal,
               timeout: { totalMs: 60000 },
-              maxRetries: 0,
+              maxRetries: PROVIDER_MAX_RETRIES,
               maxOutputTokens:
                 config.provider.kind === 'chatgpt' ? undefined : Math.min(limits.output, 6000),
               providerOptions: {

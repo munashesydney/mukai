@@ -6,6 +6,7 @@ import {
   verify,
   type JsonWebKey,
 } from 'node:crypto';
+import { APICallError } from 'ai';
 import { ApiError, privateSecret } from '../config';
 import type { ProviderRepository } from '../repositories/providerRepository';
 import type { DiagnosticService } from './diagnosticService';
@@ -622,7 +623,28 @@ export class ChatGPTService {
                     : response.status === 404
                       ? 'This model is no longer available. Refresh the ChatGPT model catalog in Settings.'
                       : chatGPTError();
-          throw Object.assign(new ApiError(response.status, message), {
+          // Keep retries in the SDK, so request failures use one shared budget and
+          // an interrupted response stream cannot replay tools or partial output.
+          const retryable =
+            code === 'subscription_sharing_usage_unavailable' ||
+            code === 'subscription_sharing_user_unavailable' ||
+            ([408, 429, 500, 502, 503, 504].includes(response.status) &&
+              !code?.startsWith('subscription_sharing_') &&
+              !code?.startsWith('chatpass_v2_') &&
+              !['insufficient_quota', 'billing_hard_limit_reached'].includes(code ?? ''));
+          const error = retryable
+            ? new APICallError({
+                message,
+                url,
+                requestBodyValues: body,
+                statusCode: response.status,
+                responseHeaders: Object.fromEntries(response.headers),
+                responseBody,
+                isRetryable: true,
+              })
+            : new ApiError(response.status, message);
+          throw Object.assign(error, {
+            status: response.status,
             code,
             responseBody,
             requestId: response.headers.get('x-request-id'),

@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 import type { ProviderService } from './providerService';
 import { ContextError, contextLimits, estimateTokens, type Summarizer } from './contextPolicy';
-import { RESPONSE_TIMEOUT_MS } from './responsePolicy';
+import { PROVIDER_MAX_RETRIES, RESPONSE_TIMEOUT_MS } from './responsePolicy';
 
 type ModelConfig = ReturnType<ProviderService['resolve']>;
 type ProviderOptions = NonNullable<Parameters<typeof generateText>[0]['providerOptions']>;
@@ -52,7 +52,7 @@ export function contextSummarizer(
       const summary = await generateText({
         model: config.model,
         maxOutputTokens: output,
-        maxRetries: config.provider.kind === 'chatgpt' ? 0 : 1,
+        maxRetries: PROVIDER_MAX_RETRIES,
         abortSignal: signal,
         timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: 45000 },
         providerOptions: summaryOptions(config),

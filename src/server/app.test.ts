@@ -208,6 +208,7 @@ beforeEach(async () => {
         .writeHead(503, {
           'Content-Type': 'application/json',
           'x-request-id': 'fixture-request-42',
+          'retry-after-ms': '0',
         })
         .end(
           JSON.stringify({
@@ -570,6 +571,7 @@ describe('Mukai bots and AI API', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mode = 'upstream-fail';
     await chat('PRIVATE USER REQUEST - do not log this');
+    expect(calls).toHaveLength(6);
     const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
     expect(reply.error).toContain('Could not complete the provider request');
     const path = join(dir, 'logs', 'errors.log');
@@ -606,9 +608,10 @@ describe('Mukai bots and AI API', () => {
       .map((line) => JSON.parse(line));
     expect(records.at(-1)).toMatchObject({
       event: 'provider.test_failed',
-      error: { statusCode: 503 },
+      error: { name: 'AI_RetryError', lastError: { statusCode: 503 } },
     });
     expect(records).toHaveLength(2);
+    expect(calls).toHaveLength(12);
   }, 20000);
   it('records reported token usage, applies model limits, and distinguishes estimates', async () => {
     const provider = await configure();

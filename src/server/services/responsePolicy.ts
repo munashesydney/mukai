@@ -3,6 +3,8 @@ export const TOOL_STEP_LIMIT = 1000;
 export const RUNTIME_TOOL_CALL_LIMIT = 2000;
 export const FILE_TOOL_CALL_LIMIT = 2000;
 export const RESPONSE_TIMEOUT_MS = 180000;
+// Five retries after the initial request. The SDK handles backoff and cancellation.
+export const PROVIDER_MAX_RETRIES = 5;
 
 const RAW_TOOL_PROTOCOL = /<[｜|]{2}DSML[｜|]{2}\s+(?:calls|invoke|parameter)\b/;
 

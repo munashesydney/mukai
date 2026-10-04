@@ -18,6 +18,7 @@ import { ChatGPTService, classifyChatGPTModel } from './services/chatgptService'
 import { chatGPTRequest, collectChatGPTResponse } from './services/chatgptTransport';
 import { DiagnosticService } from './services/diagnosticService';
 import { safeProviderError } from './services/providerService';
+import { PROVIDER_MAX_RETRIES } from './services/responsePolicy';
 
 let dir: string, database: Database, providers: ProviderRepository, service: ChatGPTService;
 let authorization: URL;
@@ -163,6 +164,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
+  vi.useRealTimers();
   service.shutdown();
   database.db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -179,6 +181,177 @@ async function login(providerId?: string, client = 'oaiapp_test') {
   const response = await fetch(callback);
   return { attempt, response, result: service.status(attempt.id) };
 }
+
+describe('ChatGPT provider retries', () => {
+  async function model() {
+    const { result } = await login();
+    return createOpenAI({
+      apiKey: 'placeholder',
+      fetch: service.fetch(result.providerId!),
+    }).responses('gpt-4.1-mini');
+  }
+
+  it.each([408, 429, 500, 502, 503, 504])(
+    'recovers on the fifth retry after HTTP %s',
+    async (status) => {
+      const configured = await model();
+      inference = () => {
+        if (inferenceCalls.length > 5)
+          return sse([{ type: 'response.completed', response: complete() }]);
+        const response = json({ detail: 'Temporary failure' }, status);
+        response.headers.set('retry-after-ms', '0');
+        return response;
+      };
+      const response = await generateText({
+        model: configured,
+        prompt: 'Hi',
+        maxRetries: PROVIDER_MAX_RETRIES,
+      });
+      expect(response.text).toBe('OK');
+      expect(inferenceCalls).toHaveLength(6);
+    },
+  );
+
+  it('stops after five retries when the service stays unavailable', async () => {
+    const configured = await model();
+    inference = () => {
+      const response = json({ detail: 'Unavailable' }, 503);
+      response.headers.set('retry-after-ms', '0');
+      return response;
+    };
+    await expect(
+      generateText({ model: configured, prompt: 'Hi', maxRetries: PROVIDER_MAX_RETRIES }),
+    ).rejects.toMatchObject({ reason: 'maxRetriesExceeded' });
+    expect(inferenceCalls).toHaveLength(6);
+  });
+
+  it('retries ECONNRESET with backoff before opening a stream', async () => {
+    const configured = await model();
+    vi.useFakeTimers();
+    const attemptTimes: number[] = [];
+    inference = () => {
+      attemptTimes.push(Date.now());
+      if (inferenceCalls.length <= 5)
+        throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+      return sse([{ type: 'response.completed', response: complete() }]);
+    };
+    const response = streamText({
+      model: configured,
+      prompt: 'Hi',
+      maxRetries: PROVIDER_MAX_RETRIES,
+    });
+    const reading = (async () => {
+      for await (const chunk of response.fullStream) if (chunk.type === 'error') throw chunk.error;
+    })();
+    await vi.advanceTimersByTimeAsync(62000);
+    await reading;
+    expect(inferenceCalls).toHaveLength(6);
+    expect(attemptTimes.slice(1).map((time, index) => time - attemptTimes[index])).toEqual([
+      2000, 4000, 8000, 16000, 32000,
+    ]);
+  });
+
+  it.each([
+    [401, undefined],
+    [403, undefined],
+    [404, undefined],
+    [429, 'subscription_sharing_usage_limit_exceeded'],
+    [429, 'insufficient_quota'],
+    [503, 'chatpass_v2_invalid_authorization_context'],
+  ])('does not retry permanent rejection %s / %s', async (status, code) => {
+    const configured = await model();
+    inference = () => json({ error: { code } }, status as number);
+    await expect(
+      generateText({ model: configured, prompt: 'Hi', maxRetries: PROVIDER_MAX_RETRIES }),
+    ).rejects.toBeDefined();
+    expect(inferenceCalls).toHaveLength(1);
+  });
+
+  it('Stop cancels the backoff without sending another request', async () => {
+    const configured = await model();
+    vi.useFakeTimers();
+    inference = () => {
+      throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    };
+    const controller = new AbortController();
+    const pending = generateText({
+      model: configured,
+      prompt: 'Hi',
+      maxRetries: PROVIDER_MAX_RETRIES,
+      abortSignal: controller.signal,
+    });
+    const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(inferenceCalls).toHaveLength(1);
+    controller.abort();
+    await rejection;
+    await vi.advanceTimersByTimeAsync(62000);
+    expect(inferenceCalls).toHaveLength(1);
+  });
+
+  it('keeps partial text and does not replay an interrupted stream', async () => {
+    const configured = await model();
+    inference = () => {
+      const events = [
+        {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            id: 'msg_test',
+            type: 'message',
+            role: 'assistant',
+            status: 'in_progress',
+            content: [],
+          },
+        },
+        {
+          type: 'response.output_text.delta',
+          item_id: 'msg_test',
+          output_index: 0,
+          content_index: 0,
+          delta: 'Partial',
+        },
+      ];
+      let sent = false;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            if (!sent) {
+              sent = true;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''),
+                ),
+              );
+            } else {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+              controller.close();
+            }
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
+    };
+    const response = streamText({
+      model: configured,
+      prompt: 'Hi',
+      maxRetries: PROVIDER_MAX_RETRIES,
+    });
+    let text = '';
+    let failure: unknown;
+    try {
+      for await (const chunk of response.fullStream) {
+        if (chunk.type === 'text-delta') text += chunk.text;
+        if (chunk.type === 'error') failure = chunk.error;
+      }
+    } catch (error) {
+      failure = error;
+    }
+    expect(text).toBe('Partial');
+    expect(failure).toMatchObject({ cause: { message: expect.stringContaining('interrupted') } });
+    expect(inferenceCalls).toHaveLength(1);
+  });
+});
 
 describe('ChatGPT OAuth and accounts', () => {
   it('registers through PKCE, validates identity, and stores encrypted credentials', async () => {
@@ -554,7 +727,7 @@ describe('ChatGPT Responses compatibility', () => {
       apiKey: 'placeholder',
       fetch: service.fetch(result.providerId!),
     }).responses('gpt-4.1-mini');
-    const stream = streamText({ model, prompt: 'Hi', maxRetries: 0 });
+    const stream = streamText({ model, prompt: 'Hi', maxRetries: PROVIDER_MAX_RETRIES });
     let text = '',
       failure: unknown;
     for await (const chunk of stream.fullStream) {

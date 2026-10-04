@@ -45,6 +45,7 @@ import {
 import {
   assistantContextText,
   containsRawToolProtocol,
+  PROVIDER_MAX_RETRIES,
   RESPONSE_TIMEOUT_MS,
   TOOL_STEP_LIMIT,
 } from './responsePolicy';
@@ -679,7 +680,7 @@ export class ChatService {
           model: config.model,
           system: attemptSystem,
           messages: memoryMessage ? [memoryMessage, ...messages] : messages,
-          maxRetries: config.provider.kind === 'chatgpt' ? 0 : 3,
+          maxRetries: PROVIDER_MAX_RETRIES,
           abortSignal: signal,
           timeout: {
             totalMs: RESPONSE_TIMEOUT_MS,
