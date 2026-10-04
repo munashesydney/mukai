@@ -17,6 +17,7 @@ import { SpaceDetails } from '../features/chat/SpaceDetails';
 import { usePursuits } from '../features/pursuits/usePursuits';
 import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
+import { BotHierarchyPage } from '../features/ai/BotHierarchyPage';
 import { useBotConversations } from '../features/ai/useBotConversations';
 import { BotEditor } from '../features/ai/BotEditor';
 import { SettingsPage } from '../features/settings/SettingsPage';
@@ -90,12 +91,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   useEffect(() => {
     if (
       location.section === 'bots' &&
+      location.item !== 'hierarchy' &&
       bot &&
       botConversation &&
       location.conversationId !== botConversation.id
     )
       replace({ section: 'bots', item: bot.id, conversationId: botConversation.id });
-  }, [location.section, location.conversationId, bot, botConversation, replace]);
+  }, [location.section, location.item, location.conversationId, bot, botConversation, replace]);
   async function createBotConversation(botId: string) {
     const conversation = await botChats.create(botId);
     select({ section: 'bots', item: botId, conversationId: conversation.id });
@@ -171,7 +173,11 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             workspaces={ai.workspaces}
             onWorkspace={ai.selectWorkspace}
             onCreateWorkspace={() => setEditingWorkspace('new')}
-            location={location.section === 'bots' && bot ? { ...location, item: bot.id } : location}
+            location={
+              location.section === 'bots' && location.item !== 'hierarchy' && bot
+                ? { ...location, item: bot.id }
+                : location
+            }
             spaces={spaceState.spaces}
             pursuits={pursuitState.pursuits}
             pursuitsLoading={pursuitState.loading}
@@ -234,6 +240,14 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             onSelectTool={(toolId) =>
               select({ section: 'tools', item: toolId ?? 'workspace-tools' })
             }
+          />
+        ) : location.section === 'bots' && location.item === 'hierarchy' ? (
+          <BotHierarchyPage
+            bots={ai.bots}
+            loading={ai.loading}
+            error={ai.error}
+            onOpen={(id) => select({ section: 'bots', item: id })}
+            onCreate={() => setEditingBot('new')}
           />
         ) : location.section === 'bots' ? (
           ai.loading || botChats.loading ? (

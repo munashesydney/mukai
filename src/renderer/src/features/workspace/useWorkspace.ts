@@ -29,7 +29,7 @@ export function useWorkspace(workspaceId = 'default') {
   });
   const location = history.entries[history.index];
   useEffect(() => {
-    if (location.section === 'bots') {
+    if (location.section === 'bots' && location.item !== 'hierarchy') {
       try {
         localStorage.setItem(`mukai.active-bot.${workspaceId}`, location.item);
         if (location.conversationId)

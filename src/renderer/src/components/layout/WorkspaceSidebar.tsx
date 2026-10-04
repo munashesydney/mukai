@@ -307,6 +307,15 @@ export function WorkspaceSidebar({
           </>
         )}
       </div>
+      {location.section === 'bots' && (
+        <button
+          className={`sidebar-hierarchy-link ${location.item === 'hierarchy' ? 'is-active' : ''}`}
+          aria-current={location.item === 'hierarchy' ? 'page' : undefined}
+          onClick={() => onSelect({ section: 'bots', item: 'hierarchy' })}
+        >
+          Bot Hierarchy <ArrowUpRight size={15} />
+        </button>
+      )}
       <div className="sidebar-footer">
         <div className="wake-icon">
           <Sunrise size={15} />

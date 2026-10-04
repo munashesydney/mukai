@@ -11,6 +11,7 @@ async function main() {
   const dir = process.env.MUKAI_BOT_SMOKE_DIR;
   if (!dir) throw new Error('Disposable bot smoke directory required.');
   app.setPath('userData', dir);
+  app.on('window-all-closed', () => {});
   await app.whenReady();
   const api = await startApiServer(0, {
     dataDir: join(dir, 'api'),
@@ -288,9 +289,125 @@ async function main() {
     assert.deepEqual(sentModels, ['fixture-alternate', 'fixture-default']);
     assert.equal((await request<Bot[]>('/bots')).find((bot) => bot.id === child.id)?.model, null);
     await capture('bot-name-only-sidebar.png');
+    const specialistInput = {
+      name: 'Ada',
+      role: 'Code architect',
+      avatar: 'atlas' as const,
+      instructions: 'Design and delegate implementation work.',
+      providerId: null,
+      model: null,
+      supportsImages: null,
+      contextWindowTokens: null,
+    };
+    const architect = await api.botManagement.create(main, specialistInput, ['manage_bot']);
+    const engineer = await api.botManagement.create(architect, {
+      ...specialistInput,
+      name: 'Nova',
+      role: 'Software engineer',
+      avatar: 'nova',
+    });
+    await api.botManagement.create(main, {
+      ...specialistInput,
+      name: 'Atlas',
+      role: 'Research analyst',
+    });
+    await click('Bot Hierarchy');
+    await wait('document.querySelectorAll(".bot-tree-card").length===5');
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".sidebar-hierarchy-link").getAttribute("aria-current")',
+      ),
+      'page',
+    );
+    assert.equal(
+      await evaluate('document.querySelector(".bot-tree-card.is-main strong").textContent'),
+      'Mukai',
+    );
+    assert.deepEqual(
+      await evaluate(
+        `Array.from(document.querySelectorAll('ul[aria-label="Bots created by Ada"] > li > button .bot-tree-copy strong')).map(e=>e.textContent)`,
+      ),
+      ['Nova'],
+    );
+    assert.equal(await evaluate('document.querySelectorAll(".bot-tree-root").length'), 1);
+    assert.equal(
+      await evaluate('document.querySelector(".conversation-heading h1").textContent'),
+      'Bot Hierarchy',
+    );
+    assert.equal(await evaluate('document.querySelector(".bot-tree-card").offsetHeight'), 76);
+    await evaluate(`document.querySelector('button[aria-label="Zoom in"]').click()`);
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent==="110%"');
+    await evaluate(`document.querySelector('button[aria-label="Zoom out"]').click()`);
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent==="100%"');
+    await evaluate(
+      `document.querySelector('.bot-hierarchy-canvas').dispatchEvent(new WheelEvent('wheel',{deltaY:-100,ctrlKey:true,bubbles:true,cancelable:true}))`,
+    );
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent!=="100%"');
+    await evaluate(`document.querySelector('button[aria-label="Reset zoom"]').click()`);
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent==="100%"');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.bot-tree-toggle')).find(e=>e.getAttribute('aria-label').startsWith('Collapse Ada')).click()`,
+    );
+    await wait('document.querySelectorAll(".bot-tree-card").length===4');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.bot-tree-toggle')).find(e=>e.getAttribute('aria-label').startsWith('Expand Ada')).click()`,
+    );
+    await wait('document.querySelectorAll(".bot-tree-card").length===5');
+    await evaluate(
+      `(()=>{const zoom=document.querySelector('button[aria-label="Zoom in"]');for(let i=0;i<10;i++)zoom.click();})()`,
+    );
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent==="200%"');
+    const panStart = await evaluate<{ x: number; y: number; left: number }>(
+      `(()=>{const e=document.querySelector('.bot-hierarchy-canvas'),r=e.getBoundingClientRect();return {x:Math.round(r.left+150),y:Math.round(r.top+15),left:e.scrollLeft};})()`,
+    );
+    window.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: panStart.x,
+      y: panStart.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    window.webContents.sendInputEvent({ type: 'mouseMove', x: panStart.x - 80, y: panStart.y });
+    window.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: panStart.x - 80,
+      y: panStart.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await wait(
+      `document.querySelector('.bot-hierarchy-canvas').scrollLeft > ${panStart.left + 50}`,
+    );
+    await evaluate(`document.querySelector('button[aria-label="Center view"]').click()`);
+    assert.equal(
+      await evaluate(
+        `(()=>{const e=document.querySelector('.bot-hierarchy-canvas');return Math.abs(e.scrollLeft-(e.scrollWidth-e.clientWidth)/2)<2;})()`,
+      ),
+      true,
+    );
+    await evaluate(`document.querySelector('button[aria-label="Reset zoom"]').click()`);
+    await wait('document.querySelector(".bot-hierarchy-zoom-value").textContent==="100%"');
+    await capture('bot-hierarchy.png');
+    await evaluate(
+      `document.querySelector('button[aria-label="Open Nova, Software engineer"]').click()`,
+    );
+    await wait(`document.querySelector('.conversation-heading h1')?.textContent==='Nova'`);
+    await evaluate(`document.querySelector('button[aria-label="Bot details"]').click()`);
+    assert.equal(
+      await evaluate(
+        `Array.from(document.querySelectorAll('.ai-details dt')).find(e=>e.textContent==='Created by').nextElementSibling.textContent.trim()`,
+      ),
+      'Ada',
+    );
+    assert.equal(engineer.createdBy, architect.id);
+    await click('Bot Hierarchy');
+    await wait('Boolean(document.querySelector(".bot-hierarchy-canvas"))');
+    window.setSize(720, 900);
+    await capture('bot-hierarchy-narrow.png');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, required roles, name-only sidebar, assignments, model picker saves and uses selected/default models on actual SDK requests.',
+      'PASS bot UI: onboarding, roles, assignments, model requests, hierarchy relationships/navigation, creator details, and narrow layout.',
     );
   } finally {
     window.destroy();

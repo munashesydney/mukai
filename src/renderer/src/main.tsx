@@ -12,6 +12,7 @@ import './styles/tokens.css';
 import './styles/global.css';
 import './styles/appearance.css';
 import './styles/ai.css';
+import './styles/botHierarchy.css';
 import './styles/pursuits.css';
 import './styles/capabilities.css';
 import './styles/memory.css';
