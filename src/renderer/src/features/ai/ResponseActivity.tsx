@@ -12,6 +12,7 @@ import {
   Globe,
   Check,
   Minimize2,
+  MessageCircleQuestion,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -24,6 +25,8 @@ const actionLabels: Record<string, string> = {
   patch: 'Edited',
   list: 'Listed',
   search_files: 'Searched',
+  clarification: 'Answered question',
+  approval: 'Reviewed approval',
 };
 
 function ActivitySpinner() {
@@ -44,17 +47,19 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
     complete: 'Completed pursuit',
   };
   const Icon =
-    activity.tool === 'terminal'
-      ? Terminal
-      : activity.tool === 'browser'
-        ? Globe
-        : activity.tool === 'manage_pursuit'
-          ? Target
-          : activity.action === 'search_files'
-            ? Search
-            : ['write_file', 'patch', 'create_directory'].includes(activity.action)
-              ? Pencil
-              : FileText;
+    activity.tool === 'ask'
+      ? MessageCircleQuestion
+      : activity.tool === 'terminal'
+        ? Terminal
+        : activity.tool === 'browser'
+          ? Globe
+          : activity.tool === 'manage_pursuit'
+            ? Target
+            : activity.action === 'search_files'
+              ? Search
+              : ['write_file', 'patch', 'create_directory'].includes(activity.action)
+                ? Pencil
+                : FileText;
   const running = activity.status === 'running';
   const problem = activity.status === 'failed' || activity.status === 'interrupted';
   return (

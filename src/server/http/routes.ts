@@ -161,10 +161,17 @@ export function createRoutes({
       }
       if (id && !action && method === 'POST') {
         const input = z
-          .object({ approved: z.boolean() })
-          .strict()
+          .union([
+            z.object({ approved: z.boolean() }).strict(),
+            z.object({ answer: z.string().trim().min(1).max(16000) }).strict(),
+          ])
           .parse(await jsonBody(request));
-        return send(response, approvals.decide(id, input.approved));
+        return send(
+          response,
+          'answer' in input
+            ? approvals.answer(id, input.answer)
+            : approvals.decide(id, input.approved),
+        );
       }
       throw new ApiError(404, 'Not found');
     }

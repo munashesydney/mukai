@@ -19,6 +19,9 @@ export class ApprovalRepository {
   remove(id: string) {
     this.store.run('DELETE FROM pending_tool_approvals WHERE id=?', id);
   }
+  resolve<T>(action: () => T) {
+    return this.store.transaction(action);
+  }
   target(conversationId: string): ApprovalTarget | undefined {
     const row = this.store.get(
       `SELECT c.kind,c.workspace_id,c.name,r.pursuit_id,r.id AS run_id

@@ -52,7 +52,7 @@ export function PendingApprovalsPage({
           <div className="pending-approvals-empty">
             <Sparkles size={30} />
             <h2>A clear runway.</h2>
-            <p>New requests will appear here whenever {bot.name} needs your approval.</p>
+            <p>New requests will appear here whenever {bot.name} needs your input or approval.</p>
           </div>
         ) : (
           <div className="pending-approval-grid">
@@ -67,7 +67,7 @@ export function PendingApprovalsPage({
                   : {};
               const action =
                 typeof input.action === 'string' ? input.action.replaceAll('_', ' ') : 'Tool call';
-              const detail = ['path', 'command', 'url', 'query']
+              const detail = ['question', 'path', 'command', 'url', 'query']
                 .map((key) => input[key])
                 .find((value) => typeof value === 'string') as string | undefined;
               return (
@@ -83,14 +83,24 @@ export function PendingApprovalsPage({
                       <h2>
                         {grouped
                           ? request.target?.name || 'Conversation'
-                          : request.toolName.replaceAll('_', ' ')}
+                          : request.ask
+                            ? request.ask.action === 'clarification'
+                              ? 'Clarification'
+                              : 'Approval request'
+                            : request.toolName.replaceAll('_', ' ')}
                       </h2>
                       <span>{grouped ? `${requests.length} approvals` : action}</span>
                     </div>
                     {grouped ? (
                       <div className="pending-approval-tools">
                         {requests.map((item) => (
-                          <span key={item.id}>{item.toolName.replaceAll('_', ' ')}</span>
+                          <span key={item.id}>
+                            {item.ask
+                              ? item.ask.action === 'clarification'
+                                ? 'Clarification'
+                                : 'Approval request'
+                              : item.toolName.replaceAll('_', ' ')}
+                          </span>
                         ))}
                       </div>
                     ) : (

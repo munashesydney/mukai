@@ -451,6 +451,30 @@ export class ChatService {
               contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.2 * 3,
             ),
           ),
+          (input, toolCallId, signal) => {
+            if (!this.approvals) throw new ApiError(503, 'User questions are unavailable.');
+            return this.approvals.ask(
+              {
+                toolCallId,
+                toolName: 'ask',
+                input,
+                botId,
+                botName: bot.name,
+                conversationId,
+                messageId: assistantId,
+                batchId: approvalBatchId,
+              },
+              input,
+              signal,
+              () => emit({ type: 'approval', id: assistantId }),
+              (response) => {
+                this.jobs.approvalResult(assistantId, toolCallId, {
+                  type: 'text',
+                  value: resultPreview(response, 96000),
+                });
+              },
+            );
+          },
         ),
         ...runtime?.tools,
       };
@@ -724,20 +748,23 @@ export class ChatService {
               batchId: approvalBatchId,
               state: 'pending',
             });
-            const approved = await this.approvals?.request(
-              {
-                toolCallId: options.toolCallId,
-                toolName: name,
-                input,
-                botId,
-                botName: bot.name,
-                conversationId,
-                messageId: assistantId,
-                batchId: approvalBatchId,
-              },
-              stepSignal,
-              () => emit({ type: 'approval', id: assistantId }),
-            );
+            const approved =
+              name === 'ask'
+                ? true
+                : await this.approvals?.request(
+                    {
+                      toolCallId: options.toolCallId,
+                      toolName: name,
+                      input,
+                      botId,
+                      botName: bot.name,
+                      conversationId,
+                      messageId: assistantId,
+                      batchId: approvalBatchId,
+                    },
+                    stepSignal,
+                    () => emit({ type: 'approval', id: assistantId }),
+                  );
             stepSignal.throwIfAborted();
             if (approved === false) {
               const summary =
@@ -753,7 +780,9 @@ export class ChatService {
               return { rejected: true, message: summary };
             }
             diagnosticPhase = 'tool-execution';
-            this.jobs.beforeTool(assistantId, options.toolCallId);
+            // Asking has no external side effect: it remains safely resumable
+            // while waiting, and its answer is checkpointed before the card clears.
+            if (name !== 'ask') this.jobs.beforeTool(assistantId, options.toolCallId);
             executionVersion++;
             const operation = Promise.resolve(
               execute(input, { ...options, abortSignal: stepSignal }),

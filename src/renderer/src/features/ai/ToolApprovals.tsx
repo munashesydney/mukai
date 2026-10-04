@@ -2,6 +2,7 @@ import { PopupMenu } from '../../components/ui/PopupMenu';
 import { Check, ChevronDown, ChevronUp, Hand, ShieldAlert } from 'lucide-react';
 import { approvalStore, useApprovals } from './approvalStore';
 import type { ApprovalMode, ToolApproval } from '../../../../shared/approvals';
+import { AskRequestCard } from './AskRequestCard';
 
 const choices = [
   {
@@ -91,12 +92,15 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
           </button>
         </div>
       )}
-      {[...groups].map(([batchId, requests]) =>
-        requests.length === 1 ? (
+      {[...groups].map(([batchId, requests]) => {
+        const hasClarification = requests.some(
+          (request) => request.ask?.action === 'clarification',
+        );
+        return requests.length === 1 ? (
           <ToolApprovalCard key={batchId} request={requests[0]} deciding={state.deciding} />
         ) : (
           <section
-            className="tool-approval-batch"
+            className={`tool-approval-batch ${hasClarification ? 'tool-approval-batch--questions' : ''}`}
             key={batchId}
             aria-label="Parallel tool approvals"
           >
@@ -104,8 +108,16 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
               <summary>
                 <Hand size={18} />
                 <span>
-                  <strong>{requests.length} tool calls need approval</strong>
-                  <small>{requests[0].botName} is waiting. Review each call or approve all.</small>
+                  <strong>
+                    {requests.length}{' '}
+                    {hasClarification ? 'requests need your response' : 'requests need approval'}
+                  </strong>
+                  <small>
+                    {requests[0].botName} is waiting.{' '}
+                    {hasClarification
+                      ? 'Expand to review and answer each request.'
+                      : 'Review each request or approve all.'}
+                  </small>
                 </span>
                 <ChevronDown size={15} className="tool-approval-batch-chevron" />
               </summary>
@@ -115,28 +127,34 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
                 ))}
               </div>
             </details>
-            <button
-              type="button"
-              className="button button--primary button--small tool-approval-batch-approve"
-              disabled={requests.some((request) => state.deciding.includes(request.id))}
-              onClick={() =>
-                void approvalStore.decideBatch(
-                  conversationId,
-                  batchId,
-                  requests.map((request) => request.id),
-                )
-              }
-            >
-              Approve all
-            </button>
+            {!hasClarification && (
+              <button
+                type="button"
+                className="button button--primary button--small tool-approval-batch-approve"
+                disabled={requests.some((request) => state.deciding.includes(request.id))}
+                onClick={() =>
+                  void approvalStore.decideBatch(
+                    conversationId,
+                    batchId,
+                    requests.map((request) => request.id),
+                  )
+                }
+              >
+                Approve all
+              </button>
+            )}
           </section>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
 
 function ToolApprovalCard({ request, deciding }: { request: ToolApproval; deciding: string[] }) {
+  if (request.ask)
+    return (
+      <AskRequestCard key={request.id} request={request} busy={deciding.includes(request.id)} />
+    );
   return (
     <section className="tool-approval-card" aria-label={`Approval for ${request.toolName}`}>
       <div className="tool-approval-heading">

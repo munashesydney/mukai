@@ -1,3 +1,5 @@
+import type { AskInput } from './ask';
+
 export type ApprovalMode = 'ask-for-approval' | 'full-access';
 
 export interface ApprovalTarget {
@@ -21,6 +23,8 @@ export interface ToolApproval {
   batchId: string;
   createdAt: string;
   target?: ApprovalTarget;
+  /** Explicit human interaction, rather than permission to run a tool. */
+  ask?: AskInput;
 }
 
 export interface ApprovalState {

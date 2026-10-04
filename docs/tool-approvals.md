@@ -11,6 +11,8 @@ The central chat execution wrapper requests approval before calling the tool or 
 
 Pending approval cards appear above bot and space composers and in pursuit run views, exclusively in the conversation that triggered them. Background requests can be found through the bot's Pending Approvals page. The dropdown opens upward and changes the shared server policy, not a local or per-chat preference.
 
+The built-in [ask tool](ask-tool.md) shares this pending flow. Its clarification action shows suggestions, exactly one recommendation, and a free-text answer field. Its approval action shows Approve and Deny. Explicit questions always wait for the user, including in Full access, and do not receive a redundant tool-permission prompt. Clarifications cannot be approved through a boolean decision or a bulk grant. User answers are saved atomically with removal of the pending card, so a resolved question is not repeated during restart recovery.
+
 Bots with requests across any of their conversations show a **Pending Approvals** sidebar tab with an animated gradient border (static when reduced motion is enabled). The page groups all requests from the same conversation into one compact row and links to the exact private chat, space, or pursuit run. The Bots rail dot reflects outstanding requests; Spaces has no static notification dot. Requests include an authenticated server-derived destination, so pursuit links open the correct run instead of the pursuit overview.
 
 Mentioning a bot in a space starts it normally. The bot's tool calls obey the same approval policy as other conversations, including the memory exception. The approval selector and workspace picker share `PopupMenu`, including their floating surface, keyboard navigation, focus handling, and viewport positioning.
@@ -24,6 +26,7 @@ Authenticated API endpoints:
 - `GET /approvals`: global mode and all pending requests.
 - `PUT /approvals` with `{ "mode": "ask-for-approval" | "full-access" }`: persist the global mode.
 - `POST /approvals/:id` with `{ "approved": true | false }`: resolve exactly one live request. Expired or duplicate decisions return 409.
+- `POST /approvals/:id` with `{ "answer": "..." }`: answer one live clarification with a suggested choice or custom text (1–16000 trimmed characters). Approval requests require a boolean instead.
 - `POST /approvals/batch` with `{ "conversationId", "batchId", "ids": [...], "approved": true | false }`: resolve an explicit snapshot of pending calls from one model step. Mixed or stale batches return 409 without granting any calls; empty or duplicate IDs return 400.
 
 Implementation plan: central persisted policy and cancellable gate → authenticated approval API → shared renderer state, dropup, and cards → stop/reconnect/timeout behavior → regression tests covering real SDK workspace and custom-tool dispatch.

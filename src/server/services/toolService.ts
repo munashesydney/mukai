@@ -25,6 +25,7 @@ import type { MemoryService } from './memoryService';
 import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
 import { WebSearchService } from './webSearchService';
+import { askTools, type AskHandler } from '../tools/ask/execute';
 
 export class ToolService {
   private webSearch = new WebSearchService();
@@ -128,7 +129,7 @@ export class ToolService {
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
                   ? Boolean(this.capabilities)
-                  : ['browser', 'web_search'].includes(tool.id)
+                  : ['browser', 'web_search', 'ask'].includes(tool.id)
                     ? true
                     : Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
@@ -146,6 +147,7 @@ export class ToolService {
     vision = false,
     resultBytes?: number,
     skillContextBytes?: number,
+    ask?: AskHandler,
   ) {
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
@@ -155,6 +157,7 @@ export class ToolService {
     return this.assigned(
       bot,
       {
+        ...(ask ? askTools({ ask, signal, onActivity }) : {}),
         ...(this.skills
           ? skillTools({
               bot,

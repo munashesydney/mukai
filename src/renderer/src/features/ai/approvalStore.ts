@@ -81,6 +81,20 @@ export const approvalStore = {
       update({ deciding: state.deciding.filter((id) => !ids.includes(id)) });
     }
   },
+  async answer(id: string, answer: string) {
+    if (state.deciding.includes(id)) return;
+    version++;
+    update({ deciding: [...state.deciding, id], error: '' });
+    try {
+      const result = await approvalService.answer(id, answer);
+      version++;
+      update({ ...result, loaded: true });
+    } catch (caught) {
+      update({ error: errorText(caught) });
+    } finally {
+      update({ deciding: state.deciding.filter((item) => item !== id) });
+    }
+  },
 };
 function subscribe(listener: () => void) {
   listeners.add(listener);

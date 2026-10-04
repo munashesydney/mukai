@@ -2,11 +2,15 @@ import { randomUUID } from 'node:crypto';
 import type { ApprovalMode, ApprovalState, ToolApproval } from '../../shared/approvals';
 import type { ApprovalRepository } from '../repositories/approvalRepository';
 import { ApiError } from '../config';
+import type { AskInput, AskResponse } from '../../shared/ask';
+import { askDefinition } from '../tools/ask/definition';
+
+type Decision = boolean | string;
 
 interface PendingApproval {
   request: ToolApproval;
   restoring?: boolean;
-  settle(approved: boolean): void;
+  settle(decision: Decision): void;
 }
 
 /** One policy for the entire installation; a grant authorizes exactly one invocation. */
@@ -58,7 +62,20 @@ export class ApprovalService {
   decide(id: string, approved: boolean) {
     const item = this.pending.get(id);
     if (!item) throw new ApiError(409, 'This tool approval is no longer pending.');
+    if (item.request.ask?.action === 'clarification')
+      throw new ApiError(400, 'This request needs an answer, not an approval.');
     item.settle(approved);
+    return this.state();
+  }
+  answer(id: string, answer: string) {
+    const item = this.pending.get(id);
+    if (!item) throw new ApiError(409, 'This request is no longer pending.');
+    if (item.request.ask?.action !== 'clarification')
+      throw new ApiError(400, 'This request needs an approval decision.');
+    answer = answer.trim();
+    if (!answer || answer.length > 16000)
+      throw new ApiError(400, 'Enter an answer between 1 and 16000 characters.');
+    item.settle(answer);
     return this.state();
   }
 
@@ -71,6 +88,8 @@ export class ApprovalService {
       const item = this.pending.get(id);
       if (!item) throw new ApiError(409, 'This tool approval is no longer pending.');
       if (item.restoring) throw new ApiError(409, 'This approval is restoring. Try again shortly.');
+      if (item.request.ask?.action === 'clarification')
+        throw new ApiError(400, 'Clarifications must be answered individually.');
       if (item.request.conversationId !== conversationId || item.request.batchId !== batchId)
         throw new ApiError(
           409,
@@ -88,7 +107,31 @@ export class ApprovalService {
     onChange: () => void,
   ): Promise<boolean> {
     signal.throwIfAborted();
-    const restored = [...this.pending.values()].find(
+    if (!this.restored(details) && (details.toolName === 'memory' || this.mode() === 'full-access'))
+      return true;
+    return (await this.wait(details, signal, onChange)) as boolean;
+  }
+
+  async ask(
+    details: Omit<ToolApproval, 'id' | 'createdAt' | 'ask'>,
+    input: AskInput,
+    signal: AbortSignal,
+    onChange: () => void,
+    onAnswer: (response: AskResponse) => void,
+  ): Promise<AskResponse> {
+    const question = askDefinition.inputSchema.parse(input);
+    const response = (decision: Decision): AskResponse =>
+      question.action === 'clarification'
+        ? { action: 'clarification', answer: String(decision) }
+        : { action: 'approval', approved: decision === true };
+    const decision = await this.wait({ ...details, ask: question }, signal, onChange, (decision) =>
+      onAnswer(response(decision)),
+    );
+    return response(decision);
+  }
+
+  private restored(details: Omit<ToolApproval, 'id' | 'createdAt'>) {
+    return [...this.pending.values()].find(
       ({ request, restoring }) =>
         restoring &&
         request.messageId === details.messageId &&
@@ -96,7 +139,16 @@ export class ApprovalService {
         request.batchId === details.batchId &&
         request.toolCallId === details.toolCallId,
     );
-    if (!restored && (details.toolName === 'memory' || this.mode() === 'full-access')) return true;
+  }
+
+  private wait(
+    details: Omit<ToolApproval, 'id' | 'createdAt'>,
+    signal: AbortSignal,
+    onChange: () => void,
+    beforeResolve?: (decision: Decision) => void,
+  ): Promise<Decision> {
+    signal.throwIfAborted();
+    const restored = this.restored(details);
     const target = this.repository.target(details.conversationId);
     const request: ToolApproval = restored?.request || {
       ...details,
@@ -105,7 +157,7 @@ export class ApprovalService {
       createdAt: new Date().toISOString(),
     };
     this.repository.save(request);
-    return new Promise<boolean>((resolve, reject) => {
+    return new Promise<Decision>((resolve, reject) => {
       const cleanup = () => {
         this.pending.delete(request.id);
         this.repository.remove(request.id);
@@ -119,9 +171,12 @@ export class ApprovalService {
       };
       this.pending.set(request.id, {
         request,
-        settle: (approved) => {
-          cleanup();
-          resolve(approved);
+        settle: (decision) => {
+          this.repository.resolve(() => {
+            beforeResolve?.(decision);
+            cleanup();
+          });
+          resolve(decision);
         },
       });
       signal.addEventListener('abort', abort, { once: true });

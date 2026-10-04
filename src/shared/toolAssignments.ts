@@ -4,6 +4,7 @@ export const workspaceToolIds = [
   'browser',
   'web_search',
   'memory',
+  'ask',
   'manage_pursuit',
   'manage_bot',
   'register_custom_tool',

@@ -71,6 +71,9 @@ let mode:
   | 'runtime-tools'
   | 'approval-custom'
   | 'approval-parallel'
+  | 'ask-clarification'
+  | 'ask-approval'
+  | 'ask-mixed'
   | 'approval-memory' = 'normal';
 let endpoint = '';
 let project = '';
@@ -306,7 +309,22 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    if (mode === 'approval-custom' || mode === 'approval-memory' || mode === 'approval-parallel') {
+    if (
+      mode === 'approval-custom' ||
+      mode === 'approval-memory' ||
+      mode === 'approval-parallel' ||
+      mode === 'ask-clarification' ||
+      mode === 'ask-approval' ||
+      mode === 'ask-mixed'
+    ) {
+      const clarification = {
+        action: 'clarification',
+        question: 'Which audience should I focus on?',
+        options: [
+          { label: 'New customers', description: 'Reach a wider audience.', recommended: true },
+          { label: 'Existing customers', recommended: false },
+        ],
+      };
       const completed = body.messages.some((message: { role: string }) => message.role === 'tool');
       res.write(
         `data: ${JSON.stringify({
@@ -321,17 +339,33 @@ beforeEach(async () => {
                 ? { content: 'Custom call resolved.' }
                 : {
                     tool_calls: Array.from(
-                      { length: mode === 'approval-parallel' ? 3 : 1 },
+                      { length: mode === 'approval-parallel' || mode === 'ask-mixed' ? 3 : 1 },
                       (_, index) => ({
                         index,
                         id: `custom-call-${index + 1}`,
                         type: 'function',
                         function: {
-                          name: mode === 'approval-memory' ? 'memory' : 'approval_echo',
+                          name:
+                            mode === 'ask-mixed' && index === 2
+                              ? 'browser'
+                              : mode.startsWith('ask-')
+                                ? 'ask'
+                                : mode === 'approval-memory'
+                                  ? 'memory'
+                                  : 'approval_echo',
                           arguments:
-                            mode === 'approval-memory'
-                              ? '{"action":"search","query":"user preferences"}'
-                              : '{"value":"approved"}',
+                            mode === 'ask-mixed' && index === 2
+                              ? '{"action":"tabs"}'
+                              : mode === 'ask-approval' || (mode === 'ask-mixed' && index === 1)
+                                ? JSON.stringify({
+                                    action: 'approval',
+                                    question: 'May I publish this draft?',
+                                  })
+                                : mode.startsWith('ask-')
+                                  ? JSON.stringify(clarification)
+                                  : mode === 'approval-memory'
+                                    ? '{"action":"search","query":"user preferences"}'
+                                    : '{"value":"approved"}',
                         },
                       }),
                     ),
@@ -628,6 +662,156 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it.each([
+    { approvalMode: 'ask-for-approval', answer: 'New customers', restart: false },
+    { approvalMode: 'full-access', answer: 'Focus on partners instead.', restart: true },
+  ])(
+    'returns the actual clarification answer in $approvalMode, preserving pending questions on restart',
+    async ({ approvalMode, answer, restart }) => {
+      await configure();
+      await request('/approvals', 'PUT', { mode: approvalMode });
+      mode = 'ask-clarification';
+      const result = chat('Ask who to focus on');
+      const item = await pendingApproval('custom-call-1');
+      expect(item).toMatchObject({
+        toolName: 'ask',
+        ask: {
+          action: 'clarification',
+          options: [
+            { label: 'New customers', recommended: true },
+            { label: 'Existing customers', recommended: false },
+          ],
+        },
+      });
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1);
+      expect(
+        (await request(`/approvals/${item.id}`, 'POST', { approved: true })).response.status,
+      ).toBe(400);
+      expect(
+        (await request(`/approvals/${item.id}`, 'POST', { answer: '  ' })).response.status,
+      ).toBe(400);
+      if (restart) {
+        await api.shutdown();
+        await result;
+        await close(api.server);
+        api = await startApiServer(0, {
+          dataDir: dir,
+          memoryExtractor: async () => ({ facts: [] }),
+        });
+        expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([item]);
+        expect(calls.filter((call) => call.stream)).toHaveLength(1);
+      }
+      await vi.waitFor(async () =>
+        expect((await request(`/approvals/${item.id}`, 'POST', { answer })).response.status).toBe(
+          200,
+        ),
+      );
+      await vi.waitFor(async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'complete',
+        ),
+      );
+      expect(
+        JSON.stringify(calls.at(-1)!.messages.filter((message) => message.role === 'tool')),
+      ).toContain(answer);
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity).toMatchObject(
+        [
+          {
+            tool: 'ask',
+            action: 'clarification',
+            status: 'complete',
+            summary: expect.stringContaining(answer),
+          },
+        ],
+      );
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+      expect((await request(`/approvals/${item.id}`, 'POST', { answer })).response.status).toBe(
+        409,
+      );
+      await result;
+    },
+  );
+
+  it.each([true, false])(
+    'waits for explicit approval in Full access and returns approved=%s without a duplicate permission card',
+    async (approved) => {
+      await configure();
+      mode = 'ask-approval';
+      const result = chat('Ask permission to publish');
+      const item = await pendingApproval('custom-call-1');
+      expect(item.ask).toEqual({ action: 'approval', question: 'May I publish this draft?' });
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1);
+      expect(
+        (await request(`/approvals/${item.id}`, 'POST', { answer: 'yes' })).response.status,
+      ).toBe(400);
+      await request(`/approvals/${item.id}`, 'POST', { approved });
+      await result;
+      const toolMessages = calls.at(-1)!.messages.filter((message) => message.role === 'tool');
+      expect(JSON.parse(String(toolMessages[0].content))).toEqual({ action: 'approval', approved });
+      expect(
+        (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity![0].summary,
+      ).toContain(approved ? 'Approved by the user' : 'Denied by the user');
+    },
+  );
+
+  it('keeps parallel questions separate from tool permissions and rejects bulk clarification grants atomically', async () => {
+    await configure();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'ask-mixed';
+    const result = chat('Ask two questions and list browser tabs');
+    await pendingApproval('custom-call-3');
+    const pending = (await request<ApprovalState>('/approvals')).data.pending;
+    expect(pending).toHaveLength(3);
+    expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
+    const batch = {
+      conversationId: pending[0].conversationId,
+      batchId: pending[0].batchId,
+      ids: pending.map((item) => item.id),
+      approved: true,
+    };
+    expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(400);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(3);
+    const question = pending.find((item) => item.ask?.action === 'clarification')!;
+    const permission = pending.find((item) => item.ask?.action === 'approval')!;
+    await request(`/approvals/${question.id}`, 'POST', { answer: 'Existing customers' });
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',
+          question.messageId,
+        )?.approval_step_json,
+      ).toContain('Existing customers'),
+    );
+    // An answered question must not be repeated while its siblings remain pending.
+    await api.shutdown();
+    await result;
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    expect(
+      (await request<ApprovalState>('/approvals')).data.pending.map((item) => item.id).sort(),
+    ).toEqual(
+      pending
+        .filter((item) => item.id !== question.id)
+        .map((item) => item.id)
+        .sort(),
+    );
+    await vi.waitFor(async () =>
+      expect(
+        (await request(`/approvals/${permission.id}`, 'POST', { approved: false })).response.status,
+      ).toBe(200),
+    );
+    await request(`/approvals/${pending.find((item) => !item.ask)!.id}`, 'POST', {
+      approved: true,
+    });
+    await vi.waitFor(async () =>
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+        'complete',
+      ),
+    );
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    expect(calls.filter((call) => call.stream)).toHaveLength(2);
+  });
+
   it('executes built-in memory without approval while ask-for-approval is selected', async () => {
     await configure();
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });

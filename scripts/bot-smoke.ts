@@ -176,6 +176,7 @@ async function main() {
       false,
     );
     await capture('bot-tool-assignments.png');
+    console.log('Bot UI: checking custom tool assignments.');
     await evaluate(`document.querySelector('input[aria-label="Assign Scout"]').click()`);
     await wait(
       `document.querySelector('input[aria-label="Assign Scout"]').checked && !document.querySelector('input[aria-label="Assign Scout"]').disabled`,
@@ -195,6 +196,7 @@ async function main() {
       operation: 'register',
       modulePath: 'echo.ts',
     });
+    console.log('Bot UI: custom tool registered.');
     await click('Custom tools');
     await wait(
       'Array.from(document.querySelectorAll(".capability-open")).some(b=>b.textContent.includes("echo"))',
@@ -219,13 +221,14 @@ async function main() {
     const sentModels: string[] = [];
     let approvalFixture = false;
     let parallelFixture = false;
+    let askFixture: 'clarification' | 'approval' | null = null;
     modelFixture = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk;
       const input = JSON.parse(body) as { model: string; messages: { role: string }[] };
       sentModels.push(input.model);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      if (approvalFixture) {
+      if (approvalFixture || askFixture) {
         const completed = input.messages.some((message) => message.role === 'tool');
         res.write(
           `data: ${JSON.stringify({
@@ -243,7 +246,34 @@ async function main() {
                         index,
                         id: `approval-ui-call-${index}`,
                         type: 'function',
-                        function: { name: 'echo', arguments: '{}' },
+                        function: {
+                          name: askFixture ? 'ask' : 'echo',
+                          arguments: askFixture
+                            ? JSON.stringify({
+                                action: askFixture,
+                                question:
+                                  askFixture === 'clarification'
+                                    ? 'Which audience should I focus on?'
+                                    : 'May I publish this draft?',
+                                ...(askFixture === 'clarification'
+                                  ? {
+                                      options: [
+                                        {
+                                          label: 'New customers',
+                                          description: 'Reach a wider audience.',
+                                          recommended: true,
+                                        },
+                                        {
+                                          label: 'Existing customers',
+                                          description: 'Focus on retention.',
+                                          recommended: false,
+                                        },
+                                      ],
+                                    }
+                                  : {}),
+                              })
+                            : '{}',
+                        },
                       })),
                     },
                 finish_reason: completed ? 'stop' : 'tool_calls',
@@ -577,6 +607,100 @@ async function main() {
     parallelFixture = false;
     await request('/approvals', 'PUT', { mode: 'full-access' });
     approvalFixture = false;
+    // Ask uses the same pending flow in Full access, without a second permission prompt.
+    console.log('Bot UI: checking ask clarification and approval cards.');
+    askFixture = 'clarification';
+    await evaluate(
+      `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
+    );
+    await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+    await fill('.composer textarea', 'Ask me who to focus on.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    assert.equal(await evaluate('document.querySelectorAll(".tool-approval-card").length'), 1);
+    assert.equal(await evaluate('document.querySelectorAll(".ask-recommended").length'), 1);
+    assert.equal(
+      await evaluate('document.querySelectorAll(".ask-option input:checked").length'),
+      0,
+    );
+    assert.equal(
+      await evaluate('document.querySelector(".ask-request-card button[type=submit]").disabled'),
+      true,
+    );
+    await evaluate('document.querySelector(".bot-pending-approvals").click()');
+    await wait('Boolean(document.querySelector(".pending-approval-tile"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".pending-approval-tile").textContent.includes("Clarification")',
+      ),
+    );
+    await capture('ask-pending-page.png');
+    await evaluate('document.querySelector(".pending-approval-tile").click()');
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    await capture('ask-clarification-card.png');
+    await evaluate(`document.documentElement.dataset.mode='dark'`);
+    await capture('ask-clarification-card-dark.png');
+    await evaluate(`document.documentElement.dataset.mode='light'`);
+    await evaluate('document.querySelectorAll(".ask-option input")[1].click()');
+    await click('Submit answer');
+    await wait(
+      '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+    );
+    assert(
+      await evaluate(
+        'document.querySelector(".ai-message-feed").textContent.includes("Answered question")',
+      ),
+    );
+    // A typed answer is also accepted after reloading the UI.
+    await evaluate(
+      `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
+    );
+    await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+    await fill('.composer textarea', 'Ask me again.');
+    await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    const questionId = (await request<ApprovalState>('/approvals')).pending[0].id;
+    window.reload();
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    assert.equal((await request<ApprovalState>('/approvals')).pending[0].id, questionId);
+    await fill('.ask-answer-field textarea', 'Focus on partners instead.');
+    window.setSize(900, 800);
+    await capture('ask-clarification-card-narrow.png');
+    assert(
+      await evaluate(
+        'document.querySelector(".ask-request-card button[type=submit]").getBoundingClientRect().bottom <= document.querySelector(".tool-approval-cards").getBoundingClientRect().bottom',
+      ),
+    );
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    window.setSize(1480, 980);
+    await click('Submit answer');
+    await wait(
+      '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+    );
+    // Approval questions offer just Approve and Deny, and report both outcomes.
+    askFixture = 'approval';
+    for (const choice of ['Deny', 'Approve']) {
+      await evaluate(
+        `document.querySelector('button[aria-label="New conversation with Mukai"]').click()`,
+      );
+      await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+      await fill('.composer textarea', 'Ask permission to publish.');
+      await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+      await wait('Boolean(document.querySelector(".ask-request-card"))');
+      assert.deepEqual(
+        await evaluate(
+          'Array.from(document.querySelectorAll(".ask-request-card button")).map(button=>button.textContent)',
+        ),
+        ['Deny', 'Approve'],
+      );
+      assert.equal(await evaluate('document.querySelector(".ask-request-card textarea")'), null);
+      if (choice === 'Deny') await capture('ask-approval-card.png');
+      await click(choice);
+      await wait(
+        '!document.querySelector(".ask-request-card") && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+      );
+    }
+    askFixture = null;
     const specialistInput = {
       name: 'Ada',
       role: 'Code architect',
@@ -695,8 +819,11 @@ async function main() {
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, assignments, models, approval menus/cards/page, exact chat and pursuit links, badges, shared workspace picker, reload recovery, approve/reject/full access, hierarchy, and narrow layout.',
+      'PASS bot UI: onboarding, assignments, models, pending approvals, clarification choices and typed answers, explicit approve/deny, exact chat and pursuit links, reload recovery, shared pickers, hierarchy, and narrow layout.',
     );
+  } catch (error) {
+    console.error('Bot UI failed before cleanup:', error);
+    throw error;
   } finally {
     window.destroy();
     await api.shutdown();
