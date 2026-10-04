@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { Database, Row } from '../db/database';
 import {
-  nextScheduledWake,
   scheduledStatus,
   type Pursuit,
   type PursuitInput,
   type PursuitRun,
   type PursuitStatus,
 } from '../../shared/pursuits';
+import { pursuitReportProblem, type PursuitReport } from '../tools/pursuits/report';
 
 export class PursuitRepository {
   constructor(private database: Database) {}
@@ -20,10 +20,10 @@ export class PursuitRepository {
       successCriteria: String(row.success_criteria),
       ownerBotId: row.owner_bot_id as string | null,
       status: row.status as PursuitStatus,
-      intervalMinutes: Number(row.interval_minutes),
       deadline: row.deadline as string | null,
       nextRunAt: row.next_run_at as string | null,
       nextRunReason: String(row.next_run_reason),
+      nextRunInstructions: String(row.next_run_instructions),
       createdAt: String(row.created_at),
       currentRunId:
         (this.database.get(
@@ -45,17 +45,19 @@ export class PursuitRepository {
     const id = randomUUID();
     this.database.transaction(() => {
       this.database.run(
-        "INSERT INTO pursuits VALUES(?,?,?,?,?,?,'active',?,?,?,'Scheduled wake-up',?)",
+        // Retain the legacy interval column and existing values for compatibility;
+        // scheduling no longer reads it.
+        "INSERT INTO pursuits(id,workspace_id,name,objective,success_criteria,owner_bot_id,status,interval_minutes,deadline,next_run_at,next_run_reason,created_at,next_run_instructions) VALUES(?,?,?,?,?,?,'active',1,?,?,'First pursuit run',?,?)",
         id,
         workspaceId,
         input.name,
         input.objective,
         input.successCriteria,
         ownerBotId,
-        input.intervalMinutes,
         input.deadline,
-        input.firstRunAt || new Date(now + input.intervalMinutes * 60000).toISOString(),
+        input.firstRunAt || new Date(now).toISOString(),
         new Date(now).toISOString(),
+        input.objective,
       );
     });
     return this.find(id)!;
@@ -64,30 +66,27 @@ export class PursuitRepository {
     const pursuit = this.find(id)!;
     this.database.transaction(() => {
       const next = scheduledStatus(pursuit.status)
-        ? input.firstRunAt || new Date(now + input.intervalMinutes * 60000).toISOString()
+        ? input.firstRunAt || new Date(now).toISOString()
         : null;
       this.database.run(
-        'UPDATE pursuits SET name=?,objective=?,success_criteria=?,interval_minutes=?,deadline=?,next_run_at=?,next_run_reason=? WHERE id=?',
+        'UPDATE pursuits SET name=?,objective=?,success_criteria=?,deadline=?,next_run_at=?,next_run_reason=?,next_run_instructions=? WHERE id=?',
         input.name,
         input.objective,
         input.successCriteria,
-        input.intervalMinutes,
         input.deadline,
         next,
         next ? 'Schedule updated' : pursuit.nextRunReason,
+        input.objective,
         id,
       );
     });
     return this.find(id)!;
   }
   setStatus(id: string, status: PursuitStatus, reason: string, now: number) {
-    const pursuit = this.find(id)!;
     this.database.run(
       'UPDATE pursuits SET status=?,next_run_at=?,next_run_reason=? WHERE id=?',
       status,
-      scheduledStatus(status)
-        ? new Date(now + pursuit.intervalMinutes * 60000).toISOString()
-        : null,
+      scheduledStatus(status) ? new Date(now).toISOString() : null,
       reason,
       id,
     );
@@ -174,17 +173,7 @@ export class PursuitRepository {
         date,
         JSON.stringify(pursuit),
       );
-      const next = nextScheduledWake(
-        trigger === 'schedule' ? pursuit.nextRunAt! : date,
-        pursuit.intervalMinutes,
-        now,
-      );
-      this.database.run(
-        'UPDATE pursuits SET next_run_at=?,next_run_reason=? WHERE id=?',
-        next,
-        'Scheduled wake-up after this run',
-        id,
-      );
+      this.database.run('UPDATE pursuits SET next_run_at=NULL WHERE id=?', id);
       return this.findRun(runId)!;
     });
   }
@@ -195,6 +184,7 @@ export class PursuitRepository {
     error: string | null,
     outcome: PursuitStatus,
     now: number,
+    report?: PursuitReport,
   ) {
     this.database.transaction(() => {
       const run = this.findRun(runId)!;
@@ -209,25 +199,31 @@ export class PursuitRepository {
       const pursuit = this.find(run.pursuitId)!;
       if (pursuit.status === 'paused' || pursuit.status === 'completed') return;
       const deadlinePassed = pursuit.deadline && Date.parse(pursuit.deadline) <= now;
-      const nextStatus = deadlinePassed && outcome !== 'completed' ? 'blocked' : outcome;
-      const next =
-        pursuit.nextRunAt && Date.parse(pursuit.nextRunAt) > now
-          ? pursuit.nextRunAt
-          : nextScheduledWake(
-              pursuit.nextRunAt || new Date(now).toISOString(),
-              pursuit.intervalMinutes,
-              now,
-            );
+      const scheduleProblem = scheduledStatus(outcome)
+        ? status !== 'complete'
+          ? 'The run did not finish successfully. Review its saved work before resuming.'
+          : pursuitReportProblem(report, now, pursuit.deadline)
+        : undefined;
+      const nextStatus =
+        deadlinePassed && outcome !== 'completed'
+          ? 'blocked'
+          : scheduleProblem
+            ? 'waiting_for_you'
+            : outcome;
       this.database.run(
-        'UPDATE pursuits SET status=?,next_run_at=?,next_run_reason=? WHERE id=?',
+        'UPDATE pursuits SET status=?,next_run_at=?,next_run_reason=?,next_run_instructions=? WHERE id=?',
         nextStatus,
-        scheduledStatus(nextStatus) ? next : null,
+        scheduledStatus(nextStatus) ? report?.nextRunAt || null : null,
         error ||
+          scheduleProblem ||
           (deadlinePassed && nextStatus !== 'completed'
             ? 'Deadline reached. Review this pursuit.'
             : scheduledStatus(nextStatus)
-              ? 'Scheduled wake-up'
+              ? report?.nextRunReason || 'Next pursuit run'
               : summary),
+        scheduledStatus(nextStatus)
+          ? report?.nextRunInstructions || ''
+          : pursuit.nextRunInstructions,
         pursuit.id,
       );
     });

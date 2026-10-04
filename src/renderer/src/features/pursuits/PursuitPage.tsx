@@ -106,7 +106,7 @@ export function PursuitPage({
           <span>Owns this pursuit</span>
         </div>
         <div className="conversation-tabs" role="tablist" aria-label="Pursuit views">
-          {['Overview', 'Runs', 'Notebook & plan'].map((name) => (
+          {['Overview', 'Runs'].map((name) => (
             <button
               key={name}
               role="tab"
@@ -125,30 +125,7 @@ export function PursuitPage({
         </p>
       )}
       <div className="pursuit-content">
-        {tab === 'Notebook & plan' ? (
-          <section className="pursuit-notebook">
-            <span className="preview-badge">Preview · sample notebook</span>
-            <h2>Working notebook & plan</h2>
-            <p>
-              This tab is a preview. Run outcomes are saved separately and carried into the next
-              run.
-            </p>
-            <div className="pursuit-note">
-              <h3>Findings & decisions</h3>
-              <p>
-                Start with the smallest verifiable step. Record evidence before changing direction.
-              </p>
-            </div>
-            <div className="pursuit-note">
-              <h3>Next steps</h3>
-              <ol>
-                <li>Review the objective and success criteria.</li>
-                <li>Check available tools and workspace context.</li>
-                <li>Work, verify the result, and report the next step.</li>
-              </ol>
-            </div>
-          </section>
-        ) : tab === 'Runs' ? (
+        {tab === 'Runs' ? (
           <PursuitRuns runs={runs} onSelect={setSelectedRun} />
         ) : (
           <>
@@ -199,12 +176,15 @@ export function PursuitPage({
                 <p>{p.successCriteria}</p>
               </section>
             </div>
+            {scheduledStatus(p.status) && p.nextRunInstructions && !p.currentRunId && (
+              <section className="pursuit-info-card">
+                <span className="context-section-label">NEXT RUN INSTRUCTIONS</span>
+                <MessageMarkdown text={p.nextRunInstructions} />
+              </section>
+            )}
             <div className="pursuit-policy">
               <Clock3 size={16} />
-              <span>
-                Every {p.intervalMinutes} minute{p.intervalMinutes !== 1 ? 's' : ''} · Scheduled
-                wakes
-              </span>
+              <span>The owner chooses when to run next</span>
               {p.deadline && (
                 <time dateTime={p.deadline}>
                   Deadline · {new Date(p.deadline).toLocaleString()}

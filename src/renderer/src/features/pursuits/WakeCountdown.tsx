@@ -12,17 +12,9 @@ export function WakeCountdown({ pursuit }: { pursuit: Pursuit }) {
     scheduled && pursuit.nextRunAt
       ? Math.max(0, Math.ceil((Date.parse(pursuit.nextRunAt) - now) / 1000))
       : null;
-  const progress =
-    remaining === null ? 0 : 1 - Math.min(1, remaining / (pursuit.intervalMinutes * 60));
   return (
     <div className={`pursuit-wake ${pursuit.currentRunId ? 'is-running' : ''}`}>
-      <div
-        className="pursuit-wake-dial"
-        style={{
-          background: `conic-gradient(var(--theme-accent) ${progress * 360}deg, var(--line) 0deg)`,
-        }}
-        aria-hidden="true"
-      >
+      <div className="pursuit-wake-dial" style={{ background: 'var(--line)' }} aria-hidden="true">
         <span>
           {pursuit.currentRunId ? (
             <LoaderCircle className="is-spinning" size={24} />

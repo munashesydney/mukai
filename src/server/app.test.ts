@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 import { startApiServer } from './app';
+import { migrations } from './db/migrations';
 import type {
   Bot,
   ChatEvent,
@@ -1578,8 +1579,17 @@ describe('Mukai bots and AI API', () => {
     expect(calls[1].model).toBe('writer-model');
     expect(calls[1].messages[0]).toEqual({
       role: 'system',
-      content: expect.stringMatching(/^Write in short sentences\.\nCurrent UTC time: /),
+      content: expect.stringMatching(/^No current pursuits\n/),
     });
+    const writerSystem = String(calls[1].messages[0].content);
+    expect(writerSystem).toContain('You are an intelligent assistant operating inside Mukai');
+    expect(writerSystem).toContain(
+      JSON.stringify({ id: bot.id, name: 'Writer', description: 'Clear writing' }),
+    );
+    expect(writerSystem).toContain('Write in short sentences.\nCurrent UTC time: ');
+    expect(writerSystem).toContain(
+      "If you don't have a tool to do something you can literally make/suggest to make it.",
+    );
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
     await close(api.server);
@@ -1589,19 +1599,9 @@ describe('Mukai bots and AI API', () => {
       'A real SDK response.',
     );
     expect((await request<Bot[]>('/bots')).data).toHaveLength(2);
-    expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([
-      { version: 1 },
-      { version: 2 },
-      { version: 3 },
-      { version: 4 },
-      { version: 5 },
-      { version: 6 },
-      { version: 7 },
-      { version: 8 },
-      { version: 9 },
-      { version: 10 },
-      { version: 11 },
-    ]);
+    expect(api.store.all('SELECT version FROM schema_migrations ORDER BY version')).toEqual(
+      migrations.map((_sql, index) => ({ version: index + 1 })),
+    );
     await request('/bots/scout', 'DELETE');
     await api.shutdown();
     await close(api.server);

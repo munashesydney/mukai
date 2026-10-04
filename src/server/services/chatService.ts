@@ -1,4 +1,8 @@
-import { buildBotSystemPrompt, buildBotAttemptPrompt } from '../../shared/botSystemPrompt';
+import {
+  buildBotSystemPrompt,
+  buildBotAttemptPrompt,
+  mukaiEnvironmentInstructions,
+} from '../../shared/botSystemPrompt';
 import { createHash, randomUUID } from 'node:crypto';
 import { streamText, isStepCount, type ModelMessage, type UserContent, type ToolSet } from 'ai';
 import type {
@@ -194,7 +198,7 @@ export class ChatService {
     value: ChatInput,
     output: ChatOutput,
     conversationId = 'bot-' + bot.id,
-    runtime?: { system: string; tools: ToolSet },
+    runtime?: { system: string; tools: ToolSet; completionNotice?: () => string | undefined },
   ) {
     const botId = String(bot.id);
     const running = this.active.get(conversationId);
@@ -378,13 +382,18 @@ export class ChatService {
         ),
         ...runtime?.tools,
       };
-      const system = buildBotSystemPrompt({
-        instructions: bot.instructions,
-        workspaceFolder: scope.folder,
-        tools,
-        runtimeSystem: runtime?.system,
-        previousOperations: Boolean(existingUser && generation.activity.length),
-      });
+      const botIdentity = { id: bot.id, name: bot.name, description: bot.description };
+      const buildSystem = () =>
+        buildBotSystemPrompt({
+          bot: botIdentity,
+          pursuits: this.tools.currentPursuits(bot),
+          instructions: bot.instructions,
+          workspaceFolder: scope.folder,
+          tools,
+          runtimeSystem: runtime?.system,
+          previousOperations: Boolean(existingUser && generation.activity.length),
+        });
+      const system = buildSystem();
       let messages = this.context(
         conversationId,
         botId,
@@ -403,6 +412,8 @@ export class ChatService {
             botId,
             scope,
             instructions: bot.instructions,
+            identity: botIdentity,
+            environment: mukaiEnvironmentInstructions,
             provider: config.provider.id,
             endpoint: config.provider.baseUrl,
             model: config.modelId,
@@ -624,6 +635,7 @@ export class ChatService {
       for (const [name, definition] of Object.entries(tools)) guardTool(name, definition);
       let customNames = Object.keys(this.tools.customForBot(bot, signal, onActivity));
       let malformedRecoveries = 0,
+        completionRecoveries = 0,
         outputContinuations = 0,
         overflowRecoveries = 0;
       let notice = checkpoint
@@ -645,7 +657,7 @@ export class ChatService {
         customNames = Object.keys(custom);
         for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
         const skillContext = this.tools.skillContext(bot, conversationId);
-        const currentSystem = system + (skillContext ? '\n' + skillContext : '');
+        const currentSystem = buildSystem() + (skillContext ? '\n' + skillContext : '');
         manager.setOverhead(
           estimateTokens(currentSystem) + (await toolTokens(tools)) + memoryOverhead,
         );
@@ -947,6 +959,20 @@ export class ChatService {
         if (lastStep?.toolCalls.length) {
           notice = '';
           continue;
+        }
+        const completionNotice = runtime?.completionNotice?.();
+        if (completionNotice) {
+          if (completionRecoveries++ < 2) {
+            notice =
+              completionNotice +
+              ' Continue this same run using structured tools. Do not repeat successful work. Give a final response after reporting.';
+            continue;
+          }
+          status = 'failed';
+          error =
+            completionNotice +
+            ' Required outcome reporting failed after two reminders. Saved work needs review before resuming.';
+          break;
         }
         if (!lastStep?.text.trim()) {
           status = 'failed';

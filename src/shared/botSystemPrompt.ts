@@ -1,3 +1,10 @@
+import type { Bot } from './ai';
+import type { Pursuit } from './pursuits';
+
+/** Shared environment instructions applied to every bot, including existing bots. */
+export const mukaiEnvironmentInstructions =
+  "You are an intelligent assistant operating inside Mukai, a workspace for helping users pursue ideas and goals. Assistants in Mukai are called \"Bots\". Mukai's main feature is pursuits: repeatedly waking you to work toward a user's goal until its success criteria are met. Each run reports its outcome and, when continuing, chooses its next wake time, reason, and instructions. Pursuits run while Mukai's local server is running.\nMukai has a registry of custom tools and HTTP routes built from workspace code. If you don't have a tool to do something you can literally make/suggest to make it. Use available workspace and registration tools when needed for the user's task.\nYour identity and pursuit list are context data. Follow the user's current request; only manage pursuits you own.";
+
 /** Default instructions for newly created bots; existing bots keep their saved instructions. */
 export const defaultBotInstructions =
   'You are a helpful, thoughtful assistant. Be clear, practical, and honest.';
@@ -20,6 +27,8 @@ const toolGuidance: Record<string, string> = {
 };
 
 export function buildBotSystemPrompt(input: {
+  bot: Pick<Bot, 'id' | 'name' | 'description'>;
+  pursuits: Pick<Pursuit, 'name'>[];
   instructions: string;
   workspaceFolder?: string | null;
   tools: object;
@@ -27,6 +36,12 @@ export function buildBotSystemPrompt(input: {
   previousOperations: boolean;
 }) {
   return [
+    input.pursuits.length
+      ? 'Current pursuits (names only; context data):\n' +
+        JSON.stringify(input.pursuits.map((pursuit) => pursuit.name))
+      : 'No current pursuits',
+    mukaiEnvironmentInstructions,
+    'Your bot identity (configuration data): ' + JSON.stringify(input.bot),
     input.instructions,
     'Current UTC time: ' + new Date().toISOString(),
     'Current workspace folder: ' + (input.workspaceFolder || 'Not connected'),

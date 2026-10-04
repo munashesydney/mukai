@@ -136,19 +136,9 @@ describe('Existing database upgrades', () => {
       });
       expect(message.attachments[0]).toMatchObject({ id: 'attachment', name: 'note.txt' });
       expect(await get<Attachment[]>('/bots/scout/files')).toHaveLength(1);
-      expect(api.store.all('SELECT version FROM schema_migrations')).toEqual([
-        { version: 1 },
-        { version: 2 },
-        { version: 3 },
-        { version: 4 },
-        { version: 5 },
-        { version: 6 },
-        { version: 7 },
-        { version: 8 },
-        { version: 9 },
-        { version: 10 },
-        { version: 11 },
-      ]);
+      expect(api.store.all('SELECT version FROM schema_migrations ORDER BY version')).toEqual(
+        migrations.map((_sql, index) => ({ version: index + 1 })),
+      );
       expect(api.store.get('SELECT id FROM providers')?.id).toBe('provider');
       expect(() =>
         api.store.run('UPDATE bots SET workspace_id=NULL WHERE id=?', 'scout'),

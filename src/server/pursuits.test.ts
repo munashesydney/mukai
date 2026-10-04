@@ -4,10 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { migrations } from './db/migrations';
 import { startApiServer } from './app';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import {
-  nextScheduledWake,
   type Pursuit,
   type PursuitDetail,
   type PursuitRun,
@@ -16,18 +17,32 @@ import {
 import type { Bot, ChatMessage, ToolInfo } from '../shared/ai';
 import { pursuitActionSchema, pursuitDefinition } from './tools/pursuits/definition';
 import { z } from 'zod';
+import { pursuitReportProblem, pursuitReportSchema } from './tools/pursuits/report';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, dir: string;
 let mode:
-  'create' | 'waiting' | 'completed' | 'blocked' | 'waiting_for_you' | 'no-report' | 'slow' =
-  'create';
+  | 'create'
+  | 'waiting'
+  | 'completed'
+  | 'blocked'
+  | 'waiting_for_you'
+  | 'no-report'
+  | 'slow'
+  | 'reminder'
+  | 'report-fail'
+  | 'invalid-report' = 'create';
 let calls: { messages: { role: string; content: unknown }[] }[] = [];
+let nextWake: string,
+  reportAttempts = 0;
+let reportOverride: Record<string, unknown> = {};
+const wakeReason = 'Allow time for the export to finish.';
+const wakeInstructions =
+  'Check the export status, then validate the output against the success criteria.';
 const input: PursuitInput = {
   name: 'Review the notes',
   objective: 'Read notes and identify a useful next step.',
   successCriteria: 'A verified next step with supporting evidence.',
-  intervalMinutes: 1,
-  firstRunAt: null,
+  firstRunAt: new Date(Date.now() + 3600000).toISOString(),
   deadline: null,
 };
 async function close(server: Server) {
@@ -68,12 +83,44 @@ async function settled(id: string) {
 beforeEach(async () => {
   mode = 'create';
   calls = [];
+  nextWake = new Date(Date.now() + 2 * 3600000).toISOString();
+  reportAttempts = 0;
+  reportOverride = {};
   dir = mkdtempSync(join(tmpdir(), 'mukai-pursuit-test-'));
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
+    if (!body.stream) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          id: 'memory-fixture',
+          object: 'chat.completion',
+          created: 1,
+          model: 'test',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: JSON.stringify({ facts: [] }) },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      );
+      return;
+    }
     calls.push(body);
+    if (mode === 'report-fail' && body.messages.some((m: { role: string }) => m.role === 'tool')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: { message: 'Fixture failed after reporting.', type: 'invalid_request_error' },
+        }),
+      );
+      return;
+    }
     // Exercise the provider's schema boundary, not only execution of tool calls.
     if (
       body.tools?.some(
@@ -109,12 +156,38 @@ beforeEach(async () => {
       if (res.destroyed) return;
     }
     const hasTool = body.messages.some((m: { role: string }) => m.role === 'tool');
-    if (!hasTool && mode !== 'no-report' && mode !== 'slow') {
+    const reminded = body.messages.some(
+      (m: { role: string; content: unknown }) =>
+        m.role === 'system' &&
+        String(m.content).includes('This run finished without reporting a valid pursuit outcome'),
+    );
+    if (
+      (!hasTool || (mode === 'invalid-report' && reportAttempts === 1)) &&
+      mode !== 'no-report' &&
+      mode !== 'slow' &&
+      (mode !== 'reminder' || reminded)
+    ) {
       const name = mode === 'create' ? 'manage_pursuit' : 'report_pursuit';
+      const outcome =
+        mode === 'reminder' || mode === 'invalid-report' || mode === 'report-fail'
+          ? 'waiting'
+          : mode;
       const args =
         mode === 'create'
           ? { action: 'create', ...input }
-          : { status: mode, summary: 'Verified the notes. Recorded evidence and the next step.' };
+          : {
+              status: outcome,
+              summary: 'Verified the notes. Recorded evidence and the next step.',
+              ...(outcome === 'waiting'
+                ? {
+                    nextRunAt: nextWake,
+                    nextRunReason: wakeReason,
+                    nextRunInstructions: wakeInstructions,
+                  }
+                : {}),
+              ...(mode === 'invalid-report' && reportAttempts === 0 ? reportOverride : {}),
+            };
+      if (name === 'report_pursuit') reportAttempts++;
       send({
         role: 'assistant',
         tool_calls: [
@@ -173,7 +246,6 @@ describe('AI-owned pursuits and scheduled runs', () => {
       name: input.name,
       objective: input.objective,
       successCriteria: input.successCriteria,
-      intervalMinutes: input.intervalMinutes,
     };
     expect(pursuitActionSchema.parse({ action: 'create', ...required })).toMatchObject({
       firstRunAt: null,
@@ -182,10 +254,13 @@ describe('AI-owned pursuits and scheduled runs', () => {
   });
   it('creates only through an AI tool, binds ownership, and blocks another bot from managing it', async () => {
     const p = await createWithAI();
+    expect(String(calls[0].messages[0].content)).toMatch(/^No current pursuits\n/);
+    const updatedSystem = String(calls.at(-1)!.messages[0].content);
+    expect(updatedSystem).toMatch(/^Current pursuits /);
+    expect(JSON.parse(updatedSystem.split('\n')[1])).toEqual([p.name]);
     expect(p).toMatchObject({
       ownerBotId: 'scout',
       status: 'active',
-      intervalMinutes: 1,
       objective: input.objective,
       successCriteria: input.successCriteria,
     });
@@ -224,7 +299,11 @@ describe('AI-owned pursuits and scheduled runs', () => {
     expect(result.runs).toHaveLength(1);
     expect(result.runs[0]).toMatchObject({ status: 'complete', trigger: 'schedule' });
     expect(result.pursuit.status).toBe('waiting');
-    expect(Date.parse(result.pursuit.nextRunAt!)).toBeGreaterThan(Date.now());
+    expect(result.pursuit).toMatchObject({
+      nextRunAt: nextWake,
+      nextRunReason: wakeReason,
+      nextRunInstructions: wakeInstructions,
+    });
     const conversation = api.store.get(
       'SELECT * FROM conversations WHERE id=?',
       result.runs[0].conversationId,
@@ -283,6 +362,12 @@ describe('AI-owned pursuits and scheduled runs', () => {
     await request(`/pursuits/${p.id}/run`, 'POST');
     const result = await settled(p.id);
     expect(result.runs[0].error).toContain('without reporting');
+    expect(result.runs[0].status).toBe('failed');
+    const runCalls = calls.filter((call) =>
+      call.messages.some((m) => String(m.content).includes('Run this pursuit')),
+    );
+    expect(runCalls).toHaveLength(3);
+    expect(runCalls.at(-1)?.messages.filter((m) => m.role === 'user')).toHaveLength(1);
     expect(result.pursuit.status).toBe('waiting_for_you');
     expect(result.pursuit.nextRunAt).toBeNull();
   });
@@ -307,9 +392,203 @@ describe('AI-owned pursuits and scheduled runs', () => {
     expect(api.pursuits.require(p.id).status).toBe('blocked');
     expect(api.pursuits.detail(p.id).runs).toHaveLength(1);
   });
-  it('keeps cadence without catch-up bursts across long downtime and timezone offsets', () => {
-    const start = '2026-10-02T09:00:00-07:00',
-      now = Date.parse('2026-10-02T19:01:00Z');
-    expect(nextScheduledWake(start, 60, now)).toBe('2026-10-02T20:00:00.000Z');
+  it('repairs a missing report in the same run without creating a user message', async () => {
+    const p = await createWithAI();
+    mode = 'reminder';
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    const result = await settled(p.id);
+    expect(result.runs).toHaveLength(1);
+    expect(result.runs[0].status).toBe('complete');
+    expect(result.pursuit.nextRunAt).toBe(nextWake);
+    expect(
+      api.store
+        .all(
+          'SELECT role FROM messages WHERE conversation_id=? ORDER BY sequence',
+          result.runs[0].conversationId,
+        )
+        .map((m) => m.role),
+    ).toEqual(['user', 'assistant']);
+    expect(reportAttempts).toBe(1);
+  });
+  it.each([
+    { nextRunAt: null },
+    { nextRunReason: null },
+    { nextRunInstructions: null },
+    { nextRunAt: '2020-01-01T00:00:00Z' },
+    { nextRunInstructions: '   ' },
+  ])('rejects an invalid continuation and lets the AI correct it: %j', async (invalid) => {
+    const p = await createWithAI();
+    mode = 'invalid-report';
+    reportOverride = invalid;
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    const result = await settled(p.id);
+    expect(reportAttempts).toBe(2);
+    expect(result.runs[0].status).toBe('complete');
+    expect(result.pursuit).toMatchObject({
+      nextRunAt: nextWake,
+      nextRunReason: wakeReason,
+      nextRunInstructions: wakeInstructions,
+    });
+  });
+  it('passes continuation instructions and recommends optional workspace memory on the next run', async () => {
+    const p = await createWithAI();
+    mode = 'waiting';
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    await settled(p.id);
+    mode = 'completed';
+    api.store.run(
+      'UPDATE pursuits SET next_run_at=? WHERE id=?',
+      new Date(Date.now() - 1000).toISOString(),
+      p.id,
+    );
+    api.pursuits.tick();
+    const result = await settled(p.id);
+    expect(result.runs).toHaveLength(2);
+    const latest = calls.at(-1)!.messages;
+    expect(
+      latest.some(
+        (m) =>
+          m.role === 'user' &&
+          String(m.content).includes(wakeInstructions) &&
+          String(m.content).includes(wakeReason),
+      ),
+    ).toBe(true);
+    expect(
+      latest.some(
+        (m) =>
+          m.role === 'system' &&
+          String(m.content).includes('scope workspace') &&
+          String(m.content).includes('this is optional'),
+      ),
+    ).toBe(true);
+  });
+  it('normalizes the AI wake timestamp with a timezone offset', async () => {
+    const p = await createWithAI();
+    mode = 'waiting';
+    nextWake = new Date(Date.now() + 3600000).toISOString().replace('Z', '+00:00');
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    const result = await settled(p.id);
+    expect(result.pursuit.nextRunAt).toBe(new Date(nextWake).toISOString());
+  });
+  it('requires wakes before the deadline and explicit null scheduling on terminal outcomes', () => {
+    const now = Date.now();
+    const report = pursuitReportSchema.parse({
+      status: 'waiting',
+      summary: 'Work saved.',
+      nextRunAt: nextWake,
+      nextRunReason: wakeReason,
+      nextRunInstructions: wakeInstructions,
+    });
+    expect(pursuitReportProblem(report, now, new Date(now + 60000).toISOString())).toContain(
+      'before the pursuit deadline',
+    );
+    expect(pursuitReportProblem({ ...report, status: 'completed' }, now, null)).toContain(
+      'Set nextRunAt',
+    );
+    expect(
+      pursuitReportProblem(
+        pursuitReportSchema.parse({ status: 'completed', summary: 'Verified.' }),
+        now,
+        null,
+      ),
+    ).toBeUndefined();
+  });
+  it('schedules an immediate first run without an interval or firstRunAt', () => {
+    const repository = new PursuitRepository(api.store);
+    const now = Date.now();
+    const pursuit = repository.create('default', 'scout', { ...input, firstRunAt: null }, now);
+    expect(pursuit.nextRunAt).toBe(new Date(now).toISOString());
+    expect(pursuit.nextRunInstructions).toBe(input.objective);
+    expect(pursuit).not.toHaveProperty('intervalMinutes');
+    const run = repository.claim(pursuit.id, 'schedule', now)!;
+    expect(repository.find(pursuit.id)!.nextRunAt).toBeNull();
+    repository.finish(run.id, 'complete', 'Verified.', null, 'completed', now);
+  });
+  it('preserves existing schedules and legacy interval data during the upgrade', () => {
+    const legacy = new DatabaseSync(':memory:');
+    try {
+      legacy.exec(`CREATE TABLE pursuits(id TEXT PRIMARY KEY, objective TEXT NOT NULL, interval_minutes INTEGER NOT NULL, next_run_at TEXT, next_run_reason TEXT NOT NULL);
+        INSERT INTO pursuits VALUES('legacy','Validate the export',90,'2026-11-01T09:00:00.000Z','Scheduled wake-up');`);
+      legacy.exec(migrations.at(-1)!);
+      expect(legacy.prepare('SELECT * FROM pursuits').get()).toMatchObject({
+        id: 'legacy',
+        interval_minutes: 90,
+        next_run_at: '2026-11-01T09:00:00.000Z',
+        next_run_reason: 'Scheduled wake-up',
+        next_run_instructions: 'Validate the export',
+      });
+    } finally {
+      legacy.close();
+    }
+  });
+  it('does not schedule a reported continuation if the response subsequently fails', async () => {
+    const p = await createWithAI();
+    mode = 'report-fail';
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    const result = await settled(p.id);
+    expect(reportAttempts).toBe(1);
+    expect(result.runs[0].status).toBe('failed');
+    expect(result.pursuit.status).toBe('waiting_for_you');
+    expect(result.pursuit.nextRunAt).toBeNull();
+  });
+  it('preserves the AI-selected continuation across a restart', async () => {
+    const p = await createWithAI();
+    mode = 'waiting';
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    await settled(p.id);
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect(api.pursuits.require(p.id)).toMatchObject({
+      status: 'waiting',
+      nextRunAt: nextWake,
+      nextRunReason: wakeReason,
+      nextRunInstructions: wakeInstructions,
+    });
+    api.pursuits.tick();
+    expect(api.pursuits.detail(p.id).runs).toHaveLength(1);
+  });
+  it('shows only this bot’s unfinished pursuits in normal chats, including paused and blocked work', async () => {
+    const scout = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
+    const mine = api.pursuits.create(scout, { ...input, name: 'My paused pursuit' });
+    api.pursuits.control(mine.id, 'paused');
+    const blocked = api.pursuits.create(scout, { ...input, name: 'My blocked pursuit' });
+    new PursuitRepository(api.store).setStatus(blocked.id, 'blocked', 'Needs access', Date.now());
+    const done = api.pursuits.create(scout, { ...input, name: 'My completed pursuit' });
+    api.pursuits.control(done.id, 'completed');
+    const other = (
+      await request<Bot>('/bots', 'POST', {
+        name: 'Other',
+        description: '',
+        instructions: 'Help.',
+        providerId: null,
+        model: null,
+        supportsImages: null,
+        avatar: 'atlas',
+      })
+    ).data;
+    api.pursuits.create(other, { ...input, name: 'Other bot pursuit' });
+    mode = 'no-report';
+    const chat = async () => {
+      const response = await fetch(api.url + '/bots/scout/chat', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          text: 'What am I pursuing?',
+          attachmentIds: [],
+        }),
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+      return String(calls.at(-1)!.messages[0].content);
+    };
+    const system = await chat();
+    const current = JSON.parse(system.split('\n')[1]);
+    expect(current).toHaveLength(2);
+    expect(current).toEqual(expect.arrayContaining([mine.name, blocked.name]));
+    api.pursuits.control(mine.id, 'completed');
+    api.pursuits.control(blocked.id, 'completed');
+    expect(await chat()).toMatch(/^No current pursuits\n/);
   });
 });

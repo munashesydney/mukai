@@ -39,6 +39,11 @@ export class ToolService {
   attachPursuits(service: PursuitService) {
     this.pursuits = service;
   }
+  currentPursuits(bot: Bot) {
+    return (this.pursuits?.list(bot.workspaceId) || []).filter(
+      (pursuit) => pursuit.ownerBotId === bot.id && pursuit.status !== 'completed',
+    );
+  }
   constructor(
     private workspaces: WorkspaceService,
     private artifacts: ArtifactService,

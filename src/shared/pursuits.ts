@@ -5,7 +5,6 @@ export interface PursuitInput {
   name: string;
   objective: string;
   successCriteria: string;
-  intervalMinutes: number;
   firstRunAt: string | null;
   deadline: string | null;
 }
@@ -16,6 +15,7 @@ export interface Pursuit extends Omit<PursuitInput, 'firstRunAt'> {
   status: PursuitStatus;
   nextRunAt: string | null;
   nextRunReason: string;
+  nextRunInstructions: string;
   currentRunId: string | null;
   createdAt: string;
 }
@@ -45,11 +45,4 @@ export const pursuitStatusLabels: Record<PursuitStatus, string> = {
 };
 export function scheduledStatus(status: PursuitStatus) {
   return status === 'active' || status === 'waiting';
-}
-export function nextScheduledWake(scheduledAt: string, intervalMinutes: number, now: number) {
-  const interval = intervalMinutes * 60000;
-  const previous = Date.parse(scheduledAt);
-  return new Date(
-    previous + (Math.floor(Math.max(0, now - previous) / interval) + 1) * interval,
-  ).toISOString();
 }

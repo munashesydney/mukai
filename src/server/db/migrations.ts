@@ -196,6 +196,8 @@ export const migrations = [
     skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
     version TEXT NOT NULL, name TEXT NOT NULL, instructions TEXT NOT NULL,
     PRIMARY KEY(conversation_id,bot_id,skill_id));`,
+  `ALTER TABLE pursuits ADD COLUMN next_run_instructions TEXT NOT NULL DEFAULT '';
+   UPDATE pursuits SET next_run_instructions=objective;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -203,8 +203,7 @@
   align-items: center;
   margin-bottom: 16px;
 }
-.pursuit-section-heading h2,
-.pursuit-notebook h2 {
+.pursuit-section-heading h2 {
   font-size: 17px;
 }
 .pursuit-section-heading > span {
@@ -274,36 +273,6 @@
 }
 .pursuit-empty-runs small {
   font-size: 11px;
-}
-.pursuit-notebook > h2 {
-  margin-top: 18px;
-}
-.pursuit-notebook > p,
-.pursuit-note {
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.8;
-  margin-top: 16px;
-}
-.pursuit-note {
-  border: 1px solid var(--line);
-  padding: 22px;
-  border-radius: 12px;
-}
-.pursuit-note h3 {
-  color: var(--ink);
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-.pursuit-note ol {
-  padding-left: 18px;
-}
-.preview-badge {
-  padding: 5px 8px;
-  background: var(--theme-soft);
-  color: var(--theme-text);
-  font-size: 11px;
-  border-radius: 5px;
 }
 .pursuit-run-context {
   border: 1px solid var(--line);

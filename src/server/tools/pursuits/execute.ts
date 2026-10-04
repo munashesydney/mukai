@@ -55,7 +55,7 @@ export function executePursuit(
   } catch (error) {
     const summary =
       error instanceof z.ZodError
-        ? 'Invalid pursuit arguments. Create and update require name, objective, successCriteria, and intervalMinutes. Update, pause, resume, and complete require a valid pursuitId. Correct the arguments and retry.'
+        ? 'Invalid pursuit arguments. Create and update require name, objective, and successCriteria. Update, pause, resume, and complete require a valid pursuitId. Correct the arguments and retry.'
         : error instanceof Error
           ? error.message
           : 'Pursuit operation failed.';
