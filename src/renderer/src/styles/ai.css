@@ -91,6 +91,78 @@
 .popup-menu .full-access {
   color: #ca7331;
 }
+.bot-model-menu {
+  padding-bottom: 0;
+}
+.bot-model-group {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding: 8px 0;
+}
+.bot-model-group h4 {
+  margin: 4px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.bot-model-group > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.bot-model-group > button:hover,
+.bot-model-group > button:focus-visible {
+  background: var(--surface-muted);
+}
+.bot-model-group > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.bot-model-group [aria-checked='true'] > svg {
+  color: var(--teal);
+}
+.bot-model-menu > small {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  padding: 10px 8px;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--line);
+}
+.provider-models {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.provider-models h4 {
+  margin: 0 0 8px;
+}
+.provider-model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.provider-model-row > span {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.provider-model-editor {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
 .workspace-picker-menu .workspace-mini {
   flex: 0 0 32px;
   height: 32px;

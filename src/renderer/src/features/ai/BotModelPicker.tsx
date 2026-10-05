@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronUp } from 'lucide-react';
 import type { Bot, BotModelInput, ProviderModel, ProviderSettings } from '../../../../shared/ai';
-import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
-import { Dropdown } from '../../components/ui/Dropdown';
-import { Sheet } from '../../components/ui/Sheet';
+import { PopupMenu } from '../../components/ui/PopupMenu';
 import { botService } from '../../services/botService';
+import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
 
 export function BotModelPicker({
@@ -22,14 +21,34 @@ export function BotModelPicker({
   onSaving: (saving: boolean) => void;
   onProviders: () => void;
 }) {
-  const [open, setOpen] = useState(false),
-    [saving, setSaving] = useState(false),
+  const [saving, setSaving] = useState(false),
     [error, setError] = useState('');
+  const [catalog, setCatalog] = useState<Record<string, ProviderModel[]>>({});
   const pending = useRef(false);
   const provider = providers.find((item) =>
     bot.providerId ? item.id === bot.providerId : item.isDefault,
   );
-  async function change(value: BotModelInput, close = true) {
+  useEffect(() => {
+    let alive = true;
+    void Promise.all(
+      providers
+        .filter(
+          (item) => item.kind === 'chatgpt' && item.account?.connected && item.account.planEnabled,
+        )
+        .map(async (item) => {
+          try {
+            const models = await providerService.models(item.id);
+            if (alive) setCatalog((current) => ({ ...current, [item.id]: models }));
+          } catch {
+            /* Saved models remain visible if discovery is unavailable. */
+          }
+        }),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [providers]);
+  async function change(value: BotModelInput, close: () => void) {
     if (pending.current || disabled) return;
     pending.current = true;
     setSaving(true);
@@ -37,7 +56,7 @@ export function BotModelPicker({
     setError('');
     try {
       onSelected(await botService.setModel(bot.id, value));
-      if (close) setOpen(false);
+      close();
     } catch (error) {
       setError(errorText(error));
     } finally {
@@ -46,181 +65,108 @@ export function BotModelPicker({
       onSaving(false);
     }
   }
+  const active = bot.model || provider?.defaultModel;
+  const name =
+    provider?.models?.find((model) => model.id === active)?.name ||
+    catalog[provider?.id ?? '']?.find((model) => model.id === active)?.name ||
+    active;
   return (
-    <>
-      <button
-        type="button"
-        className="ai-model-label ai-model-picker"
-        aria-label={`Choose model for ${bot.name}`}
-        aria-haspopup="dialog"
-        disabled={disabled || saving}
-        onClick={() => {
-          if (!provider) {
-            onProviders();
-            return;
-          }
-          setError('');
-          setOpen(true);
-        }}
-      >
-        <span>
-          {saving ? 'Saving model…' : bot.model || provider?.defaultModel || 'Choose a model'}
-        </span>
-        <ChevronDown size={13} />
-      </button>
-      {open && (
-        <Sheet
-          title={`Model for ${bot.name}`}
-          className="bot-model-sheet"
-          onClose={() => {
-            if (!saving) setOpen(false);
-          }}
-        >
-          <div className="bot-editor-body ai-form">
-            <p className="ai-caption">Changes save to this bot and apply to its next response.</p>
-            {error && (
-              <p className="ai-alert" role="alert">
-                {error}
-              </p>
-            )}
-            <label>
-              Provider
-              <Dropdown
-                label="Model provider"
-                value={bot.providerId || ''}
-                disabled={disabled || saving}
-                options={[
-                  { value: '', label: 'Workspace default' },
-                  ...providers.map((item) => ({ value: item.id, label: item.name })),
-                ]}
-                onChange={(id) =>
-                  void change(
-                    {
-                      providerId: id || null,
-                      model: null,
-                      supportsImages: null,
-                      contextWindowTokens: null,
-                    },
-                    false,
-                  )
-                }
-              />
-            </label>
-            {provider && (
-              <ModelChoices
-                key={provider.id}
-                bot={bot}
-                provider={provider}
-                disabled={disabled || saving}
-                onChange={(model, metadata, contextWindowTokens) =>
-                  void change({
-                    providerId: bot.providerId,
-                    model,
-                    supportsImages:
-                      metadata?.supportsImages ?? (model === bot.model ? bot.supportsImages : null),
-                    contextWindowTokens:
-                      contextWindowTokens ??
-                      metadata?.contextWindowTokens ??
-                      (model === bot.model ? bot.contextWindowTokens : null),
-                  })
-                }
-              />
-            )}
-          </div>
-        </Sheet>
-      )}
-    </>
-  );
-}
-
-function ModelChoices({
-  bot,
-  provider,
-  disabled,
-  onChange,
-}: {
-  bot: Bot;
-  provider: ProviderSettings;
-  disabled: boolean;
-  onChange: (model: string | null, metadata?: ProviderModel, contextWindowTokens?: number) => void;
-}) {
-  const [custom, setCustom] = useState(false),
-    [modelId, setModelId] = useState(bot.model || ''),
-    [context, setContext] = useState(bot.contextWindowTokens?.toString() || '');
-  if (provider.kind === 'chatgpt')
-    return (
-      <label>
-        Model
-        <ChatGPTModelSelect
-          providerId={provider.id}
-          value={bot.model || ''}
-          includeDefault
-          disabled={disabled}
-          onChange={(id, model) => onChange(id || null, model)}
-        />
-      </label>
-    );
-  return (
-    <>
-      <label>
-        Model
-        <Dropdown
-          label="Bot model"
-          value={custom ? 'custom' : bot.model || ''}
-          disabled={disabled}
-          options={[
-            { value: '', label: `Provider default · ${provider.defaultModel}` },
-            ...(bot.model ? [{ value: bot.model, label: bot.model }] : []),
-            { value: 'custom', label: 'Use another model…' },
-          ]}
-          onChange={(id) => {
-            if (id === 'custom') setCustom(true);
-            else onChange(id || null);
-          }}
-        />
-      </label>
-      {custom && (
-        <form
-          className="ai-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!disabled) onChange(modelId.trim(), undefined, Number(context));
-          }}
-        >
-          <label>
-            Model ID
-            <input
-              required
-              maxLength={150}
-              disabled={disabled}
-              value={modelId}
-              placeholder="Exact model ID from your provider"
-              onChange={(event) => setModelId(event.target.value)}
-            />
-          </label>
-          <label>
-            Context window (tokens)
-            <input
-              required
-              type="number"
-              min={4096}
-              max={10000000}
-              step={1}
-              disabled={disabled}
-              value={context}
-              onChange={(event) => setContext(event.target.value)}
-            />
-            <small>Enter this model’s documented capacity.</small>
-          </label>
+    <PopupMenu
+      label={`Choose model for ${bot.name}`}
+      title="Choose a model"
+      placement="top"
+      menuClassName="bot-model-menu"
+      buttonClassName="ai-model-label ai-model-picker"
+      disabled={disabled}
+      trigger={
+        <>
+          <span>{saving ? 'Saving model...' : name || 'Workspace default'}</span>
+          <ChevronUp size={13} />
+        </>
+      }
+      footer={
+        <button type="button" role="menuitem" className="text-button" onClick={onProviders}>
+          Configure models
+        </button>
+      }
+    >
+      {(close) => (
+        <>
+          {error && (
+            <div className="ai-alert" role="alert">
+              {error}
+            </div>
+          )}
           <button
-            className="button button--primary"
-            type="submit"
-            disabled={disabled || !modelId.trim() || !context}
+            type="button"
+            role="menuitemradio"
+            aria-checked={!bot.providerId && !bot.model}
+            disabled={saving}
+            onClick={() =>
+              void change(
+                { providerId: null, model: null, supportsImages: null, contextWindowTokens: null },
+                close,
+              )
+            }
           >
-            Use model
+            <span>
+              <strong>Workspace default</strong>
+              <small>
+                {providers.find((item) => item.isDefault)?.name ||
+                  'Configure a provider in Settings'}
+              </small>
+            </span>
+            {!bot.providerId && !bot.model && <Check size={16} />}
           </button>
-        </form>
+          {providers.map((item) => {
+            const choices = new Map(
+              (item.models ?? []).map((model) => [model.id, { id: model.id, name: model.name }]),
+            );
+            for (const model of catalog[item.id] ?? [])
+              if (!choices.has(model.id)) choices.set(model.id, model);
+            if (item.defaultModel && !choices.has(item.defaultModel))
+              choices.set(item.defaultModel, { id: item.defaultModel, name: item.defaultModel });
+            return (
+              <section
+                key={item.id}
+                role="group"
+                aria-label={item.name}
+                className="bot-model-group"
+              >
+                <h4>{item.name}</h4>
+                {[...choices.values()].map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={bot.providerId === item.id && active === model.id}
+                    disabled={
+                      saving ||
+                      (item.kind === 'chatgpt' &&
+                        (!item.account?.connected || !item.account.planEnabled))
+                    }
+                    onClick={() =>
+                      void change(
+                        {
+                          providerId: item.id,
+                          model: model.id,
+                          supportsImages: null,
+                          contextWindowTokens: null,
+                        },
+                        close,
+                      )
+                    }
+                  >
+                    <span>{model.name}</span>
+                    {bot.providerId === item.id && active === model.id && <Check size={16} />}
+                  </button>
+                ))}
+                {!choices.size && <small>Add models in Settings.</small>}
+              </section>
+            );
+          })}
+        </>
       )}
-    </>
+    </PopupMenu>
   );
 }

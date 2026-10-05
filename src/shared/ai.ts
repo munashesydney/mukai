@@ -14,6 +14,13 @@ export interface ProviderModel {
   contextWindowTokens: number | null;
   supportsImages: boolean | null;
 }
+export interface SavedProviderModel {
+  id: string;
+  name: string;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number;
+  supportsImages: boolean;
+}
 export interface ChatGPTSignIn {
   id: string;
   url?: string;
@@ -22,6 +29,7 @@ export interface ChatGPTSignIn {
   message?: string;
 }
 export interface ProviderSettings {
+  models?: SavedProviderModel[];
   id: string;
   name: string;
   kind: ProviderKind;
@@ -35,6 +43,7 @@ export interface ProviderSettings {
   maxOutputTokens?: number;
 }
 export interface ProviderInput {
+  models?: SavedProviderModel[];
   name: string;
   kind: ProviderKind;
   baseUrl: string;

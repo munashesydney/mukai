@@ -27,6 +27,7 @@ export function botRecord(row: Row): BotRecord {
 }
 export function providerRecord(row: Row): ProviderRecord {
   return {
+    models: JSON.parse(String(row.models_json || '[]')),
     id: String(row.id),
     name: String(row.name),
     kind: row.kind as ProviderRecord['kind'],

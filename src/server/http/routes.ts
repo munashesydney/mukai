@@ -521,7 +521,7 @@ export function createRoutes({
         }
       }
       if (id && action === 'models' && method === 'GET')
-        return send(response, await providers.chatgpt.models(id));
+        return send(response, await providers.models(id));
       if (id && action === 'disconnect' && method === 'POST')
         return send(response, await providers.chatgpt.disconnect(id));
       if (!id && method === 'GET') return send(response, providers.list());

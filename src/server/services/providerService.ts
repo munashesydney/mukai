@@ -207,6 +207,20 @@ export class ProviderService {
       throw new ApiError(400, 'An API key is required for this provider.');
     if (!this.providers.list().length) value.isDefault = true;
     const provider: ProviderRecord = {
+      models:
+        value.models ??
+        existing?.models ??
+        (value.defaultModel
+          ? [
+              {
+                id: value.defaultModel,
+                name: value.defaultModel,
+                contextWindowTokens: value.contextWindowTokens ?? null,
+                maxOutputTokens: value.maxOutputTokens ?? 8192,
+                supportsImages: value.supportsImages,
+              },
+            ]
+          : []),
       id: providerId,
       name: value.name,
       kind: value.kind,
@@ -224,6 +238,16 @@ export class ProviderService {
               : null) ?? null),
       maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? 8192,
     };
+    if (value.models !== undefined) {
+      const selected = value.models.find((model) => model.id === value.defaultModel);
+      if (value.defaultModel && !selected)
+        throw new ApiError(400, 'Choose a saved model as the provider default.');
+      if (selected) {
+        provider.contextWindowTokens = selected.contextWindowTokens;
+        provider.maxOutputTokens = selected.maxOutputTokens;
+        provider.supportsImages = selected.supportsImages;
+      }
+    }
     this.providers.save(provider);
     return this.public(provider);
   }
@@ -245,12 +269,29 @@ export class ProviderService {
   async validateModel(id: string | null, model: string | null) {
     const provider = id ? this.providers.find(id) : this.providers.default();
     if (provider?.kind !== 'chatgpt') return;
-    const models = await this.chatgpt.models(provider.id);
+    if (!model && !provider.defaultModel) return;
+    const models = await this.models(provider.id);
     if (!models.some((item) => item.id === (model || provider.defaultModel)))
       throw new ApiError(
         400,
         'Choose a model available to this ChatGPT account. Refresh models in Settings.',
       );
+  }
+  async models(id: string) {
+    const models = await this.chatgpt.models(id);
+    const provider = this.require(id);
+    const saved = provider.models ?? [];
+    const added = models
+      .filter((model) => !saved.some((item) => item.id === model.id))
+      .map((model) => ({
+        id: model.id,
+        name: model.name,
+        contextWindowTokens: model.contextWindowTokens,
+        maxOutputTokens: provider.maxOutputTokens ?? 8192,
+        supportsImages: model.supportsImages ?? false,
+      }));
+    if (added.length) this.providers.save({ ...provider, models: [...saved, ...added] });
+    return models;
   }
   resolve(bot: BotRecord) {
     const provider = bot.providerId
@@ -260,15 +301,18 @@ export class ProviderService {
     const modelId = String(bot.model || provider.defaultModel);
     if (!modelId.trim())
       throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
+    const configured = provider.models?.find((model) => model.id === modelId);
     return {
       provider,
       modelId,
       contextWindow: modelContextWindow(bot, provider),
-      maxOutputTokens: bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
+      maxOutputTokens:
+        configured?.maxOutputTokens ?? bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
       vision:
-        bot.supportsImages === null
+        configured?.supportsImages ??
+        (bot.supportsImages === null
           ? Boolean(provider.supportsImages)
-          : Boolean(bot.supportsImages),
+          : Boolean(bot.supportsImages)),
       model: this.model(provider, modelId),
       options: this.reasoningOptions(provider, modelId),
     };
@@ -323,6 +367,8 @@ export class ProviderService {
   }
   async test(id: string) {
     const provider = this.require(id);
+    if (!provider.defaultModel)
+      throw new ApiError(400, 'Add a model in Settings before testing this connection.');
     try {
       const result = await generateText({
         model: this.model(provider, String(provider.defaultModel)),

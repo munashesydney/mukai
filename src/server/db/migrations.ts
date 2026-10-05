@@ -259,6 +259,24 @@ export const migrations = [
     PRIMARY KEY(parent_message_id,tool_call_id));
    CREATE INDEX delegation_child ON bot_delegations(conversation_id,child_request_id);`,
   `ALTER TABLE artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file';`,
+  `ALTER TABLE providers ADD COLUMN models_json TEXT NOT NULL DEFAULT '[]';
+   UPDATE providers SET models_json=json_array(json_object(
+     'id',default_model,'name',default_model,'contextWindowTokens',context_window_tokens,
+     'maxOutputTokens',max_output_tokens,'supportsImages',json(CASE WHEN supports_images=1 THEN 'true' ELSE 'false' END)))
+   WHERE trim(default_model)<>'';
+   UPDATE providers SET models_json=(
+     SELECT json_group_array(json_object('id',id,'name',id,'contextWindowTokens',context_tokens,
+       'maxOutputTokens',output_tokens,'supportsImages',json(CASE WHEN images=1 THEN 'true' ELSE 'false' END)))
+     FROM (
+       SELECT default_model AS id,context_window_tokens AS context_tokens,max_output_tokens AS output_tokens,supports_images AS images
+       FROM providers p WHERE p.id=providers.id AND trim(default_model)<>''
+       UNION ALL
+       SELECT b.model,MAX(b.context_window_tokens),COALESCE(MAX(b.max_output_tokens),providers.max_output_tokens),COALESCE(MAX(b.supports_images),providers.supports_images)
+       FROM bots b WHERE b.model IS NOT NULL AND trim(b.model)<>'' AND b.model<>providers.default_model
+         AND (b.provider_id=providers.id OR (b.provider_id IS NULL AND providers.is_default=1))
+       GROUP BY b.model
+     )
+   );`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

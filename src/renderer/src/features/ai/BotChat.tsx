@@ -93,7 +93,11 @@ export function BotChat({
     bot.providerId ? provider.id === bot.providerId : provider.isDefault,
   );
   const model = bot.model || provider?.defaultModel;
-  const vision = bot.supportsImages ?? provider?.supportsImages ?? false;
+  const vision =
+    provider?.models?.find((item) => item.id === model)?.supportsImages ??
+    bot.supportsImages ??
+    provider?.supportsImages ??
+    false;
   const blocked = state.files.some((file) => file.kind === 'image') && !vision;
   const files = state.messages.flatMap((message) => message.attachments);
   const latestAssistant = [...state.messages]
@@ -348,8 +352,8 @@ export function BotChat({
                   <div className="ai-alert" role="alert">
                     This model is configured for text only. Remove the image or choose a vision
                     model before sending.
-                    <button className="text-button" onClick={onEdit}>
-                      Edit model settings
+                    <button className="text-button" onClick={onProviders}>
+                      Configure models
                     </button>
                   </div>
                 )}
@@ -425,7 +429,7 @@ export function BotChat({
                         <ContextMeter
                           usage={latestAssistant?.contextUsage}
                           window={modelContextWindow(bot, provider)}
-                          onConfigure={onEdit}
+                          onConfigure={onProviders}
                         />
                       </div>
                       {state.busy ? (

@@ -422,7 +422,7 @@ describe('Bot architecture', () => {
       name: 'Mukai',
       role: 'Main Bot/Orchestrator',
       model: 'architect-model',
-      contextWindowTokens: 65536,
+      contextWindowTokens: null,
     });
     await chat(selected.data);
     expect(calls.at(-1)!.model).toBe('architect-model');

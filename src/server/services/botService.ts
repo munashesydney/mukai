@@ -93,7 +93,7 @@ export class BotService {
   setModel(id: string, input: BotModelInput) {
     const bot = this.require(id);
     return this.save(
-      { ...bot, ...input, contextWindowTokens: input.contextWindowTokens ?? null },
+      { ...bot, ...input, supportsImages: null, contextWindowTokens: null, maxOutputTokens: null },
       id,
     );
   }

@@ -4,10 +4,8 @@ import { Trash2 } from 'lucide-react';
 import { mainBotRole, type Bot, type BotInput, type ProviderSettings } from '../../../../shared/ai';
 import { Sheet } from '../../components/ui/Sheet';
 import { Avatar } from '../../components/ui/Avatar';
-import { Dropdown } from '../../components/ui/Dropdown';
 import { botService } from '../../services/botService';
 import { errorText } from '../../utils/errors';
-import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
 import { botNameSuggestions } from '../../../../shared/toolAssignments';
 
 export function BotEditor({
@@ -41,9 +39,6 @@ export function BotEditor({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [deleting, setDeleting] = useState(false);
-  const provider = providers.find((provider) =>
-    value.providerId ? provider.id === value.providerId : provider.isDefault,
-  );
   async function save() {
     setBusy(true);
     setError('');
@@ -190,143 +185,6 @@ export function BotEditor({
                   onChange={(event) => setValue({ ...value, instructions: event.target.value })}
                 />
                 <small>Tell your bot how to help, what to focus on, and how to respond.</small>
-              </label>
-              <div className="ai-form-grid">
-                <label>
-                  Provider <span>(optional)</span>
-                  <Dropdown
-                    label="Provider"
-                    disabled={busy}
-                    value={value.providerId || ''}
-                    onChange={(providerId) =>
-                      setValue({
-                        ...value,
-                        providerId: providerId || null,
-                        model: null,
-                        supportsImages: null,
-                        contextWindowTokens: null,
-                        maxOutputTokens: null,
-                      })
-                    }
-                    options={[
-                      { value: '', label: providers.length ? 'Workspace default' : 'Set up later' },
-                      ...providers.map((provider) => ({
-                        value: provider.id,
-                        label: provider.account
-                          ? `${provider.name} · ${provider.account.label}`
-                          : provider.name,
-                      })),
-                    ]}
-                  />
-                </label>
-                <label>
-                  Model
-                  {provider?.kind === 'chatgpt' ? (
-                    <ChatGPTModelSelect
-                      key={provider.id}
-                      providerId={provider.id}
-                      value={value.model || ''}
-                      disabled={busy}
-                      includeDefault
-                      onChange={(id, model) =>
-                        setValue({
-                          ...value,
-                          model: id || null,
-                          contextWindowTokens: model?.contextWindowTokens ?? null,
-                          supportsImages: model?.supportsImages ?? null,
-                        })
-                      }
-                    />
-                  ) : (
-                    <input
-                      maxLength={150}
-                      disabled={busy}
-                      placeholder={provider?.defaultModel || 'Provider default'}
-                      value={value.model || ''}
-                      onChange={(event) =>
-                        setValue({
-                          ...value,
-                          model: event.target.value.trim() || null,
-                          contextWindowTokens: null,
-                        })
-                      }
-                    />
-                  )}
-                </label>
-              </div>
-              <div className="ai-form-grid">
-                <label>
-                  Context window (tokens)
-                  <input
-                    type="number"
-                    min={4096}
-                    max={10000000}
-                    step={1}
-                    disabled={busy}
-                    required={Boolean(value.model && value.model !== provider?.defaultModel)}
-                    value={value.contextWindowTokens ?? ''}
-                    placeholder={
-                      !value.model || value.model === provider?.defaultModel
-                        ? String(provider?.contextWindowTokens ?? 'Provider setting')
-                        : 'Enter this model’s capacity'
-                    }
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        contextWindowTokens: event.target.value ? Number(event.target.value) : null,
-                      })
-                    }
-                  />
-                  <small>A different model needs its own context-window size.</small>
-                </label>
-                <label>
-                  {provider?.kind === 'chatgpt'
-                    ? 'Output reserve (tokens)'
-                    : 'Maximum output (tokens)'}
-                  <input
-                    type="number"
-                    min={256}
-                    max={262144}
-                    step={1}
-                    disabled={busy}
-                    value={value.maxOutputTokens ?? ''}
-                    placeholder={String(provider?.maxOutputTokens ?? 8192)}
-                    onChange={(event) =>
-                      setValue({
-                        ...value,
-                        maxOutputTokens: event.target.value ? Number(event.target.value) : null,
-                      })
-                    }
-                  />
-                  {provider?.kind === 'chatgpt' && (
-                    <small>
-                      Used for context budgeting. ChatGPT determines the actual output limit.
-                    </small>
-                  )}
-                </label>
-              </div>
-              <label>
-                Image capability
-                <Dropdown
-                  label="Image capability"
-                  disabled={busy}
-                  value={value.supportsImages === null ? 'inherit' : String(value.supportsImages)}
-                  onChange={(capability) =>
-                    setValue({
-                      ...value,
-                      supportsImages: capability === 'inherit' ? null : capability === 'true',
-                    })
-                  }
-                  options={[
-                    {
-                      value: 'inherit',
-                      label: `Use provider setting (${provider?.supportsImages ? 'images enabled' : 'text only'})`,
-                    },
-                    { value: 'true', label: 'This model supports images' },
-                    { value: 'false', label: 'Text only' },
-                  ]}
-                />
-                <small>Confirm your chosen model supports vision before enabling images.</small>
               </label>
               {!providers.length && (
                 <p className="ai-caption">

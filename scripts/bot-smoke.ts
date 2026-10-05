@@ -108,6 +108,12 @@ async function main() {
     assert.equal(await evaluate('document.querySelector(".bot-editor input").value'), 'Mukai');
     assert.equal(
       await evaluate(
+        'document.querySelectorAll(".bot-editor select, .bot-editor input[type=number]").length',
+      ),
+      0,
+    );
+    assert.equal(
+      await evaluate(
         `Array.from(document.querySelectorAll('.bot-editor label')).find(e=>e.textContent.trim().startsWith('Role')).querySelector('input').value`,
       ),
       'Main Bot/Orchestrator',
@@ -345,6 +351,22 @@ async function main() {
       kind: 'compatible',
       baseUrl: `http://127.0.0.1:${(modelFixture.address() as { port: number }).port}/v1`,
       defaultModel: 'fixture-default',
+      models: [
+        {
+          id: 'fixture-default',
+          name: 'fixture-default',
+          contextWindowTokens: 32768,
+          maxOutputTokens: 8192,
+          supportsImages: false,
+        },
+        {
+          id: 'fixture-alternate',
+          name: 'fixture-alternate',
+          contextWindowTokens: 65536,
+          maxOutputTokens: 4096,
+          supportsImages: false,
+        },
+      ],
       isDefault: true,
       supportsImages: false,
       contextWindowTokens: 32768,
@@ -357,17 +379,21 @@ async function main() {
     );
     await wait('document.querySelector(".conversation-header h1")?.textContent==="Mukai"');
     await evaluate('document.querySelector(".ai-model-picker").click()');
-    await wait('Boolean(document.querySelector(".bot-model-sheet"))');
-    await evaluate(`document.querySelector('button[aria-label="Bot model"]').click()`);
-    await evaluate(
-      `Array.from(document.querySelectorAll('[role=option]')).find(e=>e.textContent==='Use another model…').click()`,
+    await wait('Boolean(document.querySelector(".bot-model-menu"))');
+    assert.equal(await evaluate('Boolean(document.querySelector(".bot-model-sheet"))'), false);
+    assert.equal(
+      await evaluate('document.querySelector(".bot-model-group h4").textContent'),
+      'Model fixture',
     );
-    await wait('Boolean(document.querySelector(".bot-model-sheet form"))');
-    await fill('.bot-model-sheet form input', 'fixture-alternate');
-    await fill('.bot-model-sheet input[type=number]', '65536');
+    assert.equal(
+      await evaluate(
+        'getComputedStyle(document.querySelector(".bot-model-menu > small")).position',
+      ),
+      'sticky',
+    );
     await capture('bot-model-picker.png');
-    await click('Use model');
-    await wait('!document.querySelector(".bot-model-sheet")');
+    await click('fixture-alternate');
+    await wait('!document.querySelector(".bot-model-menu")');
     assert.equal(
       (await request<Bot[]>('/bots')).find((bot) => bot.id === main.id)?.model,
       'fixture-alternate',
@@ -384,12 +410,9 @@ async function main() {
     assert.deepEqual(sentModels, ['fixture-alternate']);
     await wait('!document.querySelector(".ai-model-picker").disabled');
     await evaluate('document.querySelector(".ai-model-picker").click()');
-    await wait('Boolean(document.querySelector(".bot-model-sheet"))');
-    await evaluate(`document.querySelector('button[aria-label="Bot model"]').click()`);
-    await evaluate(
-      `Array.from(document.querySelectorAll('[role=option]')).find(e=>e.textContent.startsWith('Provider default ·')).click()`,
-    );
-    await wait('!document.querySelector(".bot-model-sheet")');
+    await wait('Boolean(document.querySelector(".bot-model-menu"))');
+    await evaluate(`document.querySelector('.bot-model-menu > button').click()`);
+    await wait('!document.querySelector(".bot-model-menu")');
     assert.equal((await request<Bot[]>('/bots')).find((bot) => bot.id === main.id)?.model, null);
     await fill('.composer textarea', 'Use the provider default again.');
     await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
@@ -1089,6 +1112,66 @@ async function main() {
     window.setSize(720, 900);
     await capture('bot-pair-conversation-narrow.png');
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    // Configure a second provider and its models through the settings UI.
+    window.setSize(1480, 980);
+    await evaluate('document.querySelector(".ai-model-picker").click()');
+    await wait('Boolean(document.querySelector(".bot-model-menu"))');
+    await click('Configure models');
+    await wait('Boolean(document.querySelector("#settings-tab-providers[aria-selected=true]"))');
+    await wait(
+      `Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Add provider' && !button.disabled)`,
+    );
+    await click('Add provider');
+    await wait(`Boolean(document.querySelector('button[aria-label="Provider type"]'))`);
+    await evaluate(`document.querySelector('button[aria-label="Provider type"]').click()`);
+    await wait(`Boolean(document.querySelector('[role=option]'))`);
+    await evaluate(
+      `Array.from(document.querySelectorAll('[role=option]')).find(e=>e.textContent==='OpenAI-compatible / local').click()`,
+    );
+    await wait('Boolean(document.querySelector(".provider-panel input[type=url]"))');
+    await fill('.provider-panel input[maxlength="80"]', 'GLM');
+    await fill('.provider-panel input[type="url"]', 'http://127.0.0.1:11434/v1');
+    assert.equal(await evaluate('Boolean(document.querySelector(".provider-models"))'), false);
+    await click('Save connection');
+    await wait('Boolean(document.querySelector(".provider-models"))');
+    await click('Add model');
+    await wait('Boolean(document.querySelector(".provider-model-editor"))');
+    await fill('.provider-model-editor input[maxlength="150"]', 'glm-test');
+    await fill('.provider-model-editor label:nth-of-type(2) input', 'GLM Test');
+    await fill('.provider-model-editor input[type="number"]', '131072');
+    await click('Keep model');
+    await wait('!document.querySelector(".provider-model-editor")');
+    await click('Save connection');
+    await wait('!document.querySelector(".provider-panel button[type=submit]").disabled');
+    const glm = (await request<{ name: string; models: { id: string }[] }[]>('/providers')).find(
+      (provider) => provider.name === 'GLM',
+    );
+    assert.deepEqual(
+      glm?.models.map((model) => model.id),
+      ['glm-test'],
+    );
+    await capture('provider-model-settings.png');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait('Boolean(document.querySelector(".ai-model-picker"))');
+    await evaluate('document.querySelector(".ai-model-picker").click()');
+    await wait('Boolean(document.querySelector(".bot-model-menu"))');
+    assert.equal(
+      await evaluate(
+        `Array.from(document.querySelectorAll('.bot-model-group h4')).some(e=>e.textContent==='GLM')`,
+      ),
+      true,
+    );
+    assert.equal(
+      await evaluate(
+        `Array.from(document.querySelectorAll('.bot-model-group button')).some(e=>e.textContent==='GLM Test')`,
+      ),
+      true,
+    );
+    await evaluate(
+      `document.querySelector('.ai-model-picker').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`,
+    );
     assert.deepEqual(errors, []);
     console.log(
       'PASS bot UI: onboarding, assignments, models, approvals, exact chat and pursuit links, reload recovery, nested hierarchy, read-only bot pair threads, live follow-ups, parent delegation navigation, child approval identity, and narrow layout.',

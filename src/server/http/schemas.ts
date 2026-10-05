@@ -13,10 +13,26 @@ export const botSchema = z.object({
 });
 
 export const providerSchema = z.object({
+  models: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(150),
+        name: z.string().trim().min(1).max(150),
+        contextWindowTokens: z.number().int().min(4096).max(10000000).nullable(),
+        maxOutputTokens: z.number().int().min(256).max(262144),
+        supportsImages: z.boolean(),
+      }),
+    )
+    .max(200)
+    .refine(
+      (models) => new Set(models.map((model) => model.id)).size === models.length,
+      'Model IDs must be unique within a provider.',
+    )
+    .optional(),
   name: z.string().trim().min(1).max(80),
   kind: z.enum(['openai', 'chatgpt', 'anthropic', 'google', 'compatible']),
   baseUrl: z.string().trim().max(500),
-  defaultModel: z.string().trim().min(1).max(150),
+  defaultModel: z.string().trim().max(150),
   supportsImages: z.boolean(),
   isDefault: z.boolean(),
   apiKey: z.string().trim().max(4096).optional(),

@@ -4,7 +4,7 @@ import type { ProviderInput, ProviderSettings, ProviderKind } from '../../../../
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
 import { Dropdown } from '../../components/ui/Dropdown';
-import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
+import { ProviderModels } from './ProviderModels';
 import type { ChatGPTSignIn } from '../../../../shared/ai';
 
 const kinds: { id: ProviderKind; label: string; model: string }[] = [
@@ -18,7 +18,8 @@ const empty = (): ProviderInput => ({
   name: 'OpenAI',
   kind: 'openai',
   baseUrl: '',
-  defaultModel: 'gpt-4.1-mini',
+  defaultModel: '',
+  models: [],
   supportsImages: true,
   isDefault: false,
   apiKey: '',
@@ -150,10 +151,6 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     );
   }
   async function save(test = false) {
-    if (!value.contextWindowTokens) {
-      setError('Enter this model’s context-window size in tokens.');
-      return;
-    }
     setBusy(true);
     setError('');
     setNotice('');
@@ -169,7 +166,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
         const result = await providerService.test(saved.id);
         setNotice(result.message);
       } else {
-        setEditing(null);
+        setEditing(saved.id);
         setNotice('Provider settings saved.');
       }
     } catch (error) {
@@ -256,7 +253,8 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   ...value,
                   kind: kind.id,
                   name: kind.label,
-                  defaultModel: kind.model,
+                  defaultModel: '',
+                  models: [],
                   contextWindowTokens: null,
                   supportsImages: kind.id !== 'compatible',
                   apiKey: '',
@@ -395,102 +393,18 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               Remove the saved key (for endpoints without authentication)
             </label>
           )}
-          <label>
-            Default model
-            {value.kind === 'chatgpt' ? (
-              saved?.account?.connected && saved.account.planEnabled ? (
-                <ChatGPTModelSelect
-                  providerId={saved.id}
-                  value={value.defaultModel}
-                  disabled={busy || Boolean(signIn)}
-                  onChange={(id, model) =>
-                    setValue({
-                      ...value,
-                      defaultModel: id,
-                      contextWindowTokens: model?.contextWindowTokens ?? null,
-                      supportsImages: model?.supportsImages ?? false,
-                    })
-                  }
-                />
-              ) : (
-                <small>Connect an account and enable plan usage to choose a model.</small>
-              )
-            ) : (
-              <input
-                required
-                maxLength={150}
-                placeholder="Enter an exact model ID"
-                value={value.defaultModel}
-                disabled={busy}
-                onChange={(event) =>
-                  setValue({
-                    ...value,
-                    defaultModel: event.target.value,
-                    contextWindowTokens: null,
-                  })
-                }
-              />
-            )}
-            {value.kind !== 'chatgpt' && (
-              <small>Use a chat model available to your account or installed locally.</small>
-            )}
-          </label>
-          <div className="ai-form-grid">
-            <label>
-              Context window (tokens)
-              <input
-                type="number"
-                required
-                min={4096}
-                max={10000000}
-                step={1}
-                disabled={busy}
-                value={value.contextWindowTokens ?? ''}
-                placeholder="e.g. 128000"
-                onChange={(event) =>
-                  setValue({
-                    ...value,
-                    contextWindowTokens: event.target.value ? Number(event.target.value) : null,
-                  })
-                }
-              />
-              <small>
-                Use the capacity documented for this exact model. Mukai uses it for automatic
-                compaction.
-              </small>
-            </label>
-            <label>
-              {value.kind === 'chatgpt' ? 'Output reserve (tokens)' : 'Maximum output (tokens)'}
-              <input
-                type="number"
-                required
-                min={256}
-                max={262144}
-                step={1}
-                disabled={busy}
-                value={value.maxOutputTokens ?? 8192}
-                onChange={(event) =>
-                  setValue({ ...value, maxOutputTokens: Number(event.target.value) })
-                }
-              />
-              <small>
-                {value.kind === 'chatgpt'
-                  ? 'Used for local context budgeting; ChatGPT does not accept an output-token cap. '
-                  : ''}
-                Per generation, including reasoning where the provider counts it. Mukai reserves up
-                to an eighth of the context for output, and adjusts it to available room.
-              </small>
-            </label>
-          </div>
-          <label className="ai-checkbox">
-            <input
-              type="checkbox"
-              disabled={busy}
-              checked={value.supportsImages}
-              onChange={(event) => setValue({ ...value, supportsImages: event.target.checked })}
+          {saved ? (
+            <ProviderModels
+              value={value}
+              onChange={setValue}
+              disabled={busy || Boolean(signIn)}
+              provider={saved}
             />
-            This model supports images
-          </label>
+          ) : (
+            <p className="ai-caption">
+              Save your connection, then add its models and configure their limits.
+            </p>
+          )}
           <label className="ai-checkbox">
             <input
               type="checkbox"
@@ -514,7 +428,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   (!saved?.account?.connected || !saved.account.planEnabled || !value.defaultModel))
               }
             >
-              {busy ? 'Connecting…' : 'Save provider'}
+              {busy ? 'Connecting…' : 'Save connection'}
             </button>
             <button
               type="button"
@@ -548,7 +462,10 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                     </span>
                     <div>
                       <strong>{provider.name}</strong>
-                      <small>{provider.defaultModel}</small>
+                      <small>
+                        {provider.models?.length || (provider.defaultModel ? 1 : 0)} saved models ·{' '}
+                        {provider.defaultModel || 'Add a model'}
+                      </small>
                     </div>
                     {provider.isDefault && <span className="provider-default">Default</span>}
                   </div>

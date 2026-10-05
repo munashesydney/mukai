@@ -98,6 +98,7 @@ export function useAIWorkspace() {
         ...previous,
         bots: previous.bots.map((item) => (item.id === bot.id ? bot : item)),
       }));
+      void refresh();
     },
     selectWorkspace,
   };

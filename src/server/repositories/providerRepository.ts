@@ -33,6 +33,11 @@ export class ProviderRepository {
         provider.contextWindowTokens ?? null,
         provider.maxOutputTokens ?? 8192,
       );
+      this.database.run(
+        'UPDATE providers SET models_json = ? WHERE id = ?',
+        JSON.stringify(provider.models ?? []),
+        provider.id,
+      );
     });
   }
   delete(id: string) {

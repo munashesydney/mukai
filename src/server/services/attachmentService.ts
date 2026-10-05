@@ -203,7 +203,7 @@ export class AttachmentService {
       if (row.kind === 'image' && !vision)
         throw new ApiError(
           400,
-          'This model is configured for text only. Remove the image or choose a vision model in bot settings.',
+          'This model is configured for text only. Remove the image or choose a vision model in the model picker.',
         );
       return row;
     });
