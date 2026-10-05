@@ -377,6 +377,14 @@ export function BotChat({
                       maxLength={16000}
                       disabled={state.loading || state.busy}
                       onChange={(event) => chatStore.draft(chatId, event.target.value)}
+                      onPaste={(event) => {
+                        const files = Array.from(event.clipboardData.files);
+                        if (!files.length) return;
+
+                        // Keep ordinary text pastes intact, but turn copied files into pending attachments.
+                        event.preventDefault();
+                        void chatStore.upload(chatId, files);
+                      }}
                       onKeyDown={(event) => {
                         if (
                           event.key === 'Enter' &&
@@ -459,7 +467,10 @@ export function BotChat({
                   </div>
                   <div className="composer-hint ai-composer-hint">
                     <span>Enter to send · Shift + Enter for a new line</span>
-                    <span>4 files · 10 MB each · {vision ? 'Images enabled' : 'Text only'}</span>
+                    <span>
+                      Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
+                      {vision ? 'Images enabled' : 'Text only'}
+                    </span>
                   </div>
                   {!provider && (
                     <button className="text-button ai-configure-link" onClick={onProviders}>

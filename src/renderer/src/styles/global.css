@@ -479,6 +479,9 @@ p {
   flex-direction: column;
   gap: 12px;
 }
+.bot-pair-empty {
+  padding-inline-start: 24px;
+}
 .bot-pair-avatars {
   display: inline-flex;
   align-items: center;
