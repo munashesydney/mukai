@@ -5,6 +5,8 @@ import type { Conversation } from '../../../../shared/conversations';
 import type { Location } from '../workspace/types';
 import { Avatar } from '../../components/ui/Avatar';
 
+const INITIAL_CONVERSATION_COUNT = 3;
+
 export function BotPairConversationsSidebar({
   bots,
   conversations,
@@ -23,6 +25,7 @@ export function BotPairConversationsSidebar({
   onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const groups = new Map<string, { bots: Bot[]; conversations: Conversation[] }>();
   for (const conversation of conversations) {
     const ids = [...conversation.botIds].sort();
@@ -55,6 +58,8 @@ export function BotPairConversationsSidebar({
         const open =
           expanded[key] ?? group.conversations.some((chat) => chat.id === location.conversationId);
         const title = group.bots.map((bot) => bot.name).join('/');
+        const visibleCount = visibleCounts[key] ?? INITIAL_CONVERSATION_COUNT;
+        const visibleConversations = group.conversations.slice(0, visibleCount);
         return (
           <section className="bot-conversation-group" key={key}>
             <button
@@ -73,7 +78,7 @@ export function BotPairConversationsSidebar({
             </button>
             {open && (
               <div className="bot-conversation-list">
-                {group.conversations.map((chat) => (
+                {visibleConversations.map((chat) => (
                   <button
                     key={chat.id}
                     className={`sidebar-row bot-conversation-row ${location.conversationId === chat.id ? 'is-selected' : ''}`}
@@ -99,6 +104,24 @@ export function BotPairConversationsSidebar({
                     </time>
                   </button>
                 ))}
+                {group.conversations.length > visibleCount && (
+                  <button
+                    className="bot-conversations-load-more"
+                    onClick={() =>
+                      setVisibleCounts((previous) => ({
+                        ...previous,
+                        [key]: visibleCount + INITIAL_CONVERSATION_COUNT,
+                      }))
+                    }
+                  >
+                    Load{' '}
+                    {Math.min(
+                      INITIAL_CONVERSATION_COUNT,
+                      group.conversations.length - visibleCount,
+                    )}{' '}
+                    more
+                  </button>
+                )}
               </div>
             )}
           </section>

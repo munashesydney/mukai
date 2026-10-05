@@ -8,6 +8,8 @@ import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { errorText } from '../../utils/errors';
 
+const INITIAL_CONVERSATION_COUNT = 3;
+
 function age(value: string) {
   const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
   return minutes < 1
@@ -34,6 +36,7 @@ export function BotConversationsSidebar({
 }) {
   const approvals = useApprovals();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [creating, setCreating] = useState<string | null>(null),
     [error, setError] = useState('');
   async function create(botId: string) {
@@ -61,6 +64,8 @@ export function BotConversationsSidebar({
         .map((bot) => {
           const open = expanded[bot.id] ?? location.item === bot.id;
           const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
+          const visibleCount = visibleCounts[bot.id] ?? INITIAL_CONVERSATION_COUNT;
+          const visibleChats = chats.slice(0, visibleCount);
           const count = approvals.pending.filter(
             (request) =>
               request.botId === bot.id ||
@@ -109,7 +114,7 @@ export function BotConversationsSidebar({
               )}
               {open && (
                 <div className="bot-conversation-list">
-                  {chats.map((chat) => (
+                  {visibleChats.map((chat) => (
                     <button
                       key={chat.id}
                       className={`sidebar-row bot-conversation-row ${location.item === bot.id && !location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
@@ -134,6 +139,19 @@ export function BotConversationsSidebar({
                       </time>
                     </button>
                   ))}
+                  {chats.length > visibleCount && (
+                    <button
+                      className="bot-conversations-load-more"
+                      onClick={() =>
+                        setVisibleCounts((previous) => ({
+                          ...previous,
+                          [bot.id]: visibleCount + INITIAL_CONVERSATION_COUNT,
+                        }))
+                      }
+                    >
+                      Load {Math.min(INITIAL_CONVERSATION_COUNT, chats.length - visibleCount)} more
+                    </button>
+                  )}
                 </div>
               )}
             </section>

@@ -569,6 +569,24 @@ p {
   font-size: 10px;
   font-weight: 400;
 }
+.bot-conversations-load-more {
+  align-self: flex-start;
+  margin: 3px 0 1px 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.bot-conversations-load-more:hover,
+.bot-conversations-load-more:focus-visible {
+  background: var(--surface-muted);
+  color: var(--ink);
+  outline: none;
+}
 .bot-online {
   width: 5px;
   height: 5px;
