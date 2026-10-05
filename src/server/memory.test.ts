@@ -294,6 +294,49 @@ describe('Mukai memory integration', () => {
     expect(api.memory.snapshot('default').facts).toHaveLength(1);
     expect(attempts).toBe(2);
   });
+  it('resumes a failed review after new chat activity and includes all unreviewed messages', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso.');
+    let attempts = 0;
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      if (++attempts === 1) throw new Error('Fixture failure');
+      return { facts: [coffee] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+    );
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    worker.schedule('default', 'bot-scout', 'scout');
+    now.mockReturnValue(61001);
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')[0].status).toBe('failed');
+    await worker.drain(new AbortController().signal);
+    expect(attempts).toBe(1);
+
+    await chat('I also like coffee in the afternoon.');
+    worker.schedule('default', 'bot-scout', 'scout');
+    const job = api.memory.store.get(
+      "SELECT checkpoint,blocked FROM memory_review_jobs WHERE conversation_id='bot-scout'",
+    );
+    expect(job).toMatchObject({ checkpoint: 0, blocked: 0 });
+    now.mockReturnValue(121000);
+    await worker.drain(new AbortController().signal);
+    expect(attempts).toBe(1);
+    now.mockReturnValue(121002);
+    await worker.drain(new AbortController().signal);
+    const completed = worker.list('default')[0];
+    expect(completed.status).toBe('complete');
+    expect(completed.messageIds).toHaveLength(4);
+    expect(attempts).toBe(2);
+    await worker.drain(new AbortController().signal);
+    expect(attempts).toBe(2);
+  });
   it('debounces reviews, skips active responses, and checkpoints complete exchanges exactly once', async () => {
     api.memory.saveSettings('default', {
       ...api.memory.settings('default'),

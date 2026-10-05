@@ -1873,18 +1873,13 @@
   display: block;
   font-size: 13px;
 }
+/* Match the workspace picker's clear, neutral hover treatment for both pointer and keyboard selection. */
 .space-mention-list button:hover,
 .space-mention-list button:focus-visible,
 .space-mention-list button.is-active {
-  background: var(--accent);
-  color: var(--accent-ink);
-  outline: none;
-}
-.space-mention-list button:hover small,
-.space-mention-list button:focus-visible small,
-.space-mention-list button.is-active small {
+  background: var(--surface-muted);
   color: inherit;
-  opacity: 0.8;
+  outline: none;
 }
 .mention-link {
   display: inline;

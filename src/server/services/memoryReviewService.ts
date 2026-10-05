@@ -27,7 +27,7 @@ export class MemoryReviewService {
     this.store.run(
       `INSERT INTO memory_review_jobs(conversation_id,workspace_id,actor_id,due_at)
       VALUES(?,?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET actor_id=excluded.actor_id,
-      due_at=excluded.due_at`,
+      due_at=excluded.due_at,blocked=0`,
       conversationId,
       workspaceId,
       actorId,
