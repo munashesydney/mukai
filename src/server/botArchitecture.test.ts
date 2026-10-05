@@ -36,6 +36,7 @@ let mode:
   | 'web-revoke';
 let delegatedId: string;
 let nestedId: string;
+let invalidAskFirst: boolean;
 const waitFor = (check: () => void | Promise<void>) => vi.waitFor(check, { timeout: 5000 });
 const input = (name = 'Mukai'): BotInput => ({
   name,
@@ -85,6 +86,7 @@ beforeEach(async () => {
   mode = 'normal';
   delegatedId = '';
   nestedId = '';
+  invalidAskFirst = false;
   api = await startApiServer(0, {
     dataDir: join(root, 'data'),
     memoryExtractor: async () => ({ facts: [] }),
@@ -107,7 +109,24 @@ beforeEach(async () => {
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
-    if (
+    if (child && invalidAskFirst) {
+      invalidAskFirst = false;
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'invalid-ask',
+            type: 'function',
+            function: {
+              name: 'ask',
+              arguments: JSON.stringify({ question: 'PRIVATE INVALID QUESTION' }),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+    } else if (
       child &&
       [
         'delegate-approval',
@@ -118,7 +137,7 @@ beforeEach(async () => {
         'delegate-empty-always',
         'delegate-empty-restart',
       ].includes(mode) &&
-      !call.messages.some((item) => item.role === 'tool')
+      !call.messages.some((item) => item.tool_call_id === 'child-call')
     ) {
       const intermediate =
         mode === 'delegate-nested' &&
@@ -760,11 +779,14 @@ describe('Bot architecture', () => {
   });
   it('recovers a child’s empty continuation and sends the saved user answer back to its parent', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Nova'));
     delegatedId = child.id;
     mode = 'delegate-empty-once';
+    invalidAskFirst = true;
     const pending = chat(main);
     await waitFor(async () =>
       expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
@@ -779,25 +801,31 @@ describe('Bot architecture', () => {
       status: 'complete',
       content: 'The user chose: A meal or treat.',
     });
-    expect(saved.activity).toHaveLength(1);
-    expect(saved.activity?.[0].summary).toContain('User answer: A meal or treat');
-    expect(calls).toHaveLength(5);
-    expect(calls[3]).not.toHaveProperty('tools');
-    expect(calls[3].messages.at(-1)).toMatchObject({
+    expect(saved.activity).toHaveLength(2);
+    expect(saved.activity?.[1].summary).toContain('User answer: A meal or treat');
+    expect(calls).toHaveLength(6);
+    expect(calls[4]).not.toHaveProperty('tools');
+    expect(calls[4].messages.at(-1)).toMatchObject({
       role: 'user',
       content: expect.stringContaining('write the final reply'),
     });
-    expect(JSON.stringify(calls[3].messages)).toContain('A meal or treat');
-    expect(JSON.stringify(calls[4].messages)).toContain('The user chose: A meal or treat.');
+    expect(JSON.stringify(calls[4].messages)).toContain('A meal or treat');
+    expect(JSON.stringify(calls[5].messages)).toContain('The user chose: A meal or treat.');
     expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
     const logs = readFileSync(join(root, 'data', 'logs', 'errors.log'), 'utf8')
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
     expect(logs).toMatchObject([
-      { event: 'chat.empty_reply_recovery', level: 'warn', messageId: saved.id },
+      { event: 'chat.tool_input_invalid', level: 'warn', messageId: saved.id },
+      { event: 'chat.tool_input_corrected', level: 'info', messageId: saved.id },
+      { event: 'chat.empty_reply_recovery', level: 'info', messageId: saved.id },
+      { event: 'chat.empty_reply_recovered', level: 'info', messageId: saved.id },
     ]);
+    for (const entry of logs.slice(1)) expect(entry).not.toHaveProperty('error');
+    expect(console.error).not.toHaveBeenCalled();
     expect(JSON.stringify(logs)).not.toContain('A meal or treat');
+    expect(JSON.stringify(logs)).not.toContain('PRIVATE INVALID QUESTION');
   });
   it('bounds empty-reply recovery, preserves the answer, and logs the exhausted attempts', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

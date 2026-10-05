@@ -4,7 +4,14 @@ import {
   mukaiEnvironmentInstructions,
 } from '../../shared/botSystemPrompt';
 import { createHash, randomUUID } from 'node:crypto';
-import { streamText, isStepCount, type ModelMessage, type UserContent, type ToolSet } from 'ai';
+import {
+  streamText,
+  isStepCount,
+  InvalidToolInputError,
+  type ModelMessage,
+  type UserContent,
+  type ToolSet,
+} from 'ai';
 import type {
   ChatInput,
   ChatEvent,
@@ -458,6 +465,8 @@ export class ChatService {
       usedTokens: diagnosticUsage?.usedTokens,
     });
     const pendingTools = new Set<Promise<unknown>>();
+    const invalidToolInputs = new Set<string>();
+    let recoveredEmptyReply = false;
     let status: MessageStatus = 'complete',
       error: string | null = null,
       lastSaved = Date.now();
@@ -1114,12 +1123,28 @@ export class ChatService {
                 emit({ type: 'reasoning', id: assistantId, text, partId: reasoningPartId });
               }
               if (Date.now() - lastSaved > 150) save();
+            } else if (chunk.type === 'tool-result') {
+              if (invalidToolInputs.delete(chunk.toolName))
+                this.diagnostics.info(
+                  'chat.tool_input_corrected',
+                  `Invalid input for ${chunk.toolName} was corrected; the tool returned a result.`,
+                  { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
+                );
             } else if (chunk.type === 'tool-error') {
-              this.diagnostics.record('chat.tool_failed', chunk.error, {
-                ...diagnosticContext(),
-                phase: 'tool-execution',
-                tool: chunk.toolName,
-              });
+              const invalidInput =
+                InvalidToolInputError.isInstance(chunk.error) ||
+                (typeof chunk.error === 'string' &&
+                  chunk.error.startsWith('AI_InvalidToolInputError:'));
+              if (invalidInput) invalidToolInputs.add(chunk.toolName);
+              this.diagnostics.record(
+                invalidInput ? 'chat.tool_input_invalid' : 'chat.tool_failed',
+                chunk.error,
+                { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
+                invalidInput ? 'warn' : 'error',
+                invalidInput
+                  ? 'Invalid tool input; returning validation feedback so the bot can correct it.'
+                  : undefined,
+              );
               const previous = generation.activity.find((item) => item.id === chunk.toolCallId);
               onActivity({
                 id: chunk.toolCallId,
@@ -1304,13 +1329,10 @@ export class ChatService {
             emptyReplyRecoveries++;
             finalReplyOnly = true;
             notice = finalReplyNotice;
-            this.diagnostics.record(
+            this.diagnostics.info(
               'chat.empty_reply_recovery',
-              new Error(
-                `The model ended without final text (${finishReason}). Requesting a tool-free reply, attempt ${emptyReplyRecoveries}/${EMPTY_REPLY_RECOVERY_LIMIT}.`,
-              ),
+              `Empty reply; requesting a tool-free final response, attempt ${emptyReplyRecoveries}/${EMPTY_REPLY_RECOVERY_LIMIT}.`,
               diagnosticContext(),
-              'warn',
             );
             continue;
           }
@@ -1321,7 +1343,10 @@ export class ChatService {
         }
         break;
       }
-      if (status === 'complete') this.jobs.remove(assistantId);
+      if (status === 'complete') {
+        recoveredEmptyReply = emptyReplyRecoveries > 0;
+        this.jobs.remove(assistantId);
+      }
     } catch (caught) {
       if (generation.controller.signal.aborted) status = generation.reason;
       else {
@@ -1369,7 +1394,7 @@ export class ChatService {
           status = 'streaming';
           error = null;
           save();
-        } else
+        } else {
           this.messages.finish(
             assistantId,
             generation.content,
@@ -1379,6 +1404,13 @@ export class ChatService {
             generation.activity,
             generation.parts,
           );
+          if (status === 'complete' && recoveredEmptyReply)
+            this.diagnostics.info(
+              'chat.empty_reply_recovered',
+              'Empty reply recovered successfully; the final response was saved.',
+              diagnosticContext(),
+            );
+        }
         {
           try {
             this.memory?.capture(bot, conversationId, userId);

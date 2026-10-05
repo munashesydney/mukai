@@ -26,7 +26,7 @@ export interface DiagnosticContext {
   usedTokens?: number;
 }
 
-// Error-only diagnostics: never serialize SDK errors wholesale. They contain
+// Sanitized diagnostics: never serialize SDK errors wholesale. They contain
 // request bodies, authorization headers, tool arguments and generated source.
 export class DiagnosticService {
   readonly path: string;
@@ -150,6 +150,19 @@ export class DiagnosticService {
     error: unknown,
     context: DiagnosticContext = {},
     level: 'error' | 'warn' = 'error',
+    message?: string,
+  ) {
+    return this.write(event, context, level, error, message);
+  }
+  info(event: string, message: string, context: DiagnosticContext = {}) {
+    return this.write(event, context, 'info', undefined, message);
+  }
+  private write(
+    event: string,
+    context: DiagnosticContext,
+    level: 'error' | 'warn' | 'info',
+    error: unknown,
+    message?: string,
   ) {
     const id = randomUUID();
     try {
@@ -168,14 +181,16 @@ export class DiagnosticService {
       for (const key of ['step', 'contextWindow', 'usedTokens'] as const)
         if (typeof context[key] === 'number' && Number.isFinite(context[key]))
           metadata[key] = context[key];
-      let details: Record<string, unknown>;
-      try {
-        details = this.details(error);
-      } catch {
-        details = {
-          name: 'UninspectableError',
-          message: 'Error properties could not be inspected safely.',
-        };
+      let details: Record<string, unknown> | undefined;
+      if (level !== 'info') {
+        try {
+          details = this.details(error);
+        } catch {
+          details = {
+            name: 'UninspectableError',
+            message: 'Error properties could not be inspected safely.',
+          };
+        }
       }
       const line =
         JSON.stringify({
@@ -183,10 +198,11 @@ export class DiagnosticService {
           id,
           level,
           event: this.text(event, 128),
+          message: this.text(message),
           ...metadata,
           error: details,
         }) + '\n';
-      console.error('[mukai diagnostic] ' + line.trimEnd());
+      console[level]('[mukai diagnostic] ' + line.trimEnd());
       try {
         mkdirSync(this.dir, { recursive: true, mode: 0o700 });
         if (

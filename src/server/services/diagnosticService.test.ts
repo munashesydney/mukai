@@ -38,6 +38,31 @@ it('logs structured extraction failures with output size while omitting generate
   );
 });
 
+it('routes warnings and recovery notices to the appropriate console level and redacts secrets', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const logger = new DiagnosticService(dir);
+  logger.registerSecret('private-recovery-token');
+  logger.record('chat.tool_input_invalid', new Error('Invalid input'), {}, 'warn');
+  logger.info('chat.empty_reply_recovered', 'Recovered successfully private-recovery-token', {
+    messageId: 'recovered-message',
+  });
+  const records = readFileSync(logger.path, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(warn).toHaveBeenCalledOnce();
+  expect(info).toHaveBeenCalledOnce();
+  expect(console.error).not.toHaveBeenCalled();
+  expect(records[1]).toMatchObject({
+    level: 'info',
+    message: 'Recovered successfully [redacted]',
+    messageId: 'recovered-message',
+  });
+  expect(records[1]).not.toHaveProperty('error');
+  expect(JSON.stringify(info.mock.calls)).not.toContain('private-recovery-token');
+});
+
 it('persists useful provider and network errors without SDK request bodies or credentials', () => {
   const logger = new DiagnosticService(dir);
   const key = 'private-test-key',

@@ -47,7 +47,7 @@ export function BotPairConversationsSidebar({
         </p>
       )}
       {!loading && !error && !groups.size && (
-        <p className="sidebar-empty">Conversations appear here when bots message each other.</p>
+        <p className="ai-caption">Conversations appear here when bots message each other.</p>
       )}
       {[...groups].map(([key, group]) => {
         const open =
