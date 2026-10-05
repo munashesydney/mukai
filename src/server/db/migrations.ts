@@ -258,6 +258,7 @@ export const migrations = [
     state TEXT NOT NULL CHECK(state IN ('waiting','complete','cancelled')),
     PRIMARY KEY(parent_message_id,tool_call_id));
    CREATE INDEX delegation_child ON bot_delegations(conversation_id,child_request_id);`,
+  `ALTER TABLE artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'file';`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

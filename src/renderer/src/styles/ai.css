@@ -947,6 +947,29 @@
 .artifact-row {
   margin-bottom: 10px;
 }
+.artifact-thumbnail {
+  width: 80px;
+  height: 56px;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface-muted);
+  cursor: pointer;
+}
+.artifact-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.artifact-image-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 65vh;
+  margin: 0 auto;
+  object-fit: contain;
+}
 .artifact-row-name {
   flex: 1;
   min-width: 0;

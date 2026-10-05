@@ -79,6 +79,8 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
             mediaType: 'image/png' as const,
             outputWidth: normalized.info.width,
             outputHeight: normalized.info.height,
+            imageIncluded: false,
+            imageDelivery: 'pending',
           }
         : {}),
     };
@@ -111,7 +113,13 @@ export function imageTools(context: ImageContext): ToolSet {
             value: [
               {
                 type: 'text',
-                text: resultPreview({ ...output, result: metadata }, context.resultBytes ?? 96000),
+                text: resultPreview(
+                  {
+                    ...output,
+                    result: { ...metadata, imageIncluded: true, imageDelivery: 'included' },
+                  },
+                  context.resultBytes ?? 96000,
+                ),
               },
               { type: 'file', mediaType: 'image/png', data: { type: 'data', data: image } },
             ],

@@ -8,6 +8,7 @@ const artifactRecord = (row: Row): FileArtifact => ({
   path: String(row.path),
   name: String(row.name),
   createdAt: String(row.created_at),
+  ...(row.kind === 'image' ? { kind: 'image' as const, mediaType: 'image/png' } : {}),
 });
 export class ArtifactRepository {
   constructor(private database: Database) {}
@@ -30,7 +31,7 @@ export class ArtifactRepository {
   }
   save(file: FileArtifact) {
     this.database.run(
-      'INSERT INTO artifacts VALUES (?,?,?,?,?,?,(SELECT conversation_id FROM messages WHERE id=?)) ON CONFLICT(conversation_id,path) DO UPDATE SET bot_id=excluded.bot_id,message_id=excluded.message_id,created_at=excluded.created_at',
+      'INSERT INTO artifacts(id,bot_id,message_id,path,name,created_at,conversation_id,kind) VALUES (?,?,?,?,?,?,(SELECT conversation_id FROM messages WHERE id=?),?) ON CONFLICT(conversation_id,path) DO UPDATE SET bot_id=excluded.bot_id,message_id=excluded.message_id,created_at=excluded.created_at,kind=excluded.kind',
       file.id,
       file.botId,
       file.messageId,
@@ -38,6 +39,7 @@ export class ArtifactRepository {
       file.name,
       file.createdAt,
       file.messageId,
+      file.kind || 'file',
     );
   }
 }

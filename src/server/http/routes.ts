@@ -490,7 +490,8 @@ export function createRoutes({
       return send(response, tools.list(url.searchParams.get('workspaceId') || 'default'));
     } else if (resource === 'artifacts' && id && !action && method === 'GET') {
       const file = await artifacts.read(id);
-      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.setHeader('Content-Type', file.mediaType);
+      response.setHeader('X-Content-Type-Options', 'nosniff');
       response.setHeader(
         'Content-Disposition',
         `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,

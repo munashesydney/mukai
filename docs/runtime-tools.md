@@ -76,8 +76,22 @@ Example: `{"action":"view","path":"C:\\Users\\sydne\\Downloads\\picture.png"}`.
   live tab IDs last only until the application closes.
 - The model takes a snapshot before interacting. References are generated in an isolated
   JavaScript world, include open shadow roots, and expire on another snapshot or navigation.
-- Screenshots are sent as images when the selected model supports vision; other models get
-  the screenshot location and use text snapshots. Snapshots mask password field values.
+- Every bot screenshot is saved as a unique PNG artifact in
+  `<workspace>/.mukai/artifacts/screenshots/<artifact-id>.png`. Without a workspace
+  folder, screenshots use `<Mukai data>/artifacts/screenshots/<workspace-id>/`.
+  Tool results include `artifactId`, absolute `path`, `width`, and `height`.
+  Captures appear in that conversation's Artifacts view with a thumbnail, full image
+  preview, and download. Files and previews survive closing the tab and restarting
+  Mukai; subsequent captures never overwrite earlier ones. Storage is limited to
+  16 MiB per PNG. The temporary browser screenshot endpoint remains available.
+- Screenshots are sent as images when the selected model supports vision. Delivery
+  fields `imageIncluded` and `imageDelivery` distinguish `included`, `omitted` by
+  context limits, and `unsupported` for text-only models. The activity log hides image
+  bytes and shows the same delivery status. Saved files remain available even when
+  model context omits the pixels; use `image view` with the returned absolute path to
+  inspect them again. This follows the existing tool approval policy. Saving and
+  artifact registration happen only after the screenshot invocation is approved.
+  Snapshots mask password field values.
 - This first version controls the main document and open shadow roots. Cross-origin iframe
   controls, file uploads, popups, downloads and permission prompts are not supported.
 - Remote pages receive no Mukai preload, Node integration or API token. Browser protocol

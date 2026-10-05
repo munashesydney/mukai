@@ -51,9 +51,7 @@ export function SpaceChat({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const matchingBots =
-    mentionQuery === null
-      ? []
-      : members.filter((bot) => botHandle(bot).includes(mentionQuery));
+    mentionQuery === null ? [] : members.filter((bot) => botHandle(bot).includes(mentionQuery));
 
   function completeMention(bot: Bot) {
     const cursor = input.current?.selectionStart ?? state.text.length;
@@ -103,6 +101,7 @@ export function SpaceChat({
       {tab === 'Artifacts' && !savedOpen ? (
         <ArtifactsView
           conversationId={space.id}
+          messages={state.messages}
           attachments={state.messages.flatMap((message) => message.attachments)}
         />
       ) : (
@@ -248,9 +247,10 @@ export function SpaceChat({
                       }
                       if (matchingBots.length && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
                         event.preventDefault();
-                        setActiveMentionIndex((index) =>
-                          (index + (event.key === 'ArrowDown' ? 1 : -1) + matchingBots.length) %
-                          matchingBots.length,
+                        setActiveMentionIndex(
+                          (index) =>
+                            (index + (event.key === 'ArrowDown' ? 1 : -1) + matchingBots.length) %
+                            matchingBots.length,
                         );
                         return;
                       }
@@ -289,7 +289,9 @@ export function SpaceChat({
                           <Avatar person={bot.avatar} size="xs" />
                           <span>
                             <strong>{bot.name}</strong>
-                            <small>@{botHandle(bot)} · {bot.role}</small>
+                            <small>
+                              @{botHandle(bot)} · {bot.role}
+                            </small>
                           </span>
                         </button>
                       ))}

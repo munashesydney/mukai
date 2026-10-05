@@ -106,7 +106,64 @@ export function resultPreview(value: unknown, bytes: number, notice = RESULT_TRU
     : preview;
 }
 
+export function imageDeliveryState(
+  output: unknown,
+): 'included' | 'omitted' | 'unsupported' | undefined {
+  const item = output as { type?: string; value?: unknown } | null;
+  if (!item) return;
+  const blocks = item.type === 'content' && Array.isArray(item.value) ? item.value : [];
+  if (blocks.some((block) => block.type === 'file' && String(block.mediaType).startsWith('image/')))
+    return 'included';
+  const text =
+    blocks
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n') || (typeof item.value === 'string' ? item.value : '');
+  if (text.includes(IMAGE_OMITTED) || text.includes('[Image omitted')) return 'omitted';
+  if (text.includes('"imageDelivery":"unsupported"')) return 'unsupported';
+  if (text.includes('"imageDelivery":"included"') || text.includes('"imageDelivery":"omitted"'))
+    return 'omitted';
+}
+
+// Delivery metadata describes the bounded result, not the original capture.
+// Reapply after group transport limits as well as individual result limits.
+function syncImageDelivery(output: ToolOutput): ToolOutput {
+  const state = imageDeliveryState(output);
+  if (!state) return output;
+  const sync = (text: string) => {
+    const [json, ...notices] = text.split('\n\n');
+    try {
+      const value = JSON.parse(json);
+      if (value?.result && typeof value.result.imageIncluded === 'boolean') {
+        value.result.imageIncluded = state === 'included';
+        value.result.imageDelivery = state;
+        return [JSON.stringify(value), ...notices].join('\n\n');
+      }
+    } catch {
+      /* Truncated metadata retains its explicit omission notice. */
+    }
+    return text;
+  };
+  if (output.type === 'content')
+    return {
+      ...output,
+      value: output.value.map((block) =>
+        block.type === 'text' ? { ...block, text: sync(block.text) } : block,
+      ),
+    };
+  if (output.type === 'text') return { ...output, value: sync(output.value) };
+  return output;
+}
+
 export function limitToolOutput(
+  output: ToolOutput,
+  tokens: number,
+  estimate: (value: unknown) => number,
+): ToolOutput {
+  return syncImageDelivery(limitToolOutputValue(output, tokens, estimate));
+}
+
+function limitToolOutputValue(
   output: ToolOutput,
   tokens: number,
   estimate: (value: unknown) => number,
@@ -252,7 +309,7 @@ export function limitToolGroups(
         if (part.type !== 'tool-result' || part.output.type !== 'content') return part;
         return {
           ...part,
-          output: {
+          output: syncImageDelivery({
             ...part.output,
             value: part.output.value.map((block) => {
               const size = binaryBytes(block);
@@ -260,7 +317,7 @@ export function limitToolGroups(
               binaryRoom -= size;
               return block;
             }),
-          },
+          }),
         };
       }),
     };

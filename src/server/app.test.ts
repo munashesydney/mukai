@@ -71,6 +71,7 @@ let mode:
   | 'oversized-results'
   | 'runtime-tools'
   | 'image-view'
+  | 'screenshot-artifact'
   | 'approval-custom'
   | 'approval-parallel'
   | 'ask-clarification'
@@ -311,6 +312,45 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'screenshot-artifact') {
+      const step = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const sessionId = api.browsers.list('default')[0]?.id;
+      const steps = [
+        { name: 'browser', input: { action: 'open', url: 'https://example.com' } },
+        { name: 'browser', input: { action: 'screenshot', sessionId } },
+        { name: 'browser', input: { action: 'screenshot', sessionId } },
+        { name: 'browser', input: { action: 'close', sessionId } },
+        {
+          name: 'image',
+          input: {
+            action: 'view',
+            path:
+              api.store.get('SELECT path FROM artifacts ORDER BY created_at DESC LIMIT 1')?.path ||
+              '',
+          },
+        },
+      ];
+      const action = steps[step];
+      const delta = action
+        ? {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'capture-' + step,
+                type: 'function',
+                function: { name: action.name, arguments: JSON.stringify(action.input) },
+              },
+            ],
+          }
+        : { content: 'Saved and reinspected screenshot artifacts.' };
+      res.write(
+        `data: ${JSON.stringify({ id: 'capture', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: action ? 'tool_calls' : 'stop' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (mode === 'image-view') {
       const completed = JSON.stringify(body.messages).includes('"tool_call_id":"image-view"');
       const delta = completed
@@ -651,6 +691,16 @@ beforeEach(async () => {
         isClosed: () => false,
         close: async () => {},
         send: async (method) => {
+          if (method === 'Page.captureScreenshot')
+            return {
+              data: (
+                await sharp({
+                  create: { width: 30, height: 20, channels: 3, background: '#0088cc' },
+                })
+                  .png()
+                  .toBuffer()
+              ).toString('base64'),
+            };
           if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main' } } };
           if (method === 'Page.createIsolatedWorld') return { executionContextId: 42 };
           if (method === 'Runtime.evaluate')
@@ -687,6 +737,115 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('waits before screenshot capture and persistence, and rejected captures create no artifact', async () => {
+    await configure(true);
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'screenshot-artifact';
+    const running = chat('Save approved screenshots only');
+    const opened = await pendingApproval('capture-0');
+    await request('/approvals/' + opened.id, 'POST', { approved: true });
+    const first = await pendingApproval('capture-1');
+    expect((await request<FileArtifact[]>('/bots/scout/artifacts')).data).toEqual([]);
+    await request('/approvals/' + first.id, 'POST', { approved: true });
+    const second = await pendingApproval('capture-2');
+    expect((await request<FileArtifact[]>('/bots/scout/artifacts')).data).toHaveLength(1);
+    await request('/approvals/' + second.id, 'POST', { approved: false });
+    for (const toolCallId of ['capture-3', 'capture-4']) {
+      const item = await pendingApproval(toolCallId);
+      await request('/approvals/' + item.id, 'POST', { approved: true });
+    }
+    await running;
+    expect((await request<FileArtifact[]>('/bots/scout/artifacts')).data).toHaveLength(1);
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.activity).toMatchObject([
+      { action: 'open', status: 'complete' },
+      { action: 'screenshot', status: 'complete' },
+      { action: 'rejected', status: 'failed' },
+      { action: 'close', status: 'complete' },
+      { tool: 'image', action: 'view', status: 'complete' },
+    ]);
+  });
+
+  it.each([
+    { vision: true, folder: false },
+    { vision: true, folder: true },
+    { vision: false, folder: false },
+  ])(
+    'persists unique screenshot artifacts with vision=$vision and folder=$folder after restart',
+    async ({ vision, folder }) => {
+      await configure(vision);
+      if (folder) {
+        project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+        await request('/workspaces/default', 'PUT', {
+          name: 'Screenshot workspace',
+          folder: project,
+        });
+      }
+      mode = 'screenshot-artifact';
+      await chat('Capture screenshots and inspect the saved image after closing the tab');
+      const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      expect(reply.status, reply.error || undefined).toBe('complete');
+      const files = (await request<FileArtifact[]>('/bots/scout/artifacts')).data;
+      expect(files).toHaveLength(2);
+      expect(files[0].path).not.toBe(files[1].path);
+      expect(api.browsers.list('default')).toEqual([]);
+      for (const file of files) {
+        expect(file).toMatchObject({ kind: 'image', mediaType: 'image/png', messageId: reply.id });
+        expect(file.path).toContain(
+          folder
+            ? join(project, '.mukai', 'artifacts', 'screenshots')
+            : join(dir, 'artifacts', 'screenshots', 'default'),
+        );
+        expect(readFileSync(file.path).subarray(1, 4).toString()).toBe('PNG');
+        const response = await fetch(api.url + '/artifacts/' + file.id, {
+          headers: { Authorization: `Bearer ${api.token}` },
+        });
+        expect(response.headers.get('Content-Type')).toBe('image/png');
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(readFileSync(file.path));
+        expect((await fetch(api.url + '/artifacts/' + file.id)).status).toBe(401);
+      }
+      const privateConversation = (
+        await request<Conversation>('/bots/scout/conversations', 'POST', {})
+      ).data;
+      expect(
+        (await request<FileArtifact[]>('/conversations/' + privateConversation.id + '/artifacts'))
+          .data,
+      ).toEqual([]);
+      api.store.run('UPDATE artifacts SET path=? WHERE id=?', join(dir, 'api.token'), files[0].id);
+      expect((await request('/artifacts/' + files[0].id)).response.status).toBe(400);
+      api.store.run('UPDATE artifacts SET path=? WHERE id=?', files[0].path, files[0].id);
+      const screenshots = reply.activity!.filter((item) => item.action === 'screenshot');
+      expect(screenshots).toHaveLength(2);
+      for (const item of screenshots) {
+        expect(JSON.parse(item.summary)).toMatchObject({
+          artifactId: expect.any(String),
+          path: expect.any(String),
+          width: 30,
+          height: 20,
+          imageIncluded: vision,
+          imageDelivery: vision ? 'included' : 'unsupported',
+        });
+        expect(item.summary).not.toContain('"image":');
+      }
+      expect(JSON.stringify(calls.at(-1)!.messages).includes('data:image/png;base64')).toBe(vision);
+      expect(reply.activity!.at(-1)).toMatchObject({
+        tool: 'image',
+        status: vision ? 'complete' : 'failed',
+      });
+      await api.shutdown();
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+      expect((await request<FileArtifact[]>('/bots/scout/artifacts')).data).toEqual(files);
+      for (const file of files) {
+        const response = await fetch(api.url + '/artifacts/' + file.id, {
+          headers: { Authorization: `Bearer ${api.token}` },
+        });
+        expect(response.status).toBe(200);
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(readFileSync(file.path));
+      }
+    },
+  );
+
   it.each([
     { approvalMode: 'full-access', approved: true, restart: false },
     { approvalMode: 'ask-for-approval', approved: true, restart: true },

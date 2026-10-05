@@ -11,6 +11,55 @@ import {
 } from './toolResultPolicy';
 
 describe('bounded tool results', () => {
+  it('reports actual image delivery after pixel and shared binary limits', () => {
+    const header = Buffer.alloc(24);
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);
+    header.writeUInt32BE(30, 16);
+    header.writeUInt32BE(20, 20);
+    const content = {
+      type: 'content' as const,
+      value: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok: true,
+            result: { path: '/saved.png', imageIncluded: true, imageDelivery: 'included' },
+          }),
+        },
+        {
+          type: 'file' as const,
+          mediaType: 'image/png',
+          data: {
+            type: 'data' as const,
+            data: Buffer.concat([header, Buffer.alloc(1024 * 1024)]).toString('base64'),
+          },
+        },
+      ],
+    };
+    const metadata = (output: typeof content) =>
+      JSON.parse((output.value[0] as { text: string }).text).result;
+    expect(
+      metadata(limitToolOutput(content, 6000, estimateTokens) as typeof content),
+    ).toMatchObject({ imageIncluded: true, imageDelivery: 'included' });
+    const omitted = limitToolOutput(content, 400, estimateTokens);
+    expect(JSON.stringify(omitted)).toContain(IMAGE_OMITTED);
+    expect(metadata(omitted as typeof content)).toMatchObject({
+      imageIncluded: false,
+      imageDelivery: 'omitted',
+    });
+    const messages: ModelMessage[] = ['old', 'new'].map((toolCallId) => ({
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId, toolName: 'browser', output: content }],
+    }));
+    const bounded = limitToolGroups(messages, 6000, estimateTokens);
+    const old = bounded[0];
+    if (old.role !== 'tool' || old.content[0].type !== 'tool-result')
+      throw new Error('Missing tool output');
+    expect(metadata(old.content[0].output as typeof content)).toMatchObject({
+      imageIncluded: false,
+      imageDelivery: 'omitted',
+    });
+  });
   it('preserves omitted-image notices when an added default tool leaves very little result room', () => {
     const output = {
       type: 'content' as const,

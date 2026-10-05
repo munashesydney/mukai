@@ -54,6 +54,7 @@ import {
   RESULT_TRUNCATED,
   limitResultText,
   ACTIVITY_TRUNCATED,
+  imageDeliveryState,
 } from './toolResultPolicy';
 import {
   assistantContextText,
@@ -775,6 +776,27 @@ export class ChatService {
         }
       };
       const reportTruncation = (callId: string, output: unknown) => {
+        const delivery = imageDeliveryState(output);
+        const observation = generation.activity.find((item) => item.id === callId);
+        if (
+          delivery &&
+          observation &&
+          ((observation.tool === 'browser' && observation.action === 'screenshot') ||
+            (observation.tool === 'image' && observation.action === 'view'))
+        ) {
+          try {
+            const [json, ...notices] = observation.summary.split('\n\n');
+            const summary = JSON.parse(json);
+            summary.imageIncluded = delivery === 'included';
+            summary.imageDelivery = delivery;
+            onActivity({
+              ...observation,
+              summary: [JSON.stringify(summary), ...notices].join('\n\n'),
+            });
+          } catch {
+            /* Keep truncated activity summaries intact. */
+          }
+        }
         const preview = JSON.stringify(output, (_key, value: unknown) => {
           if (value && typeof value === 'object' && 'type' in value && value.type === 'file')
             return '[image]';

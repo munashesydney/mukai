@@ -118,6 +118,7 @@ export function PursuitRunView({
       {tab === 'Artifacts' ? (
         <ArtifactsView
           conversationId={run.conversationId}
+          messages={messages}
           attachments={messages.flatMap((m) => m.attachments)}
         />
       ) : (

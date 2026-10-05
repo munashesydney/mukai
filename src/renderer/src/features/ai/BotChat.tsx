@@ -167,7 +167,11 @@ export function BotChat({
           </div>
         </header>
         {filesOpen ? (
-          <ArtifactsView conversationId={conversation.id} attachments={files} />
+          <ArtifactsView
+            conversationId={conversation.id}
+            attachments={files}
+            messages={state.messages}
+          />
         ) : (
           <>
             <div

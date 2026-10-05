@@ -60,6 +60,7 @@ export function runtimeTools(
     webSearch: WebSearchService;
     folder: string | null;
     vision: boolean;
+    saveScreenshot?: Parameters<typeof executeBrowser>[1]['saveScreenshot'];
   },
 ): ToolSet {
   return {
@@ -117,14 +118,32 @@ export function runtimeTools(
                 value: [
                   {
                     type: 'text',
-                    text: resultPreview({ ...output, result: rest }, context.resultBytes ?? 96000),
+                    text: resultPreview(
+                      {
+                        ...output,
+                        result: { ...rest, imageIncluded: true, imageDelivery: 'included' },
+                      },
+                      context.resultBytes ?? 96000,
+                    ),
                   },
                   { type: 'file', mediaType: 'image/png', data: { type: 'data', data: image } },
                 ],
               }
             : {
                 type: 'text',
-                value: resultPreview({ ...output, result: rest }, context.resultBytes ?? 96000),
+                value: resultPreview(
+                  {
+                    ...output,
+                    result: {
+                      ...rest,
+                      imageIncluded: false,
+                      imageDelivery: 'unsupported',
+                      notice:
+                        'Screenshot saved. Choose a vision model to inspect the image pixels.',
+                    },
+                  },
+                  context.resultBytes ?? 96000,
+                ),
               };
         }
         return { type: 'text', value: resultPreview(output, context.resultBytes ?? 96000) };

@@ -190,6 +190,8 @@ export class ToolService {
           folder: workspace.folder,
           vision,
           resultBytes,
+          saveScreenshot: (image) =>
+            this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
         }),
         ...(workspace.folder
           ? toolsForBot({

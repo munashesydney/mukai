@@ -88,6 +88,8 @@ export interface ChatActivity {
   delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
 }
 export interface FileArtifact {
+  kind?: 'file' | 'image';
+  mediaType?: string;
   id: string;
   botId: string;
   messageId: string;

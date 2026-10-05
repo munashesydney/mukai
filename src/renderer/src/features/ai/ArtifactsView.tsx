@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Eye, FileText, LoaderCircle } from 'lucide-react';
-import type { Attachment, FileArtifact } from '../../../../shared/ai';
+import { Download, Eye, FileText, Image, LoaderCircle } from 'lucide-react';
+import type { Attachment, FileArtifact, ChatMessage } from '../../../../shared/ai';
 import { artifactService } from '../../services/artifactService';
 import { errorText } from '../../utils/errors';
 import { Modal } from '../../components/ui/Modal';
@@ -10,14 +10,27 @@ export function ArtifactsView({
   botId,
   conversationId,
   attachments,
+  messages,
 }: {
   botId?: string;
   conversationId?: string;
   attachments: Attachment[];
+  messages: ChatMessage[];
 }) {
   const [files, setFiles] = useState<FileArtifact[]>([]),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true);
+  const revision = messages
+    .flatMap((message) =>
+      (message.activity || [])
+        .filter(
+          (activity) =>
+            activity.status === 'complete' &&
+            ['screenshot', 'write_file', 'patch'].includes(activity.action),
+        )
+        .map((activity) => activity.id),
+    )
+    .join('|');
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -35,14 +48,14 @@ export function ArtifactsView({
   }, [botId, conversationId]);
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, revision]);
   return (
     <div className="alternate-view artifacts-view">
       <div className="view-intro">
         <FileText size={24} />
         <span className="artifacts-eyebrow">Artifacts</span>
         <h2>A home for the useful things.</h2>
-        <p>Drafts and files shared in this conversation.</p>
+        <p>Drafts, files, and screenshots shared in this conversation.</p>
       </div>
       {error && (
         <div className="ai-alert" role="alert">
@@ -79,9 +92,34 @@ export function ArtifactsView({
 
 function ArtifactCard({ artifact }: { artifact: FileArtifact }) {
   const [preview, setPreview] = useState<string | null>(null),
+    [imageUrl, setImageUrl] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const isImage = artifact.kind === 'image';
+  useEffect(() => {
+    if (!isImage) return;
+    let disposed = false,
+      url = '';
+    void artifactService
+      .blob(artifact.id)
+      .then((blob) => {
+        if (disposed) return;
+        url = URL.createObjectURL(blob);
+        setImageUrl(url);
+      })
+      .catch((failure) => {
+        if (!disposed) setError(errorText(failure));
+      });
+    return () => {
+      disposed = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [artifact.id, isImage]);
   async function open(download = false) {
+    if (!download && isImage) {
+      setPreview(imageUrl);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -103,17 +141,29 @@ function ArtifactCard({ artifact }: { artifact: FileArtifact }) {
   return (
     <>
       <article className="file-list-row artifact-row">
-        <span className="card-symbol card-symbol--purple">
-          <FileText size={24} />
-        </span>
+        {isImage && imageUrl ? (
+          <button
+            className="artifact-thumbnail"
+            aria-label={`Preview ${artifact.name}`}
+            onClick={() => setPreview(imageUrl)}
+          >
+            <img src={imageUrl} alt={artifact.name} />
+          </button>
+        ) : (
+          <span className="card-symbol card-symbol--purple">
+            {isImage ? <Image size={24} /> : <FileText size={24} />}
+          </span>
+        )}
         <div className="artifact-row-name">
           <strong>{artifact.name}</strong>
-          <small title={artifact.path}>{artifact.path} · Workspace file</small>
+          <small title={artifact.path}>
+            {artifact.path} · {isImage ? 'Screenshot' : 'Workspace file'}
+          </small>
         </div>
         <button
           className="icon-button"
           aria-label={`Preview ${artifact.name}`}
-          disabled={busy}
+          disabled={busy || (isImage && !imageUrl)}
           onClick={() => void open()}
         >
           <Eye size={17} />
@@ -136,10 +186,14 @@ function ArtifactCard({ artifact }: { artifact: FileArtifact }) {
         <Modal title={artifact.name} onClose={() => setPreview(null)}>
           <div className="artifact-preview">
             <p>{artifact.path}</p>
-            <pre>{preview}</pre>
+            {isImage ? (
+              <img className="artifact-image-preview" src={preview} alt={artifact.name} />
+            ) : (
+              <pre>{preview}</pre>
+            )}
           </div>
           <div className="modal-footer">
-            <span>Current workspace file</span>
+            <span>{isImage ? 'Saved screenshot' : 'Current workspace file'}</span>
             <button className="button" disabled={busy} onClick={() => void open(true)}>
               <Download size={15} />
               Download
