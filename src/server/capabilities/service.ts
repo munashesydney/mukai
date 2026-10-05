@@ -18,6 +18,7 @@ import type { WorkspaceService } from '../services/workspaceService';
 import { WorkspaceFileService } from '../services/workspaceFileService';
 import { body } from '../http/transport';
 import type { Bot, ChatActivity } from '../../shared/ai';
+import { customToolPermissionModes } from '../../shared/customCapabilities';
 import type {
   CapabilityDefinition,
   CapabilityRegistration,
@@ -64,8 +65,10 @@ const reserved = new Set([
   'skills',
   'memory',
   'ask',
+  'confirm_custom_tool',
 ]);
 const definitionSchema = z.object({
+  permissionMode: z.enum(customToolPermissionModes).optional(),
   name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/),
   description: z.string().min(1).max(4000).optional(),
   inputSchema: z.record(z.string(), z.unknown()).optional(),
@@ -283,6 +286,10 @@ export class CapabilityService {
   ) {
     signal?.throwIfAborted();
     const input = registrationInput.parse(value);
+    if (kind === 'route' && (input.permissionMode || input.operation === 'set_permission'))
+      throw new ApiError(400, 'Permission modes apply only to custom tools.');
+    if (kind === 'tool' && input.operation === 'register' && !input.permissionMode)
+      throw new ApiError(400, 'Choose permissionMode: auto_approve, ask_bot, or user_approval.');
     if (input.operation === 'list')
       return this.list(workspaceId).filter((item) => item.kind === kind);
     // Registration always creates an ID; a suggested ID must not trigger an existing-row lookup.
@@ -293,6 +300,20 @@ export class CapabilityService {
     if (input.operation === 'inspect') {
       if (!previous) throw new ApiError(400, 'Choose a registration ID.');
       return this.detail(previous.id, workspaceId);
+    }
+    if (input.operation === 'set_permission') {
+      if (!previous || !input.permissionMode)
+        throw new ApiError(400, 'Choose a tool registration ID and permissionMode.');
+      this.db.run(
+        'UPDATE capabilities SET definition_json=? WHERE id=?',
+        JSON.stringify({ ...previous.definition, permissionMode: input.permissionMode }),
+        previous.id,
+      );
+      this.db.run(
+        "UPDATE custom_tool_confirmations SET state='cancelled' WHERE capability_id=? AND state='pending'",
+        previous.id,
+      );
+      return this.require(previous.id);
     }
     if (['enable', 'disable', 'remove'].includes(input.operation)) {
       if (!previous) throw new ApiError(400, 'Choose a registration ID.');
@@ -366,6 +387,9 @@ export class CapabilityService {
       writeFileSync(join(directory, 'sources.json'), JSON.stringify(sources), { mode: 0o600 });
       const exportName = value.exportName || previous?.exportName || 'default';
       const definition = await this.validate(version, exportName, kind, signal);
+      if (kind === 'tool')
+        definition.permissionMode =
+          input.permissionMode || previous?.definition.permissionMode || 'user_approval';
       writeFileSync(
         join(directory, 'manifest.json'),
         JSON.stringify({ exportName, kind, definition }),
@@ -796,13 +820,132 @@ export class CapabilityService {
           : JSON.stringify(result.body ?? null),
     );
   }
+  prepareConfirmation(
+    registration: CapabilityRegistration,
+    bot: Bot,
+    conversationId: string,
+    messageId: string,
+    toolCallId: string,
+    input: unknown,
+  ) {
+    const validate = this.ajv.compile(registration.definition.inputSchema!);
+    if (!validate(input)) throw new ApiError(400, 'Tool arguments do not match inputSchema.');
+    const text = JSON.stringify(input);
+    if (Buffer.byteLength(text) > 262144) throw new ApiError(413, 'Tool input exceeds 256 KB.');
+    const id = randomUUID();
+    this.db.run(
+      `INSERT INTO custom_tool_confirmations VALUES(?,?,?,?,?,?,?,?,'pending')
+      ON CONFLICT(message_id,tool_call_id) DO NOTHING`,
+      id,
+      registration.id,
+      registration.version,
+      bot.id,
+      conversationId,
+      messageId,
+      toolCallId,
+      this.environment.encrypt(text),
+    );
+    const saved = this.db.get(
+      'SELECT id,state FROM custom_tool_confirmations WHERE message_id=? AND tool_call_id=?',
+      messageId,
+      toolCallId,
+    )!;
+    if (saved.state !== 'pending')
+      throw new ApiError(409, 'This confirmation is no longer pending.');
+    return {
+      status: 'confirmation_required',
+      pendingCallId: String(saved.id),
+      tool: registration.definition.name,
+      input: this.environment.publicValue(input),
+      message:
+        'Expected ask_bot checkpoint. The tool has NOT executed. This is not an error or a denial. Review the exact action against the user’s authorization, then call confirm_custom_tool with this pendingCallId and continue, ask_user_approval, or cancel. Continue executes this saved call once; ask_user_approval opens the regular user approval card. Do not call the original tool again to confirm.',
+    };
+  }
+  confirmation(id: string, bot: Bot, conversationId: string, messageId: string) {
+    const row = this.db.get('SELECT * FROM custom_tool_confirmations WHERE id=?', id);
+    if (
+      !row ||
+      row.bot_id !== bot.id ||
+      row.conversation_id !== conversationId ||
+      row.message_id !== messageId
+    )
+      throw new ApiError(
+        403,
+        'This confirmation belongs to another bot or run, or no longer exists.',
+      );
+    if (row.state !== 'pending')
+      throw new ApiError(409, 'This call was already consumed or cancelled. Do not replay it.');
+    const registration = this.require(String(row.capability_id), bot.workspaceId);
+    if (
+      registration.status !== 'ready' ||
+      registration.version !== row.version ||
+      registration.definition.permissionMode !== 'ask_bot'
+    )
+      throw new ApiError(
+        409,
+        'The tool changed or is unavailable. Request a fresh call before confirming.',
+      );
+    return {
+      registration,
+      input: JSON.parse(this.environment.decrypt(String(row.input), false)) as unknown,
+    };
+  }
+  cancelConfirmations(messageId: string) {
+    this.db.run(
+      "UPDATE custom_tool_confirmations SET state='cancelled' WHERE message_id=? AND state='pending'",
+      messageId,
+    );
+  }
+  cancelConfirmation(id: string) {
+    this.db.run(
+      "UPDATE custom_tool_confirmations SET state='cancelled' WHERE id=? AND state='pending'",
+      id,
+    );
+  }
+  async executeConfirmation(
+    id: string,
+    bot: Bot,
+    conversationId: string,
+    messageId: string,
+    signal: AbortSignal,
+    beforeExecute: () => void,
+  ) {
+    signal.throwIfAborted();
+    const { registration, input } = this.confirmation(id, bot, conversationId, messageId);
+    this.db.transaction(() => {
+      this.confirmation(id, bot, conversationId, messageId);
+      beforeExecute();
+      this.db.run("UPDATE custom_tool_confirmations SET state='running' WHERE id=?", id);
+    });
+    try {
+      const result = await this.invoke(
+        registration.id,
+        input,
+        'execute',
+        signal,
+        registration.version,
+      );
+      this.db.run(
+        "UPDATE custom_tool_confirmations SET state='complete',input='null' WHERE id=?",
+        id,
+      );
+      return result;
+    } catch (error) {
+      this.db.run("UPDATE custom_tool_confirmations SET state='failed' WHERE id=?", id);
+      throw error;
+    }
+  }
   forBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void): ToolSet {
     const tools = customRegistrationTools({ bot, signal, onActivity, capabilities: this });
     for (const registration of this.list(bot.workspaceId).filter(
       (item) => item.kind === 'tool' && item.status === 'ready',
     )) {
       tools[registration.definition.name] = tool({
-        description: this.environment.redact(registration.definition.description!),
+        description:
+          this.environment.redact(registration.definition.description!) +
+          '\nCustom-tool permission mode: ' +
+          (registration.definition.permissionMode || 'user_approval') +
+          '. auto_approve executes immediately; ask_bot returns an expected confirmation_required result without executing—use confirm_custom_tool to continue, ask the user, or cancel; user_approval waits for the user even in Full access. A checkpoint is normal, not a tool failure or a policy violation.',
         inputSchema: jsonSchema(registration.definition.inputSchema!),
         execute: async (input, options) => {
           const activity: ChatActivity = {

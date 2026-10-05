@@ -79,6 +79,63 @@ export class ToolService {
   attachCapabilities(service: CapabilityService) {
     this.capabilities = service;
   }
+  customRegistration(bot: Bot, name: string) {
+    const registration = this.capabilities
+      ?.list(bot.workspaceId)
+      .find((item) => item.kind === 'tool' && item.definition.name === name);
+    if (registration) this.access?.require(bot, 'custom:' + registration.id);
+    return registration;
+  }
+  prepareCustomConfirmation(
+    bot: Bot,
+    name: string,
+    conversationId: string,
+    messageId: string,
+    toolCallId: string,
+    input: unknown,
+  ) {
+    const registration = this.customRegistration(bot, name);
+    if (!registration || registration.status !== 'ready')
+      throw new Error('Custom tool is unavailable.');
+    return this.capabilities!.prepareConfirmation(
+      registration,
+      bot,
+      conversationId,
+      messageId,
+      toolCallId,
+      input,
+    );
+  }
+  customConfirmation(id: string, bot: Bot, conversationId: string, messageId: string) {
+    if (!this.capabilities) throw new Error('Custom tools are unavailable.');
+    const pending = this.capabilities.confirmation(id, bot, conversationId, messageId);
+    this.access?.require(bot, 'custom:' + pending.registration.id);
+    return pending;
+  }
+  executeCustomConfirmation(
+    id: string,
+    bot: Bot,
+    conversationId: string,
+    messageId: string,
+    signal: AbortSignal,
+    beforeExecute: () => void,
+  ) {
+    this.customConfirmation(id, bot, conversationId, messageId);
+    return this.capabilities!.executeConfirmation(
+      id,
+      bot,
+      conversationId,
+      messageId,
+      signal,
+      beforeExecute,
+    );
+  }
+  cancelCustomConfirmation(id: string) {
+    this.capabilities?.cancelConfirmation(id);
+  }
+  cancelCustomConfirmations(messageId: string) {
+    this.capabilities?.cancelConfirmations(messageId);
+  }
   customForBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void) {
     const ids = Object.fromEntries(
       (this.capabilities?.list(bot.workspaceId) || [])

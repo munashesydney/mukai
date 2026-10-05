@@ -3,6 +3,11 @@ import { Dropdown } from '../../components/ui/Dropdown';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import type { CapabilityRegistration } from '../../../../shared/customCapabilities';
+import {
+  customToolPermissionLabels,
+  customToolPermissionModes,
+  type CustomToolPermissionMode,
+} from '../../../../shared/customCapabilities';
 import { capabilityService } from '../../services/capabilityService';
 import { errorText } from '../../utils/errors';
 
@@ -23,6 +28,7 @@ export function CustomCapabilities({
   const [kind, setKind] = useState<'tool' | 'route'>('tool'),
     [modulePath, setModulePath] = useState('');
   const [exportName, setExportName] = useState('default');
+  const [permissionMode, setPermissionMode] = useState<CustomToolPermissionMode>('ask_bot');
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true);
@@ -98,6 +104,16 @@ export function CustomCapabilities({
                         {item.missingEnv.length ? ' · ' + item.missingEnv.join(', ') : ''}
                       </span>
                       {item.error && <p>{item.error}</p>}
+                      {item.kind === 'tool' && (
+                        <p>
+                          Permission:{' '}
+                          {
+                            customToolPermissionLabels[
+                              item.definition.permissionMode || 'user_approval'
+                            ]
+                          }
+                        </p>
+                      )}
                     </div>
                     <ChevronRight className="tool-family-arrow" size={18} />
                   </button>
@@ -137,6 +153,7 @@ export function CustomCapabilities({
                   await capabilityService.manage(workspaceId, kind, 'register', {
                     modulePath,
                     exportName,
+                    ...(kind === 'tool' ? { permissionMode } : {}),
                   });
                   setModulePath('');
                   setRegistering(false);
@@ -172,6 +189,24 @@ export function CustomCapabilities({
                   onChange={(event) => setExportName(event.target.value)}
                 />
               </label>
+              {kind === 'tool' && (
+                <label>
+                  Permission mode
+                  <Dropdown
+                    label="Custom tool permission mode"
+                    value={permissionMode}
+                    onChange={(value) => setPermissionMode(value as CustomToolPermissionMode)}
+                    options={customToolPermissionModes.map((value) => ({
+                      value,
+                      label: customToolPermissionLabels[value],
+                    }))}
+                  />
+                  <span className="ai-caption">
+                    Auto approve runs immediately. Ask bot lets the bot review, continue, or request
+                    your approval. User approval always waits for you.
+                  </span>
+                </label>
+              )}
               <button className="button button--primary" disabled={busy}>
                 Validate & register
               </button>

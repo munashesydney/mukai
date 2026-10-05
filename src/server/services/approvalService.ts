@@ -111,9 +111,14 @@ export class ApprovalService {
     details: Omit<ToolApproval, 'id' | 'createdAt'>,
     signal: AbortSignal,
     onChange: () => void,
+    force = false,
   ): Promise<boolean> {
     signal.throwIfAborted();
-    if (!this.restored(details) && (details.toolName === 'memory' || this.mode() === 'full-access'))
+    if (
+      !force &&
+      !this.restored(details) &&
+      (details.toolName === 'memory' || this.mode() === 'full-access')
+    )
       return true;
     return (await this.wait(details, signal, onChange)) as boolean;
   }

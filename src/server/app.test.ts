@@ -1209,6 +1209,7 @@ describe('Mukai bots and AI API', () => {
           kind: 'tool',
           operation: 'register',
           modulePath: 'approval-echo.ts',
+          permissionMode: 'user_approval',
           ownerBotId: 'scout',
         })
       ).response.status,
@@ -1252,6 +1253,7 @@ describe('Mukai bots and AI API', () => {
         kind: 'tool',
         operation: 'register',
         modulePath: 'approval-echo.ts',
+        permissionMode: 'user_approval',
         ownerBotId: 'scout',
       });
       await request('/approvals', 'PUT', { mode: 'ask-for-approval' });

@@ -3,6 +3,7 @@ import type {
   CapabilityRegistration,
   CapabilityRun,
   EnvironmentVariable,
+  CustomToolPermissionMode,
 } from '../../../shared/customCapabilities';
 
 export interface CapabilityDetail {
@@ -21,7 +22,13 @@ export const capabilityService = {
     workspaceId: string,
     kind: 'tool' | 'route',
     operation: string,
-    values: { id?: string; modulePath?: string; exportName?: string; ownerBotId?: string } = {},
+    values: {
+      id?: string;
+      modulePath?: string;
+      exportName?: string;
+      ownerBotId?: string;
+      permissionMode?: CustomToolPermissionMode;
+    } = {},
   ) => api('/capabilities' + scope(workspaceId), 'POST', { kind, operation, ...values }),
   test: (workspaceId: string, id: string, input: unknown) =>
     api<unknown>(

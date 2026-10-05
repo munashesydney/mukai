@@ -1,4 +1,11 @@
 /** Authoring contract for real .ts/.js capability modules. Imports may be type-only. */
+export const customToolPermissionModes = ['auto_approve', 'ask_bot', 'user_approval'] as const;
+export type CustomToolPermissionMode = (typeof customToolPermissionModes)[number];
+export const customToolPermissionLabels: Record<CustomToolPermissionMode, string> = {
+  auto_approve: 'Auto approve',
+  ask_bot: 'Ask bot',
+  user_approval: 'User approval',
+};
 export interface CapabilityContext {
   env: Record<string, string>;
   signal: AbortSignal;
@@ -47,6 +54,7 @@ export interface CustomRouteModule {
   processJob?(payload: unknown, context: CapabilityContext): Promise<unknown> | unknown;
 }
 export interface CapabilityDefinition {
+  permissionMode?: CustomToolPermissionMode;
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;

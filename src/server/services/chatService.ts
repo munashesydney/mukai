@@ -5,6 +5,7 @@ import {
 } from '../../shared/botSystemPrompt';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  tool,
   streamText,
   isStepCount,
   InvalidToolInputError,
@@ -12,6 +13,7 @@ import {
   type UserContent,
   type ToolSet,
 } from 'ai';
+import { z } from 'zod';
 import type {
   ChatInput,
   ChatEvent,
@@ -537,6 +539,91 @@ export class ChatService {
         ),
         ...runtime?.tools,
       };
+      const decidingCustomCalls = new Set<string>();
+      tools.confirm_custom_tool = tool({
+        description:
+          'Resolve an expected ask_bot confirmation_required checkpoint. The original custom tool has not executed. Use the returned pendingCallId: continue executes the exact saved call once; ask_user_approval waits for the user through the regular approval UI even in Full access; cancel discards it. This is a normal runtime checkpoint, not a failure or evidence that the task is forbidden. Review the user’s authorization and consequences; escalate when approval is needed. Never resend the original call to confirm it. Arguments, bot/run, code version, and current access are checked by Mukai.',
+        inputSchema: z
+          .object({
+            pendingCallId: z.string().uuid(),
+            decision: z.enum(['continue', 'ask_user_approval', 'cancel']),
+          })
+          .strict(),
+        execute: async (input, options) => {
+          const pending = this.tools.customConfirmation(
+            input.pendingCallId,
+            bot,
+            conversationId,
+            assistantId,
+          );
+          if (decidingCustomCalls.has(input.pendingCallId))
+            throw new ApiError(409, 'This call already has a decision in progress.');
+          decidingCustomCalls.add(input.pendingCallId);
+          try {
+            if (input.decision === 'cancel') {
+              this.tools.cancelCustomConfirmation(input.pendingCallId);
+              return { cancelled: true, executed: false };
+            }
+            if (input.decision === 'ask_user_approval') {
+              if (!this.approvals) throw new ApiError(503, 'User approvals are unavailable.');
+              const approved = await this.approvals.request(
+                {
+                  toolCallId: options.toolCallId,
+                  toolName: pending.registration.definition.name,
+                  input: pending.input,
+                  botId,
+                  botName: bot.name,
+                  conversationId,
+                  messageId: assistantId,
+                  batchId: approvalBatchId,
+                },
+                stepSignal,
+                () => emit({ type: 'approval', id: assistantId }),
+                true,
+              );
+              stepSignal.throwIfAborted();
+              if (!approved) {
+                this.tools.cancelCustomConfirmation(input.pendingCallId);
+                return {
+                  rejected: true,
+                  executed: false,
+                  message:
+                    'The user denied this invocation. It was not executed. Do not retry without new user authorization.',
+                };
+              }
+            }
+            const result = await this.tools.executeCustomConfirmation(
+              input.pendingCallId,
+              bot,
+              conversationId,
+              assistantId,
+              stepSignal,
+              () => {
+                this.jobs.beforeTool(assistantId, options.toolCallId);
+                onActivity({
+                  id: options.toolCallId,
+                  tool: pending.registration.definition.name,
+                  action: 'execute',
+                  path: pending.registration.modulePath,
+                  status: 'running',
+                  summary: 'Executing the confirmed custom tool call.',
+                });
+              },
+            );
+            onActivity({
+              id: options.toolCallId,
+              tool: pending.registration.definition.name,
+              action: 'execute',
+              path: pending.registration.modulePath,
+              status: 'complete',
+              summary: 'Confirmed custom tool completed.',
+            });
+            return result;
+          } finally {
+            decidingCustomCalls.delete(input.pendingCallId);
+          }
+        },
+      });
       const botIdentity = {
         id: bot.id,
         name: bot.name,
@@ -844,8 +931,38 @@ export class ChatService {
               batchId: approvalBatchId,
               state: 'pending',
             });
+            const custom = this.tools.customRegistration(bot, name);
+            if (
+              custom &&
+              custom.definition.permissionMode !== 'auto_approve' &&
+              custom.definition.permissionMode !== 'ask_bot' &&
+              !this.approvals
+            )
+              throw new ApiError(503, 'User approvals are unavailable.');
+            if (custom?.definition.permissionMode === 'ask_bot') {
+              const checkpoint = this.tools.prepareCustomConfirmation(
+                bot,
+                name,
+                conversationId,
+                assistantId,
+                options.toolCallId,
+                input,
+              );
+              onActivity({
+                id: options.toolCallId,
+                tool: name,
+                action: 'confirmation_required',
+                path: custom.modulePath,
+                status: 'complete',
+                summary:
+                  'Expected Ask bot checkpoint. No custom code ran; the bot can continue, ask you for approval, or cancel.',
+              });
+              return checkpoint;
+            }
             const approved =
               name === 'ask' ||
+              name === 'confirm_custom_tool' ||
+              custom?.definition.permissionMode === 'auto_approve' ||
               (name === 'manage_bot' &&
                 this.jobs.resumableDelegation(assistantId, options.toolCallId))
                 ? true
@@ -862,6 +979,7 @@ export class ChatService {
                     },
                     stepSignal,
                     () => emit({ type: 'approval', id: assistantId }),
+                    Boolean(custom),
                   );
             stepSignal.throwIfAborted();
             if (approved === false) {
@@ -878,9 +996,24 @@ export class ChatService {
               return { rejected: true, message: summary };
             }
             diagnosticPhase = 'tool-execution';
+            if (custom) {
+              const current = this.tools.customRegistration(bot, name);
+              if (
+                !current ||
+                current.id !== custom.id ||
+                current.version !== custom.version ||
+                current.status !== 'ready' ||
+                current.definition.permissionMode !== custom.definition.permissionMode
+              )
+                throw new ApiError(
+                  409,
+                  'The custom tool changed while awaiting approval. Request a fresh call.',
+                );
+            }
             // Asking has no external side effect: it remains safely resumable
             // while waiting, and its answer is checkpointed before the card clears.
-            if (name !== 'ask') this.jobs.beforeTool(assistantId, options.toolCallId);
+            if (name !== 'ask' && name !== 'confirm_custom_tool')
+              this.jobs.beforeTool(assistantId, options.toolCallId);
             executionVersion++;
             const operation = Promise.resolve(
               execute(input, { ...options, abortSignal: stepSignal }),
@@ -1394,6 +1527,7 @@ export class ChatService {
         Boolean(this.approvals?.suspending(assistantId)) ||
         (this.closing && this.jobs.resumableDelegation(assistantId));
       if (!suspended) {
+        this.tools.cancelCustomConfirmations(assistantId);
         this.approvals?.discard(assistantId);
         this.cancelDelegations(assistantId);
       }

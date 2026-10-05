@@ -277,6 +277,16 @@ export const migrations = [
        GROUP BY b.model
      )
    );`,
+  `UPDATE capabilities SET definition_json=json_set(definition_json,'$.permissionMode','user_approval')
+   WHERE kind='tool' AND json_extract(definition_json,'$.permissionMode') IS NULL;
+   CREATE TABLE custom_tool_confirmations (
+    id TEXT PRIMARY KEY, capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+    version TEXT NOT NULL, bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    tool_call_id TEXT NOT NULL, input TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','running','complete','cancelled','failed')),
+    UNIQUE(message_id,tool_call_id));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

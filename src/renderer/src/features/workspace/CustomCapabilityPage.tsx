@@ -4,6 +4,12 @@ import { capabilityService, type CapabilityDetail } from '../../services/capabil
 import { errorText } from '../../utils/errors';
 import type { Bot } from '../../../../shared/ai';
 import { ToolAssignments } from './ToolAssignments';
+import { Dropdown } from '../../components/ui/Dropdown';
+import {
+  customToolPermissionLabels,
+  customToolPermissionModes,
+  type CustomToolPermissionMode,
+} from '../../../../shared/customCapabilities';
 export function CustomCapabilityPage({
   workspaceId,
   id,
@@ -159,6 +165,33 @@ export function CustomCapabilityPage({
               <dt>Environment</dt>
               <dd>{detail.registration.definition.requiredEnv?.join(', ') || 'None required'}</dd>
             </dl>
+            {detail.registration.kind === 'tool' && (
+              <label className="ai-form">
+                Permission mode
+                <Dropdown
+                  label="Custom tool permission mode"
+                  disabled={busy}
+                  value={detail.registration.definition.permissionMode || 'user_approval'}
+                  onChange={(value) =>
+                    void perform(() =>
+                      capabilityService.manage(workspaceId, 'tool', 'set_permission', {
+                        id,
+                        permissionMode: value as CustomToolPermissionMode,
+                      }),
+                    )
+                  }
+                  options={customToolPermissionModes.map((value) => ({
+                    value,
+                    label: customToolPermissionLabels[value],
+                  }))}
+                />
+                <span className="ai-caption">
+                  Auto approve runs immediately. Ask bot pauses for the bot’s decision. User
+                  approval waits for you, including in Full access. Changing the mode cancels
+                  pending bot confirmations.
+                </span>
+              </label>
+            )}
             <ToolAssignments
               workspaceId={workspaceId}
               bots={bots}

@@ -9,6 +9,7 @@ import { ProviderService } from './services/providerService';
 import { DiagnosticService } from './services/diagnosticService';
 import { scoutBot } from './services/botService';
 import { providerSchema } from './http/schemas';
+import { migrations } from './db/migrations';
 
 describe('Saved provider models', () => {
   let dir: string, database: Database, service: ProviderService;
@@ -127,8 +128,11 @@ describe('Saved provider models', () => {
       maxOutputTokens: 16384,
       supportsImages: true,
     });
-    database.db.exec(
-      'ALTER TABLE providers DROP COLUMN models_json; DELETE FROM schema_migrations WHERE version=(SELECT MAX(version) FROM schema_migrations);',
+    database.db.exec('ALTER TABLE providers DROP COLUMN models_json;');
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE providers ADD COLUMN models_json')) +
+        1,
     );
     database.db.close();
     database = new Database(dir);

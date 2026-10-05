@@ -14,6 +14,15 @@ import { scoutBot } from '../services/botService';
 let api: Awaited<ReturnType<typeof startApiServer>>, root: string, folder: string;
 let fixture: Server | undefined;
 async function request(path: string, method = 'GET', input?: unknown) {
+  if (
+    input &&
+    typeof input === 'object' &&
+    'kind' in input &&
+    input.kind === 'tool' &&
+    'operation' in input &&
+    input.operation === 'register'
+  )
+    input = { permissionMode: 'auto_approve', ...input };
   const response = await fetch(api.url + path, {
     method,
     headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
@@ -511,6 +520,7 @@ describe('Custom capabilities', () => {
                       step === 0
                         ? {
                             operation: 'register',
+                            permissionMode: 'auto_approve',
                             id: 'weather',
                             modulePath: 'weather-tool.js',
                             exportName: 'default',

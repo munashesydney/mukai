@@ -591,6 +591,7 @@ describe('Bot architecture', () => {
     const registration = await api.capabilities.manage('default', main.id, 'tool', {
       operation: 'register',
       modulePath: 'echo.ts',
+      permissionMode: 'auto_approve',
     });
     const id = 'custom:' + (registration as { id: string }).id;
     expect(api.access.allowed(main, id)).toBe(true);
