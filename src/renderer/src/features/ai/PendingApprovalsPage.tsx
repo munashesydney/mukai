@@ -12,7 +12,10 @@ export function PendingApprovalsPage({
   onOpen: (request: ToolApproval) => void;
 }) {
   const state = useApprovals();
-  const pending = state.pending.filter((request) => request.botId === bot.id);
+  const pending = state.pending.filter(
+    (request) =>
+      request.botId === bot.id || request.blockedParents?.some((parent) => parent.botId === bot.id),
+  );
   const groups = new Map<string, ToolApproval[]>();
   for (const request of pending) {
     const group = groups.get(request.conversationId) || [];
@@ -91,6 +94,12 @@ export function PendingApprovalsPage({
                       </h2>
                       <span>{grouped ? `${requests.length} approvals` : action}</span>
                     </div>
+                    {request.botId !== bot.id && (
+                      <p className="ai-caption">
+                        Sub-bot {request.botName} is requesting permission. {bot.name} is waiting
+                        for its response.
+                      </p>
+                    )}
                     {grouped ? (
                       <div className="pending-approval-tools">
                         {requests.map((item) => (
@@ -115,7 +124,9 @@ export function PendingApprovalsPage({
                             ? 'Pursuit run'
                             : request.target?.kind === 'space'
                               ? 'Space'
-                              : 'Private chat'}
+                              : request.target?.kind === 'bot'
+                                ? 'Bot conversation'
+                                : 'Private chat'}
                         </small>
                       </span>
                     </div>

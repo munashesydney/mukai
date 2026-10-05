@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
+import { ConversationNavigation } from './ConversationNavigation';
 import {
   Brain,
   ChevronDown,
@@ -38,6 +39,7 @@ function ActivitySpinner() {
 }
 
 function ToolRow({ activity }: { activity: ChatActivity }) {
+  const openConversation = useContext(ConversationNavigation);
   const pursuitLabels: Record<string, string> = {
     create: 'Created pursuit',
     update: 'Updated pursuit',
@@ -79,6 +81,20 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
           </span>
         </span>
         {problem && <CircleAlert size={13} aria-label={activity.status} />}
+        {activity.delegation && openConversation && (
+          <button
+            type="button"
+            className="text-button response-delegation-link"
+            aria-label={`Open bot conversation with ${activity.delegation.botName}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openConversation(activity.delegation!.conversationId);
+            }}
+          >
+            Open bot conversation
+          </button>
+        )}
         <ChevronDown size={13} className="response-chevron" />
       </summary>
       <div className="response-tool-detail">

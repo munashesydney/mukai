@@ -46,7 +46,13 @@ export class ApprovalService {
   }
 
   state(): ApprovalState {
-    return { mode: this.mode(), pending: [...this.pending.values()].map((item) => item.request) };
+    return {
+      mode: this.mode(),
+      pending: [...this.pending.values()].map(({ request }) => {
+        const blockedParents = this.repository.blockedParents(request);
+        return blockedParents.length ? { ...request, blockedParents } : request;
+      }),
+    };
   }
 
   setMode(mode: ApprovalMode) {

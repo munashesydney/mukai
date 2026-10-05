@@ -20,6 +20,7 @@ import { DiagnosticService } from './services/diagnosticService';
 import { safeProviderError } from './services/providerService';
 import { PROVIDER_MAX_RETRIES } from './services/responsePolicy';
 import { memoryReviewOutputSchema } from './services/memoryService';
+import { emptyReplyRecoveryMessages, FINAL_REPLY_NOTICE } from './services/responsePolicy';
 
 let dir: string, database: Database, providers: ProviderRepository, service: ChatGPTService;
 let authorization: URL;
@@ -704,6 +705,104 @@ describe('ChatGPT Responses compatibility', () => {
     expect(inferenceCalls[0].tools).toEqual([
       expect.objectContaining({ type: 'namespace', name: 'mukai' }),
     ]);
+  });
+  it('sends the saved ask answer and a fresh continuation through the ChatGPT Responses SDK', async () => {
+    const { result } = await login();
+    const final = complete('The user chose: Time to relax.');
+    inference = () =>
+      sse([
+        { type: 'response.output_item.added', output_index: 0, item: final.output[0] },
+        {
+          type: 'response.output_text.delta',
+          output_index: 0,
+          content_index: 0,
+          item_id: 'msg_test',
+          delta: 'The user chose: Time to relax.',
+        },
+        { type: 'response.output_item.done', output_index: 0, item: final.output[0] },
+        { type: 'response.completed', response: final },
+      ]);
+    const model = createOpenAI({
+      apiKey: 'placeholder',
+      fetch: service.fetch(result.providerId!),
+    }).responses('gpt-5.6-terra');
+    const response = streamText({
+      model,
+      system: FINAL_REPLY_NOTICE,
+      messages: emptyReplyRecoveryMessages([
+        { role: 'user', content: 'Call ask and wait. Do not provide a normal reply instead.' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'reasoning',
+              text: '',
+              providerOptions: {
+                openai: { itemId: 'rs_previous', reasoningEncryptedContent: 'old-opaque-state' },
+              },
+            },
+            {
+              type: 'tool-call',
+              toolCallId: 'call_ask',
+              toolName: 'ask',
+              input: { action: 'clarification', question: 'What are you looking forward to?' },
+              providerOptions: { openai: { itemId: 'fc_previous', namespace: 'mukai' } },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call_ask',
+              toolName: 'ask',
+              output: {
+                type: 'text',
+                value: '{"action":"clarification","answer":"Time to relax"}',
+              },
+            },
+          ],
+        },
+      ]),
+      tools: {},
+      toolChoice: 'none',
+      maxRetries: 0,
+      providerOptions: {
+        openai: { store: false, reasoningEffort: 'medium', systemMessageMode: 'developer' },
+      },
+    });
+    for await (const chunk of response.fullStream) if (chunk.type === 'error') throw chunk.error;
+    expect(await response.text).toBe('The user chose: Time to relax.');
+    expect(inferenceCalls).toHaveLength(1);
+    const body = inferenceCalls[0];
+    const items = body.input as Record<string, unknown>[];
+    expect(body.store).toBe(false);
+    expect(body.tools ?? []).toEqual([]);
+    expect(items[0]).toMatchObject({ role: 'developer' });
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'function_call', call_id: 'call_ask', namespace: 'mukai' }),
+        expect.objectContaining({
+          type: 'function_call_output',
+          call_id: 'call_ask',
+          output: '{"action":"clarification","answer":"Time to relax"}',
+        }),
+      ]),
+    );
+    expect(items.at(-1)).toMatchObject({
+      role: 'user',
+      content: [
+        expect.objectContaining({
+          type: 'input_text',
+          text: expect.stringContaining('[Mukai runtime continuation'),
+        }),
+      ],
+    });
+    expect(items.some((item) => item.type === 'reasoning' || item.type === 'item_reference')).toBe(
+      false,
+    );
+    expect(JSON.stringify(body)).not.toContain('old-opaque-state');
   });
   it('rejects an interrupted stream and reports a late plan-limit failure', async () => {
     await expect(

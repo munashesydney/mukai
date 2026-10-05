@@ -6,6 +6,7 @@ export interface ChatCheckpoint {
   messages: ModelMessage[];
   usage: ContextUsage;
   steps: number;
+  emptyReplyRecoveries?: number;
   response?: {
     content: string;
     reasoning: string;
@@ -14,6 +15,23 @@ export interface ChatCheckpoint {
   };
 }
 export class ChatCheckpointError extends Error {}
+
+/** Only saved tool calls still waiting to be incorporated into the model context. */
+export const resumableDelegationMessages = `SELECT d.parent_message_id FROM bot_delegations d
+  JOIN chat_jobs j ON j.message_id=d.parent_message_id
+  JOIN json_each(j.approval_step_json) step ON json_extract(step.value,'$.toolCallId')=d.tool_call_id
+  WHERE d.state IN ('waiting','complete')`;
+
+export interface BotDelegation {
+  parentMessageId: string;
+  toolCallId: string;
+  callerId: string;
+  targetId: string;
+  conversationId: string;
+  childRequestId: string;
+  message: string;
+  state: 'waiting' | 'complete' | 'cancelled';
+}
 
 export interface ApprovalStepCall {
   toolCallId: string;
@@ -30,6 +48,112 @@ export interface ApprovalStepCall {
 // Checkpoints contain model context, never provider credentials or request headers.
 export class ChatJobRepository {
   constructor(private database: Database) {}
+  delegation(messageId: string, toolCallId: string): BotDelegation | undefined {
+    const row = this.database.get(
+      'SELECT * FROM bot_delegations WHERE parent_message_id=? AND tool_call_id=?',
+      messageId,
+      toolCallId,
+    );
+    if (!row) return;
+    return {
+      parentMessageId: String(row.parent_message_id),
+      toolCallId: String(row.tool_call_id),
+      callerId: String(row.caller_id),
+      targetId: String(row.target_id),
+      conversationId: String(row.conversation_id),
+      childRequestId: String(row.child_request_id),
+      message: String(row.message),
+      state: row.state as BotDelegation['state'],
+    };
+  }
+  saveDelegation(value: BotDelegation) {
+    this.database.run(
+      'INSERT INTO bot_delegations VALUES(?,?,?,?,?,?,?,?)',
+      value.parentMessageId,
+      value.toolCallId,
+      value.callerId,
+      value.targetId,
+      value.conversationId,
+      value.childRequestId,
+      value.message,
+      value.state,
+    );
+  }
+  delegationState(messageId: string, toolCallId: string, state: BotDelegation['state']) {
+    this.database.run(
+      'UPDATE bot_delegations SET state=? WHERE parent_message_id=? AND tool_call_id=?',
+      state,
+      messageId,
+      toolCallId,
+    );
+  }
+  cancelDelegations(messageId: string) {
+    const children = this.database
+      .all(
+        "SELECT conversation_id,child_request_id FROM bot_delegations WHERE parent_message_id=? AND state='waiting'",
+        messageId,
+      )
+      .map((row) => ({
+        conversationId: String(row.conversation_id),
+        requestId: String(row.child_request_id),
+      }));
+    this.database.run(
+      "UPDATE bot_delegations SET state='cancelled' WHERE parent_message_id=? AND state='waiting'",
+      messageId,
+    );
+    return children;
+  }
+  resumableDelegation(messageId: string, toolCallId?: string): boolean {
+    const calls = this.approvalStep(messageId);
+    if (!toolCallId)
+      return calls.some((call) => this.resumableDelegation(messageId, call.toolCallId));
+    if (!calls.some((call) => call.toolCallId === toolCallId)) return false;
+    return Boolean(
+      this.database.get(
+        "SELECT 1 FROM bot_delegations WHERE parent_message_id=? AND state IN ('waiting','complete') AND tool_call_id=?",
+        messageId,
+        toolCallId,
+      ),
+    );
+  }
+  delegatedRequest(conversationId: string, requestId: string) {
+    return Boolean(
+      this.database.get(
+        "SELECT 1 FROM bot_delegations WHERE conversation_id=? AND child_request_id=? AND state='waiting'",
+        conversationId,
+        requestId,
+      ),
+    );
+  }
+  delegationRequest(conversationId: string) {
+    const row = this.database.get(
+      `SELECT request_id FROM messages WHERE conversation_id=?
+      AND status IN ('streaming','interrupted') AND id IN (${resumableDelegationMessages})
+      ORDER BY sequence DESC LIMIT 1`,
+      conversationId,
+    );
+    return row ? String(row.request_id) : undefined;
+  }
+  delegationRoots() {
+    return this.database
+      .all(
+        `SELECT DISTINCT m.id,m.bot_id,m.conversation_id,m.request_id
+      FROM messages m JOIN chat_jobs j ON j.message_id=m.id
+      JOIN bot_delegations d ON d.parent_message_id=m.id
+      JOIN conversations c ON c.id=m.conversation_id
+      WHERE m.status IN ('streaming','interrupted') AND d.state IN ('waiting','complete')
+      AND c.kind!='pursuit_run' AND j.approval_step_json IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM bot_delegations p WHERE p.conversation_id=m.conversation_id
+        AND p.child_request_id=m.request_id AND p.state='waiting')`,
+      )
+      .map((row) => ({
+        messageId: String(row.id),
+        botId: String(row.bot_id),
+        conversationId: String(row.conversation_id),
+        requestId: String(row.request_id),
+      }))
+      .filter((row) => this.resumableDelegation(row.messageId));
+  }
   approvalStep(id: string): ApprovalStepCall[] {
     const row = this.database.get(
       'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',

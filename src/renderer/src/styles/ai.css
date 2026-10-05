@@ -1076,6 +1076,11 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.response-delegation-link {
+  flex-shrink: 0;
+  font-size: 11px;
+  margin-left: 4px;
+}
 .response-tool-detail,
 .response-reasoning-detail {
   margin: 8px 0 0 7px;

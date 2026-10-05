@@ -8,11 +8,13 @@ export function AskRequestCard({
   busy,
   navigation,
   onCancel,
+  delegated,
 }: {
   request: ToolApproval;
   busy: boolean;
   navigation?: ReactNode;
   onCancel?: () => void;
+  delegated?: boolean;
 }) {
   const [selected, setSelected] = useState('');
   const [typed, setTyped] = useState('');
@@ -29,7 +31,8 @@ export function AskRequestCard({
     >
       <header className="ask-request-header">
         <span>
-          {clarification ? 'Question' : 'Approval'} from {request.botName}
+          {clarification ? 'Question' : 'Approval'} from {delegated ? 'sub-bot ' : ''}
+          {request.botName}
         </span>
         <div className="ask-request-controls">
           <button
@@ -56,6 +59,12 @@ export function AskRequestCard({
           )}
         </div>
       </header>
+      {delegated && (
+        <p className="ai-caption">
+          Your bot is waiting for {request.botName}’s response. This request is from{' '}
+          {request.botName}.
+        </p>
+      )}
       <p className="ask-question" id={`ask-question-${request.id}`}>
         {question.question}
       </p>

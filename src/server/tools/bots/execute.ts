@@ -8,6 +8,7 @@ export async function executeBotManagement(
     bot: Bot;
     management: BotManagementService;
     signal: AbortSignal;
+    messageId?: string;
     onActivity: (activity: ChatActivity) => void;
   },
   callId: string,
@@ -53,11 +54,22 @@ export async function executeBotManagement(
         input.message,
         context.signal,
         input.conversationId,
+        {
+          parentMessageId: context.messageId,
+          toolCallId: callId,
+          onStarted(value) {
+            activity.delegation = value;
+            activity.path = value.botName;
+            activity.summary = `Waiting for ${value.botName}’s response…`;
+            context.onActivity({ ...activity });
+          },
+        },
       );
     }
     context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });
     return { ok: true, result };
   } catch (error) {
+    context.signal.throwIfAborted();
     const summary = error instanceof Error ? error.message : 'Bot operation failed.';
     context.onActivity({
       ...activity,

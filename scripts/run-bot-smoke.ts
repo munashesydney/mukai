@@ -30,7 +30,7 @@ async function main() {
         stdio: 'inherit',
         windowsHide: true,
       });
-      const timer = setTimeout(() => child.kill(), 90000);
+      const timer = setTimeout(() => child.kill(), 120000);
       child.once('error', (error) => {
         clearTimeout(timer);
         reject(error);

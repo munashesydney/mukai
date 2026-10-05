@@ -31,6 +31,7 @@ import { BotModelPicker } from './BotModelPicker';
 import { ApprovalModePicker, ToolApprovalCards } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { useApprovals } from './approvalStore';
+import { approvalBlocksConversation } from '../../../../shared/approvals';
 
 export function BotChat({
   bot,
@@ -55,8 +56,8 @@ export function BotChat({
   const chatId = (readOnly ? 'space:' : 'private:') + conversation.id;
   const state = useChat(chatId, readOnly);
   const approvals = useApprovals();
-  const hasRequests = approvals.pending.some(
-    (request) => request.conversationId === conversation.id,
+  const hasRequests = approvals.pending.some((request) =>
+    approvalBlocksConversation(request, conversation.id),
   );
   const participants = [...conversation.botIds]
     .sort()
@@ -213,6 +214,9 @@ export function BotChat({
                 </p>
               )}
               {state.messages.map((message) => {
+                const delegation = message.activity?.find(
+                  (activity) => activity.status === 'running' && activity.delegation,
+                )?.delegation;
                 const author = readOnly
                   ? bots.find((item) => item.id === message.botId)
                   : undefined;
@@ -273,13 +277,15 @@ export function BotChat({
                             <i />
                             <i />
                           </span>
-                          {message.activity?.some((activity) => activity.status === 'running')
-                            ? 'Working with files…'
-                            : message.content
-                              ? 'Responding…'
-                              : message.reasoning
-                                ? `${bot.name} is thinking…`
-                                : 'Waiting for the model…'}
+                          {delegation
+                            ? `Waiting for ${delegation.botName}’s response…`
+                            : message.activity?.some((activity) => activity.status === 'running')
+                              ? 'Working with files…'
+                              : message.content
+                                ? 'Responding…'
+                                : message.reasoning
+                                  ? `${bot.name} is thinking…`
+                                  : 'Waiting for the model…'}
                         </div>
                       )}
                       {['failed', 'stopped', 'interrupted'].includes(message.status) && (

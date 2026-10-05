@@ -207,7 +207,7 @@ export class ToolService {
           ? pursuitTools({ bot, pursuits: this.pursuits, onActivity, signal, scheduledRun })
           : {}),
         ...(this.management
-          ? botManagementTools({ bot, management: this.management, signal, onActivity })
+          ? botManagementTools({ bot, management: this.management, signal, onActivity, messageId })
           : {}),
       },
       Object.fromEntries(

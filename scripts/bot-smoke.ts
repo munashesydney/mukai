@@ -222,12 +222,58 @@ async function main() {
     let approvalFixture = false;
     let parallelFixture = false;
     let askFixture: 'clarification' | 'approval' | null = null;
+    let delegationFixture = '';
     modelFixture = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const input = JSON.parse(body) as { model: string; messages: { role: string }[] };
+      const input = JSON.parse(body) as {
+        model: string;
+        messages: { role: string; content?: string }[];
+      };
       sentModels.push(input.model);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (
+        delegationFixture &&
+        !input.messages.some((message) => message.role === 'tool') &&
+        !input.messages.some((message) =>
+          message.content?.includes('This message is coming from another bot'),
+        )
+      ) {
+        res.write(
+          `data: ${JSON.stringify({
+            id: 'delegation-ui',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: input.model,
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'delegation-ui-call',
+                      type: 'function',
+                      function: {
+                        name: 'manage_bot',
+                        arguments: JSON.stringify({
+                          action: 'send_message',
+                          botId: delegationFixture,
+                          message: 'Review and ask for permission.',
+                        }),
+                      },
+                    },
+                  ],
+                },
+                finish_reason: 'tool_calls',
+              },
+            ],
+          })}\n\n`,
+        );
+        res.end('data: [DONE]\n\n');
+        return;
+      }
       if (approvalFixture || askFixture) {
         const completed = input.messages.some((message) => message.role === 'tool');
         res.write(
@@ -976,14 +1022,87 @@ async function main() {
     assert.equal((await pairApproval).status, 'complete');
     askFixture = null;
     await wait('!document.querySelector(".ask-request-card")');
+    console.log('Bot UI: checking parent navigation and child approvals.');
+    window.setSize(1480, 980);
+    delegationFixture = child.id;
+    askFixture = 'approval';
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait(
+      'Boolean(document.querySelector(\'button[aria-label="New conversation with Mukai"]\'))',
+    );
+    await evaluate(
+      'document.querySelector(\'button[aria-label="New conversation with Mukai"]\').click()',
+    );
+    await wait(
+      'Boolean(document.querySelector(".composer textarea")) && document.querySelector(".conversation-heading h1").textContent==="Mukai"',
+    );
+    await wait('document.querySelectorAll(".ai-message--assistant").length===0');
+    await fill('.composer textarea', 'Delegate this review.');
+    await evaluate('document.querySelector(\'button[aria-label="Send message"]\').click()');
+    await wait('Boolean(document.querySelector(".ask-request-card"))');
+    assert(
+      (
+        await evaluate<string>('document.querySelector(".ask-request-header").textContent')
+      ).includes(`Approval from sub-bot ${child.name}`),
+    );
+    assert(
+      (await evaluate<string>('document.querySelector(".ask-request-card").textContent')).includes(
+        `Your bot is waiting for ${child.name}`,
+      ),
+    );
+    const parentApproval = (await request<ApprovalState>('/approvals')).pending[0];
+    assert(parentApproval.blockedParents?.some((parent) => parent.botId === main.id));
+    await wait('Boolean(document.querySelector(".response-delegation-link"))');
+    await capture('bot-delegation-parent-approval.png');
+    window.setSize(720, 900);
+    await capture('bot-delegation-parent-narrow.png');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    await evaluate('document.querySelector(".response-delegation-link").click()');
+    await wait(
+      'document.querySelectorAll(".ai-message").length===2 && Boolean(document.querySelector(".ask-request-card")) && !document.querySelector(".composer")',
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".ask-request-header").textContent.includes("sub-bot")',
+      ),
+      false,
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".conversation-heading h1").textContent.includes("/")',
+      ),
+      true,
+    );
+    await click('Approve');
+    await wait('!document.querySelector(".ask-request-card")');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait(
+      'document.querySelector(".conversation-heading h1")?.textContent==="Mukai" && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+    );
+    assert.equal((await request<ApprovalState>('/approvals')).pending.length, 0);
+    delegationFixture = '';
+    askFixture = null;
     window.setSize(720, 900);
     await capture('bot-pair-conversation-narrow.png');
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, assignments, models, pending approvals, clarification choices and typed answers, explicit approve/deny, exact chat and pursuit links, reload recovery, shared pickers, nested hierarchy, read-only bot pair threads, live follow-ups, and narrow layout.',
+      'PASS bot UI: onboarding, assignments, models, approvals, exact chat and pursuit links, reload recovery, nested hierarchy, read-only bot pair threads, live follow-ups, parent delegation navigation, child approval identity, and narrow layout.',
     );
   } catch (error) {
+    console.error('Smoke approvals:', JSON.stringify(await request('/approvals')));
+    console.error(
+      'Smoke final message:',
+      JSON.stringify(
+        api.store.get(
+          "SELECT bot_id,content,status,error,activity_json FROM messages WHERE role='assistant' ORDER BY sequence DESC LIMIT 1",
+        ),
+      ),
+    );
     console.error('Bot UI failed before cleanup:', error);
     throw error;
   } finally {

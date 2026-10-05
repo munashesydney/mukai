@@ -25,6 +25,15 @@ export interface ToolApproval {
   target?: ApprovalTarget;
   /** Explicit human interaction, rather than permission to run a tool. */
   ask?: AskInput;
+  /** Ancestor responses waiting for the bot making this request. */
+  blockedParents?: { messageId: string; conversationId: string; botId: string; botName: string }[];
+}
+
+export function approvalBlocksConversation(request: ToolApproval, conversationId: string) {
+  return (
+    request.conversationId === conversationId ||
+    Boolean(request.blockedParents?.some((parent) => parent.conversationId === conversationId))
+  );
 }
 
 export interface ApprovalState {

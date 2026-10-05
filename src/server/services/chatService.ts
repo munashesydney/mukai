@@ -54,6 +54,9 @@ import {
   PROVIDER_MAX_RETRIES,
   RESPONSE_TIMEOUT_MS,
   TOOL_STEP_LIMIT,
+  EMPTY_REPLY_RECOVERY_LIMIT,
+  FINAL_REPLY_NOTICE,
+  emptyReplyRecoveryMessages,
 } from './responsePolicy';
 
 interface Generation {
@@ -77,6 +80,10 @@ export interface ChatOutput {
 }
 export class ChatService {
   private active = new Map<string, Generation>();
+  private closing = false;
+  get isClosing() {
+    return this.closing;
+  }
   constructor(
     private messages: MessageRepository,
     private providers: ProviderService,
@@ -95,6 +102,10 @@ export class ChatService {
   busy(id: string) {
     return [...this.active.values()].some((generation) => generation.botId === id);
   }
+  runningRequest(conversationId: string, requestId: string, botId: string) {
+    const active = this.active.get(conversationId);
+    return active?.requestId === requestId && active.botId === botId;
+  }
   hasActiveResponses() {
     return this.active.size > 0;
   }
@@ -102,15 +113,29 @@ export class ChatService {
     const request = this.approvals
       ?.state()
       .pending.find((item) => item.conversationId === conversationId);
-    return request ? this.messages.message(request.messageId).requestId : undefined;
+    return request
+      ? this.messages.message(request.messageId).requestId
+      : this.jobs.delegationRequest(conversationId);
   }
   suspended(conversationId: string) {
     return Boolean(this.pendingRequest(conversationId));
   }
   restorePending(requireBot: (id: string) => BotRecord) {
     const seen = new Set<string>();
-    for (const request of this.approvals?.state().pending || []) {
-      if (request.target?.kind === 'pursuit_run' || seen.has(request.conversationId)) continue;
+    const roots = this.jobs.delegationRoots();
+    const pending = (this.approvals?.state().pending || []).filter(
+      (request) =>
+        !this.jobs.delegatedRequest(
+          request.conversationId,
+          this.messages.message(request.messageId).requestId,
+        ),
+    );
+    for (const request of [...roots, ...pending]) {
+      if (
+        ('target' in request && request.target?.kind === 'pursuit_run') ||
+        seen.has(request.conversationId)
+      )
+        continue;
       seen.add(request.conversationId);
       const requestId = this.messages.message(request.messageId).requestId;
       void Promise.resolve()
@@ -127,9 +152,13 @@ export class ChatService {
               },
             },
             request.conversationId,
+            undefined,
+            undefined,
+            true,
           ),
         )
         .catch((error) => {
+          this.cancelDelegations(request.messageId);
           this.approvals?.discard(request.messageId);
           this.messages.interruptStreaming(
             'The pending response could not be restored. You can retry.',
@@ -152,6 +181,13 @@ export class ChatService {
   }
   stop(id: string) {
     this.stopConversation('bot-' + id);
+  }
+  private cancelDelegations(messageId: string) {
+    for (const child of this.jobs.cancelDelegations(messageId)) {
+      const message = this.messages.forRequest(child.conversationId, child.requestId, 'assistant');
+      if (message) this.cancelDelegations(String(message.id));
+      this.stopConversation(child.conversationId);
+    }
   }
   stopConversation(id: string) {
     const active = this.active.get(id);
@@ -176,6 +212,7 @@ export class ChatService {
     }
   }
   async shutdown() {
+    this.closing = true;
     this.approvals?.suspend();
     for (const active of this.active.values()) {
       active.controller.abort();
@@ -269,6 +306,7 @@ export class ChatService {
       restore?: (toolName: string, input: unknown, output: unknown) => void;
     },
     sender?: BotRecord,
+    restoreSavedStep = false,
   ) {
     const botId = String(bot.id);
     const running = this.active.get(conversationId);
@@ -296,7 +334,7 @@ export class ChatService {
     const existingUser = this.messages.forRequest(conversationId, value.requestId, 'user');
     let userId: string, assistantId: string;
     let retryMessage: ChatMessage | undefined;
-    let recoveringApproval = false;
+    let recoveringStep = false;
     if (existingUser) {
       userId = String(existingUser.id);
       const assistant = this.messages.forRequest(conversationId, value.requestId, 'assistant')!;
@@ -307,8 +345,14 @@ export class ChatService {
         );
       if (assistant.botId !== botId) throw new ApiError(409, 'Retry with the original bot.');
       assistantId = String(assistant.id);
-      recoveringApproval = Boolean(this.approvals?.waiting(assistantId));
-      if (assistant.status === 'complete') {
+      recoveringStep =
+        Boolean(this.approvals?.waiting(assistantId)) ||
+        this.jobs.resumableDelegation(assistantId) ||
+        (restoreSavedStep && this.jobs.approvalStep(assistantId).length > 0);
+      if (
+        assistant.status === 'complete' ||
+        (restoreSavedStep && ['failed', 'stopped'].includes(assistant.status))
+      ) {
         output.start();
         output.emit({
           type: 'start',
@@ -328,7 +372,7 @@ export class ChatService {
       if (!config.vision && previousFiles.some((file) => file.kind === 'image'))
         throw new ApiError(400, 'Choose a vision model before retrying this image message.');
       retryMessage = this.messages.message(assistantId);
-      this.messages.reset(assistantId, recoveringApproval);
+      this.messages.reset(assistantId, recoveringStep);
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
@@ -357,9 +401,9 @@ export class ChatService {
     const generation: Generation = {
       botId,
       controller: new AbortController(),
-      content: recoveringApproval ? retryMessage?.content || '' : '',
-      reasoning: recoveringApproval ? retryMessage?.reasoning || '' : '',
-      parts: recoveringApproval
+      content: recoveringStep ? retryMessage?.content || '' : '',
+      reasoning: recoveringStep ? retryMessage?.reasoning || '' : '',
+      parts: recoveringStep
         ? retryMessage?.parts || []
         : (this.messages.message(assistantId).activity || []).map((item) => ({
             id: `previous-${item.id}`,
@@ -544,15 +588,15 @@ export class ChatService {
           }),
         )
         .digest('hex');
-      const recoveryCalls = recoveringApproval ? this.jobs.approvalStep(assistantId) : [];
+      const recoveryCalls = recoveringStep ? this.jobs.approvalStep(assistantId) : [];
       const checkpoint =
-        existingUser && (!runtime || recoveringApproval)
-          ? this.jobs.read(assistantId, fingerprint, recoveringApproval)
+        existingUser && (!runtime || recoveringStep)
+          ? this.jobs.read(assistantId, fingerprint, recoveringStep)
           : undefined;
-      if (recoveringApproval && (!checkpoint || !recoveryCalls.length)) {
+      if (recoveringStep && (!checkpoint || !recoveryCalls.length)) {
         this.approvals?.discard(assistantId);
         throw new ChatCheckpointError(
-          'The tools or model changed since approval was requested. Retry to review fresh calls.',
+          'The tools or model changed since this response was saved. Retry to review fresh calls.',
         );
       }
       let stepsUsed = checkpoint?.steps ?? 0;
@@ -582,7 +626,7 @@ export class ChatService {
                   runtime.restore(part.toolName, part.input, completed.get(part.toolCallId));
         }
         messages = checkpoint.messages;
-        const saved = recoveringApproval ? retryMessage : checkpoint.response;
+        const saved = recoveringStep ? retryMessage : checkpoint.response;
         generation.content = saved?.content ?? retryMessage.content;
         generation.reasoning = saved?.reasoning ?? retryMessage.reasoning ?? '';
         generation.parts = (saved?.parts ?? retryMessage.parts ?? generation.parts).map((part) =>
@@ -638,6 +682,9 @@ export class ChatService {
         }),
       );
       manager.compactions = usage.compactions;
+      let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
+      let finalReplyOnly = emptyReplyRecoveries > 0;
+      const finalReplyNotice = FINAL_REPLY_NOTICE;
       const saveCheckpoint = () => {
         const previousPhase = diagnosticPhase;
         diagnosticPhase = 'checkpoint';
@@ -645,6 +692,7 @@ export class ChatService {
           messages,
           usage,
           steps: stepsUsed,
+          emptyReplyRecoveries,
           response: {
             content: generation.content,
             reasoning: generation.reasoning,
@@ -766,7 +814,9 @@ export class ChatService {
               state: 'pending',
             });
             const approved =
-              name === 'ask'
+              name === 'ask' ||
+              (name === 'manage_bot' &&
+                this.jobs.resumableDelegation(assistantId, options.toolCallId))
                 ? true
                 : await this.approvals?.request(
                     {
@@ -815,12 +865,18 @@ export class ChatService {
         };
       };
       for (const [name, definition] of Object.entries(tools)) guardTool(name, definition);
-      if (recoveringApproval) {
+      if (recoveringStep) {
         const results = await Promise.all(
           recoveryCalls.map(async (call) => {
             let output = call.output;
             if (call.state === 'resolved') runtime?.restore?.(call.toolName, call.input, output);
-            else if (call.state === 'running')
+            else if (
+              call.state === 'running' &&
+              !(
+                call.toolName === 'manage_bot' &&
+                this.jobs.resumableDelegation(assistantId, call.toolCallId)
+              )
+            )
               output = {
                 type: 'error-text',
                 value:
@@ -894,9 +950,11 @@ export class ChatService {
         completionRecoveries = 0,
         outputContinuations = 0,
         overflowRecoveries = 0;
-      let notice = checkpoint
-          ? 'Resume the original request from saved completed steps. Do not repeat successful operations; verify state before further changes. Browser and process handles may have expired; check live sessions and take a fresh snapshot before reusing browser references.'
-          : '',
+      let notice = finalReplyOnly
+          ? finalReplyNotice
+          : checkpoint
+            ? 'Resume the original request from saved completed steps. Do not repeat successful operations; verify state before further changes. Browser and process handles may have expired; check live sessions and take a fresh snapshot before reusing browser references.'
+            : '',
         pausedReason = '';
       let continuationOf = '';
       // A job owns one provider generation at a time. Complete operation pairs
@@ -931,9 +989,10 @@ export class ChatService {
           progressNotice: guard.notice,
           pausedReason,
         });
-        usage.usedTokens = manager.estimate(messages);
+        const attemptMessages = finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages;
+        usage.usedTokens = manager.estimate(attemptMessages);
         usage.estimated = true;
-        const estimatedInput = manager.estimate(messages);
+        const estimatedInput = manager.estimate(attemptMessages);
         const previouslyEstimated = usage.runEstimated;
         usage.runTokens += estimatedInput;
         usage.runEstimated = true;
@@ -950,17 +1009,17 @@ export class ChatService {
         const result = streamText({
           model: config.model,
           system: attemptSystem,
-          messages: memoryMessage ? [memoryMessage, ...messages] : messages,
+          messages: memoryMessage ? [memoryMessage, ...attemptMessages] : attemptMessages,
           maxRetries: PROVIDER_MAX_RETRIES,
           abortSignal: stepSignal,
           maxOutputTokens: manager.outputAllowance(
-            messages,
+            attemptMessages,
             Math.max(0, estimateTokens(attemptSystem) - estimateTokens(currentSystem)),
           ),
           providerOptions: config.options,
-          tools: pausedReason ? {} : tools,
-          activeTools: pausedReason ? [] : undefined,
-          toolChoice: pausedReason ? 'none' : 'auto',
+          tools: pausedReason || finalReplyOnly ? {} : tools,
+          activeTools: pausedReason || finalReplyOnly ? [] : undefined,
+          toolChoice: pausedReason || finalReplyOnly ? 'none' : 'auto',
           stopWhen: isStepCount(1),
           onError: (event) => {
             providerError = event.error;
@@ -1241,9 +1300,24 @@ export class ChatService {
           break;
         }
         if (!lastStep?.text.trim()) {
+          if (emptyReplyRecoveries < EMPTY_REPLY_RECOVERY_LIMIT) {
+            emptyReplyRecoveries++;
+            finalReplyOnly = true;
+            notice = finalReplyNotice;
+            this.diagnostics.record(
+              'chat.empty_reply_recovery',
+              new Error(
+                `The model ended without final text (${finishReason}). Requesting a tool-free reply, attempt ${emptyReplyRecoveries}/${EMPTY_REPLY_RECOVERY_LIMIT}.`,
+              ),
+              diagnosticContext(),
+              'warn',
+            );
+            continue;
+          }
           status = 'failed';
           error =
-            'The model ended without a final response after its activity. You can retry; completed file changes are saved.';
+            'The model ended without a final response after two recovery attempts. You can retry; completed tool results and user answers are saved.';
+          this.diagnostics.record('chat.empty_reply_failed', new Error(error), diagnosticContext());
         }
         break;
       }
@@ -1269,8 +1343,13 @@ export class ChatService {
         });
         /* Saving the visible response remains the priority on a full disk. */
       }
-      const suspended = Boolean(this.approvals?.suspending(assistantId));
-      if (!suspended) this.approvals?.discard(assistantId);
+      const suspended =
+        Boolean(this.approvals?.suspending(assistantId)) ||
+        (this.closing && this.jobs.resumableDelegation(assistantId));
+      if (!suspended) {
+        this.approvals?.discard(assistantId);
+        this.cancelDelegations(assistantId);
+      }
       if (status === 'interrupted' && !error && !suspended)
         error = 'Mukai stopped before this response finished. You can resume from saved progress.';
       try {

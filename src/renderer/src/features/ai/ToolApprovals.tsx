@@ -2,6 +2,7 @@ import { PopupMenu } from '../../components/ui/PopupMenu';
 import { Check, ChevronDown, ChevronUp, Hand, ShieldAlert } from 'lucide-react';
 import { approvalStore, useApprovals } from './approvalStore';
 import type { ApprovalMode, ToolApproval } from '../../../../shared/approvals';
+import { approvalBlocksConversation } from '../../../../shared/approvals';
 
 const choices = [
   {
@@ -76,10 +77,11 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
   const state = useApprovals();
   const groups = new Map<string, ToolApproval[]>();
   for (const request of state.pending) {
-    if (request.conversationId !== conversationId || request.ask) continue;
-    const group = groups.get(request.batchId) || [];
+    if (!approvalBlocksConversation(request, conversationId) || request.ask) continue;
+    const key = request.conversationId + ':' + request.batchId;
+    const group = groups.get(key) || [];
     group.push(request);
-    groups.set(request.batchId, group);
+    groups.set(key, group);
   }
   return (
     <div className="tool-approval-cards">
@@ -91,16 +93,23 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
           </button>
         </div>
       )}
-      {[...groups].map(([batchId, requests]) => {
+      {[...groups].map(([key, requests]) => {
+        const batchId = requests[0].batchId;
+        const delegated = requests[0].conversationId !== conversationId;
         const hasClarification = requests.some(
           (request) => request.ask?.action === 'clarification',
         );
         return requests.length === 1 ? (
-          <ToolApprovalCard key={batchId} request={requests[0]} deciding={state.deciding} />
+          <ToolApprovalCard
+            key={key}
+            request={requests[0]}
+            deciding={state.deciding}
+            delegated={delegated}
+          />
         ) : (
           <section
             className={`tool-approval-batch ${hasClarification ? 'tool-approval-batch--questions' : ''}`}
-            key={batchId}
+            key={key}
             aria-label="Parallel tool approvals"
           >
             <details>
@@ -112,6 +121,7 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
                     {hasClarification ? 'requests need your response' : 'requests need approval'}
                   </strong>
                   <small>
+                    {delegated ? 'Sub-bot ' : ''}
                     {requests[0].botName} is waiting.{' '}
                     {hasClarification
                       ? 'Expand to review and answer each request.'
@@ -122,7 +132,12 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
               </summary>
               <div className="tool-approval-batch-items">
                 {requests.map((request) => (
-                  <ToolApprovalCard key={request.id} request={request} deciding={state.deciding} />
+                  <ToolApprovalCard
+                    key={request.id}
+                    request={request}
+                    deciding={state.deciding}
+                    delegated={delegated}
+                  />
                 ))}
               </div>
             </details>
@@ -133,7 +148,7 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
                 disabled={requests.some((request) => state.deciding.includes(request.id))}
                 onClick={() =>
                   void approvalStore.decideBatch(
-                    conversationId,
+                    requests[0].conversationId,
                     batchId,
                     requests.map((request) => request.id),
                   )
@@ -149,16 +164,31 @@ export function ToolApprovalCards({ conversationId }: { conversationId: string }
   );
 }
 
-function ToolApprovalCard({ request, deciding }: { request: ToolApproval; deciding: string[] }) {
+function ToolApprovalCard({
+  request,
+  deciding,
+  delegated,
+}: {
+  request: ToolApproval;
+  deciding: string[];
+  delegated?: boolean;
+}) {
   return (
     <section className="tool-approval-card" aria-label={`Approval for ${request.toolName}`}>
       <div className="tool-approval-heading">
         <Hand size={18} />
         <strong>
+          {delegated ? 'Sub-bot ' : ''}
           {request.botName} wants to use {request.toolName}
         </strong>
       </div>
       <p role="status">Waiting for your approval. This tool has not run.</p>
+      {delegated && (
+        <p>
+          Your bot is waiting for {request.botName}’s response. This permission is for{' '}
+          {request.botName}.
+        </p>
+      )}
       <details>
         <summary>Review tool arguments</summary>
         <pre>{JSON.stringify(request.input, null, 2)}</pre>

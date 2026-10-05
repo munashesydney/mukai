@@ -61,7 +61,11 @@ export function BotConversationsSidebar({
         .map((bot) => {
           const open = expanded[bot.id] ?? location.item === bot.id;
           const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
-          const count = approvals.pending.filter((request) => request.botId === bot.id).length;
+          const count = approvals.pending.filter(
+            (request) =>
+              request.botId === bot.id ||
+              request.blockedParents?.some((parent) => parent.botId === bot.id),
+          ).length;
           return (
             <section className="bot-conversation-group" key={bot.id}>
               <div className="bot-conversation-heading">

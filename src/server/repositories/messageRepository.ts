@@ -6,6 +6,7 @@ import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
 import { messageRecord } from './records';
 import { FileChangeRepository } from './fileChangeRepository';
+import { resumableDelegationMessages } from './chatJobRepository';
 
 export class MessageRepository {
   constructor(
@@ -83,7 +84,8 @@ export class MessageRepository {
   }
   interruptStreaming(error: string, conversationId?: string) {
     const pending = this.database.all(
-      `SELECT * FROM messages WHERE status='streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
+      `SELECT * FROM messages WHERE status='streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)
+       AND id NOT IN (${resumableDelegationMessages})${conversationId === undefined ? '' : ' AND conversation_id=?'}`,
       ...(conversationId === undefined ? [] : [conversationId]),
     );
     for (const row of pending) {
@@ -115,7 +117,8 @@ export class MessageRepository {
       );
     }
     this.database.run(
-      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)${conversationId === undefined ? '' : ' AND conversation_id = ?'}`,
+      `UPDATE messages SET status = 'interrupted', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), error = ? WHERE status = 'streaming' AND id NOT IN (SELECT message_id FROM pending_tool_approvals)
+       AND id NOT IN (${resumableDelegationMessages})${conversationId === undefined ? '' : ' AND conversation_id = ?'}`,
       error,
       ...(conversationId === undefined ? [] : [conversationId]),
     );

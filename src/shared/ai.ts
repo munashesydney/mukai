@@ -85,6 +85,7 @@ export interface ChatActivity {
   path: string;
   status: 'running' | 'complete' | 'failed' | 'interrupted';
   summary: string;
+  delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
 }
 export interface FileArtifact {
   id: string;

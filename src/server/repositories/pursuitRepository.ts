@@ -8,6 +8,10 @@ import {
   type PursuitStatus,
 } from '../../shared/pursuits';
 import { pursuitReportProblem, type PursuitReport } from '../tools/pursuits/report';
+import { resumableDelegationMessages } from './chatJobRepository';
+
+const resumableConversations = `SELECT m.conversation_id FROM pending_tool_approvals a JOIN messages m ON m.id=a.message_id
+  UNION SELECT conversation_id FROM messages WHERE id IN (${resumableDelegationMessages}) AND status IN ('streaming','interrupted')`;
 
 export class PursuitRepository {
   constructor(private database: Database) {}
@@ -231,10 +235,10 @@ export class PursuitRepository {
   recover(now: number) {
     this.database.transaction(() => {
       const interrupted = this.database.all(
-        "SELECT pursuit_id FROM pursuit_runs WHERE status='running' AND conversation_id NOT IN (SELECT m.conversation_id FROM pending_tool_approvals a JOIN messages m ON m.id=a.message_id)",
+        `SELECT pursuit_id FROM pursuit_runs WHERE status='running' AND conversation_id NOT IN (${resumableConversations})`,
       );
       this.database.run(
-        "UPDATE pursuit_runs SET status='interrupted',finished_at=?,error='Server restarted during this run. Review its saved work before resuming.' WHERE status='running' AND conversation_id NOT IN (SELECT m.conversation_id FROM pending_tool_approvals a JOIN messages m ON m.id=a.message_id)",
+        `UPDATE pursuit_runs SET status='interrupted',finished_at=?,error='Server restarted during this run. Review its saved work before resuming.' WHERE status='running' AND conversation_id NOT IN (${resumableConversations})`,
         new Date(now).toISOString(),
       );
       for (const row of interrupted) {
@@ -252,7 +256,7 @@ export class PursuitRepository {
   pendingRuns() {
     return this.database
       .all(
-        "SELECT id FROM pursuit_runs WHERE status='running' AND conversation_id IN (SELECT m.conversation_id FROM pending_tool_approvals a JOIN messages m ON m.id=a.message_id)",
+        `SELECT id FROM pursuit_runs WHERE status='running' AND conversation_id IN (${resumableConversations})`,
       )
       .map((row) => this.findRun(String(row.id))!);
   }

@@ -118,12 +118,13 @@ export function createApiServer(options: ApiOptions = {}) {
       join(dir, 'uploads'),
     );
     const approvals = new ApprovalService(new ApprovalRepository(store));
+    const jobs = new ChatJobRepository(store);
     const chats = new ChatService(
       messageRepository,
       providers,
       attachments,
       tools,
-      new ChatJobRepository(store),
+      jobs,
       diagnostics,
       memory,
       approvals,
@@ -168,7 +169,14 @@ export function createApiServer(options: ApiOptions = {}) {
       memory,
     );
     const access = new ToolAccessService(new ToolAssignmentRepository(store));
-    const botManagement = new BotManagementService(bots, chats, conversations, access, providers);
+    const botManagement = new BotManagementService(
+      bots,
+      chats,
+      conversations,
+      access,
+      providers,
+      jobs,
+    );
     tools.attachBotManagement(access, botManagement);
     const route = createRoutes({
       approvals,

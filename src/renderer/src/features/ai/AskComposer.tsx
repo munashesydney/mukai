@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { AskRequestCard } from './AskRequestCard';
 import { useApprovals } from './approvalStore';
+import { approvalBlocksConversation } from '../../../../shared/approvals';
 
 // Every conversation surface uses the same temporary replacement for its composer.
 export function AskComposer({
@@ -16,7 +17,7 @@ export function AskComposer({
   const state = useApprovals();
   const [selectedId, setSelectedId] = useState<string>();
   const requests = state.pending.filter(
-    (request) => request.conversationId === conversationId && request.ask,
+    (request) => approvalBlocksConversation(request, conversationId) && request.ask,
   );
   if (!requests.length) return children;
   const index = Math.max(
@@ -29,6 +30,7 @@ export function AskComposer({
         <div key={request.id} hidden={index !== itemIndex}>
           <AskRequestCard
             request={request}
+            delegated={request.conversationId !== conversationId}
             busy={state.deciding.includes(request.id)}
             onCancel={onCancel}
             navigation={

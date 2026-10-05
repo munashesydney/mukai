@@ -249,6 +249,15 @@ export const migrations = [
    CREATE TRIGGER conversation_finished AFTER UPDATE OF finished_at ON messages WHEN NEW.finished_at IS NOT NULL BEGIN
     UPDATE conversations SET updated_at=NEW.finished_at WHERE id=NEW.conversation_id;
    END;`,
+  `CREATE TABLE bot_delegations (
+    parent_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    tool_call_id TEXT NOT NULL, caller_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    child_request_id TEXT NOT NULL, message TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('waiting','complete','cancelled')),
+    PRIMARY KEY(parent_message_id,tool_call_id));
+   CREATE INDEX delegation_child ON bot_delegations(conversation_id,child_request_id);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

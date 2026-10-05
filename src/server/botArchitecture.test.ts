@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -11,15 +11,32 @@ import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
 import type { Conversation } from '../shared/conversations';
 import { botManagementDefinition } from './tools/bots/definition';
+import type { ApprovalState } from '../shared/approvals';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
   model: string;
   tools: { function: { name: string } }[];
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
-let mode: 'normal' | 'slow' | 'revoke' | 'delegate' | 'web-search' | 'web-revoke';
+let mode:
+  | 'normal'
+  | 'slow'
+  | 'revoke'
+  | 'delegate'
+  | 'delegate-slow'
+  | 'delegate-approval'
+  | 'delegate-tool-approval'
+  | 'delegate-nested'
+  | 'delegate-pursuit'
+  | 'delegate-empty-once'
+  | 'delegate-empty-always'
+  | 'delegate-empty-restart'
+  | 'web-search'
+  | 'web-revoke';
 let delegatedId: string;
+let nestedId: string;
+const waitFor = (check: () => void | Promise<void>) => vi.waitFor(check, { timeout: 5000 });
 const input = (name = 'Mukai'): BotInput => ({
   name,
   role: 'Assistant',
@@ -67,6 +84,7 @@ beforeEach(async () => {
   calls = [];
   mode = 'normal';
   delegatedId = '';
+  nestedId = '';
   api = await startApiServer(0, {
     dataDir: join(root, 'data'),
     memoryExtractor: async () => ({ facts: [] }),
@@ -76,13 +94,107 @@ beforeEach(async () => {
     for await (const chunk of req) body += chunk;
     const call = JSON.parse(body) as (typeof calls)[number];
     calls.push(call);
-    if (mode === 'slow') return;
+    const child = call.messages.some((item) =>
+      item.content?.includes('This message is coming from another bot'),
+    );
+    const recoveringReply = call.messages
+      .at(-1)
+      ?.content?.startsWith('[Mukai runtime continuation');
+    if (mode === 'slow' || (mode === 'delegate-slow' && child)) return;
+    if (child && mode === 'delegate-empty-restart' && recoveringReply) return;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = (delta: unknown, reason: string | null = null) =>
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
     if (
+      child &&
+      [
+        'delegate-approval',
+        'delegate-tool-approval',
+        'delegate-nested',
+        'delegate-pursuit',
+        'delegate-empty-once',
+        'delegate-empty-always',
+        'delegate-empty-restart',
+      ].includes(mode) &&
+      !call.messages.some((item) => item.role === 'tool')
+    ) {
+      const intermediate =
+        mode === 'delegate-nested' &&
+        call.messages.some(
+          (item) =>
+            item.content?.includes('"name":"Mukai"') &&
+            item.content.includes('This message is coming from another bot'),
+        );
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'child-call',
+            type: 'function',
+            function: {
+              name: intermediate
+                ? 'manage_bot'
+                : mode === 'delegate-tool-approval'
+                  ? 'browser'
+                  : 'ask',
+              arguments: JSON.stringify(
+                intermediate
+                  ? { action: 'send_message', botId: nestedId, message: 'Check the details.' }
+                  : mode === 'delegate-tool-approval'
+                    ? { action: 'tabs' }
+                    : mode.startsWith('delegate-empty-')
+                      ? {
+                          action: 'clarification',
+                          question: 'What’s one small thing you’re looking forward to this week?',
+                          options: [
+                            { label: 'A meal or treat', recommended: true },
+                            { label: 'A quiet moment', recommended: false },
+                          ],
+                        }
+                      : { action: 'approval', question: 'May I publish this draft?' },
+              ),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+    } else if (child && mode.startsWith('delegate-empty-')) {
+      if (mode === 'delegate-empty-always' || !recoveringReply) send({}, 'stop');
+      else {
+        send({ role: 'assistant', content: 'The user chose: A meal or treat.' });
+        send({}, 'stop');
+      }
+    } else if (
+      mode === 'delegate-pursuit' &&
+      !child &&
+      call.messages.some((item) => item.role === 'tool') &&
+      !call.messages.some((item) => item.tool_call_id === 'pursuit-report')
+    ) {
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'pursuit-report',
+            type: 'function',
+            function: {
+              name: 'report_pursuit',
+              arguments: JSON.stringify({
+                status: 'completed',
+                summary: 'Child review finished.',
+                nextRunAt: null,
+                nextRunReason: null,
+                nextRunInstructions: null,
+              }),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+    } else if (
       ['web-search', 'web-revoke'].includes(mode) &&
       !call.messages.some((item) => item.role === 'tool')
     ) {
@@ -121,7 +233,7 @@ beforeEach(async () => {
       });
       send({}, 'tool_calls');
     } else if (
-      mode === 'delegate' &&
+      mode.startsWith('delegate') &&
       !call.messages.some((item) => item.role === 'tool') &&
       !call.messages.some((item) =>
         item.content?.includes('This message is coming from another bot'),
@@ -317,7 +429,7 @@ describe('Bot architecture', () => {
     );
     mode = 'slow';
     const pending = chat(main);
-    await vi.waitFor(() => expect(calls).toHaveLength(6));
+    await waitFor(() => expect(calls).toHaveLength(6));
     expect(
       (
         await request(`/bots/${main.id}/model`, 'PUT', {
@@ -554,6 +666,424 @@ describe('Bot architecture', () => {
       content: 'Reviewed the notes successfully.',
     });
   });
+  async function restart(snapshot?: string) {
+    await api.shutdown();
+    api.server.closeAllConnections();
+    fixture.closeAllConnections();
+    await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    if (snapshot) copyFileSync(snapshot, join(root, 'data', 'mukai.sqlite'));
+    api = await startApiServer(0, {
+      dataDir: join(root, 'data'),
+      memoryExtractor: async () => ({ facts: [] }),
+    });
+  }
+  it('resumes a waiting parent and the same child request after closing the app', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.activity?.[0].delegation).toMatchObject({ botId: child.id, botName: 'Ada' });
+    const conversationId = parent.activity![0].delegation!.conversationId;
+    const before = (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data;
+    await restart();
+    await pending;
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+      'streaming',
+    );
+    mode = 'delegate';
+    // Release the restored inference request; restarting once more avoids a hanging fixture socket.
+    await restart();
+    await waitFor(async () => {
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)).toMatchObject(
+        { id: parent.id, status: 'complete' },
+      );
+    });
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
+    const after = (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data;
+    expect(after).toHaveLength(2);
+    expect(after.map((item) => item.id)).toEqual(before.map((item) => item.id));
+    expect(after.map((item) => item.requestId)).toEqual(before.map((item) => item.requestId));
+    expect(after.at(-1)?.status).toBe('complete');
+    expect(
+      calls.filter(
+        (call) =>
+          !call.messages.some((item) => item.role === 'tool') &&
+          !call.messages.some((item) =>
+            item.content?.includes('This message is coming from another bot'),
+          ),
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Reviewed the notes successfully.');
+  });
+  it('keeps a child approval visible and actionable in the waiting parent after restart', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-approval';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const approval = (await request<ApprovalState>('/approvals')).data.pending[0];
+    expect(approval).toMatchObject({
+      botName: 'Ada',
+      blockedParents: [{ botId: main.id, botName: main.name, conversationId: 'bot-' + main.id }],
+    });
+    await restart();
+    await pending;
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect((await request<ApprovalState>('/approvals')).data.pending[0]).toMatchObject({
+      id: approval.id,
+      blockedParents: approval.blockedParents,
+    });
+    await waitFor(async () =>
+      expect((await request(`/approvals/${approval.id}`, 'POST', { approved: true })).status).toBe(
+        200,
+      ),
+    );
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${approval.conversationId}/messages`)).data,
+    ).toHaveLength(2);
+    // Neither the parent tool call nor the child's permission prompt was regenerated.
+    expect(calls).toHaveLength(4);
+  });
+  it('recovers a child’s empty continuation and sends the saved user answer back to its parent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Nova'));
+    delegatedId = child.id;
+    mode = 'delegate-empty-once';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const question = (await request<ApprovalState>('/approvals')).data.pending[0];
+    await request(`/approvals/${question.id}`, 'POST', { answer: 'A meal or treat' });
+    await pending;
+    const saved = (
+      await request<ChatMessage[]>(`/conversations/${question.conversationId}/messages`)
+    ).data.at(-1)!;
+    expect(saved).toMatchObject({
+      status: 'complete',
+      content: 'The user chose: A meal or treat.',
+    });
+    expect(saved.activity).toHaveLength(1);
+    expect(saved.activity?.[0].summary).toContain('User answer: A meal or treat');
+    expect(calls).toHaveLength(5);
+    expect(calls[3]).not.toHaveProperty('tools');
+    expect(calls[3].messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('write the final reply'),
+    });
+    expect(JSON.stringify(calls[3].messages)).toContain('A meal or treat');
+    expect(JSON.stringify(calls[4].messages)).toContain('The user chose: A meal or treat.');
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+    const logs = readFileSync(join(root, 'data', 'logs', 'errors.log'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(logs).toMatchObject([
+      { event: 'chat.empty_reply_recovery', level: 'warn', messageId: saved.id },
+    ]);
+    expect(JSON.stringify(logs)).not.toContain('A meal or treat');
+  });
+  it('bounds empty-reply recovery, preserves the answer, and logs the exhausted attempts', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Nova'));
+    delegatedId = child.id;
+    mode = 'delegate-empty-always';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const question = (await request<ApprovalState>('/approvals')).data.pending[0];
+    await request(`/approvals/${question.id}`, 'POST', { answer: 'A meal or treat' });
+    await pending;
+    const saved = (
+      await request<ChatMessage[]>(`/conversations/${question.conversationId}/messages`)
+    ).data.at(-1)!;
+    expect(saved.status).toBe('failed');
+    expect(saved.error).toContain('after two recovery attempts');
+    expect(saved.activity).toHaveLength(1);
+    expect(saved.activity?.[0].summary).toContain('User answer: A meal or treat');
+    expect(calls).toHaveLength(6);
+    for (const call of calls.slice(3, 5)) expect(call).not.toHaveProperty('tools');
+    const logs = readFileSync(join(root, 'data', 'logs', 'errors.log'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(logs.map((entry) => entry.event)).toEqual([
+      'chat.empty_reply_recovery',
+      'chat.empty_reply_recovery',
+      'chat.empty_reply_failed',
+    ]);
+    expect(logs[2]).toMatchObject({ level: 'error', messageId: saved.id });
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+  });
+  it('keeps empty-reply recovery tool-free after restarting a waiting delegation', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Nova'));
+    delegatedId = child.id;
+    mode = 'delegate-empty-restart';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const question = (await request<ApprovalState>('/approvals')).data.pending[0];
+    await request(`/approvals/${question.id}`, 'POST', { answer: 'A meal or treat' });
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(calls[3]).not.toHaveProperty('tools');
+    mode = 'delegate-empty-once';
+    await restart();
+    await pending;
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect(calls).toHaveLength(6);
+    expect(calls[4]).not.toHaveProperty('tools');
+    expect(calls[4].messages.at(-1)?.content).toContain('[Mukai runtime continuation');
+    expect(JSON.stringify(calls[4].messages)).toContain('A meal or treat');
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${question.conversationId}/messages`)).data.at(
+        -1,
+      ),
+    ).toMatchObject({ status: 'complete', content: 'The user chose: A meal or treat.' });
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+  });
+  it('restores a crash-time database snapshot without relying on graceful shutdown', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    const snapshot = join(root, 'crash.sqlite');
+    api.store.run('VACUUM INTO ?', snapshot);
+    await api.shutdown();
+    await pending;
+    api.server.closeAllConnections();
+    fixture.closeAllConnections();
+    await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    // Restore exactly what was durable while the child was running, before any shutdown callbacks.
+    copyFileSync(snapshot, join(root, 'data', 'mukai.sqlite'));
+    mode = 'delegate';
+    api = await startApiServer(0, {
+      dataDir: join(root, 'data'),
+      memoryExtractor: async () => ({ facts: [] }),
+    });
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
+    expect(calls).toHaveLength(4);
+  });
+  it('forwards child tool permissions and does not ask again for an already started parent delegation', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-tool-approval';
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    let permission = (await request<ApprovalState>('/approvals')).data.pending[0];
+    expect(permission.toolName).toBe('manage_bot');
+    await request(`/approvals/${permission.id}`, 'POST', { approved: true });
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending[0]?.toolName).toBe(
+        'browser',
+      ),
+    );
+    permission = (await request<ApprovalState>('/approvals')).data.pending[0];
+    expect(permission.blockedParents?.[0].botId).toBe(main.id);
+    await restart();
+    await pending;
+    const restored = (await request<ApprovalState>('/approvals')).data.pending;
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toMatchObject({ id: permission.id, toolName: 'browser' });
+    await waitFor(async () =>
+      expect(
+        (
+          await request(`/approvals/batch`, 'POST', {
+            conversationId: permission.conversationId,
+            batchId: permission.batchId,
+            ids: [permission.id],
+            approved: false,
+          })
+        ).status,
+      ).toBe(200),
+    );
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect(calls).toHaveLength(4);
+  });
+  it('delivers an already completed child result after a crash without running the child again', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate';
+    const send = api.botManagement.sendMessage.bind(api.botManagement);
+    let childFinished = false;
+    vi.spyOn(api.botManagement, 'sendMessage').mockImplementation(async (...args) => {
+      const result = await send(...args);
+      childFinished = true;
+      // Crash window: the child is saved, but the parent has not received its tool result yet.
+      await new Promise<void>((_resolve, reject) =>
+        args[3].addEventListener('abort', () => reject(args[3].reason), { once: true }),
+      );
+      return result;
+    });
+    const pending = chat(main);
+    await waitFor(() => expect(childFinished).toBe(true));
+    expect(calls).toHaveLength(2);
+    const snapshot = join(root, 'completed-child-crash.sqlite');
+    api.store.run('VACUUM INTO ?', snapshot);
+    await restart(snapshot);
+    await pending;
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect(calls).toHaveLength(3);
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Reviewed the notes successfully.');
+  });
+  it('stops the waiting chain when changed settings make its checkpoint incompatible', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-approval';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    api.store.run('UPDATE bots SET instructions=? WHERE id=?', 'Different instructions.', main.id);
+    await restart();
+    await pending;
+    await waitFor(async () => {
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'interrupted',
+      );
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+    });
+    expect(calls).toHaveLength(2);
+  });
+  it('propagates a nested child approval to every waiting ancestor and restores the chain', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    const grandchild = await api.botManagement.create(child, input('Nova'));
+    delegatedId = child.id;
+    nestedId = grandchild.id;
+    mode = 'delegate-nested';
+    const pending = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const approval = (await request<ApprovalState>('/approvals')).data.pending[0];
+    expect(approval.botId).toBe(grandchild.id);
+    expect(approval.blockedParents?.map((item) => item.botId).sort()).toEqual(
+      [main.id, child.id].sort(),
+    );
+    await restart();
+    await pending;
+    await waitFor(async () =>
+      expect((await request(`/approvals/${approval.id}`, 'POST', { approved: false })).status).toBe(
+        200,
+      ),
+    );
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(2);
+    expect(calls).toHaveLength(6);
+  });
+  it('does not restart an explicitly stopped delegation', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    await request(`/bots/${main.id}/stop`, 'POST');
+    await pending;
+    const before = calls.length;
+    mode = 'delegate';
+    await restart();
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+      'stopped',
+    );
+    expect(calls).toHaveLength(before);
+  });
+  it('restores a pursuit run waiting on a child without creating another run or request', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    mode = 'delegate-pursuit';
+    const pursuit = api.pursuits.create(main, {
+      name: 'Review',
+      objective: 'Delegate a review.',
+      successCriteria: 'Review complete.',
+      firstRunAt: new Date(Date.now() + 60000).toISOString(),
+      deadline: null,
+    });
+    const run = api.pursuits.runNow(pursuit.id);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const permission = (await request<ApprovalState>('/approvals')).data.pending[0];
+    expect(permission.blockedParents?.[0].conversationId).toBe(run.conversationId);
+    await restart();
+    expect(api.pursuits.detail(pursuit.id).runs).toHaveLength(1);
+    expect(api.pursuits.detail(pursuit.id).runs[0]).toMatchObject({
+      id: run.id,
+      status: 'running',
+    });
+    await waitFor(async () =>
+      expect(
+        (await request(`/approvals/${permission.id}`, 'POST', { approved: true })).status,
+      ).toBe(200),
+    );
+    await waitFor(() => expect(api.pursuits.detail(pursuit.id).runs[0].status).toBe('complete'));
+    expect(api.pursuits.detail(pursuit.id).pursuit.status).toBe('completed');
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${run.conversationId}/messages`)).data,
+    ).toHaveLength(2);
+    expect(calls).toHaveLength(5);
+  });
   it('continues only the requested pair thread, preserves history, and keeps the viewer read-only', async () => {
     const main = await bot();
     await provider();
@@ -700,7 +1230,7 @@ describe('Bot architecture', () => {
       controller.signal,
     );
     const stopped = expect(pending).rejects.toThrow();
-    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() => expect(calls).toHaveLength(1));
     await expect(
       api.botManagement.sendMessage(main, child.id, 'Other work', new AbortController().signal),
     ).rejects.toThrow('already working');

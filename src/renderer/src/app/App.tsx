@@ -1,6 +1,6 @@
 import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target, Plus } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
@@ -29,6 +29,21 @@ import type { Bot, Workspace } from '../../../shared/ai';
 import type { DialogKind, Location, Section, SettingsSection } from '../features/workspace/types';
 import { BrowserPanel } from '../features/browser/BrowserPanel';
 import { BrowserLayout, BrowserWorkspace } from '../features/browser/BrowserWorkspace';
+import { ConversationNavigation } from '../features/ai/ConversationNavigation';
+
+function WorkspaceLayout({
+  children,
+  onOpen,
+}: {
+  children: ReactNode;
+  onOpen: (conversationId: string) => void;
+}) {
+  return (
+    <ConversationNavigation.Provider value={onOpen}>
+      <BrowserLayout>{children}</BrowserLayout>
+    </ConversationNavigation.Provider>
+  );
+}
 
 export function App() {
   const ai = useAIWorkspace();
@@ -158,7 +173,12 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   }, [location]);
 
   return (
-    <BrowserLayout>
+    <WorkspaceLayout
+      onOpen={(conversationId) => {
+        botPairs.refresh();
+        select({ section: 'spaces', item: 'bot-conversations', conversationId });
+      }}
+    >
       <TitleBar
         workspaceName={ai.workspace?.name}
         onSearch={() => setSearchOpen(true)}
@@ -501,6 +521,6 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           }}
         />
       )}
-    </BrowserLayout>
+    </WorkspaceLayout>
   );
 }
