@@ -1844,7 +1844,7 @@
 }
 .space-mention-list {
   position: absolute;
-  bottom: 100%;
+  bottom: calc(100% + 8px);
   left: 0;
   right: 0;
   max-height: 240px;
@@ -1852,6 +1852,7 @@
   background: var(--surface-raised);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
   padding: 6px;
   z-index: 2;
 }
@@ -1868,9 +1869,38 @@
   border-radius: 6px;
   cursor: pointer;
 }
+.space-mention-list button strong {
+  display: block;
+  font-size: 13px;
+}
 .space-mention-list button:hover,
-.space-mention-list button:focus-visible {
-  background: var(--surface-muted);
+.space-mention-list button:focus-visible,
+.space-mention-list button.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  outline: none;
+}
+.space-mention-list button:hover small,
+.space-mention-list button:focus-visible small,
+.space-mention-list button.is-active small {
+  color: inherit;
+  opacity: 0.8;
+}
+.mention-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  text-decoration: none;
+}
+.mention-link:hover,
+.mention-link:focus-visible {
+  color: var(--accent-strong);
+  text-decoration: underline;
 }
 .diff-drawer > .modal-heading {
   padding: 20px;

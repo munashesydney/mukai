@@ -26,6 +26,7 @@ export function SpaceChat({
   onCloseSaved,
   providers,
   onProviders,
+  onOpenBot,
 }: {
   space: Conversation;
   bots: Bot[];
@@ -34,6 +35,7 @@ export function SpaceChat({
   onCloseSaved: () => void;
   providers: ProviderSettings[];
   onProviders: () => void;
+  onOpenBot: (botId: string) => Promise<void>;
 }) {
   const id = 'space:' + space.id,
     state = useChat(id);
@@ -47,6 +49,22 @@ export function SpaceChat({
     follow = useRef(true),
     input = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const matchingBots =
+    mentionQuery === null
+      ? []
+      : members.filter((bot) => botHandle(bot).includes(mentionQuery));
+
+  function completeMention(bot: Bot) {
+    const cursor = input.current?.selectionStart ?? state.text.length;
+    const before = state.text
+      .slice(0, cursor)
+      .replace(/@[\p{L}\p{N}_-]*$/u, '@' + botHandle(bot) + ' ');
+    chatStore.draft(id, before + state.text.slice(cursor));
+    setSelectedBot(bot.id);
+    setMentionQuery(null);
+    input.current?.focus();
+  }
   useEffect(() => {
     if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
   }, [state.messages, tab, savedOpen]);
@@ -150,7 +168,11 @@ export function SpaceChat({
                         />
                       </>
                     ) : (
-                      <MessageMarkdown text={message.content} />
+                      <MessageMarkdown
+                        text={message.content}
+                        mentionBots={members}
+                        onMention={(mentioned) => void onOpenBot(mentioned.id)}
+                      />
                     )}
                     {message.status === 'streaming' && (
                       <p className="ai-response-status" role="status">
@@ -216,46 +238,61 @@ export function SpaceChat({
                         .slice(0, cursor)
                         .match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
                       setMentionQuery(match ? match[1].toLowerCase() : null);
+                      setActiveMentionIndex(0);
                     }}
                     onKeyDown={(event) => {
-                      if (event.key === 'Escape') setMentionQuery(null);
+                      if (event.key === 'Escape' && mentionQuery !== null) {
+                        event.preventDefault();
+                        setMentionQuery(null);
+                        return;
+                      }
+                      if (matchingBots.length && ['ArrowUp', 'ArrowDown'].includes(event.key)) {
+                        event.preventDefault();
+                        setActiveMentionIndex((index) =>
+                          (index + (event.key === 'ArrowDown' ? 1 : -1) + matchingBots.length) %
+                          matchingBots.length,
+                        );
+                        return;
+                      }
                       if (
                         event.key === 'Enter' &&
                         !event.shiftKey &&
                         !event.nativeEvent.isComposing
                       ) {
                         event.preventDefault();
-                        setMentionQuery(null);
-                        send();
+                        if (matchingBots.length) completeMention(matchingBots[activeMentionIndex]);
+                        else {
+                          setMentionQuery(null);
+                          send();
+                        }
                       }
                     }}
                   />
-                  {mentionQuery !== null && members.length > 0 && (
-                    <div className="space-mention-list" aria-label="Mention a bot">
-                      {members
-                        .filter((bot) => botHandle(bot).includes(mentionQuery))
-                        .map((bot) => (
-                          <button
-                            type="button"
-                            key={bot.id}
-                            onClick={() => {
-                              const cursor = input.current?.selectionStart ?? state.text.length;
-                              const before = state.text
-                                .slice(0, cursor)
-                                .replace(/@[\p{L}\p{N}_-]*$/u, '@' + botHandle(bot) + ' ');
-                              chatStore.draft(id, before + state.text.slice(cursor));
-                              setSelectedBot(bot.id);
-                              setMentionQuery(null);
-                              input.current?.focus();
-                            }}
-                          >
-                            <Avatar person={bot.avatar} size="xs" />
-                            <span>
-                              {bot.name}
-                              <small>{bot.role}</small>
-                            </span>
-                          </button>
-                        ))}
+                  {mentionQuery !== null && matchingBots.length > 0 && (
+                    <div
+                      className="space-mention-list"
+                      role="listbox"
+                      aria-label="Mention a bot"
+                      aria-activedescendant={`mention-option-${matchingBots[activeMentionIndex]?.id}`}
+                    >
+                      {matchingBots.map((bot, index) => (
+                        <button
+                          type="button"
+                          role="option"
+                          id={`mention-option-${bot.id}`}
+                          aria-selected={index === activeMentionIndex}
+                          className={index === activeMentionIndex ? 'is-active' : ''}
+                          key={bot.id}
+                          onMouseMove={() => setActiveMentionIndex(index)}
+                          onClick={() => completeMention(bot)}
+                        >
+                          <Avatar person={bot.avatar} size="xs" />
+                          <span>
+                            <strong>{bot.name}</strong>
+                            <small>@{botHandle(bot)} · {bot.role}</small>
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   )}
                   <div className="composer-toolbar">

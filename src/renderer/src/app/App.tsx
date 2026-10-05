@@ -407,6 +407,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                       space={space}
                       providers={ai.providers}
                       onProviders={() => openSettings('providers')}
+                      onOpenBot={createBotConversation}
                       bots={ai.bots}
                       tab={tab}
                       savedOpen={savedOpen}
