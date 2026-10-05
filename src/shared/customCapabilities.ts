@@ -9,8 +9,8 @@ export interface CapabilityContext {
     eventId: string,
     payload: unknown,
   ): Promise<{ id: string; duplicate: boolean }>;
-  /** Explicitly request a model run. Only the registration's owner bot can be woken. */
-  wakeBot(message: string): Promise<{ accepted: boolean }>;
+  /** Queue a model run for botId, or the registration's owner when omitted. */
+  wakeBot(message: string, options?: { botId?: string }): Promise<{ accepted: boolean }>;
 }
 export interface CustomToolModule {
   name: string;

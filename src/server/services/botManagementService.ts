@@ -53,6 +53,21 @@ export class BotManagementService {
     }
     return level;
   }
+  requireMessageTarget(caller: Bot, botId: string) {
+    this.access.require(caller, 'manage_bot');
+    caller = this.bots.require(caller.id);
+    const target = this.bots.require(botId);
+    if (
+      caller.workspaceId !== target.workspaceId ||
+      caller.id === target.id ||
+      this.level(target) < this.level(caller)
+    )
+      throw new ApiError(
+        403,
+        'You may message only peers or lower-level bots in this workspace’s hierarchy, never yourself or higher-level bots.',
+      );
+    return target;
+  }
   async sendMessage(
     caller: Bot,
     botId: string,
@@ -71,18 +86,8 @@ export class BotManagementService {
     },
   ) {
     signal.throwIfAborted();
-    this.access.require(caller, 'manage_bot');
+    const target = this.requireMessageTarget(caller, botId);
     caller = this.bots.require(caller.id);
-    const target = this.bots.require(botId);
-    if (
-      caller.workspaceId !== target.workspaceId ||
-      caller.id === target.id ||
-      this.level(target) < this.level(caller)
-    )
-      throw new ApiError(
-        403,
-        'You may message only peers or lower-level bots in this workspace’s hierarchy, never yourself or higher-level bots.',
-      );
     const saved = delegation?.parentMessageId
       ? this.jobs.delegation(delegation.parentMessageId, delegation.toolCallId)
       : undefined;

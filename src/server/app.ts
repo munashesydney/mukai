@@ -141,7 +141,7 @@ export function createApiServer(options: ApiOptions = {}) {
       const bot = bots.require(botId);
       if (bot.workspaceId !== workspaceId)
         throw new ApiError(403, 'Bot belongs to another workspace.');
-      if (chats.busy(botId)) throw new ApiError(409, 'Owner bot is busy; the wake-up will retry.');
+      if (chats.busy(botId)) throw new ApiError(409, 'Target bot is busy; the wake-up will retry.');
       await chats.respond(
         bot,
         {
@@ -178,6 +178,13 @@ export function createApiServer(options: ApiOptions = {}) {
       jobs,
     );
     tools.attachBotManagement(access, botManagement);
+    capabilities.setWakeTargetValidator((botId, workspaceId, ownerBotId) => {
+      const target = bots.require(botId);
+      if (target.workspaceId !== workspaceId)
+        throw new ApiError(403, 'Bot belongs to another workspace.');
+      if (ownerBotId && ownerBotId !== botId)
+        botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
+    });
     const route = createRoutes({
       approvals,
       token,

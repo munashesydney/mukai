@@ -91,6 +91,11 @@ export class CapabilityService {
     message: string,
     requestId: string,
   ) => Promise<void>;
+  private validateWakeTarget?: (
+    botId: string,
+    workspaceId: string,
+    ownerBotId: string | null,
+  ) => void;
   private versions = new Map<string, CapabilityDefinition>();
   private failures = new Map<string, string>();
   private localBaseUrl = '';
@@ -110,6 +115,9 @@ export class CapabilityService {
   }
   setWake(callback: NonNullable<CapabilityService['wake']>) {
     this.wake = callback;
+  }
+  setWakeTargetValidator(callback: NonNullable<CapabilityService['validateWakeTarget']>) {
+    this.validateWakeTarget = callback;
   }
   start() {
     this.timer = setInterval(() => {
@@ -592,8 +600,18 @@ export class CapabilityService {
             );
           }
           if (action === 'wakeBot') {
-            if (!registration.ownerBotId || !this.wake)
-              throw new ApiError(403, 'This registration has no owner bot to wake.');
+            const options = z
+              .object({ botId: z.string().min(1).max(100).optional() })
+              .strict()
+              .optional()
+              .parse(args[1]);
+            const botId = options?.botId ?? registration.ownerBotId;
+            if (!botId || !this.wake || !this.validateWakeTarget)
+              throw new ApiError(
+                403,
+                'Specify botId when this registration has no owner bot to wake.',
+              );
+            this.validateWakeTarget(botId, registration.workspaceId, registration.ownerBotId);
             const message = z.string().min(1).max(8000).parse(args[0]);
             this.enqueue(
               registration,
@@ -601,7 +619,7 @@ export class CapabilityService {
               jobId ? `${jobId}:${++wakeSequence}` : randomUUID(),
               {
                 message,
-                botId: registration.ownerBotId,
+                botId,
               },
             );
             return { accepted: true };
@@ -664,8 +682,8 @@ export class CapabilityService {
           message: string;
           botId: string;
         };
-        if (!this.wake || payload.botId !== registration.ownerBotId)
-          throw new Error('Owner bot is unavailable.');
+        if (!this.wake || !this.validateWakeTarget) throw new Error('Bot wake-up is unavailable.');
+        this.validateWakeTarget(payload.botId, registration.workspaceId, registration.ownerBotId);
         await this.wake(payload.botId, registration.workspaceId, payload.message, String(job.id));
       } else {
         if (!this.versions.has(String(job.version))) {

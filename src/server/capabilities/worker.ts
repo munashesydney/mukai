@@ -39,7 +39,7 @@ console.log = console.info = console.warn = console.error = console.debug = () =
   const context = {
     env: workerData.env, workspaceId: workerData.workspaceId, signal: controller.signal,
     enqueue: (provider,eventId,payload) => rpc('enqueue',[provider,eventId,serializable(payload)]),
-    wakeBot: message => rpc('wakeBot',[message]),
+    wakeBot: (message, options) => rpc('wakeBot',[message, options]),
   };
   const input = workerData.input;
   if (workerData.operation === 'handle') input.rawBody = Buffer.from(input.rawBody);

@@ -8,6 +8,8 @@ import { startApiServer } from '../app';
 import { seedTestBot } from '../testFixtures';
 import type { CapabilityRegistration } from '../../shared/customCapabilities';
 import type { ChatEvent } from '../../shared/ai';
+import { BotRepository } from '../repositories/botRepository';
+import { scoutBot } from '../services/botService';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, root: string, folder: string;
 let fixture: Server | undefined;
@@ -395,6 +397,90 @@ describe('Custom capabilities', () => {
     expect(await api.capabilities.invoke(item.id, { value: 'x' })).toEqual({ accepted: true });
     await waitFor(() => wakes.length === 1);
     expect(wakes).toEqual(['scout:Process event']);
+  });
+  it('queues explicit route targets and supports ownerless routes without waiting for the bot', async () => {
+    new BotRepository(api.store).create({
+      ...scoutBot('default', 'specialist'),
+      isMain: false,
+      createdBy: 'scout',
+    });
+    const wakes: string[] = [];
+    api.capabilities.setWake(async (botId) => {
+      wakes.push(botId);
+    });
+    for (const owner of ['scout', undefined]) {
+      const suffix = owner || 'ownerless';
+      await register(
+        'route',
+        `export default {
+        name:'target_${suffix}',method:'POST',path:'/custom/target-${suffix}',auth:'public',
+        async handle(request,context){return {status:202,body:await context.wakeBot('Event',{botId:'specialist'})};}
+      };`,
+        `${suffix}.ts`,
+        owner,
+      );
+      const response = await fetch(api.url + '/custom/target-' + suffix, { method: 'POST' });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ accepted: true });
+    }
+    await waitFor(() => wakes.length === 2);
+    expect(wakes).toEqual(['specialist', 'specialist']);
+  });
+  it('rejects invalid wake targets without queueing or falling back to the owner', async () => {
+    new BotRepository(api.store).create({
+      ...scoutBot('default', 'child'),
+      isMain: false,
+      createdBy: 'scout',
+    });
+    const otherFolder = join(root, 'other-workspace');
+    mkdirSync(otherFolder);
+    const other = await request('/workspaces', 'POST', { name: 'Other', folder: otherFolder });
+    expect(other.status).toBe(201);
+    new BotRepository(api.store).create(scoutBot(other.value.id, 'foreign'));
+    const item = await register(
+      'tool',
+      toolSource('select_wake', `return context.wakeBot('Event', {botId:args.value});`),
+      'select.ts',
+      'child',
+    );
+    for (const target of ['missing', 'foreign', 'scout', '']) {
+      await expect(api.capabilities.invoke(item.id, { value: target })).rejects.toThrow();
+    }
+    expect(api.store.all('SELECT * FROM capability_jobs')).toHaveLength(0);
+    const ownerless = await register(
+      'tool',
+      toolSource('ownerless_wake', `return context.wakeBot('Event');`),
+      'ownerless.ts',
+    );
+    await expect(api.capabilities.invoke(ownerless.id, { value: 'x' })).rejects.toThrow('no owner');
+    expect(api.store.all('SELECT * FROM capability_jobs')).toHaveLength(0);
+  });
+  it('rechecks target permissions before processing a saved wake', async () => {
+    new BotRepository(api.store).create({
+      ...scoutBot('default', 'child'),
+      isMain: false,
+      createdBy: 'scout',
+    });
+    const wakes: string[] = [];
+    api.capabilities.setWake(async (botId) => {
+      wakes.push(botId);
+    });
+    const item = await register(
+      'tool',
+      toolSource('revoked_wake', `return context.wakeBot('Event',{botId:'child'});`),
+      'revoked.ts',
+      'scout',
+    );
+    await api.capabilities.invoke(item.id, { value: 'x' });
+    api.access.set('default', 'scout', 'manage_bot', false);
+    await waitFor(
+      () => Number(api.store.get('SELECT attempts FROM capability_jobs')?.attempts) > 0,
+    );
+    expect(wakes).toHaveLength(0);
+    expect(api.store.get('SELECT status,error FROM capability_jobs')).toMatchObject({
+      status: 'pending',
+      error: expect.stringContaining('not assigned'),
+    });
   });
   it('registers with a suggested ID and calls the new tool in the same model conversation turn', async () => {
     writeFileSync(
