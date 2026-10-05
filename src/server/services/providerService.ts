@@ -3,7 +3,8 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText } from 'ai';
+import { generateText, wrapLanguageModel } from 'ai';
+import { compatibleImageMiddleware } from './compatibleImageMiddleware';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
@@ -309,12 +310,15 @@ export class ProviderService {
       case 'google':
         return createGoogleGenerativeAI({ apiKey, fetch: secureFetch })(id);
       default:
-        return createOpenAICompatible({
-          name: 'mukai-custom',
-          baseURL: String(provider.baseUrl),
-          apiKey,
-          fetch: secureFetch,
-        })(id);
+        return wrapLanguageModel({
+          model: createOpenAICompatible({
+            name: 'mukai-custom',
+            baseURL: String(provider.baseUrl),
+            apiKey,
+            fetch: secureFetch,
+          })(id),
+          middleware: compatibleImageMiddleware,
+        });
     }
   }
   async test(id: string) {

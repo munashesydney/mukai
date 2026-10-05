@@ -3,7 +3,7 @@
 One setting applies to every bot and conversation in every workspace, including scheduled pursuit runs and custom capability wake-ups. It is stored in the installation database's metadata, independent of a bot or conversation.
 
 - **Ask for approval** pauses before each tool invocation, including reads, workspace tools, runtime tools, skills, management tools, and custom tools. Built-in memory functions (add, search, forget) always run without approval.
-- **Full access** runs permitted tools without an approval prompt. Existing tool assignments and workspace boundaries still apply.
+- **Full access** runs permitted tools without an approval prompt. Existing tool assignments and workspace boundaries still apply to file operations. The `image` family accepts absolute local image paths outside the workspace in either mode; Ask for approval gates the exact invocation before file access.
 
 V1 deliberately has no “Approve for me” mode. Full access remains the default to preserve the execution behavior of existing installations. Selecting Ask for approval immediately governs subsequent invocations, including in running conversations.
 

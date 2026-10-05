@@ -25,6 +25,8 @@ import { executeBotManagement } from './bots/execute';
 import { webSearchDefinition } from './web-search/definition';
 import { executeWebSearch } from './web-search/execute';
 import type { WebSearchService } from '../services/webSearchService';
+import { imageDefinition } from './image/definition';
+import { imageTools } from './image/execute';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
   return {
@@ -61,6 +63,7 @@ export function runtimeTools(
   },
 ): ToolSet {
   return {
+    ...imageTools(context),
     web_search: tool({
       description: webSearchDefinition.description,
       inputSchema: webSearchDefinition.inputSchema,
@@ -192,6 +195,7 @@ export function toolCatalog() {
       terminalDefinition,
       botManagementDefinition,
       browserDefinition,
+      imageDefinition,
       webSearchDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,

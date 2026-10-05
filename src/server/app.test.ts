@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { crc32 } from 'node:zlib';
+import sharp from 'sharp';
 import { startApiServer } from './app';
 import { seedTestBot } from './testFixtures';
 import { migrations } from './db/migrations';
@@ -69,6 +70,7 @@ let mode:
   | 'long-browser'
   | 'oversized-results'
   | 'runtime-tools'
+  | 'image-view'
   | 'approval-custom'
   | 'approval-parallel'
   | 'ask-clarification'
@@ -309,6 +311,29 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'image-view') {
+      const completed = JSON.stringify(body.messages).includes('"tool_call_id":"image-view"');
+      const delta = completed
+        ? { content: 'Image invocation resolved.' }
+        : {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'image-view',
+                type: 'function',
+                function: {
+                  name: 'image',
+                  arguments: JSON.stringify({ action: 'view', path: join(dir, 'outside.png') }),
+                },
+              },
+            ],
+          };
+      res.write(
+        `data: ${JSON.stringify({ id: 'image', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: completed ? 'stop' : 'tool_calls' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (
       mode === 'approval-custom' ||
       mode === 'approval-memory' ||
@@ -662,6 +687,92 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it.each([
+    { approvalMode: 'full-access', approved: true, restart: false },
+    { approvalMode: 'ask-for-approval', approved: true, restart: true },
+    { approvalMode: 'ask-for-approval', approved: false, restart: false },
+  ])(
+    'views an external image through the SDK in $approvalMode with approved=$approved',
+    async ({ approvalMode, approved, restart }) => {
+      await configure(true);
+      await request('/approvals', 'PUT', { mode: approvalMode });
+      const path = join(dir, 'outside.png');
+      const png = await sharp({
+        create: { width: 30, height: 20, channels: 3, background: '#0088cc' },
+      })
+        .png()
+        .toBuffer();
+      if (approvalMode === 'full-access') writeFileSync(path, png);
+      mode = 'image-view';
+      const running = chat('Inspect a local image outside the workspace');
+      if (approvalMode === 'ask-for-approval') {
+        const item = await pendingApproval('image-view');
+        expect(item).toMatchObject({ toolName: 'image', input: { action: 'view', path } });
+        // The file does not exist while the gate is waiting: no read has occurred.
+        expect(
+          (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity || [],
+        ).toEqual([]);
+        if (restart) {
+          await api.shutdown();
+          await running;
+          await close(api.server);
+          api = await startApiServer(0, {
+            dataDir: dir,
+            memoryExtractor: async () => ({ facts: [] }),
+          });
+          expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([item]);
+        }
+        if (approved) writeFileSync(path, png);
+        await vi.waitFor(async () =>
+          expect(
+            (await request(`/approvals/${item.id}`, 'POST', { approved })).response.status,
+          ).toBe(200),
+        );
+      }
+      await running;
+      await vi.waitFor(async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'complete',
+        ),
+      );
+      expect(
+        JSON.stringify(calls.at(-1)!.messages),
+        JSON.stringify(calls.at(-1)!.messages),
+      ).toEqual(
+        approved
+          ? expect.stringContaining('data:image/png;base64')
+          : expect.not.stringContaining('data:image/png;base64'),
+      );
+      const activities = (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity;
+      expect(JSON.stringify(activities)).not.toContain('iVBOR');
+      expect(activities).toMatchObject([
+        {
+          tool: 'image',
+          action: approved ? 'view' : 'rejected',
+          status: approved ? 'complete' : 'failed',
+        },
+      ]);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    },
+  );
+
+  it('lists image tools without a workspace folder and honors bot assignment', async () => {
+    const tools = (await request<ToolInfo[]>('/tools?workspaceId=default')).data;
+    expect(tools).toContainEqual(
+      expect.objectContaining({ id: 'image', available: true, actions: ['read', 'view'] }),
+    );
+    await request('/tools/assignments?workspaceId=default', 'PUT', {
+      botId: 'scout',
+      toolId: 'image',
+      enabled: false,
+    });
+    expect((await request('/tools/assignments?workspaceId=default')).data).toContainEqual({
+      botId: 'scout',
+      toolId: 'image',
+      enabled: false,
+    });
+  });
+
   it.each([
     { approvalMode: 'ask-for-approval', answer: 'New customers', restart: false },
     { approvalMode: 'full-access', answer: 'Focus on partners instead.', restart: true },
@@ -1783,7 +1894,9 @@ describe('Mukai bots and AI API', () => {
       text: 'All browser checks finished.',
     });
   });
-  it.each([10000, 28000])(
+  // Keep the smaller case close to the catalog's minimum context while leaving
+  // room for the image family. The fixture results still greatly exceed it.
+  it.each([11000, 28000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
       const provider = await configure(true);

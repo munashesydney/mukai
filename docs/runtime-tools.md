@@ -39,6 +39,31 @@ Use `browser` for interactions and signed-in pages. Search excerpts and fetched 
 untrusted data; bots are instructed to ignore embedded instructions and cite returned URLs.
 Tests use local/mocked provider fixtures rather than spending anonymous provider quota.
 
+## Local images
+
+`image` is a built-in family with `read` and `view` actions, enabled by default and
+controlled by bot tool assignments. It works even without a workspace folder.
+
+- `path` accepts an absolute local path, including outside the workspace. Relative
+  paths resolve against the workspace folder; without a folder, use an absolute path.
+  Files refer to the computer running Mukai's server and its OS account permissions.
+- `read` validates and decodes the file and returns its path, format, dimensions and
+  byte size. It returns metadata only, not a visual observation.
+- `view` reads the file and sends actual image content to the configured vision model
+  in the same call. Text-only models receive an error directing them to a vision model.
+- PNG, JPEG and still WebP are supported. Inputs are limited to 10 MiB and 40 million
+  pixels. Images are normalized to PNG with metadata stripped and orientation applied.
+  `detail: "high"` (default) scales the longest edge to at most 2048 pixels;
+  `detail: "original"` preserves resolution. Normalized outputs are limited to 10 MiB.
+- Full access runs permitted calls immediately. Ask for approval waits for approval of
+  the exact invocation before opening the file, including paths outside the workspace.
+  Rejected calls never read or decode the image. Existing approval restart recovery applies.
+- Image bytes are omitted from activity logs. The existing model context policy may
+  omit images that exceed the available allowance and returns an explicit notice.
+  Bots must not claim to have inspected metadata-only, failed or omitted results.
+
+Example: `{"action":"view","path":"C:\\Users\\sydne\\Downloads\\picture.png"}`.
+
 ## Browser
 
 `browser` supports `open`, `tabs`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`,

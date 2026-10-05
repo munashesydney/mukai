@@ -129,7 +129,7 @@ export class ToolService {
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
                   ? Boolean(this.capabilities)
-                  : ['browser', 'web_search', 'ask'].includes(tool.id)
+                  : ['browser', 'image', 'web_search', 'ask'].includes(tool.id)
                     ? true
                     : Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
