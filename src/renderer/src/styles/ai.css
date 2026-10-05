@@ -160,8 +160,16 @@
   overflow-wrap: anywhere;
 }
 .provider-model-editor {
-  border-top: 1px solid var(--line);
-  padding-top: 16px;
+  padding: 24px;
+}
+.chatgpt-connection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.chatgpt-connection > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .workspace-picker-menu .workspace-mini {
   flex: 0 0 32px;
@@ -1463,7 +1471,7 @@
   gap: 9px;
   line-height: 1.6;
 }
-.ai-checkbox input {
+.ai-checkbox input:not(.themed-checkbox) {
   accent-color: var(--teal);
   margin: 3px 0 0;
   width: 14px;

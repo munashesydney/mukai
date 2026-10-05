@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LoaderCircle, Send, Square } from 'lucide-react';
+import { LoaderCircle, ArrowUp, Square } from 'lucide-react';
 import type { Bot, ProviderSettings } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
@@ -333,8 +333,7 @@ export function SpaceChat({
                         disabled={state.loading || !state.text.trim()}
                         onClick={send}
                       >
-                        <Send size={16} />
-                        Send
+                        <ArrowUp size={18} />
                       </button>
                     )}
                   </div>

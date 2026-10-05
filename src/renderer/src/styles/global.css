@@ -1299,12 +1299,14 @@ p {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  flex-shrink: 0;
   background: var(--theme-accent);
   color: white;
-  border-radius: 6px;
+  border-radius: 50%;
   height: 29px;
-  padding: 0 11px;
+  width: 29px;
+  padding: 0;
   font-size: 11px;
 }
 .send-button:hover {
@@ -1315,7 +1317,7 @@ p {
   color: var(--theme-text);
 }
 .send-button svg {
-  transform: rotate(-10deg);
+  transform: none;
 }
 .composer-hint {
   display: flex;

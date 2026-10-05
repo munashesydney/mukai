@@ -1,6 +1,9 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ProviderInput, ProviderSettings, SavedProviderModel } from '../../../../shared/ai';
 import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
+import { Sheet } from '../../components/ui/Sheet';
+import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
 
 const empty = (): SavedProviderModel => ({
@@ -126,114 +129,133 @@ export function ProviderModels({
           Add model
         </button>
       ) : (
-        <div className="provider-model-editor ai-form">
-          {provider.kind === 'chatgpt' ? (
-            <label>
-              Account model
-              <ChatGPTModelSelect
-                providerId={provider.id}
-                value={draft.id}
-                disabled={disabled}
-                onChange={(id, metadata) =>
-                  setDraft({
-                    ...draft,
-                    id,
-                    name: metadata?.name ?? id,
-                    contextWindowTokens: metadata?.contextWindowTokens ?? null,
-                    supportsImages: metadata?.supportsImages ?? false,
-                  })
-                }
-              />
-            </label>
-          ) : (
-            <label>
-              Model ID
-              <input
-                maxLength={150}
-                value={draft.id}
-                disabled={disabled}
-                placeholder="Exact model ID from your provider"
-                onChange={(event) => setDraft({ ...draft, id: event.target.value })}
-              />
-            </label>
-          )}
-          <label>
-            Display name
-            <input
-              maxLength={150}
-              value={draft.name}
-              disabled={disabled}
-              placeholder={draft.id || 'Name shown in the picker'}
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-            />
-          </label>
-          <div className="ai-form-grid">
-            <label>
-              Context window (tokens)
-              <input
-                type="number"
-                min={4096}
-                max={10000000}
-                step={1}
-                value={draft.contextWindowTokens ?? ''}
-                disabled={disabled}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    contextWindowTokens: event.target.value ? Number(event.target.value) : null,
-                  })
-                }
-              />
-              <small>Use the documented capacity for this model.</small>
-            </label>
-            <label>
-              {provider.kind === 'chatgpt' ? 'Output reserve (tokens)' : 'Maximum output (tokens)'}
-              <input
-                type="number"
-                min={256}
-                max={262144}
-                step={1}
-                value={draft.maxOutputTokens}
-                disabled={disabled}
-                onChange={(event) =>
-                  setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })
-                }
-              />
-            </label>
-          </div>
-          <label className="ai-checkbox">
-            <input
-              type="checkbox"
-              checked={draft.supportsImages}
-              disabled={disabled}
-              onChange={(event) => setDraft({ ...draft, supportsImages: event.target.checked })}
-            />
-            Supports images
-          </label>
-          {error && (
-            <p className="ai-alert" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="ai-form-actions">
-            <button
-              type="button"
-              className="button button--primary"
-              disabled={disabled}
-              onClick={keep}
+        createPortal(
+          <Sheet
+            title={editing ? 'Edit model' : 'Add model'}
+            className="provider-model-sheet"
+            onClose={() => setEditing(null)}
+          >
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                keep();
+              }}
             >
-              Keep model
-            </button>
-            <button
-              type="button"
-              className="button"
-              disabled={disabled}
-              onClick={() => setEditing(null)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+              <div className="provider-model-editor ai-form bot-editor-body">
+                {provider.kind === 'chatgpt' ? (
+                  <label>
+                    Account model
+                    <ChatGPTModelSelect
+                      providerId={provider.id}
+                      value={draft.id}
+                      disabled={disabled}
+                      onChange={(id, metadata) =>
+                        setDraft({
+                          ...draft,
+                          id,
+                          name: metadata?.name ?? id,
+                          contextWindowTokens: metadata?.contextWindowTokens ?? null,
+                          supportsImages: metadata?.supportsImages ?? false,
+                        })
+                      }
+                    />
+                  </label>
+                ) : (
+                  <label>
+                    Model ID
+                    <input
+                      maxLength={150}
+                      value={draft.id}
+                      disabled={disabled}
+                      placeholder="Exact model ID from your provider"
+                      onChange={(event) => setDraft({ ...draft, id: event.target.value })}
+                    />
+                  </label>
+                )}
+                <label>
+                  Display name
+                  <input
+                    maxLength={150}
+                    value={draft.name}
+                    disabled={disabled}
+                    placeholder={draft.id || 'Name shown in the picker'}
+                    onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                  />
+                </label>
+                <div className="ai-form-grid">
+                  <label>
+                    Context window (tokens)
+                    <input
+                      type="number"
+                      min={4096}
+                      max={10000000}
+                      step={1}
+                      value={draft.contextWindowTokens ?? ''}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          contextWindowTokens: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        })
+                      }
+                    />
+                    <small>Use the documented capacity for this model.</small>
+                  </label>
+                  <label>
+                    {provider.kind === 'chatgpt'
+                      ? 'Output reserve (tokens)'
+                      : 'Maximum output (tokens)'}
+                    <input
+                      type="number"
+                      min={256}
+                      max={262144}
+                      step={1}
+                      value={draft.maxOutputTokens}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="ai-checkbox">
+                  <Checkbox
+                    checked={draft.supportsImages}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      setDraft({ ...draft, supportsImages: event.target.checked })
+                    }
+                  />
+                  Supports images
+                </label>
+                {error && (
+                  <p className="ai-alert" role="alert">
+                    {error}
+                  </p>
+                )}
+              </div>
+              <div className="modal-footer">
+                <div className="ai-form-actions">
+                  <button type="submit" className="button button--primary" disabled={disabled}>
+                    Keep model
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={disabled}
+                    onClick={() => setEditing(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </form>
+          </Sheet>,
+          document.body,
+        )
       )}
       <small>Save the connection to apply model changes.</small>
     </section>

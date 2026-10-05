@@ -6,7 +6,7 @@ import {
   MessageCirclePlus,
   Paperclip,
   RotateCcw,
-  Send,
+  ArrowUp,
   SlidersHorizontal,
   Square,
   X,
@@ -454,8 +454,7 @@ export function BotChat({
                           }
                           onClick={send}
                         >
-                          <Send size={16} />
-                          <span>Send</span>
+                          <ArrowUp size={18} />
                         </button>
                       )}
                     </div>

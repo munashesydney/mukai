@@ -3,6 +3,7 @@ import { Check, ChevronLeft, KeyRound, Plus, Radio, Trash2 } from 'lucide-react'
 import type { ProviderInput, ProviderSettings, ProviderKind } from '../../../../shared/ai';
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
+import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { ProviderModels } from './ProviderModels';
 import type { ChatGPTSignIn } from '../../../../shared/ai';
@@ -382,8 +383,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
           )}
           {value.kind === 'compatible' && saved?.hasKey && (
             <label className="ai-checkbox">
-              <input
-                type="checkbox"
+              <Checkbox
                 disabled={busy}
                 checked={Boolean(value.clearKey)}
                 onChange={(event) =>
@@ -406,8 +406,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
             </p>
           )}
           <label className="ai-checkbox">
-            <input
-              type="checkbox"
+            <Checkbox
               disabled={busy || Boolean(saved?.isDefault)}
               checked={value.isDefault}
               onChange={(event) => setValue({ ...value, isDefault: event.target.checked })}

@@ -127,6 +127,11 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    assert.equal(await evaluate('document.querySelector(".send-button").textContent.trim()'), '');
+    assert.equal(
+      await evaluate('getComputedStyle(document.querySelector(".send-button")).borderRadius'),
+      '50%',
+    );
     const main = (await request<Bot[]>('/bots'))[0];
     assert(main.isMain);
     assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 0);
@@ -1136,9 +1141,20 @@ async function main() {
     await wait('Boolean(document.querySelector(".provider-models"))');
     await click('Add model');
     await wait('Boolean(document.querySelector(".provider-model-editor"))');
+    assert.equal(
+      await evaluate('Boolean(document.querySelector("dialog.provider-model-sheet[open]"))'),
+      true,
+    );
+    assert.equal(
+      await evaluate(
+        'Boolean(document.querySelector(".provider-model-editor .checkbox-control .themed-checkbox"))',
+      ),
+      true,
+    );
     await fill('.provider-model-editor input[maxlength="150"]', 'glm-test');
     await fill('.provider-model-editor label:nth-of-type(2) input', 'GLM Test');
     await fill('.provider-model-editor input[type="number"]', '131072');
+    await capture('provider-model-sheet.png');
     await click('Keep model');
     await wait('!document.querySelector(".provider-model-editor")');
     await click('Save connection');

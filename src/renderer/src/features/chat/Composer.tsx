@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Plus, Send, Smile, Paperclip, X } from 'lucide-react';
+import { Plus, ArrowUp, Smile, Paperclip, X } from 'lucide-react';
 import { IconButton } from '../../components/ui/IconButton';
 
 export function Composer({
@@ -71,8 +71,7 @@ export function Composer({
             disabled={!text.trim() && !attachment}
             aria-label="Send message"
           >
-            <Send size={16} />
-            <span>Send</span>
+            <ArrowUp size={18} />
           </button>
         </div>
         {emojiOpen && (
