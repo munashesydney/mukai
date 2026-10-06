@@ -39,9 +39,11 @@ let calls: {
   messages: { role: string; content: unknown }[];
   stream?: boolean;
   response_format?: unknown;
+  max_tokens?: number;
   tools?: { function: { name: string } }[];
 }[];
 let invalidSchema = false;
+let extractionResponses: { content: string | null; finishReason: string }[];
 async function close(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -73,6 +75,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'mukai-memory-test-'));
   calls = [];
   invalidSchema = false;
+  extractionResponses = [];
   fixture = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += String(chunk);
@@ -104,7 +107,8 @@ beforeEach(async () => {
           }) +
           '\n\ndata: [DONE]\n\n',
       );
-    } else
+    } else {
+      const simulated = extractionResponses.shift();
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({
           id: 'test',
@@ -116,19 +120,22 @@ beforeEach(async () => {
               index: 0,
               message: {
                 role: 'assistant',
-                content: invalidSchema
-                  ? 'not json'
-                  : JSON.stringify({
-                      facts: [coffee],
-                      reviewSummary: 'Retain the explicitly stated coffee preference.',
-                    }),
+                content: simulated
+                  ? simulated.content
+                  : invalidSchema
+                    ? 'not json'
+                    : JSON.stringify({
+                        facts: [coffee],
+                        reviewSummary: 'Retain the explicitly stated coffee preference.',
+                      }),
               },
-              finish_reason: 'stop',
+              finish_reason: simulated?.finishReason ?? 'stop',
             },
           ],
           usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
         }),
       );
+    }
   });
   await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
   api = await startApiServer(0, {
@@ -142,6 +149,8 @@ beforeEach(async () => {
     kind: 'compatible',
     baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}/v1`,
     defaultModel: 'test-memory',
+    contextWindowTokens: 128000,
+    maxOutputTokens: 48000,
     supportsImages: false,
     isDefault: true,
     apiKey: '',
@@ -653,6 +662,17 @@ describe('Mukai memory integration', () => {
     const extractionCall = calls.find((call) => !call.stream)!;
     expect(extractionCall.response_format).toBeDefined();
     expect(JSON.stringify(extractionCall.messages[0])).toContain('untrusted data');
+    expect(extractionCall.response_format).toEqual({ type: 'json_object' });
+    const system = String(extractionCall.messages[0].content);
+    const schema = JSON.parse(
+      system.split(
+        'Required output JSON schema (include every required field, using null or empty arrays where appropriate):\n',
+      )[1],
+    );
+    expect(schema.required).toEqual(expect.arrayContaining(['facts', 'reviewSummary']));
+    expect(schema.properties.facts.items.required).toEqual(
+      expect.arrayContaining(['subjectId', 'objectId', 'subjectType', 'validFrom', 'supersedes']),
+    );
     invalidSchema = true;
     await chat('Remember this new preference.');
     await vi.waitFor(() =>
@@ -675,6 +695,7 @@ describe('Mukai memory integration', () => {
       error: { generatedTextBytes: 8 },
     });
     expect(JSON.stringify(diagnostic)).not.toContain('Remember this new preference.');
+    expect(calls.filter((call) => !call.stream)).toHaveLength(3);
     invalidSchema = false;
     await request('/memory/' + failed.id + '/retry', 'POST', {});
     await vi.waitFor(() =>
@@ -682,5 +703,41 @@ describe('Mukai memory integration', () => {
         api.memory.snapshot('default').episodes.find((episode) => episode.id === failed.id)?.status,
       ).toBe('complete'),
     );
+  });
+  it('regenerates once when a compatible provider returns valid JSON with missing required fields', async () => {
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 0 });
+    extractionResponses.push({
+      content: JSON.stringify({ facts: [{ text: 'PRIVATE INVALID FACT' }] }),
+      finishReason: 'stop',
+    });
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const requests = calls.filter((call) => !call.stream);
+    expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1].messages)).toContain('previous attempt');
+    expect(JSON.stringify(requests[1].messages)).not.toContain('PRIVATE INVALID FACT');
+    const log = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(log).toContain('memory.extraction_retry');
+    expect(log).not.toContain('PRIVATE INVALID FACT');
+    expect(log).not.toContain('memory.extraction_failed');
+  });
+  it('recovers an empty token-limited response with a larger bounded budget and logs metadata', async () => {
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 0 });
+    extractionResponses.push({ content: null, finishReason: 'length' });
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const requests = calls.filter((call) => !call.stream);
+    expect(requests).toHaveLength(2);
+    expect(requests[0].max_tokens).toBe(6000);
+    expect(requests[1].max_tokens).toBe(12000);
+    const diagnostic = JSON.parse(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8').trim());
+    expect(diagnostic).toMatchObject({
+      event: 'memory.extraction_retry',
+      finishReason: 'length',
+      generatedTextBytes: 0,
+      outputTokens: 10,
+    });
   });
 });

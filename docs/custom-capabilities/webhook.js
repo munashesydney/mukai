@@ -26,8 +26,6 @@ export default {
     // Do normal code work here; make external writes idempotent using event.id.
     // Only request a model run when needed:
     // await context.wakeBot(`Review verified event ${event.id}`);
-    // Or select another permitted workspace bot:
-    // await context.wakeBot(`Review verified event ${event.id}`, { botId: 'target-bot-id' });
     return { processed: event.id, workspaceId: context.workspaceId };
   },
 };

@@ -24,6 +24,10 @@ export interface DiagnosticContext {
   step?: number;
   contextWindow?: number | null;
   usedTokens?: number;
+  finishReason?: string;
+  generatedTextBytes?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
 }
 
 // Sanitized diagnostics: never serialize SDK errors wholesale. They contain
@@ -176,9 +180,17 @@ export class DiagnosticService {
         'messageId',
         'tool',
         'phase',
+        'finishReason',
       ] as const)
         if (context[key] !== undefined) metadata[key] = this.text(context[key], 512);
-      for (const key of ['step', 'contextWindow', 'usedTokens'] as const)
+      for (const key of [
+        'step',
+        'contextWindow',
+        'usedTokens',
+        'generatedTextBytes',
+        'outputTokens',
+        'reasoningTokens',
+      ] as const)
         if (typeof context[key] === 'number' && Number.isFinite(context[key]))
           metadata[key] = context[key];
       let details: Record<string, unknown> | undefined;

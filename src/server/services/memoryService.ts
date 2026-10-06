@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { generateText, Output } from 'ai';
+import { asSchema, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import {
   BgeEmbedder,
@@ -80,6 +80,18 @@ export class MemoryService {
             if (!actor) throw new Error('A bot is required to resolve the memory model.');
             const config = this.providers.resolve(actor);
             const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
+            const compatible = config.provider.kind === 'compatible';
+            const repairInstructions =
+              '\nThe previous attempt did not produce a valid result. Return only a JSON object matching the required schema, including facts and reviewSummary. Include every required field; use null for unknown IDs/dates and [] for empty arrays. Do not include reasoning or markdown.';
+            const system =
+              extractionInstructions +
+              '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.' +
+              (compatible
+                ? '\nRequired output JSON schema (include every required field, using null or empty arrays where appropriate):\n' +
+                  JSON.stringify(await asSchema(memoryReviewOutputSchema).jsonSchema)
+                : '');
+            const instructionTokens =
+              estimateTokens(system) + (compatible ? estimateTokens(repairInstructions) : 0);
             const data = {
               content: episode.content,
               referenceTime: episode.referenceTime,
@@ -98,61 +110,94 @@ export class MemoryService {
             };
             while (
               data.candidates.length &&
-              estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
-                limits.input
+              estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input
             )
               data.candidates.pop();
-            if (
-              estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
-              limits.input
-            ) {
+            if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input) {
               data.recentContext = '';
-              if (
-                estimateTokens(JSON.stringify(data)) + estimateTokens(extractionInstructions) >
-                limits.input
-              )
+              if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input)
                 throw new Error('Memory episode exceeds model context.');
             }
-            try {
-              const result = await generateText({
-                model: config.model,
-                output: Output.object({
-                  schema: memoryReviewOutputSchema,
-                }),
-                system:
-                  extractionInstructions +
-                  '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.',
-                prompt: JSON.stringify(data),
-                abortSignal: signal,
-                timeout: { totalMs: 60000 },
-                maxRetries: PROVIDER_MAX_RETRIES,
-                maxOutputTokens:
-                  config.provider.kind === 'chatgpt' ? undefined : Math.min(limits.output, 6000),
-                providerOptions: {
-                  openai: {
-                    store: false,
-                    ...(config.provider.kind === 'chatgpt'
-                      ? { systemMessageMode: 'developer' }
-                      : {}),
+            const timeoutSignal = AbortSignal.timeout(60000);
+            const abortSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+            let repair = '';
+            let outputLimit = Math.min(limits.output, 6000);
+            for (let attempt = 0; attempt < (compatible ? 2 : 1); attempt++) {
+              let outputDetails: {
+                finishReason?: string;
+                generatedTextBytes?: number;
+                outputTokens?: number;
+                reasoningTokens?: number;
+              } = {};
+              try {
+                const result = await generateText({
+                  model: config.model,
+                  output: Output.object({
+                    schema: memoryReviewOutputSchema,
+                  }),
+                  system,
+                  prompt: JSON.stringify(data) + repair,
+                  abortSignal,
+                  timeout: { totalMs: 60000 },
+                  maxRetries: PROVIDER_MAX_RETRIES,
+                  maxOutputTokens: config.provider.kind === 'chatgpt' ? undefined : outputLimit,
+                  providerOptions: {
+                    openai: {
+                      store: false,
+                      ...(config.provider.kind === 'chatgpt'
+                        ? { systemMessageMode: 'developer' }
+                        : {}),
+                    },
+                    anthropic: { thinking: { type: 'disabled' } },
+                    google: { thinkingConfig: { includeThoughts: false } },
                   },
-                  anthropic: { thinking: { type: 'disabled' } },
-                  google: { thinkingConfig: { includeThoughts: false } },
-                },
-              });
-              return result.output;
-            } catch (error) {
-              if (!signal?.aborted)
-                this.diagnostics?.record('memory.extraction_failed', error, {
-                  providerId: config.provider.id,
-                  providerKind: config.provider.kind,
-                  model: config.modelId,
-                  botId: actor.id,
-                  conversationId: episode.conversationId || undefined,
-                  messageId: episode.messageId || undefined,
-                  phase: 'memory-extraction',
                 });
-              throw error;
+                outputDetails = {
+                  finishReason: result.finishReason,
+                  generatedTextBytes: Buffer.byteLength(result.text),
+                  outputTokens: result.usage.outputTokens,
+                  reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
+                };
+                return result.output;
+              } catch (error) {
+                if (NoObjectGeneratedError.isInstance(error))
+                  outputDetails = {
+                    finishReason: error.finishReason,
+                    generatedTextBytes:
+                      error.text === undefined ? undefined : Buffer.byteLength(error.text),
+                    outputTokens: error.usage?.outputTokens,
+                    reasoningTokens: error.usage?.outputTokenDetails?.reasoningTokens,
+                  };
+                const retry =
+                  compatible &&
+                  attempt === 0 &&
+                  !abortSignal.aborted &&
+                  (NoObjectGeneratedError.isInstance(error) ||
+                    NoOutputGeneratedError.isInstance(error));
+                if (!signal?.aborted)
+                  this.diagnostics?.record(
+                    retry ? 'memory.extraction_retry' : 'memory.extraction_failed',
+                    error,
+                    {
+                      providerId: config.provider.id,
+                      providerKind: config.provider.kind,
+                      model: config.modelId,
+                      botId: actor.id,
+                      conversationId: episode.conversationId || undefined,
+                      messageId: episode.messageId || undefined,
+                      phase: 'memory-extraction',
+                      ...outputDetails,
+                    },
+                    retry ? 'warn' : 'error',
+                  );
+                if (!retry) throw error;
+                // Regenerate from the evidence rather than treating the rejected output as facts.
+                repair = repairInstructions;
+                if (outputDetails.finishReason === 'length')
+                  outputLimit = Math.min(limits.output, outputLimit * 2);
+              }
             }
+            throw new Error('Memory extraction attempts exhausted.');
           })
         )(request);
         this.reviews?.describe(
