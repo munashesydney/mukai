@@ -118,11 +118,17 @@ export class MemoryService {
               if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input)
                 throw new Error('Memory episode exceeds model context.');
             }
-            const timeoutSignal = AbortSignal.timeout(60000);
-            const abortSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+            // Bound the whole operation, while giving each repair a fresh request deadline.
+            const operationSignal = AbortSignal.timeout(240000);
             let repair = '';
-            let outputLimit = Math.min(limits.output, 6000);
+            let outputLimit = Math.min(limits.output, 12000);
             for (let attempt = 0; attempt < (compatible ? 2 : 1); attempt++) {
+              const timeoutSignal = AbortSignal.timeout(120000);
+              const abortSignal = AbortSignal.any([
+                operationSignal,
+                timeoutSignal,
+                ...(signal ? [signal] : []),
+              ]);
               let outputDetails: {
                 finishReason?: string;
                 generatedTextBytes?: number;
@@ -138,7 +144,7 @@ export class MemoryService {
                   system,
                   prompt: JSON.stringify(data) + repair,
                   abortSignal,
-                  timeout: { totalMs: 60000 },
+                  timeout: { totalMs: 120000 },
                   maxRetries: PROVIDER_MAX_RETRIES,
                   maxOutputTokens: config.provider.kind === 'chatgpt' ? undefined : outputLimit,
                   providerOptions: {
@@ -171,9 +177,11 @@ export class MemoryService {
                 const retry =
                   compatible &&
                   attempt === 0 &&
-                  !abortSignal.aborted &&
+                  !signal?.aborted &&
+                  !operationSignal.aborted &&
                   (NoObjectGeneratedError.isInstance(error) ||
-                    NoOutputGeneratedError.isInstance(error));
+                    NoOutputGeneratedError.isInstance(error) ||
+                    timeoutSignal.aborted);
                 if (!signal?.aborted)
                   this.diagnostics?.record(
                     retry ? 'memory.extraction_retry' : 'memory.extraction_failed',
@@ -193,7 +201,10 @@ export class MemoryService {
                 if (!retry) throw error;
                 // Regenerate from the evidence rather than treating the rejected output as facts.
                 repair = repairInstructions;
-                if (outputDetails.finishReason === 'length')
+                if (
+                  outputDetails.finishReason === 'length' ||
+                  NoOutputGeneratedError.isInstance(error)
+                )
                   outputLimit = Math.min(limits.output, outputLimit * 2);
               }
             }

@@ -3,6 +3,34 @@ import { GenerationTimeout } from './generationTimeout';
 
 afterEach(() => vi.useRealTimers());
 describe('Generation timeout', () => {
+  it('excludes parallel tool execution and gives the resumed provider a fresh idle window', () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let pendingTools = 0;
+    const timeout = new GenerationTimeout(() => pendingTools > 0, controller, 180000, 45000);
+    vi.advanceTimersByTime(44000);
+    pendingTools = 2;
+    vi.advanceTimersByTime(240000);
+    pendingTools = 1;
+    vi.advanceTimersByTime(240000);
+    expect(controller.signal.aborted).toBe(false);
+    pendingTools = 0;
+    vi.advanceTimersByTime(44750);
+    expect(controller.signal.aborted).toBe(false);
+    vi.advanceTimersByTime(250);
+    expect(controller.signal.reason.name).toBe('TimeoutError');
+    timeout.dispose();
+  });
+
+  it('does not interfere with explicit cancellation while a tool is running', () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const timeout = new GenerationTimeout(() => true, controller, 180000, 45000);
+    controller.abort(new Error('User stopped the response.'));
+    vi.advanceTimersByTime(240000);
+    expect(controller.signal.reason.message).toBe('User stopped the response.');
+    timeout.dispose();
+  });
   it('allows long human approval waits and restores the remaining idle budget afterward', () => {
     vi.useFakeTimers();
     const controller = new AbortController();

@@ -50,6 +50,9 @@ let mode:
   | 'normal'
   | 'fail'
   | 'upstream-fail'
+  | 'transient-stream'
+  | 'transient-stream-always'
+  | 'memory-failure'
   | 'slow'
   | 'tools'
   | 'invalid-tool'
@@ -312,6 +315,59 @@ beforeEach(async () => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'transient-stream-always' || (mode === 'transient-stream' && calls.length === 1)) {
+      res.end(
+        'data: ' +
+          JSON.stringify({
+            error: {
+              message: 'Our servers are currently overloaded. Please try again later.',
+              code: 'server_is_overloaded',
+              type: 'server_error',
+            },
+          }) +
+          '\n\ndata: [DONE]\n\n',
+      );
+      return;
+    }
+    if (
+      mode === 'memory-failure' &&
+      !body.messages.some((message: { role: string }) => message.role === 'tool')
+    ) {
+      res.end(
+        'data: ' +
+          JSON.stringify({
+            id: 'memory-failure',
+            object: 'chat.completion.chunk',
+            created: 1,
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'memory-save',
+                      type: 'function',
+                      function: {
+                        name: 'memory',
+                        arguments: JSON.stringify({
+                          action: 'add',
+                          content: 'User prefers coffee.',
+                          scope: 'workspace',
+                        }),
+                      },
+                    },
+                  ],
+                },
+                finish_reason: 'tool_calls',
+              },
+            ],
+          }) +
+          '\n\ndata: [DONE]\n\n',
+      );
+      return;
+    }
     if (mode === 'screenshot-artifact') {
       const step = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
@@ -1456,6 +1512,57 @@ describe('Mukai bots and AI API', () => {
       (await request<ProviderSettings[]>('/providers')).data[0].contextWindowTokens,
     ).toBeNull();
   });
+  it('recovers a temporary stream failure automatically without another user request', async () => {
+    await configure();
+    mode = 'transient-stream';
+    await chat('Continue through a temporary outage');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status, readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toBe('complete');
+    expect(reply.content).toContain('A real SDK response.');
+    expect(calls).toHaveLength(2);
+    expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toContain('chat.provider_retry');
+  });
+
+  it('returns a failed memory save to the model and still finishes the chat', async () => {
+    await configure();
+    mode = 'memory-failure';
+    vi.spyOn(api.memory, 'add').mockRejectedValue(
+      new DOMException('Memory request timed out', 'TimeoutError'),
+    );
+    await chat('Remember my coffee preference');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('complete');
+    expect(reply.error).toBeNull();
+    expect(reply.activity).toContainEqual(
+      expect.objectContaining({ tool: 'memory', status: 'failed' }),
+    );
+    expect(JSON.stringify(calls[1].messages)).toContain('Memory request timed out');
+    expect(reply.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'A real SDK response.',
+    });
+  });
+  it('bounds stream recovery and saves a final status when the provider remains unavailable', async () => {
+    await configure();
+    mode = 'transient-stream-always';
+    await chat('Recover from an outage');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(3);
+    expect(reply.status).toBe('failed');
+    expect(reply.content).toContain('Saved progress:');
+    expect(reply.parts?.at(-1)).toMatchObject({ type: 'text', final: true });
+  });
+
+  it('honors Stop during retry backoff without starting another provider request', async () => {
+    await configure();
+    mode = 'transient-stream';
+    const running = chat('Recover from an outage');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
+  });
   it('continues a length-limited generation and preserves the complete visible final answer', async () => {
     await configure();
     mode = 'truncated-once';
@@ -1594,7 +1701,11 @@ describe('Mukai bots and AI API', () => {
     expect(history.at(-1)?.status).toBe('failed');
     expect(history.at(-1)?.error).toContain('compaction did not finish');
     expect(history.at(-1)?.contextUsage?.phase).toBe('failed');
-    expect(history.at(-1)?.parts?.at(-1)).toMatchObject({ type: 'compaction', state: 'failed' });
+    expect(history.at(-1)?.parts?.find((part) => part.type === 'compaction')).toMatchObject({
+      type: 'compaction',
+      state: 'failed',
+    });
+    expect(history.at(-1)?.content).toContain('Saved progress:');
     expect(calls.filter((call) => !call.stream)).toHaveLength(3);
     expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
     expect(history[0].content).toBe(evidence);
@@ -1640,7 +1751,7 @@ describe('Mukai bots and AI API', () => {
       expect(history[0].content).toBe(evidence);
       expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
       expect(calls.filter((call) => !call.stream)).toHaveLength(1);
-      expect(history.at(-1)?.parts?.at(-1)).toMatchObject({
+      expect(history.at(-1)?.parts?.find((part) => part.type === 'compaction')).toMatchObject({
         type: 'compaction',
         state: failure === 'compaction-slow' ? 'interrupted' : 'failed',
       });

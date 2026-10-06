@@ -1,4 +1,37 @@
 import type { ModelMessage } from 'ai';
+import type { ChatActivity } from '../../shared/ai';
+
+export function canRetryProvider(error: unknown): boolean {
+  const detail = error as {
+    name?: string;
+    code?: string;
+    isRetryable?: boolean;
+    statusCode?: number;
+  } | null;
+  return Boolean(
+    detail &&
+    (detail.name === 'TimeoutError' ||
+      detail.code === 'server_is_overloaded' ||
+      detail.isRetryable === true ||
+      (detail.statusCode !== undefined && detail.statusCode >= 500)),
+  );
+}
+
+/** An evidence-based status remains available even when the model cannot respond. */
+export function interruptedResponseReport(activity: ChatActivity[]): string {
+  const complete = activity.filter((item) => item.status === 'complete').length;
+  const failed = activity.filter((item) => item.status === 'failed').length;
+  const uncertain = activity.filter(
+    (item) => item.status === 'running' || item.status === 'interrupted',
+  ).length;
+  return [
+    'Mukai could not finish the response. Saved progress:',
+    `${complete} tool operations completed; ${failed} failed; ${uncertain} interrupted or unresolved.`,
+    uncertain
+      ? 'Verify unresolved operations before repeating them. Completed results are saved; resume from those results.'
+      : 'Completed results are saved; resume from those results without repeating completed operations.',
+  ].join('\n');
+}
 
 // The final, tool-free step is reserved for a human-readable report.
 export const TOOL_STEP_LIMIT = 1000;

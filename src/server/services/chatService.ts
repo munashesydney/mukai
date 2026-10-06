@@ -68,6 +68,8 @@ import {
   EMPTY_REPLY_RECOVERY_LIMIT,
   FINAL_REPLY_NOTICE,
   emptyReplyRecoveryMessages,
+  canRetryProvider,
+  interruptedResponseReport,
 } from './responsePolicy';
 
 interface Generation {
@@ -1184,7 +1186,8 @@ export class ChatService {
       let malformedRecoveries = 0,
         completionRecoveries = 0,
         outputContinuations = 0,
-        overflowRecoveries = 0;
+        overflowRecoveries = 0,
+        providerRecoveries = 0;
       let notice = finalReplyOnly
           ? finalReplyNotice
           : checkpoint
@@ -1261,7 +1264,7 @@ export class ChatService {
           },
         });
         const timeout = new GenerationTimeout(
-          () => this.approvals?.waiting(assistantId) || false,
+          () => pendingTools.size > 0 || Boolean(this.approvals?.waiting(assistantId)),
           stepController,
           RESPONSE_TIMEOUT_MS,
           45000,
@@ -1384,6 +1387,8 @@ export class ChatService {
             else if (chunk.type === 'abort') {
               status = generation.controller.signal.aborted ? generation.reason : 'failed';
               if (status === 'failed') {
+                // Route watchdog failures through the bounded recovery path below.
+                if (stepController.signal.aborted) throw stepController.signal.reason;
                 error = 'The provider timed out. Retry the response.';
                 this.diagnostics.record(
                   'chat.provider_aborted',
@@ -1400,6 +1405,30 @@ export class ChatService {
             estimateTokens(generation.reasoning.slice(reasoningBeforeStep));
           usage.runEstimated = true;
           publishUsage();
+          if (
+            !signal.aborted &&
+            canRetryProvider(caught) &&
+            executionVersion === stepExecutionVersion &&
+            generation.content.length === textBeforeStep &&
+            providerRecoveries < 2
+          ) {
+            providerRecoveries++;
+            status = 'complete';
+            error = null;
+            this.diagnostics.record('chat.provider_retry', caught, diagnosticContext(), 'warn');
+            // No operation or visible answer started in this step. Prior steps stay checkpointed.
+            await new Promise<void>((resolve) => {
+              const finish = () => {
+                clearTimeout(timer);
+                signal.removeEventListener('abort', finish);
+                resolve();
+              };
+              const timer = setTimeout(finish, 1000 * providerRecoveries);
+              signal.addEventListener('abort', finish, { once: true });
+              if (signal.aborted) finish();
+            });
+            continue;
+          }
           if (
             isContextOverflow(caught) &&
             executionVersion === stepExecutionVersion &&
@@ -1622,6 +1651,22 @@ export class ChatService {
           error = null;
           save();
         } else {
+          if (
+            status === 'failed' ||
+            (status === 'interrupted' &&
+              !generation.parts.some((part) => part.type === 'text' && part.final))
+          ) {
+            const report = interruptedResponseReport(generation.activity);
+            const part: ResponsePart = {
+              id: randomUUID(),
+              type: 'text',
+              text: report,
+              final: true,
+            };
+            generation.content += (generation.content ? '\n\n' : '') + report;
+            generation.parts = upsertResponsePart(generation.parts, part);
+            emit({ type: 'part', id: assistantId, part });
+          }
           this.messages.finish(
             assistantId,
             generation.content,

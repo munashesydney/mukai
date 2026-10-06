@@ -1,6 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelMessage } from 'ai';
-import { emptyReplyRecoveryMessages } from './responsePolicy';
+import {
+  canRetryProvider,
+  emptyReplyRecoveryMessages,
+  interruptedResponseReport,
+} from './responsePolicy';
+
+describe('provider recovery policy', () => {
+  it('retries temporary failures, but not credentials, invalid requests, or arbitrary aborts', () => {
+    expect(canRetryProvider(new DOMException('Timed out', 'TimeoutError'))).toBe(true);
+    expect(canRetryProvider({ statusCode: 503 })).toBe(true);
+    expect(canRetryProvider({ code: 'server_is_overloaded', isRetryable: false })).toBe(true);
+    expect(canRetryProvider({ isRetryable: true })).toBe(true);
+    for (const error of [
+      null,
+      { statusCode: 401 },
+      { statusCode: 400 },
+      new DOMException('', 'AbortError'),
+    ])
+      expect(canRetryProvider(error)).toBe(false);
+  });
+  it('reports uncertain actions without claiming they completed or exposing tool output', () => {
+    const report = interruptedResponseReport([
+      {
+        id: '1',
+        tool: 'terminal',
+        action: 'run',
+        path: '',
+        summary: 'PRIVATE OUTPUT',
+        status: 'complete',
+      },
+      { id: '2', tool: 'memory', action: 'add', path: '', summary: '', status: 'failed' },
+      { id: '3', tool: 'terminal', action: 'run', path: '', summary: '', status: 'running' },
+    ]);
+    expect(report).toContain('1 tool operations completed; 1 failed; 1 interrupted or unresolved');
+    expect(report).toContain('Verify unresolved operations');
+    expect(report).not.toContain('PRIVATE OUTPUT');
+  });
+});
 
 describe('empty reply continuation', () => {
   it('preserves answers and call/result pairs, with a fresh instruction after them', () => {

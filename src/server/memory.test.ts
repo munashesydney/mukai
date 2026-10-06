@@ -43,7 +43,7 @@ let calls: {
   tools?: { function: { name: string } }[];
 }[];
 let invalidSchema = false;
-let extractionResponses: { content: string | null; finishReason: string }[];
+let extractionResponses: { content: string | null; finishReason: string; abort?: () => void }[];
 async function close(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -109,6 +109,10 @@ beforeEach(async () => {
       );
     } else {
       const simulated = extractionResponses.shift();
+      if (simulated?.abort) {
+        simulated.abort();
+        return;
+      }
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({
           id: 'test',
@@ -730,8 +734,9 @@ describe('Mukai memory integration', () => {
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const requests = calls.filter((call) => !call.stream);
     expect(requests).toHaveLength(2);
-    expect(requests[0].max_tokens).toBe(6000);
-    expect(requests[1].max_tokens).toBe(12000);
+    expect(requests[0].max_tokens).toBe(12000);
+    // The retry stays within the configured model's context/output allowance.
+    expect(requests[1].max_tokens).toBe(16000);
     const diagnostic = JSON.parse(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8').trim());
     expect(diagnostic).toMatchObject({
       event: 'memory.extraction_retry',
@@ -739,5 +744,29 @@ describe('Mukai memory integration', () => {
       generatedTextBytes: 0,
       outputTokens: 10,
     });
+  });
+  it('gives the repair a fresh deadline after the first extraction times out', async () => {
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 0 });
+    const firstAttempt = new AbortController();
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    let attempts = 0;
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      if (milliseconds === 120000 && attempts++ === 0) return firstAttempt.signal;
+      return nativeTimeout(milliseconds);
+    });
+    extractionResponses.push({
+      content: null,
+      finishReason: 'stop',
+      abort: () => firstAttempt.abort(new DOMException('Request timed out', 'TimeoutError')),
+    });
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    expect(calls.filter((call) => !call.stream)).toHaveLength(2);
+    expect(firstAttempt.signal.aborted).toBe(true);
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    const log = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(log).toContain('memory.extraction_retry');
+    expect(log).not.toContain('memory.extraction_failed');
   });
 });

@@ -1,4 +1,4 @@
-/** Provider time limits exclude time spent waiting for a human tool decision. */
+/** Provider time limits exclude tool execution and human decisions. */
 export class GenerationTimeout {
   private total = 0;
   private idle = 0;
@@ -16,7 +16,11 @@ export class GenerationTimeout {
     const now = Date.now();
     const elapsed = now - this.last;
     this.last = now;
-    if (this.waiting()) return;
+    if (this.waiting()) {
+      // A resumed provider request gets a full inactivity window.
+      this.idle = 0;
+      return;
+    }
     this.total += elapsed;
     this.idle += elapsed;
     if (this.total >= this.totalMs || this.idle >= this.idleMs)
