@@ -33,7 +33,7 @@ export class ToolAccessService {
     }
     return (
       (workspaceToolIds as readonly string[]).includes(toolId) &&
-      (current.isMain || toolId !== 'manage_pursuit')
+      (current.isMain || (toolId !== 'manage_pursuit' && toolId !== 'manage_bot'))
     );
   }
   list(workspaceId: string): ToolAssignment[] {

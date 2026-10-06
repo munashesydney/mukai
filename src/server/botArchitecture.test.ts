@@ -512,7 +512,7 @@ describe('Bot architecture', () => {
       ]),
     );
     expect(names(1)).not.toContain('manage_pursuit');
-    expect(names(1)).toContain('manage_bot');
+    expect(names(1)).not.toContain('manage_bot');
     expect(names(1)).toEqual(
       expect.arrayContaining(['memory', 'browser', 'skills', 'register_custom_route']),
     );
@@ -527,6 +527,17 @@ describe('Bot architecture', () => {
     ).toBe(200);
     await chat(child);
     expect(names(2)).toContain('manage_pursuit');
+    expect(
+      (
+        await request('/tools/assignments', 'PUT', {
+          botId: child.id,
+          toolId: 'manage_bot',
+          enabled: true,
+        })
+      ).status,
+    ).toBe(200);
+    await chat(child);
+    expect(names(3)).toContain('manage_bot');
     const execute = vi.spyOn(api.browsers, 'execute');
     mode = 'revoke';
     await chat(main);
@@ -645,7 +656,10 @@ describe('Bot architecture', () => {
     expect(grandchild.createdBy).toBe(child.id);
     expect(api.access.allowed(grandchild, 'browser')).toBe(true);
     expect(api.access.allowed(grandchild, 'memory')).toBe(false);
-    expect(api.access.allowed(grandchild, 'manage_bot')).toBe(true);
+    expect(api.access.allowed(grandchild, 'manage_bot')).toBe(false);
+    await expect(api.botManagement.create(grandchild, input('Blocked'))).rejects.toThrow(
+      'not assigned manage_bot',
+    );
     expect((await request<Bot[]>('/bots')).data).toHaveLength(4);
     for (const target of [main, child]) {
       await expect(
@@ -666,7 +680,7 @@ describe('Bot architecture', () => {
       ),
     )!;
     expect(JSON.stringify(childCall.messages)).toContain('Review the notes.');
-    expect(childCall.tools.map((item) => item.function.name)).toContain('manage_bot');
+    expect(childCall.tools.map((item) => item.function.name)).not.toContain('manage_bot');
     expect(JSON.stringify(childCall.messages)).toContain(main.name);
     expect(JSON.stringify(childCall.messages)).toContain(main.role);
     expect(JSON.stringify(childCall.messages)).toContain('final reply will be sent directly back');
@@ -1029,7 +1043,7 @@ describe('Bot architecture', () => {
   it('propagates a nested child approval to every waiting ancestor and restores the chain', async () => {
     const main = await bot();
     await provider();
-    const child = await api.botManagement.create(main, input('Ada'));
+    const child = await api.botManagement.create(main, input('Ada'), ['manage_bot', 'ask']);
     const grandchild = await api.botManagement.create(child, input('Nova'));
     delegatedId = child.id;
     nestedId = grandchild.id;
@@ -1117,7 +1131,7 @@ describe('Bot architecture', () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
-    const other = await api.botManagement.create(main, input('Nova'));
+    const other = await api.botManagement.create(main, input('Nova'), ['manage_bot']);
     const signal = new AbortController().signal;
     const first = await api.botManagement.sendMessage(
       main,
@@ -1196,9 +1210,9 @@ describe('Bot architecture', () => {
   it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
     const main = await bot();
     await provider();
-    const ada = await api.botManagement.create(main, input('Ada'));
-    const nova = await api.botManagement.create(main, input('Nova'));
-    const junior = await api.botManagement.create(ada, input('Junior'));
+    const ada = await api.botManagement.create(main, input('Ada'), ['manage_bot']);
+    const nova = await api.botManagement.create(main, input('Nova'), ['manage_bot']);
+    const junior = await api.botManagement.create(ada, input('Junior'), ['manage_bot']);
     const colleague = await api.botManagement.create(nova, input('Colleague'));
     const signal = new AbortController().signal;
     for (const target of [main, ada, nova])

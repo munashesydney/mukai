@@ -35,7 +35,7 @@ const toolGuidance: Record<string, string> = {
   register_custom_route:
     'Custom Route Registration manages HTTP routes from saved workspace modules. Write or edit the module first, then register or update it; Mukai hosts the route, so do not open a separate listener. Use list and inspect to check existing registrations. Follow the tool description for route contracts, authentication, and webhook verification.',
   manage_bot:
-    'The main bot leads this workspace; createdBy identifies each parent. manage_bot creates children with Bots access by default and sends messages to peers or lower-level bots. Reuse conversationId for follow-ups; omit it for a new thread. Use actual human or bot-sounding names like Ada or Nova and job titles in role. Grant only tools you have. Check returned status before reporting completion.',
+    'The main bot leads this workspace; createdBy identifies each parent. manage_bot creates children with ordinary tools but without Bots or pursuits by default, and sends messages to peers or lower-level bots. Reuse conversationId for follow-ups; omit it for a new thread. Use actual human or bot-sounding names like Ada or Nova and job titles in role. Grant only tools you have. Check returned status before reporting completion.',
 };
 
 export function buildBotSystemPrompt(input: {

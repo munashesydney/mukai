@@ -5,7 +5,7 @@ export const botManagementDefinition = {
   summary: 'Create specialist bots and message peers or bots below you in the hierarchy.',
   actions: ['create', 'list', 'send_message'],
   description:
-    'list returns IDs, roles, createdBy and hierarchyLevel (main=0). create requires name, role, instructions; children inherit your provider/model and record you as creator. Omitted toolIds grants your ordinary tools including Bots, excluding pursuits; explicit toolIds replaces defaults. Grant only assigned tools; skills/routes stay shared. send_message requires botId,message; waits and returns response,status,conversationId. Reuse conversationId to continue that pair’s thread; omit for a new one. Message only workspace peers or lower-level bots, never yourself or higher-level bots. Final replies return automatically to the caller; no send_message back. Report completion only for status complete.',
+    'list returns IDs, roles, createdBy and hierarchyLevel (main=0). create requires name, role, instructions; children inherit your provider/model and record you as creator. Omitted toolIds grants your ordinary tools, excluding Bots and pursuits; explicit toolIds replaces defaults. Grant only assigned tools; skills/routes stay shared. send_message requires botId,message; waits and returns response,status,conversationId. Reuse conversationId to continue that pair’s thread; omit for a new one. Message only workspace peers or lower-level bots, never yourself or higher-level bots. Final replies return automatically to the caller; no send_message back. Report completion only for status complete.',
   inputSchema: z.object({
     action: z.enum(['create', 'list', 'send_message']),
     name: z.string().trim().min(1).max(60).optional(),
