@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,8 @@ import type { CapabilityRegistration } from '../../shared/customCapabilities';
 import type { ChatEvent } from '../../shared/ai';
 import { BotRepository } from '../repositories/botRepository';
 import { scoutBot } from '../services/botService';
+import { ChatService } from '../services/chatService';
+import { ConversationRepository } from '../repositories/conversationRepository';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, root: string, folder: string;
 let fixture: Server | undefined;
@@ -66,6 +68,7 @@ beforeEach(async () => {
   expect(result.status).toBe(200);
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (fixture) {
     fixture.closeAllConnections();
     await new Promise<void>((resolve) => fixture!.close(() => resolve()));
@@ -78,6 +81,35 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 describe('Custom capabilities', () => {
+  it('creates a separate private conversation per route wake and reuses it on retry', async () => {
+    const conversations = new ConversationRepository(api.store);
+    const empty = conversations.createPrivate('default', 'scout');
+    const respond = vi
+      .spyOn(ChatService.prototype, 'respond')
+      .mockRejectedValueOnce(new Error('Temporary failure'))
+      .mockResolvedValue(undefined);
+    await register(
+      'route',
+      `export default {
+      name:'fresh_wake',method:'POST',path:'/custom/fresh-wake',auth:'public',
+      async handle(request,context){return {status:202,body:await context.wakeBot('Fresh message')};}
+    };`,
+      'fresh-wake.ts',
+      'scout',
+    );
+    expect((await fetch(api.url + '/custom/fresh-wake', { method: 'POST' })).status).toBe(202);
+    await waitFor(() => respond.mock.calls.length === 2);
+    const firstId = respond.mock.calls[0][3]!;
+    expect(firstId).not.toBe(empty.id);
+    expect(firstId).not.toBe('bot-scout');
+    expect(respond.mock.calls[1][3]).toBe(firstId);
+    expect(conversations.find(firstId)).toMatchObject({ kind: 'private', ownerBotId: 'scout' });
+    expect(respond.mock.calls[0][1].text).toContain('Fresh message');
+    expect((await fetch(api.url + '/custom/fresh-wake', { method: 'POST' })).status).toBe(202);
+    await waitFor(() => respond.mock.calls.length === 3);
+    expect(respond.mock.calls[2][3]).not.toBe(firstId);
+    expect(conversations.privateChats('default')).toHaveLength(3);
+  });
   it.each(['memory', 'ask'])(
     'prevents custom registrations from replacing the built-in %s family',
     async (name) => {

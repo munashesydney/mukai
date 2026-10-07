@@ -67,15 +67,21 @@ export class ConversationRepository {
       return this.find(id)!;
     });
   }
-  createPrivate(workspaceId: string, botId: string) {
+  createPrivate(workspaceId: string, botId: string, conversationId?: string) {
     return this.database.transaction(() => {
-      const empty = this.database.get(
-        "SELECT c.* FROM conversations c WHERE c.workspace_id=? AND c.owner_bot_id=? AND c.kind='private' AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id) ORDER BY c.updated_at DESC,c.rowid DESC LIMIT 1",
-        workspaceId,
-        botId,
-      );
+      if (conversationId) {
+        const existing = this.find(conversationId);
+        if (existing) return existing;
+      }
+      const empty =
+        !conversationId &&
+        this.database.get(
+          "SELECT c.* FROM conversations c WHERE c.workspace_id=? AND c.owner_bot_id=? AND c.kind='private' AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id) ORDER BY c.updated_at DESC,c.rowid DESC LIMIT 1",
+          workspaceId,
+          botId,
+        );
       if (empty) return this.project(empty);
-      const id = randomUUID(),
+      const id = conversationId ?? randomUUID(),
         now = new Date().toISOString();
       this.database.run(
         "INSERT INTO conversations(id,workspace_id,kind,name,owner_bot_id,created_at,updated_at) VALUES(?,?,'private','New conversation',?,?,?)",

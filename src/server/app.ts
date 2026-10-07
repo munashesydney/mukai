@@ -142,6 +142,12 @@ export function createApiServer(options: ApiOptions = {}) {
       if (bot.workspaceId !== workspaceId)
         throw new ApiError(403, 'Bot belongs to another workspace.');
       if (chats.busy(botId)) throw new ApiError(409, 'Target bot is busy; the wake-up will retry.');
+      // The durable wake job ID keeps retries in the same new conversation.
+      const conversation = new ConversationRepository(store).createPrivate(
+        workspaceId,
+        botId,
+        requestId,
+      );
       await chats.respond(
         bot,
         {
@@ -157,6 +163,7 @@ export function createApiServer(options: ApiOptions = {}) {
           },
           end() {},
         },
+        conversation.id,
       );
     });
     const pursuits = new PursuitService(new PursuitRepository(store), bots, chats);
