@@ -261,6 +261,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           />
         ) : location.section === 'tools' ? (
           <ToolsPage
+            vm={ai.workspace?.computer === 'qemu'}
             bots={ai.bots}
             workspaceId={ai.workspaceId}
             folder={ai.workspace?.folder || null}

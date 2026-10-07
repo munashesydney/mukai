@@ -40,7 +40,7 @@ export class ArtifactService {
   }
   private screenshotFolder(workspaceId: string) {
     const workspace = this.workspaces.require(workspaceId);
-    return workspace.folder
+    return workspace.computer !== 'qemu' && workspace.folder
       ? join(workspace.folder, '.mukai', 'artifacts', 'screenshots')
       : join(this.dataDir, 'artifacts', 'screenshots', workspaceId);
   }
@@ -60,7 +60,9 @@ export class ArtifactService {
     signal.throwIfAborted();
     const folder = resolve(this.screenshotFolder(bot.workspaceId));
     const workspace = this.workspaces.require(bot.workspaceId);
-    const root = resolve(workspace.folder || this.dataDir);
+    const root = resolve(
+      workspace.computer === 'qemu' ? this.dataDir : workspace.folder || this.dataDir,
+    );
     const parts = relative(root, folder).split(sep);
     let current = root;
     for (const part of ['', ...parts]) {
@@ -140,6 +142,21 @@ export class ArtifactService {
       } finally {
         await file.close();
       }
+    }
+    if (workspace.computer === 'qemu') {
+      const result = (await this.workspaces
+        .computers!.guest(workspace)
+        .request(
+          'download',
+          { path: artifact.path },
+          { workspaceId: workspace.id, botId: bot.id, conversationId: 'artifact-download' },
+          AbortSignal.timeout(45000),
+        )) as { name: string; bytes: string };
+      return {
+        name: result.name,
+        bytes: Buffer.from(result.bytes, 'base64'),
+        mediaType: 'text/plain; charset=utf-8',
+      };
     }
     if (!workspace.folder) throw new ApiError(400, 'This workspace has no folder.');
     return {

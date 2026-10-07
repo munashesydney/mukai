@@ -1,0 +1,47 @@
+import { build } from 'esbuild';
+import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+async function main() {
+  const directory = resolve('dist/guest');
+  await mkdir(directory, { recursive: true });
+  await build({
+    entryPoints: ['src/server/computer/guest.ts'],
+    outfile: resolve(directory, 'guest.cjs'),
+    bundle: true,
+    platform: 'node',
+    target: 'node24',
+    format: 'cjs',
+    packages: 'external',
+  });
+  const lock = JSON.parse(await readFile('package-lock.json', 'utf8')) as {
+    packages: Record<string, { version: string }>;
+  };
+  const dependencies = Object.fromEntries(
+    ['ai', 'zod', 'sharp', 'playwright-core'].map((name) => [
+      name,
+      lock.packages['node_modules/' + name].version,
+    ]),
+  );
+  await writeFile(
+    resolve(directory, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'mukai-guest',
+        private: true,
+        version: '0.1.0',
+        engines: { node: '>=24' },
+        dependencies,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  for (const file of ['install.sh', 'mukai-guest.service'])
+    await copyFile(resolve('scripts/guest', file), resolve(directory, file));
+  console.log('Guest bundle ready in dist/guest. See docs/qemu-workspaces.md.');
+}
+void main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

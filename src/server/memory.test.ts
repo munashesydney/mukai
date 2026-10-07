@@ -576,7 +576,9 @@ describe('Mukai memory integration', () => {
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const bot = (await request<Bot[]>('/bots')).data[0];
     expect(await api.memory.search(bot, 'shared-space', 'espresso', {})).toHaveLength(0);
-    api.store.run("INSERT INTO workspaces VALUES('other','Other',NULL,'now')");
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other','Other',NULL,'now')",
+    );
     const snapshot = (await request<MemorySnapshot>('/memory?workspaceId=other')).data;
     expect(snapshot.facts).toHaveLength(0);
     expect(snapshot.recalls).toHaveLength(0);

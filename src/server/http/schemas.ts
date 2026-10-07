@@ -55,10 +55,16 @@ export const botModelSchema = botSchema.pick({
   supportsImages: true,
   contextWindowTokens: true,
 });
-export const workspaceSchema = z.object({
-  name: z.string().trim().min(1).max(60),
-  folder: z.string().trim().min(1).max(2000),
-});
+export const workspaceSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    folder: z.string().trim().max(2000).default(''),
+    computer: z.enum(['local', 'qemu']).default('local'),
+  })
+  .refine((input) => input.computer === 'qemu' || Boolean(input.folder), {
+    message: 'Choose a local workspace folder.',
+    path: ['folder'],
+  });
 export const spaceSchema = z.object({
   workspaceId: z.string().min(1).max(80),
   name: z.string().trim().min(1).max(60),

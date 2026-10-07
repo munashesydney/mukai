@@ -26,6 +26,10 @@ import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
 import { WebSearchService } from './webSearchService';
 import { askTools, type AskHandler } from '../tools/ask/execute';
+import { computerTools } from '../computer/tools';
+import { executeWebSearch } from '../tools/web-search/execute';
+import { webSearchDefinition } from '../tools/web-search/definition';
+import { tool } from 'ai';
 
 export class ToolService {
   private webSearch = new WebSearchService();
@@ -137,6 +141,7 @@ export class ToolService {
     this.capabilities?.cancelConfirmations(messageId);
   }
   customForBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void) {
+    if (this.workspaces.require(bot.workspaceId).computer === 'qemu') return {};
     const ids = Object.fromEntries(
       (this.capabilities?.list(bot.workspaceId) || [])
         .filter((item) => item.kind === 'tool')
@@ -174,6 +179,19 @@ export class ToolService {
     );
     return toolCatalog().map((tool) => ({
       ...tool,
+      ...(workspace.computer === 'qemu' &&
+      ['terminal', 'image', 'browser', 'file_operations'].includes(tool.id)
+        ? {
+            description:
+              tool.id === 'browser'
+                ? 'Control headless Chrome inside the workspace Linux VM.'
+                : tool.id === 'image'
+                  ? 'Read and view guest images inside the Linux VM.'
+                  : tool.id === 'terminal'
+                    ? 'Run Linux commands and manage guest processes.'
+                    : 'Read, write and organize files inside the workspace Linux VM.',
+          }
+        : {}),
       scope: ['skills', 'register_custom_route'].includes(tool.id) ? 'all-bots' : 'selected-bots',
       available:
         tool.id === 'skills'
@@ -185,16 +203,24 @@ export class ToolService {
               : tool.id === 'manage_pursuit'
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
-                  ? Boolean(this.capabilities)
+                  ? workspace.computer !== 'qemu' && Boolean(this.capabilities)
                   : ['browser', 'image', 'web_search', 'ask'].includes(tool.id)
                     ? true
-                    : Boolean(workspace.folder),
+                    : workspace.computer === 'qemu' || Boolean(workspace.folder),
       counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {
     const workspace = this.workspaces.require(bot.workspaceId);
-    return { workspaceId: workspace.id, folder: workspace.folder };
+    return {
+      workspaceId: workspace.id,
+      computer: workspace.computer,
+      folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
+      computerSystem:
+        workspace.computer === 'qemu'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image and browser operations run inside that VM. Absolute paths refer to Linux guest paths. Browser is headless. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
+          : undefined,
+    };
   }
   forBot(
     bot: Bot,
@@ -211,6 +237,14 @@ export class ToolService {
     const scheduledRun = Boolean(
       conversationId && this.pursuits?.isRunConversation(conversationId),
     );
+    const runtime = {
+      owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
+      signal,
+      onActivity,
+      budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
+      vision,
+      resultBytes,
+    };
     return this.assigned(
       bot,
       {
@@ -236,21 +270,47 @@ export class ToolService {
             })
           : {}),
         ...this.customForBot(bot, signal, onActivity),
-        ...runtimeTools({
-          owner: { botId: bot.id, workspaceId: bot.workspaceId, conversationId: conversationId! },
-          signal,
-          onActivity,
-          budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
-          processes: this.processes,
-          browsers: this.browsers,
-          webSearch: this.webSearch,
-          folder: workspace.folder,
-          vision,
-          resultBytes,
-          saveScreenshot: (image) =>
-            this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
-        }),
-        ...(workspace.folder
+        ...(workspace.computer === 'qemu'
+          ? {
+              ...computerTools({
+                ...runtime,
+                computer: this.workspaces.computers!.guest(workspace),
+                fileBudget: { remaining: FILE_TOOL_CALL_LIMIT },
+                recordChange: (snapshot) => this.changes.record(bot.id, messageId, snapshot),
+                recordFile: (path) => this.artifacts.record(bot.id, messageId, path),
+                saveScreenshot: (image) =>
+                  this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
+              }),
+              web_search: tool({
+                description: webSearchDefinition.description,
+                inputSchema: webSearchDefinition.inputSchema,
+                execute: (input, options) =>
+                  executeWebSearch(
+                    input,
+                    { ...runtime, webSearch: this.webSearch },
+                    options.toolCallId,
+                  ),
+              }),
+            }
+          : runtimeTools({
+              owner: {
+                botId: bot.id,
+                workspaceId: bot.workspaceId,
+                conversationId: conversationId!,
+              },
+              signal,
+              onActivity,
+              budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
+              processes: this.processes,
+              browsers: this.browsers,
+              webSearch: this.webSearch,
+              folder: workspace.folder,
+              vision,
+              resultBytes,
+              saveScreenshot: (image) =>
+                this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
+            })),
+        ...(workspace.computer !== 'qemu' && workspace.folder
           ? toolsForBot({
               botId: bot.id,
               signal,

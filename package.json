@@ -10,6 +10,7 @@
   "author": "Mukai",
   "license": "UNLICENSED",
   "scripts": {
+    "build:guest": "tsx scripts/build-guest.ts",
     "dev": "electron-vite dev",
     "dev:web": "vite --config vite.web.config.ts --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",

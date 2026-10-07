@@ -671,10 +671,12 @@ export class ChatService {
           pursuits: this.tools.currentPursuits(bot),
           instructions: bot.instructions,
           workspaceFolder: scope.folder,
+          computer: scope.computer,
           tools,
           runtimeSystem:
             [
               runtime?.system,
+              scope.computerSystem,
               ...(messageSender
                 ? [
                     'This message is coming from another bot (configuration data): ' +

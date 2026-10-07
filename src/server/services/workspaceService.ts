@@ -4,11 +4,13 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import type { WorkspaceInput } from '../../shared/ai';
 import { ApiError } from '../config';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
+import type { ComputerManager } from '../computer/manager';
 
 export class WorkspaceService {
   constructor(
     private workspaces: WorkspaceRepository,
     private dataDir: string,
+    readonly computers?: ComputerManager,
   ) {}
   list() {
     return this.workspaces.list();
@@ -34,8 +36,11 @@ export class WorkspaceService {
     return folder;
   }
   create(input: WorkspaceInput) {
-    const folder = this.folder(input.folder);
-    if (this.workspaces.findFolder(folder))
+    const computer = input.computer || 'local';
+    const folder = computer === 'qemu' ? null : this.folder(input.folder);
+    if (computer === 'qemu' && !this.computers)
+      throw new ApiError(503, 'VM computers are unavailable.');
+    if (folder && this.workspaces.findFolder(folder))
       throw new ApiError(
         409,
         'That folder already belongs to a workspace. Switch to it from the workspace menu.',
@@ -44,6 +49,7 @@ export class WorkspaceService {
       id: randomUUID(),
       name: input.name,
       folder,
+      computer,
       createdAt: new Date().toISOString(),
     };
     this.workspaces.create(workspace);
@@ -51,6 +57,11 @@ export class WorkspaceService {
   }
   update(id: string, input: WorkspaceInput) {
     const workspace = this.require(id);
+    if (workspace.computer === 'qemu' || input.computer === 'qemu')
+      throw new ApiError(
+        409,
+        'The computer type is fixed at creation. Create a new workspace to change it.',
+      );
     // Keep a workspace attached to the same folder once file tools have been used.
     if (workspace.folder)
       throw new ApiError(

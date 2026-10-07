@@ -28,8 +28,9 @@ export class BrowserService {
   constructor(
     dataDir: string,
     readonly embedded?: EmbeddedBrowserHost,
+    headless = false,
   ) {
-    this.chrome = new ChromeHost(dataDir);
+    this.chrome = new ChromeHost(dataDir, headless);
   }
   list(workspaceId: string, conversationId?: string) {
     for (const [id, entry] of this.sessions)

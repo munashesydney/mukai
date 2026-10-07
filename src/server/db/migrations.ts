@@ -288,6 +288,8 @@ export const migrations = [
     state TEXT NOT NULL CHECK(state IN ('pending','running','complete','cancelled','failed')),
     UNIQUE(message_id,tool_call_id));`,
   `CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
+  `ALTER TABLE workspaces ADD COLUMN computer TEXT NOT NULL DEFAULT 'local'
+   CHECK(computer IN ('local','qemu'));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

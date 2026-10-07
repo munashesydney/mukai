@@ -31,6 +31,7 @@ import { ToolAccessService } from './services/toolAccessService';
 import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
 import { BotManagementService } from './services/botManagementService';
 import { ProcessService } from './services/processService';
+import { ComputerManager } from './computer/manager';
 import { BrowserService } from './services/browserService';
 import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
@@ -70,7 +71,8 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
-    const workspaces = new WorkspaceService(workspaceRepository, dir);
+    const computers = new ComputerManager(dir);
+    const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
       diagnostics.registerSecret(value),
     );
@@ -241,6 +243,7 @@ export function createApiServer(options: ApiOptions = {}) {
         await memory.shutdown();
         await capabilityShutdown;
         await processes.shutdown();
+        await computers.shutdown();
         await browsers.shutdown();
       })());
     server.on('close', () => {
