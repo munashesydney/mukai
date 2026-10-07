@@ -57,7 +57,7 @@ else {
   app
     .whenReady()
     .then(async () => {
-      const api = await startApiServer(0, {
+      const api = await startApiServer(47831, {
         dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
         embeddedBrowser,
       });

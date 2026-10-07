@@ -13,7 +13,7 @@ npm ci
 npm run dev
 ```
 
-The Electron app starts its backend on a random loopback port. Add your first bot from the empty workspace; suggested names start with **Mukai** and **Scout**. Provider setup can wait until after bot creation. Sending without a provider opens **Settings → Providers**. Add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the default used by bots without an explicit connection. Connection tests make a small billable request for paid providers.
+The Electron app starts its backend at `http://127.0.0.1:47831` using a fixed local port. Custom routes share this server, so their URLs stay stable across restarts (for example, `http://127.0.0.1:47831/custom/events`). Port 47831 must be available; startup fails if it is already in use. Add your first bot from the empty workspace; suggested names start with **Mukai** and **Scout**. Provider setup can wait until after bot creation. Sending without a provider opens **Settings → Providers**. Add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the default used by bots without an explicit connection. Connection tests make a small billable request for paid providers.
 
 Provider inactivity and generation deadlines pause during tool execution and human approvals. Temporary provider failures can recover automatically before any action or visible answer starts in that step; completed earlier steps stay saved. Recovery is bounded and respects Stop. If a response cannot finish, Mukai provides a saved-progress report and marks unresolved operations for verification before repeating them. Memory extraction starts with up to 12,000 output tokens within the configured model allowance; compatible providers get one repair attempt with a fresh two-minute deadline, within a four-minute operation limit. A failed memory save returns an error to the bot so it can still report completed work.
 
@@ -32,7 +32,7 @@ npm run dev:server
 npm run dev:web
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 4318. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match.
+Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 47831. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match. The desktop app uses port 47831 regardless of `PORT`; run desktop and standalone modes separately because they share the same default port.
 
 Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:11434/v1` or `http://127.0.0.1:1234/v1`. Install a chat model in your local server first and enter its exact ID. Keys are optional for endpoints without authentication. Remote custom endpoints require HTTPS. Standard text chat and streaming chat-completions compatibility are required.
 

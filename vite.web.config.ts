@@ -12,7 +12,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:4318',
+        target: 'http://127.0.0.1:47831',
         rewrite: (path) => path.replace(/^\/api/, ''),
         configure: (proxy) =>
           proxy.on('proxyReq', (request) => {

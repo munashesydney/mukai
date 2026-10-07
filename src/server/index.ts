@@ -1,6 +1,6 @@
 import { startApiServer } from './app';
 
-const port = Number(process.env.PORT ?? 4318);
+const port = Number(process.env.PORT ?? 47831);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw new Error('PORT must be between 1 and 65535');
 startApiServer(port)
