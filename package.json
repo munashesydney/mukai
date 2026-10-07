@@ -11,6 +11,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "build:guest": "tsx scripts/build-guest.ts",
+    "predev": "npm run build:guest",
+    "predev:server": "npm run build:guest",
     "dev": "electron-vite dev",
     "dev:web": "vite --config vite.web.config.ts --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",
@@ -21,7 +23,7 @@
     "test:capabilities": "tsx scripts/run-capability-smoke.ts",
     "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
-    "build": "npm run typecheck && electron-vite build && tsc -p tsconfig.server.json",
+    "build": "npm run typecheck && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
     "start:server": "node dist/server/src/server/index.js",
@@ -90,6 +92,12 @@
       "package.json"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "dist/guest",
+        "to": "guest"
+      }
+    ],
     "asarUnpack": [
       "node_modules/@esbuild/**/*",
       "node_modules/onnxruntime*/**/*",

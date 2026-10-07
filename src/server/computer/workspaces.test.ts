@@ -85,7 +85,7 @@ describe('workspace computer choice', () => {
     ).rejects.toThrow('unavailable in VM v1');
   });
   it('reports unavailable VM setup and preserves local folder validation', async () => {
-    vi.stubEnv('MUKAI_QEMU_BINARY', '');
+    vi.stubEnv('MUKAI_QEMU_BINARY', join(directory, 'missing-qemu.exe'));
     expect((await request('/workspaces/computer-setup')).data.available).toBe(false);
     expect(
       (await request('/workspaces', 'POST', { name: 'No setup', computer: 'qemu' })).status,

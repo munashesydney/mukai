@@ -469,6 +469,10 @@ export function createRoutes({
     } else if (resource === 'changes' && id && !action && method === 'GET') {
       return send(response, changes.detail(id));
     } else if (resource === 'workspaces') {
+      if (id === 'computer-setup' && !action && method === 'POST') {
+        if (!workspaces.computers) throw new ApiError(503, 'VM setup is unavailable.');
+        return send(response, await workspaces.computers.installer.start(), 202);
+      }
       if (id === 'computer-setup' && !action && method === 'GET')
         return send(
           response,

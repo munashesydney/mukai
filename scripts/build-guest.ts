@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 async function main() {
@@ -38,7 +38,10 @@ async function main() {
     ) + '\n',
   );
   for (const file of ['install.sh', 'mukai-guest.service'])
-    await copyFile(resolve('scripts/guest', file), resolve(directory, file));
+    await writeFile(
+      resolve(directory, file),
+      (await readFile(resolve('scripts/guest', file), 'utf8')).replace(/\r\n/g, '\n'),
+    );
   console.log('Guest bundle ready in dist/guest. See docs/qemu-workspaces.md.');
 }
 void main().catch((error) => {

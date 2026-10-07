@@ -5,6 +5,7 @@ import type { ComputerStatus, QemuSetup } from '../../../shared/computer';
 export const workspaceService = {
   list: () => api<Workspace[]>('/workspaces'),
   computerSetup: () => api<QemuSetup>('/workspaces/computer-setup'),
+  installComputer: () => api<QemuSetup>('/workspaces/computer-setup', 'POST', {}),
   computerStatus: (id: string) =>
     api<ComputerStatus>(`/workspaces/${encodeURIComponent(id)}/computer`),
   controlComputer: (id: string, action: 'start' | 'stop') =>

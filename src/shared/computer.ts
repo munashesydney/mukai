@@ -7,4 +7,17 @@ export interface ComputerStatus {
 export interface QemuSetup {
   available: boolean;
   reason?: string;
+  phase?:
+    | 'idle'
+    | 'checking'
+    | 'installing'
+    | 'downloading'
+    | 'preparing'
+    | 'verifying'
+    | 'ready'
+    | 'reboot-required'
+    | 'failed';
+  message?: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
 }

@@ -1,15 +1,25 @@
 import { join } from 'node:path';
 import type { Workspace } from '../../shared/ai';
 import type { ComputerStatus } from '../../shared/computer';
-import { QemuComputer, qemuSetup } from './qemuComputer';
+import { QemuComputer } from './qemuComputer';
 import { ApiError } from '../config';
+import { ComputerSetupService } from './setupService';
 
 export class ComputerManager {
   private computers = new Map<string, QemuComputer>();
   private closed = false;
-  constructor(private dataDir: string) {}
+  readonly installer: ComputerSetupService;
+  constructor(
+    private dataDir: string,
+    guestBundleDir?: string,
+  ) {
+    this.installer = new ComputerSetupService(dataDir, guestBundleDir);
+  }
+  initialize() {
+    return this.installer.initialize();
+  }
   setup() {
-    return qemuSetup();
+    return this.installer.status();
   }
   guest(workspace: Workspace) {
     if (this.closed) throw new Error('Computers are shutting down.');
@@ -17,7 +27,10 @@ export class ComputerManager {
       throw new ApiError(400, 'This workspace uses the local machine.');
     let computer = this.computers.get(workspace.id);
     if (!computer) {
-      computer = new QemuComputer(join(this.dataDir, 'computers', workspace.id));
+      computer = new QemuComputer(
+        join(this.dataDir, 'computers', workspace.id),
+        this.installer.configuration(),
+      );
       this.computers.set(workspace.id, computer);
     }
     return computer;
@@ -29,6 +42,7 @@ export class ComputerManager {
   }
   async shutdown() {
     this.closed = true;
+    await this.installer.shutdown();
     await Promise.allSettled([...this.computers.values()].map((computer) => computer.shutdown()));
   }
 }

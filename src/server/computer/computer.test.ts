@@ -122,14 +122,12 @@ describe('VM tools', () => {
       .png()
       .toBuffer();
     const image = picture.toString('base64');
-    const saveScreenshot = vi
-      .fn()
-      .mockResolvedValue({
-        artifactId: 'artifact',
-        path: 'C:\\host\\saved.png',
-        width: 8,
-        height: 9,
-      });
+    const saveScreenshot = vi.fn().mockResolvedValue({
+      artifactId: 'artifact',
+      path: 'C:\\host\\saved.png',
+      width: 8,
+      height: 9,
+    });
     const tools = computerTools({
       computer: {
         request: vi.fn().mockResolvedValue({ image, path: '/var/lib/mukai-guest/screen.png' }),

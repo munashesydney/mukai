@@ -48,6 +48,7 @@ export interface ApiOptions {
   /** Deterministic extractor for tests or a host-provided memory model. */
   memoryExtractor?: Extractor;
   memoryReviewIdleMs?: number;
+  guestBundleDir?: string;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -71,7 +72,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
-    const computers = new ComputerManager(dir);
+    const computers = new ComputerManager(dir, options.guestBundleDir);
     const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
       diagnostics.registerSecret(value),
@@ -277,6 +278,7 @@ export function createApiServer(options: ApiOptions = {}) {
       pursuits,
       browsers,
       processes,
+      computers,
       capabilities,
       memory,
       skills,
@@ -290,6 +292,7 @@ export function createApiServer(options: ApiOptions = {}) {
 export async function startApiServer(port = 0, options: ApiOptions = {}) {
   const api = createApiServer(options);
   try {
+    await api.computers.initialize();
     await api.capabilities.initialize();
     await new Promise<void>((resolve, reject) => {
       api.server.once('error', reject);
@@ -299,6 +302,7 @@ export async function startApiServer(port = 0, options: ApiOptions = {}) {
       });
     });
   } catch (error) {
+    await api.shutdown();
     api.dispose();
     throw error;
   }

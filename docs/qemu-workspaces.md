@@ -11,11 +11,21 @@ Workspace creation offers **Local machine** or **Linux VM (preview)**. Existing 
 - Automatic startup on first computer tool call; manual start/stop/status in Settings → Workspace; shutdown when Mukai closes.
 - Host-side chats, model connections, permissions, bots, memory, skills, web search and pursuits.
 
-Custom tools/routes are unavailable in VM v1, including through management APIs. They never fall back to host Node. There are no host folder mounts, live VM browser/desktop display, preview port forwarding, automatic image downloads, snapshots, ARM guests, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
+Custom tools/routes are unavailable in VM v1, including through management APIs. They never fall back to host Node. There are no host folder mounts, live VM browser/desktop display, preview port forwarding, snapshots, ARM guests, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
 
-## Prepare a base image once
+## Automatic setup
 
-V1 uses an operator-prepared, standalone **x86_64 qcow2** image. QEMU and the image are external prerequisites rather than bundled downloads. A normal Ubuntu/Debian installation with systemd and BIOS boot works. Do not use an overlay that depends on another image; every workspace receives a full copy of the base. Allocate enough disk space for the base plus a full copy per workspace.
+Choose **Linux VM** in the workspace creation dialog. Mukai installs missing QEMU, checks hardware acceleration, downloads the official Ubuntu 24.04 x86_64 cloud image over HTTPS, verifies its SHA-256, and prepares Node.js 24, Chrome and the guest tools inside a disposable VM. A second boot verifies the guest bridge and installed tools before publishing the base image. The dialog shows progress and enables workspace creation when setup succeeds. Setup continues if the dialog is closed.
+
+Windows uses Winget's `SoftwareFreedomConservancy.QEMU` package and can enable Windows Hypervisor Platform with administrator approval. If Windows requires a reboot, Mukai reports it and resumes when reopened; it never reboots the computer itself. Firmware virtualization must already be enabled. Intel macOS uses an existing Homebrew installation; Ubuntu/Debian uses apt-get with pkexec for administrator approval. Other Linux distributions require manually installing QEMU first. Automatic setup requires an x64 host and at least 12 GiB free on Mukai's data drive. Allow several minutes, internet access and any OS administrator prompts.
+
+Ordinary app startup detects existing setup without installing software for local workspaces. Once VM setup has been requested, unfinished setup resumes on app startup, including after a required Windows restart. Failed setup offers Retry. Retries may download the image again; partial downloads are never used as a base image. Setup files live under `computer-setup/` in Mukai's data directory. Each workspace gets a separate full copy of the prepared 32 GiB virtual disk, so allow additional physical storage as its files grow.
+
+Desktop builds include the guest bundle as an application resource. `npm run dev`, `npm run dev:server` and `npm run build` generate it automatically. Environment overrides below remain available for an operator-prepared image.
+
+## Optional manual base image
+
+You can supply a standalone **x86_64 qcow2** image instead of automatic preparation. A normal Ubuntu/Debian installation with systemd and BIOS boot works. Do not use an overlay that depends on another image; every workspace receives a full copy of the base. Allocate enough disk space for the base plus a full copy per workspace.
 
 1. Install QEMU on the host. On Windows, enable Windows Hypervisor Platform and reboot if required. Use an x64 host. Hardware acceleration uses WHPX on Windows, KVM on Linux, or HVF on Intel macOS. `MUKAI_QEMU_ACCEL=tcg` enables slower software emulation for development.
 2. In this repository run `npm run build:guest`. This produces `dist/guest/` with the bundled daemon, pinned direct dependency versions, installer and systemd unit.
@@ -26,7 +36,7 @@ The service does not need a network listener or SSH once prepared. Mukai passes 
 
 ## Configure Mukai
 
-Before launching Mukai, set absolute paths in its environment. PowerShell example:
+For manual setup, set absolute paths in Mukai's environment before launching. Automatic setup does not require these variables. PowerShell example:
 
 ```powershell
 $env:MUKAI_QEMU_BINARY = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -50,6 +60,6 @@ Graceful stop asks the guest to power down, then terminates QEMU after 15 second
 
 The guest has outbound user-mode networking and can reach network services, including reachable host services. VM mode isolates OS execution and storage; it is not a network deny policy or a guarantee against hypervisor vulnerabilities. Model credentials and the Mukai API token are not passed to QEMU or the guest. The bridge accepts result frames and cannot invoke arbitrary host callbacks.
 
-Automated tests cover framing, process ownership, guest dispatch, routing, cancellation, persistence, launch arguments and API guards. A real image boot must also be checked on each supported host/accelerator before shipping this preview. This development environment has no QEMU installation, so automated validation does not establish WHPX/KVM/HVF operation.
+Automated tests cover framing, process ownership, guest dispatch, routing, cancellation, persistence, launch arguments, API guards, setup retries/resumption, checksum failures, seed delivery and publishing only after successful tool verification. Installation and provisioning orchestration use mocked OS commands in tests. A real image boot must also be checked on each supported host/accelerator before shipping this preview. This development environment has no QEMU installation, so automated validation does not establish WHPX/KVM/HVF operation.
 
 References: [QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html), [firmware configuration](https://www.qemu.org/docs/master/specs/fw_cfg.html), [Windows acceleration](https://www.qemu.org/docs/master/system/whpx.html).
