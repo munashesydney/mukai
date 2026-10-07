@@ -1,16 +1,18 @@
-import { Layers3, Palette, KeyRound, Brain } from 'lucide-react';
+import { Layers3, Palette, KeyRound, Brain, Globe } from 'lucide-react';
 import { Brand } from '../../components/ui/Brand';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
 import { ProvidersPanel } from './ProvidersPanel';
 import { EnvironmentPanel } from './EnvironmentPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { CustomRoutesPanel } from './CustomRoutesPanel';
 import type { Workspace } from '../../../../shared/ai';
 import type { SettingsSection } from '../workspace/types';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'routes', label: 'Domain', icon: Globe },
   { id: 'providers', label: 'Providers', icon: KeyRound },
   { id: 'environment', label: 'Environment variables', icon: KeyRound },
   { id: 'memory', label: 'Memory', icon: Brain },
@@ -85,6 +87,8 @@ export function SettingsPage({
               key={workspace?.id || 'default'}
               workspaceId={workspace?.id || 'default'}
             />
+          ) : section === 'routes' ? (
+            <CustomRoutesPanel />
           ) : section === 'environment' ? (
             <EnvironmentPanel
               key={workspace?.id || 'default'}

@@ -287,6 +287,7 @@ export const migrations = [
     tool_call_id TEXT NOT NULL, input TEXT NOT NULL,
     state TEXT NOT NULL CHECK(state IN ('pending','running','complete','cancelled','failed')),
     UNIQUE(message_id,tool_call_id));`,
+  `CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

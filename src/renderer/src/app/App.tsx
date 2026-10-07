@@ -238,6 +238,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               location.item === 'appearance' ||
               location.item === 'providers' ||
               location.item === 'environment' ||
+              location.item === 'routes' ||
               location.item === 'memory'
                 ? location.item
                 : 'workspace'

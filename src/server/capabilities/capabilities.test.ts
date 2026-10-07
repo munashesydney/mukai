@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID, createHmac } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import { startApiServer } from '../app';
 import { seedTestBot } from '../testFixtures';
 import type { CapabilityRegistration } from '../../shared/customCapabilities';
@@ -81,6 +81,69 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 describe('Custom capabilities', () => {
+  it('saves the public route URL across restarts and applies host changes immediately', async () => {
+    const item = await register(
+      'route',
+      `export default {
+      name:'configured_host',method:'GET',path:'/custom/configured-host',auth:'public',
+      handle(){return {status:200,body:'ok'};}
+    };`,
+      'configured-host.ts',
+    );
+    expect((await request('/capabilities/settings')).value).toEqual({
+      publicBaseUrl: '',
+      localBaseUrl: api.url,
+    });
+    expect((await fetch(api.url + '/capabilities/settings')).status).toBe(401);
+    for (const publicBaseUrl of [
+      'invalid',
+      'http://example.com',
+      'https://example.com/path',
+      'https://user:pass@example.com',
+      'https://example.com/?q=x',
+      'https://example.com/#part',
+    ]) {
+      expect((await request('/capabilities/settings', 'PUT', { publicBaseUrl })).status).toBe(400);
+    }
+    const saved = await request('/capabilities/settings', 'PUT', {
+      publicBaseUrl: ' https://routes.example.com/ ',
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.value.publicBaseUrl).toBe('https://routes.example.com');
+    expect(api.capabilities.detail(item.id, 'default').registration.url).toBe(
+      'https://routes.example.com/custom/configured-host',
+    );
+    const ingress = (host: string) =>
+      new Promise<{ status: number }>((resolve, reject) => {
+        const req = httpRequest(
+          api.url + '/custom/configured-host',
+          { headers: { Host: host } },
+          (response) => {
+            response.resume();
+            response.on('end', () => resolve({ status: response.statusCode! }));
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+    expect((await ingress('routes.example.com')).status).toBe(200);
+    expect((await ingress('untrusted.example.com')).status).toBe(403);
+    await api.shutdown();
+    await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    api.dispose();
+    api = await startApiServer(0, { dataDir: join(root, 'data') });
+    expect((await request('/capabilities/settings')).value.publicBaseUrl).toBe(
+      'https://routes.example.com',
+    );
+    expect((await request('/capabilities/settings', 'PUT', { publicBaseUrl: '' })).status).toBe(
+      200,
+    );
+    expect(api.capabilities.detail(item.id, 'default').registration.url).toBe(
+      api.url + '/custom/configured-host',
+    );
+    expect((await ingress('routes.example.com')).status).toBe(403);
+    expect((await fetch(api.url + '/custom/configured-host')).status).toBe(200);
+  });
   it('creates a separate private conversation per route wake and reuses it on retry', async () => {
     const conversations = new ConversationRepository(api.store);
     const empty = conversations.createPrivate('default', 'scout');

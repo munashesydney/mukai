@@ -212,9 +212,9 @@ export function CustomCapabilityPage({
                   Copy URL
                 </button>
                 <p className="ai-caption">
-                  External webhook providers need a reachable HTTPS address. Configure
-                  MUKAI_PUBLIC_BASE_URL and forward only /custom/* to this server. Mukai must remain
-                  running.
+                  External webhook providers need a reachable HTTPS address. Configure the public
+                  base URL in Settings → Domain and forward only /custom/* to this server. Mukai
+                  must remain running.
                 </p>
               </div>
             )}

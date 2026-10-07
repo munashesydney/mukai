@@ -102,6 +102,48 @@ export class CapabilityService {
   private versions = new Map<string, CapabilityDefinition>();
   private failures = new Map<string, string>();
   private localBaseUrl = '';
+  routeSettings() {
+    return {
+      publicBaseUrl: String(
+        this.db.get("SELECT value FROM app_settings WHERE key='custom_routes_base_url'")?.value ||
+          '',
+      ),
+      localBaseUrl: this.localBaseUrl,
+    };
+  }
+  saveRouteSettings(value: unknown) {
+    const input = z
+      .object({ publicBaseUrl: z.string().trim().max(2048) })
+      .strict()
+      .parse(value);
+    let publicBaseUrl = '';
+    if (input.publicBaseUrl) {
+      let url: URL;
+      try {
+        url = new URL(input.publicBaseUrl);
+      } catch {
+        throw new ApiError(400, 'Enter a valid HTTPS base URL.');
+      }
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        url.pathname !== '/' ||
+        url.search ||
+        url.hash
+      )
+        throw new ApiError(
+          400,
+          'Use an HTTPS origin without credentials, a path, query, or fragment.',
+        );
+      publicBaseUrl = url.origin;
+    }
+    this.db.run(
+      "INSERT INTO app_settings(key,value) VALUES('custom_routes_base_url',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      publicBaseUrl,
+    );
+    return this.routeSettings();
+  }
   setLocalBaseUrl(value: string) {
     this.localBaseUrl = value;
   }
@@ -174,7 +216,7 @@ export class CapabilityService {
       ...(definition.path
         ? {
             url:
-              (process.env.MUKAI_PUBLIC_BASE_URL || this.localBaseUrl).replace(/\/$/, '') +
+              (this.routeSettings().publicBaseUrl || this.localBaseUrl).replace(/\/$/, '') +
               definition.path,
           }
         : {}),
@@ -755,7 +797,7 @@ export class CapabilityService {
     if (!row) throw new ApiError(404, 'Custom route not found.');
     const registration = this.record(row);
     const host = request.headers.host || '';
-    const base = process.env.MUKAI_PUBLIC_BASE_URL;
+    const base = this.routeSettings().publicBaseUrl;
     const publicHost = base ? new URL(base).host : null;
     if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host) && host !== publicHost)
       throw new ApiError(403, 'Custom route host is not configured.');

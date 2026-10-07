@@ -38,6 +38,8 @@ Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:114
 
 ## What works
 
+- **Settings → Domain** saves the public HTTPS base URL for all custom routes across workspaces. Leave it blank to use `http://127.0.0.1:47831`. Changes apply immediately and persist across restarts; no environment variable or `.env` file is needed. Configure your domain or tunnel separately to forward `/custom/*` to the local server.
+
 - Temporal graph memory lives in the independent [`mukai_memory`](mukai_memory/README.md) module. **Settings → Memory** provides a graph/list inspector, source evidence, corrections, forgetting, recall records, and import/export. New user statements are captured in the background using the configured AI, and relevant confirmed memories are supplied before each reply. Private chat memories stay private to their bot; spaces use workspace memory. Keyword/relationship retrieval works immediately; **Download & enable** installs local CPU BGE embeddings. Capture and recall can be disabled per workspace.
 
 - Create a workspace from a local folder using the workspace menu. The desktop has a native folder picker; browser development accepts an absolute local path. Each workspace starts with no bots. Pursuits, spaces, tools, and settings unlock after its first bot is created. Provider connections are shared across workspaces.

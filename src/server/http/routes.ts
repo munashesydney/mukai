@@ -315,6 +315,11 @@ export function createRoutes({
           return send(response, { removed: true });
         }
       } else {
+        if (id === 'settings' && !action) {
+          if (method === 'GET') return send(response, capabilities.routeSettings());
+          if (method === 'PUT')
+            return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
+        }
         if (!id && method === 'GET') return send(response, capabilities.list(workspaceId));
         if (id && !action && method === 'GET')
           return send(response, capabilities.detail(id, workspaceId));

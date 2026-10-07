@@ -14,6 +14,12 @@ export interface CapabilityDetail {
 }
 const scope = (workspaceId: string) => '?workspaceId=' + encodeURIComponent(workspaceId);
 export const capabilityService = {
+  routeSettings: () =>
+    api<{ publicBaseUrl: string; localBaseUrl: string }>('/capabilities/settings'),
+  saveRouteSettings: (publicBaseUrl: string) =>
+    api<{ publicBaseUrl: string; localBaseUrl: string }>('/capabilities/settings', 'PUT', {
+      publicBaseUrl,
+    }),
   list: (workspaceId: string) =>
     api<CapabilityRegistration[]>('/capabilities' + scope(workspaceId)),
   detail: (workspaceId: string, id: string) =>
