@@ -1,7 +1,15 @@
 #!/bin/sh
 # Run INSIDE a disposable Ubuntu/Debian QEMU guest, as root.
 set -eu
-case "$(systemd-detect-virt --vm)" in qemu|kvm) ;; *) echo 'Install only inside a QEMU/KVM guest.' >&2; exit 1 ;; esac
+# WHPX exposes Hyper-V CPUID even though QEMU supplies the virtual hardware.
+case "$(systemd-detect-virt --vm)" in
+  qemu|kvm) ;;
+  microsoft)
+    [ "$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)" = QEMU ] || {
+      echo 'Install only inside a QEMU/KVM guest.' >&2; exit 1;
+    } ;;
+  *) echo 'Install only inside a QEMU/KVM guest.' >&2; exit 1 ;;
+esac
 [ "$(id -u)" = 0 ] || { echo 'Run as root inside the guest.' >&2; exit 1; }
 [ "$(uname -m)" = x86_64 ] || { echo 'VM v1 requires x86_64.' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive

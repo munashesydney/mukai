@@ -114,6 +114,19 @@ describe('automatic computer setup', () => {
       readFile(join(directory, 'computer-setup', 'mukai-linux.qcow2')),
     ).rejects.toThrow();
   });
+  it('reports a provisioning failure without verifying or publishing the image', async () => {
+    vi.mocked(setupProcess).mockImplementation(async (_binary, args, _signal, _input, onOutput) => {
+      if (args.includes('-smbios')) onOutput?.('installer failed\nMUKAI_IMAGE_FAILED\n');
+      return { code: 0, output: '' };
+    });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('Setup details');
+    expect((await setup.status()).detail).toContain('installer failed');
+    expect(guestProbe.request).not.toHaveBeenCalled();
+    await expect(readFile(join(directory, 'computer-setup', 'ready.json'))).rejects.toThrow();
+  });
   it('does not overwrite a preparation disk still owned by a live process', async () => {
     const building = join(directory, 'computer-setup', 'building');
     await mkdir(building, { recursive: true });

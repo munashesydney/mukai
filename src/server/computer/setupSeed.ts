@@ -20,7 +20,7 @@ export function cloudConfig(files: Record<string, Buffer>) {
         [
           'sh',
           '-c',
-          'cd /opt/mukai-bootstrap && sh install.sh > /dev/ttyS0 2>&1 && touch /etc/cloud/cloud-init.disabled && sync && echo MUKAI_IMAGE_READY > /dev/ttyS0 && poweroff',
+          'if cd /opt/mukai-bootstrap && sh install.sh > /dev/ttyS0 2>&1 && touch /etc/cloud/cloud-init.disabled; then sync; echo MUKAI_IMAGE_READY > /dev/ttyS0; else echo MUKAI_IMAGE_FAILED > /dev/ttyS0; fi; sync; poweroff',
         ],
       ],
       output: { all: '| tee -a /var/log/cloud-init-output.log /dev/ttyS0' },

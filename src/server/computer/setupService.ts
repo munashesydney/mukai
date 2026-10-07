@@ -133,6 +133,7 @@ export class ComputerSetupService {
       available: phase === 'ready',
       phase,
       message,
+      detail: this.state.detail,
       ...(phase === 'failed' || phase === 'reboot-required' ? { reason: message } : {}),
     };
     const path = join(this.root, 'progress.json');
@@ -370,6 +371,7 @@ export class ComputerSetupService {
     await this.command(imageTool, ['resize', candidate, '32G'], signal);
     const seed = await setupSeed(this.bundleDir);
     let completed = false;
+    let failed = false;
     let serial = '';
     try {
       const result = await setupProcess(
@@ -407,11 +409,12 @@ export class ComputerSetupService {
           this.output(text);
           serial = (serial + text).slice(-12000);
           if (serial.includes('MUKAI_IMAGE_READY')) completed = true;
+          if (serial.includes('MUKAI_IMAGE_FAILED')) failed = true;
         },
       );
-      if (result.code !== 0 || !completed)
+      if (result.code !== 0 || !completed || failed)
         throw new Error(
-          'Linux preparation did not finish successfully. Check your internet connection and retry setup.',
+          'Linux preparation failed. See Setup details for the installer error, then retry setup.',
         );
     } finally {
       await seed.close();

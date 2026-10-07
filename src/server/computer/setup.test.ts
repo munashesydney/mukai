@@ -76,6 +76,9 @@ describe('cloud-init seed', () => {
       '`$(do-not-execute)`',
     );
     expect(config.runcmd[0][2]).toContain('sh install.sh > /dev/ttyS0 2>&1 &&');
+    expect(config.runcmd[0][2]).toContain(
+      'else echo MUKAI_IMAGE_FAILED > /dev/ttyS0; fi; sync; poweroff',
+    );
     expect(config.runcmd[0][2]).toContain('/etc/cloud/cloud-init.disabled');
   });
   it('serves only token-scoped NoCloud metadata on loopback', async () => {
