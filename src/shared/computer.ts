@@ -18,6 +18,7 @@ export interface QemuSetup {
     | 'reboot-required'
     | 'failed';
   message?: string;
+  detail?: string;
   downloadedBytes?: number;
   totalBytes?: number;
 }

@@ -5,10 +5,12 @@ import { tmpdir, platform } from 'node:os';
 import { ComputerSetupService } from './setupService';
 import { setupProcess } from './setupProcess';
 import { downloadImage } from './setupDownload';
+import { probeAccelerator } from './setupProbe';
 
 const guestProbe = vi.hoisted(() => ({ request: vi.fn() }));
 
 vi.mock('./setupProcess', () => ({ setupProcess: vi.fn() }));
+vi.mock('./setupProbe', () => ({ probeAccelerator: vi.fn() }));
 vi.mock('./setupDownload', async (original) => ({
   ...(await original<typeof import('./setupDownload')>()),
   downloadImage: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock('./qemuComputer', async (original) => ({
 let directory: string, bundle: string;
 const services: ComputerSetupService[] = [];
 beforeEach(async () => {
+  vi.mocked(probeAccelerator).mockResolvedValue({ code: 0, output: '' });
   guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\nv24\nChrome' });
   directory = await mkdtemp(join(tmpdir(), 'mukai-auto-setup-'));
   bundle = join(directory, 'bundle');
@@ -144,6 +147,7 @@ describe('automatic computer setup', () => {
     'reports a Windows reboot without starting downloads',
     async () => {
       vi.stubEnv('MUKAI_QEMU_ACCEL', 'whpx');
+      vi.mocked(probeAccelerator).mockResolvedValue({ code: 1, output: '' });
       vi.mocked(setupProcess).mockImplementation(async (binary) => ({
         code: binary === 'powershell.exe' ? 3010 : 1,
         output: '',

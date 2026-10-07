@@ -5,6 +5,7 @@ import { Modal } from '../../components/ui/Modal';
 import { workspaceService } from '../../services/workspaceService';
 import { errorText } from '../../utils/errors';
 import type { QemuSetup } from '../../../../shared/computer';
+import { VmSetupProgress } from './VmSetupProgress';
 
 export function WorkspaceEditor({
   workspace,
@@ -30,7 +31,7 @@ export function WorkspaceEditor({
         if (active) setSetup(value);
       })
       .catch((error) => {
-        if (active) setSetup({ available: false, reason: errorText(error) });
+        if (active) setSetup({ available: false, phase: 'failed', reason: errorText(error) });
       });
     return () => {
       active = false;
@@ -43,7 +44,10 @@ export function WorkspaceEditor({
       workspaceService
         .computerSetup()
         .then((value) => {
-          if (active) setSetup(value);
+          if (active) {
+            setSetup(value);
+            setSetupError('');
+          }
         })
         .catch((error) => {
           if (active) setSetupError(errorText(error));
@@ -57,6 +61,7 @@ export function WorkspaceEditor({
   }, [computer]);
   async function install() {
     setSetupError('');
+    setSetup({ available: false, phase: 'checking', message: 'Starting Linux VM setup…' });
     try {
       setSetup(await workspaceService.installComputer());
     } catch (error) {
@@ -138,39 +143,10 @@ export function WorkspaceEditor({
                   ? 'Commands and browser tools run on this computer.'
                   : 'Bots share a persistent Linux VM with 2 CPUs and 2 GiB RAM. Files stay on its disk. Headless browser; custom tools and routes are unavailable in v1.'}
               </small>
-              {computer === 'qemu' && (
-                <small role="status" aria-live="polite">
-                  {!setup
-                    ? 'Checking VM setup…'
-                    : setup.available
-                      ? 'Linux is ready. The VM starts when a bot first uses it.'
-                      : setup.message || setup.reason}
-                </small>
-              )}
-              {computer === 'qemu' && setup?.phase === 'downloading' && setup.totalBytes && (
-                <progress
-                  aria-label="Downloading Linux"
-                  max={setup.totalBytes}
-                  value={setup.downloadedBytes || 0}
-                />
-              )}
-              {computer === 'qemu' && (!setup || !setup.available) && (
-                <small>
-                  First use installs QEMU and downloads Linux, Node.js and Chrome. Allow several
-                  minutes and at least 12 GiB of free disk space. Your OS may ask for administrator
-                  approval.
-                </small>
-              )}
-              {computer === 'qemu' &&
-                setup &&
-                !setup.available &&
-                ['idle', 'failed', 'reboot-required'].includes(setup.phase || 'idle') && (
-                  <button type="button" className="button" onClick={() => void install()}>
-                    {setup.phase === 'idle' ? 'Set up Linux VM' : 'Retry setup'}
-                  </button>
-                )}
-              {computer === 'qemu' && setupError && <small role="alert">{setupError}</small>}
             </label>
+          )}
+          {!workspace && computer === 'qemu' && (
+            <VmSetupProgress setup={setup} error={setupError} onRetry={() => void install()} />
           )}
           <label>
             Workspace name

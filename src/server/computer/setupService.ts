@@ -1,5 +1,6 @@
 import {
   access,
+  appendFile,
   copyFile,
   mkdir,
   readFile,
@@ -11,12 +12,14 @@ import {
 import { constants } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { arch, platform } from 'node:os';
+import { stripVTControlCharacters } from 'node:util';
 import { z } from 'zod';
 import type { QemuSetup } from '../../shared/computer';
 import { qemuConfig, qemuSetup, QemuComputer, type QemuConfig } from './qemuComputer';
 import { setupProcess } from './setupProcess';
 import { downloadImage, imageChecksum } from './setupDownload';
 import { setupSeed } from './setupSeed';
+import { probeAccelerator } from './setupProbe';
 
 const UBUNTU = 'https://cloud-images.ubuntu.com/noble/current/';
 const IMAGE = 'noble-server-cloudimg-amd64.img';
@@ -35,6 +38,8 @@ export class ComputerSetupService {
   private binary = '';
   private closed = false;
   private root: string;
+  private logBytes = 0;
+  private logWrite = Promise.resolve();
   constructor(
     private dataDir: string,
     private bundleDir = resolve('dist/guest'),
@@ -63,6 +68,9 @@ export class ComputerSetupService {
           phase: 'failed',
           message: saved.message,
           reason: saved.message,
+          detail: await readFile(join(this.root, 'setup.log'), 'utf8')
+            .then((text) => text.slice(-3000))
+            .catch(() => undefined),
         };
     } catch {
       /* First run. */
@@ -130,7 +138,18 @@ export class ComputerSetupService {
     const path = join(this.root, 'progress.json');
     await writeFile(path + '.tmp', JSON.stringify({ phase, message }), { mode: 0o600 });
     await rename(path + '.tmp', path);
+    this.output(`\n[${phase}] ${message}\n`);
   }
+  private output = (text: string) => {
+    const clean = stripVTControlCharacters(text).replace(/[^\x20-\x7e\n\r\t]/g, '');
+    this.state = { ...this.state, detail: ((this.state.detail || '') + clean).slice(-3000) };
+    if (this.logBytes < 2 * 1024 ** 2) {
+      this.logBytes += Buffer.byteLength(clean);
+      this.logWrite = this.logWrite
+        .then(() => appendFile(join(this.root, 'setup.log'), clean, { mode: 0o600 }))
+        .catch(() => {});
+    }
+  };
   private async findBinary() {
     if (process.env.MUKAI_QEMU_BINARY) return process.env.MUKAI_QEMU_BINARY;
     const name = platform() === 'win32' ? 'qemu-system-x86_64.exe' : 'qemu-system-x86_64';
@@ -155,7 +174,7 @@ export class ComputerSetupService {
     return '';
   }
   private async command(binary: string, args: string[], signal: AbortSignal, input?: string) {
-    const result = await setupProcess(binary, args, signal, input);
+    const result = await setupProcess(binary, args, signal, input, this.output);
     if (result.code !== 0)
       throw new Error(
         `${binary.split(/[\\/]/).at(-1)} could not complete VM setup (exit ${result.code}). ${result.output.slice(-1500)}`,
@@ -225,26 +244,8 @@ export class ComputerSetupService {
   }
   private async accelerator(signal: AbortSignal) {
     const accelerator = this.configuration().accelerator;
-    const probe = () =>
-      setupProcess(
-        this.binary,
-        [
-          '-machine',
-          'q35',
-          '-accel',
-          accelerator,
-          '-display',
-          'none',
-          '-nodefaults',
-          '-S',
-          '-monitor',
-          'stdio',
-        ],
-        signal,
-        'quit\n',
-        undefined,
-        30000,
-      );
+    await this.phase('checking', 'Checking hardware virtualization…');
+    const probe = () => probeAccelerator(this.binary, accelerator, signal, this.output);
     if ((await probe()).code === 0) return accelerator;
     if (platform() !== 'win32' || accelerator !== 'whpx')
       throw new Error(
@@ -263,6 +264,8 @@ export class ComputerSetupService {
         "$p = Start-Process -FilePath dism.exe -ArgumentList '/Online','/Enable-Feature','/FeatureName:HypervisorPlatform','/All','/NoRestart','/Quiet' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode",
       ],
       signal,
+      undefined,
+      this.output,
     );
     if (enabled.code === 3010) {
       await this.phase(
@@ -286,6 +289,9 @@ export class ComputerSetupService {
   }
   private async install(signal: AbortSignal) {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
+    await this.logWrite;
+    this.logBytes = 0;
+    await writeFile(join(this.root, 'setup.log'), '', { mode: 0o600 });
     await this.phase('checking', 'Checking virtualization and free disk space…');
     if (arch() !== 'x64')
       throw new Error('Automatic Linux VM setup currently requires an x64 computer.');
@@ -398,6 +404,7 @@ export class ComputerSetupService {
         signal,
         undefined,
         (text) => {
+          this.output(text);
           serial = (serial + text).slice(-12000);
           if (serial.includes('MUKAI_IMAGE_READY')) completed = true;
         },
@@ -444,5 +451,6 @@ export class ComputerSetupService {
     this.closed = true;
     this.controller?.abort();
     await this.operation;
+    await this.logWrite;
   }
 }

@@ -21,6 +21,8 @@ Windows uses Winget's `SoftwareFreedomConservancy.QEMU` package and can enable W
 
 Ordinary app startup detects existing setup without installing software for local workspaces. Once VM setup has been requested, unfinished setup resumes on app startup, including after a required Windows restart. Failed setup offers Retry. Retries may download the image again; partial downloads are never used as a base image. Setup files live under `computer-setup/` in Mukai's data directory. Each workspace gets a separate full copy of the prepared 32 GiB virtual disk, so allow additional physical storage as its files grow.
 
+The modal shows activity throughout installation and provisioning, download counts when available, and expandable setup output. A bounded `computer-setup/setup.log` records each attempt; failure details remain available after reopening Mukai. The virtualization check uses a QMP control socket, avoiding Windows QEMU's unreliable piped console input.
+
 Desktop builds include the guest bundle as an application resource. `npm run dev`, `npm run dev:server` and `npm run build` generate it automatically. Environment overrides below remain available for an operator-prepared image.
 
 ## Optional manual base image
