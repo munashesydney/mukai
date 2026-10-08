@@ -7,6 +7,7 @@ import type { Location } from '../workspace/types';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { errorText } from '../../utils/errors';
+import { ConversationStatus } from './ConversationStatus';
 
 const INITIAL_CONVERSATION_COUNT = 3;
 
@@ -131,12 +132,9 @@ export function BotConversationsSidebar({
                       }
                     >
                       <span>{chat.name}</span>
-                      <time
-                        dateTime={chat.updatedAt}
-                        title={new Date(chat.updatedAt).toLocaleString()}
-                      >
+                      <ConversationStatus chatId={`private:${chat.id}`} updatedAt={chat.updatedAt}>
                         {age(chat.updatedAt)}
-                      </time>
+                      </ConversationStatus>
                     </button>
                   ))}
                   {chats.length > visibleCount && (

@@ -569,6 +569,13 @@ p {
   font-size: 10px;
   font-weight: 400;
 }
+.bot-conversation-row > span.bot-conversation-working {
+  flex: 0 0 20px;
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  overflow: visible;
+}
 .bot-conversations-load-more {
   align-self: flex-start;
   margin: 3px 0 1px 28px;

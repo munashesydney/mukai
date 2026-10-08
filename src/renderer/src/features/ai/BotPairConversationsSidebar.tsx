@@ -4,6 +4,7 @@ import type { Bot } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { Location } from '../workspace/types';
 import { Avatar } from '../../components/ui/Avatar';
+import { ConversationStatus } from './ConversationStatus';
 
 const INITIAL_CONVERSATION_COUNT = 3;
 
@@ -93,15 +94,12 @@ export function BotPairConversationsSidebar({
                     }
                   >
                     <span>{chat.name}</span>
-                    <time
-                      dateTime={chat.updatedAt}
-                      title={new Date(chat.updatedAt).toLocaleString()}
-                    >
+                    <ConversationStatus chatId={`space:${chat.id}`} updatedAt={chat.updatedAt}>
                       {new Date(chat.updatedAt).toLocaleDateString([], {
                         month: 'short',
                         day: 'numeric',
                       })}
-                    </time>
+                    </ConversationStatus>
                   </button>
                 ))}
                 {group.conversations.length > visibleCount && (

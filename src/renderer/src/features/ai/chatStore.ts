@@ -282,14 +282,30 @@ export const chatStore = {
     }
   },
 };
-export function useChat(id: string, readOnly = false) {
-  const state = useSyncExternalStore(
-    (callback) => {
-      listeners.add(callback);
-      return () => listeners.delete(callback);
-    },
-    () => get(id),
+function subscribe(callback: () => void) {
+  listeners.add(callback);
+  return () => listeners.delete(callback);
+}
+
+export function useChatBusy(id: string) {
+  const busy = useSyncExternalStore(
+    subscribe,
+    () => states.get(id)?.busy ?? false,
+    () => states.get(id)?.busy ?? false,
   );
+  useEffect(() => {
+    if (!busy) return;
+    // Keep a recovered/background response current after its chat view unmounts.
+    const timer = window.setInterval(() => {
+      if (!active.has(id)) void chatStore.load(id);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [id, busy]);
+  return busy;
+}
+
+export function useChat(id: string, readOnly = false) {
+  const state = useSyncExternalStore(subscribe, () => get(id));
   useEffect(() => {
     void chatStore.load(id);
     const timer = window.setInterval(() => {

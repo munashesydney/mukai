@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../../shared/ai';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const saved = new Map<string, string>();
 const user = (requestId: string): ChatMessage => ({
@@ -33,6 +35,53 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('Durable chat drafts and transport recovery', () => {
+  it.each(['complete', 'stopped', 'failed'] as const)(
+    'shows conversation activity only for the working chat and clears it on %s',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json([])),
+      );
+      const { chatStore } = await import('./chatStore');
+      const { chatService } = await import('../../services/chatService');
+      const { ConversationStatus } = await import('./ConversationStatus');
+      const id = 'private:working-chat';
+      await chatStore.load(id);
+      let finish!: () => void;
+      vi.spyOn(chatService, 'stream').mockImplementation(async (_id, input, onEvent) => {
+        onEvent({
+          type: 'start',
+          user: user(input.requestId),
+          assistant: assistant(input.requestId, 'streaming'),
+        });
+        await new Promise<void>((resolve) => {
+          finish = () => {
+            onEvent({ type: 'done', message: assistant(input.requestId, status) });
+            resolve();
+          };
+        });
+      });
+      const render = (chatId: string) =>
+        renderToStaticMarkup(
+          createElement(ConversationStatus, {
+            chatId,
+            updatedAt: '2026-10-01T00:00:00Z',
+            children: 'now',
+          }),
+        );
+      expect(render(id)).toContain('<time');
+      chatStore.draft(id, 'Work in the background');
+      const pending = chatStore.send(id);
+      expect(render(id)).toContain('aria-label="AI is working"');
+      expect(render(id)).not.toContain('<time');
+      expect(render('private:other-chat')).toContain('<time');
+      finish();
+      await pending;
+      expect(render(id)).toContain('<time');
+      expect(render(id)).not.toContain('typing-dots');
+    },
+  );
+
   it('recovers an accepted request after refresh and clears its draft without duplicating it', async () => {
     const requestId = crypto.randomUUID();
     saved.set('mukai.draft.scout', JSON.stringify({ text: 'Keep this prompt', requestId }));
