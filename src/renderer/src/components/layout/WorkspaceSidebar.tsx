@@ -233,7 +233,7 @@ export function WorkspaceSidebar({
             )}
             <BotConversationsSidebar
               bots={bots}
-              conversations={botConversations}
+              conversations={[...botConversations, ...botPairConversations]}
               location={location}
               onSelect={onSelect}
               onCreate={onCreateConversation}

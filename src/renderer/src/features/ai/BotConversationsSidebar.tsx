@@ -7,7 +7,8 @@ import type { Location } from '../workspace/types';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { errorText } from '../../utils/errors';
-import { ConversationStatus } from './ConversationStatus';
+import { BotConversationStatus, ConversationStatus } from './ConversationStatus';
+import { botConversationGroup, visibleConversations } from './conversationSidebar';
 
 const INITIAL_CONVERSATION_COUNT = 3;
 
@@ -64,9 +65,11 @@ export function BotConversationsSidebar({
         .sort((a, b) => Number(b.isMain) - Number(a.isMain))
         .map((bot) => {
           const open = expanded[bot.id] ?? location.item === bot.id;
-          const chats = conversations.filter((conversation) => conversation.ownerBotId === bot.id);
+          const chats = conversations
+            .filter((conversation) => botConversationGroup(conversation) === bot.id)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
           const visibleCount = visibleCounts[bot.id] ?? INITIAL_CONVERSATION_COUNT;
-          const visibleChats = chats.slice(0, visibleCount);
+          const visibleChats = visibleConversations(chats, visibleCount);
           const count = approvals.pending.filter(
             (request) =>
               request.botId === bot.id ||
@@ -95,6 +98,7 @@ export function BotConversationsSidebar({
                 >
                   <MessageCirclePlus size={17} />
                 </IconButton>
+                {!open && <BotConversationStatus conversations={chats} />}
               </div>
               {count > 0 && (
                 <button
@@ -118,26 +122,34 @@ export function BotConversationsSidebar({
                   {visibleChats.map((chat) => (
                     <button
                       key={chat.id}
-                      className={`sidebar-row bot-conversation-row ${location.item === bot.id && !location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                      className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
                       aria-current={
-                        location.item === bot.id &&
-                        !location.view &&
-                        location.conversationId === chat.id
-                          ? 'page'
-                          : undefined
+                        !location.view && location.conversationId === chat.id ? 'page' : undefined
                       }
                       title={chat.name}
                       onClick={() =>
-                        onSelect({ section: 'bots', item: bot.id, conversationId: chat.id })
+                        onSelect(
+                          chat.kind === 'bot'
+                            ? {
+                                section: 'spaces',
+                                item: 'bot-conversations',
+                                conversationId: chat.id,
+                              }
+                            : { section: 'bots', item: bot.id, conversationId: chat.id },
+                        )
                       }
                     >
                       <span>{chat.name}</span>
-                      <ConversationStatus chatId={`private:${chat.id}`} updatedAt={chat.updatedAt}>
+                      <ConversationStatus
+                        chatId={`${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`}
+                        updatedAt={chat.updatedAt}
+                        isWorking={chat.isWorking}
+                      >
                         {age(chat.updatedAt)}
                       </ConversationStatus>
                     </button>
                   ))}
-                  {chats.length > visibleCount && (
+                  {chats.length > visibleChats.length && (
                     <button
                       className="bot-conversations-load-more"
                       onClick={() =>
@@ -147,7 +159,9 @@ export function BotConversationsSidebar({
                         }))
                       }
                     >
-                      Load {Math.min(INITIAL_CONVERSATION_COUNT, chats.length - visibleCount)} more
+                      Load{' '}
+                      {Math.min(INITIAL_CONVERSATION_COUNT, chats.length - visibleChats.length)}{' '}
+                      more
                     </button>
                   )}
                 </div>

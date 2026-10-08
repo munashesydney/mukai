@@ -4,7 +4,8 @@ import type { Bot } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { Location } from '../workspace/types';
 import { Avatar } from '../../components/ui/Avatar';
-import { ConversationStatus } from './ConversationStatus';
+import { BotConversationStatus, ConversationStatus } from './ConversationStatus';
+import { visibleConversations } from './conversationSidebar';
 
 const INITIAL_CONVERSATION_COUNT = 3;
 
@@ -60,7 +61,7 @@ export function BotPairConversationsSidebar({
           expanded[key] ?? group.conversations.some((chat) => chat.id === location.conversationId);
         const title = group.bots.map((bot) => bot.name).join('/');
         const visibleCount = visibleCounts[key] ?? INITIAL_CONVERSATION_COUNT;
-        const visibleConversations = group.conversations.slice(0, visibleCount);
+        const visibleChats = visibleConversations(group.conversations, visibleCount);
         return (
           <section className="bot-conversation-group" key={key}>
             <button
@@ -75,11 +76,12 @@ export function BotPairConversationsSidebar({
                 ))}
               </span>
               <span>{title}</span>
+              {!open && <BotConversationStatus conversations={group.conversations} />}
               {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
             {open && (
               <div className="bot-conversation-list">
-                {visibleConversations.map((chat) => (
+                {visibleChats.map((chat) => (
                   <button
                     key={chat.id}
                     className={`sidebar-row bot-conversation-row ${location.conversationId === chat.id ? 'is-selected' : ''}`}
@@ -94,7 +96,11 @@ export function BotPairConversationsSidebar({
                     }
                   >
                     <span>{chat.name}</span>
-                    <ConversationStatus chatId={`space:${chat.id}`} updatedAt={chat.updatedAt}>
+                    <ConversationStatus
+                      chatId={`space:${chat.id}`}
+                      updatedAt={chat.updatedAt}
+                      isWorking={chat.isWorking}
+                    >
                       {new Date(chat.updatedAt).toLocaleDateString([], {
                         month: 'short',
                         day: 'numeric',
@@ -102,7 +108,7 @@ export function BotPairConversationsSidebar({
                     </ConversationStatus>
                   </button>
                 ))}
-                {group.conversations.length > visibleCount && (
+                {group.conversations.length > visibleChats.length && (
                   <button
                     className="bot-conversations-load-more"
                     onClick={() =>
@@ -115,7 +121,7 @@ export function BotPairConversationsSidebar({
                     Load{' '}
                     {Math.min(
                       INITIAL_CONVERSATION_COUNT,
-                      group.conversations.length - visibleCount,
+                      group.conversations.length - visibleChats.length,
                     )}{' '}
                     more
                   </button>

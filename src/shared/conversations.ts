@@ -8,6 +8,7 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   ownerBotId: string | null;
+  isWorking?: boolean;
 }
 export interface SpaceInput {
   name: string;

@@ -287,12 +287,16 @@ function subscribe(callback: () => void) {
   return () => listeners.delete(callback);
 }
 
-export function useChatBusy(id: string) {
-  const busy = useSyncExternalStore(
+export function useConversationsBusy(ids: string[]) {
+  return useSyncExternalStore(
     subscribe,
-    () => states.get(id)?.busy ?? false,
-    () => states.get(id)?.busy ?? false,
+    () => ids.some((id) => states.get(id)?.busy),
+    () => ids.some((id) => states.get(id)?.busy),
   );
+}
+
+export function useChatBusy(id: string) {
+  const busy = useConversationsBusy([id]);
   useEffect(() => {
     if (!busy) return;
     // Keep a recovered/background response current after its chat view unmounts.

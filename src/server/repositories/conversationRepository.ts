@@ -14,6 +14,7 @@ export class ConversationRepository {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       ownerBotId: row.owner_bot_id as string | null,
+      ...(row.is_working !== undefined ? { isWorking: Boolean(row.is_working) } : {}),
       botIds: this.database
         .all(
           'SELECT bot_id FROM conversation_bots WHERE conversation_id=? ORDER BY rowid',
@@ -37,7 +38,8 @@ export class ConversationRepository {
   privateChats(workspaceId: string) {
     return this.database
       .all(
-        "SELECT * FROM conversations WHERE workspace_id=? AND kind='private' ORDER BY updated_at DESC,rowid DESC",
+        `SELECT c.*, EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.status='streaming') AS is_working
+         FROM conversations c WHERE c.workspace_id=? AND c.kind='private' ORDER BY c.updated_at DESC,c.rowid DESC`,
         workspaceId,
       )
       .map((row) => this.project(row));
@@ -45,7 +47,8 @@ export class ConversationRepository {
   botChats(workspaceId: string) {
     return this.database
       .all(
-        "SELECT * FROM conversations WHERE workspace_id=? AND kind='bot' ORDER BY updated_at DESC,rowid DESC",
+        `SELECT c.*, EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.status='streaming') AS is_working
+         FROM conversations c WHERE c.workspace_id=? AND c.kind='bot' ORDER BY c.updated_at DESC,c.rowid DESC`,
         workspaceId,
       )
       .map((row) => this.project(row));

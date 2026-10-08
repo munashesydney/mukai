@@ -747,6 +747,16 @@ describe('Bot architecture', () => {
     expect(parent.activity?.[0].delegation).toMatchObject({ botId: child.id, botName: 'Ada' });
     const conversationId = parent.activity![0].delegation!.conversationId;
     const before = (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data;
+    expect(
+      (await request<Conversation[]>('/conversations?kind=bot')).data.find(
+        (conversation) => conversation.id === conversationId,
+      )?.isWorking,
+    ).toBe(true);
+    expect(
+      (await request<Conversation[]>('/conversations?kind=private')).data.find(
+        (conversation) => conversation.ownerBotId === main.id,
+      )?.isWorking,
+    ).toBe(true);
     await restart();
     await pending;
     expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
@@ -766,6 +776,9 @@ describe('Bot architecture', () => {
     expect(after.map((item) => item.id)).toEqual(before.map((item) => item.id));
     expect(after.map((item) => item.requestId)).toEqual(before.map((item) => item.requestId));
     expect(after.at(-1)?.status).toBe('complete');
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data[0].isWorking).toBe(
+      false,
+    );
     expect(
       calls.filter(
         (call) =>

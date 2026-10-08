@@ -569,8 +569,10 @@ p {
   font-size: 10px;
   font-weight: 400;
 }
-.bot-conversation-row > span.bot-conversation-working {
+.sidebar-row > span.bot-conversation-working,
+.bot-conversation-heading > span.bot-conversation-working {
   flex: 0 0 20px;
+  margin-left: auto;
   display: inline-flex;
   justify-content: flex-end;
   align-items: center;
