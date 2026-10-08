@@ -77,6 +77,20 @@ it('does not accuse ordinary process polls or successful repeated browser intera
   expect(guard.paused).toBe(false);
   expect(guard.notice).toBe('');
 });
+it('pauses repeated unchanged profile discovery instead of treating it as browser interaction', () => {
+  const guard = new ProgressGuard();
+  for (let index = 0; index < 10; index++)
+    guard.observe(
+      'browser',
+      { action: 'profiles' },
+      {
+        ok: true,
+        result: { profiles: [{ id: 'Default', name: 'Personal', lastUsed: true }] },
+      },
+    );
+  expect(guard.notice).toContain('repeated');
+  expect(guard.paused).toBe(true);
+});
 it('ignores rotated refs but detects unchanged browser state and resets on page progress', () => {
   const guard = new ProgressGuard();
   for (let index = 0; index < 6; index++)

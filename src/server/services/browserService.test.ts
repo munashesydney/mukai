@@ -2,12 +2,77 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { BrowserService } from './browserService';
 import type { EmbeddedBrowserHost, BrowserPage } from '../browser/types';
 import { chromium } from 'playwright-core';
+import { MainChromeProfiles } from '../browser/mainChromeProfiles';
+import { ChromeHost } from '../browser/chromeHost';
 const owner = { workspaceId: 'workspace', botId: 'scout', conversationId: 'chat' };
 const signal = () => new AbortController().signal;
 let service: BrowserService | undefined;
 afterEach(async () => {
   await service?.shutdown();
   vi.restoreAllMocks();
+});
+it('lists main Chrome profiles without starting or connecting to a browser', async () => {
+  const profiles = [{ id: 'Profile 1', name: 'Work', lastUsed: true }];
+  vi.spyOn(MainChromeProfiles.prototype, 'list').mockResolvedValue(profiles);
+  const connect = vi.spyOn(chromium, 'connectOverCDP');
+  const launch = vi.spyOn(chromium, 'launchPersistentContext');
+  const { service, host } = fixture();
+  expect(await service.execute(owner, { action: 'profiles' }, signal())).toEqual({
+    target: 'chrome-default',
+    profiles,
+  });
+  expect(connect).not.toHaveBeenCalled();
+  expect(launch).not.toHaveBeenCalled();
+  expect(host.open).not.toHaveBeenCalled();
+});
+it('rejects unknown profiles and profile selection on other browser modes before opening tabs', async () => {
+  vi.spyOn(MainChromeProfiles.prototype, 'list').mockResolvedValue([
+    { id: 'Default', name: 'Personal', lastUsed: true },
+  ]);
+  const connect = vi.spyOn(chromium, 'connectOverCDP');
+  const { service, host } = fixture();
+  await expect(
+    service.execute(
+      owner,
+      {
+        action: 'open',
+        target: 'chrome-default',
+        profileId: 'Unknown',
+        url: 'https://example.com',
+      },
+      signal(),
+    ),
+  ).rejects.toThrow('not found');
+  await expect(
+    service.execute(
+      owner,
+      { action: 'open', target: 'mukai', profileId: 'Default', url: 'https://example.com' },
+      signal(),
+    ),
+  ).rejects.toThrow('only supported');
+  await expect(
+    service.execute(owner, { action: 'profiles', target: 'chrome' }, signal()),
+  ).rejects.toThrow('main Chrome');
+  expect(connect).not.toHaveBeenCalled();
+  expect(host.open).not.toHaveBeenCalled();
+});
+it('passes the requested main profile and returns the verified profile in session results', async () => {
+  const { service, page, host } = fixture();
+  const profile = { id: 'Profile 1', name: 'Work', lastUsed: false };
+  page.profile = profile;
+  const open = vi.spyOn(ChromeHost.prototype, 'open').mockResolvedValue(page);
+  const result = await service.execute(
+    owner,
+    { action: 'open', target: 'chrome-default', profileId: profile.id, url: 'https://example.com' },
+    signal(),
+  );
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({ ...owner, target: 'chrome-default' }),
+    profile.id,
+  );
+  expect(result).toMatchObject({ tab: { target: 'chrome-default', profile } });
+  expect(service.list(owner.workspaceId)[0].profile).toEqual(profile);
+  expect(host.open).not.toHaveBeenCalled();
 });
 it('reports main Chrome setup failures without opening inline or a replacement profile', async () => {
   const connect = vi.spyOn(chromium, 'connectOverCDP').mockRejectedValue(new Error('Not enabled'));

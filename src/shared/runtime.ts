@@ -4,9 +4,15 @@ export interface RuntimeOwner {
   conversationId: string;
 }
 export type BrowserTarget = 'mukai' | 'chrome' | 'chrome-default';
+export interface ChromeProfile {
+  id: string;
+  name: string;
+  lastUsed: boolean;
+}
 export interface BrowserSession extends RuntimeOwner {
   id: string;
   target: BrowserTarget;
+  profile?: ChromeProfile;
   url: string;
   title: string;
   createdAt: string;

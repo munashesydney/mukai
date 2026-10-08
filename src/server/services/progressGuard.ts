@@ -103,7 +103,7 @@ export class ProgressGuard {
     // confirming unchanged snapshot we cannot infer that the browser is stuck.
     if (
       name === 'browser' &&
-      !['snapshot', 'get_text', 'tabs'].includes(action) &&
+      !['snapshot', 'get_text', 'tabs', 'profiles'].includes(action) &&
       !envelope.error &&
       envelope.ok !== false
     )

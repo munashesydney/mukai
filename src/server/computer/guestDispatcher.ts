@@ -86,7 +86,12 @@ export class GuestDispatcher implements Computer {
           owner,
           {
             ...value,
-            target: value.target === 'chrome-default' ? 'chrome-default' : 'chrome',
+            target:
+              value.action === 'profiles'
+                ? value.target || 'chrome-default'
+                : value.target === 'chrome-default'
+                  ? 'chrome-default'
+                  : 'chrome',
           },
           signal,
         );

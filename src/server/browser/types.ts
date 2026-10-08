@@ -1,5 +1,6 @@
-import type { BrowserBounds, BrowserSession } from '../../shared/runtime';
+import type { BrowserBounds, BrowserSession, ChromeProfile } from '../../shared/runtime';
 export interface BrowserPage {
+  profile?: ChromeProfile;
   send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>;
   close(): Promise<void>;
   isClosed(): boolean;

@@ -56,9 +56,10 @@ describe('guest services', () => {
         ['chrome', 'chrome'],
         ['chrome-default', 'chrome-default'],
       ] as const) {
+        const profile = target === 'chrome-default' ? { profileId: 'Profile 1' } : {};
         await computer.request(
           'browser',
-          { action: 'open', target, url: 'https://example.com' },
+          { action: 'open', target, url: 'https://example.com', ...profile },
           owner,
           signal(),
         );
@@ -68,10 +69,17 @@ describe('guest services', () => {
             action: 'open',
             target: expected,
             url: 'https://example.com',
+            ...profile,
           },
           expect.any(AbortSignal),
         );
       }
+      await computer.request('browser', { action: 'profiles' }, owner, signal());
+      expect(execute).toHaveBeenLastCalledWith(
+        owner,
+        { action: 'profiles', target: 'chrome-default' },
+        expect.any(AbortSignal),
+      );
     } finally {
       execute.mockRestore();
     }

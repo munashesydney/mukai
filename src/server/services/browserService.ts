@@ -80,6 +80,19 @@ export class BrowserService {
   async execute(owner: RuntimeOwner, input: BrowserInput, signal: AbortSignal) {
     signal.throwIfAborted();
     if (this.closed) throw new ApiError(503, 'Browser is shutting down.');
+    if (
+      input.profileId !== undefined &&
+      (input.action !== 'open' || input.target !== 'chrome-default')
+    )
+      throw new ApiError(400, 'profileId is only supported for open with target=chrome-default.');
+    if (input.action === 'profiles') {
+      if (input.target && input.target !== 'chrome-default')
+        throw new ApiError(
+          400,
+          'profiles discovers main Chrome profiles. Use target=chrome-default.',
+        );
+      return { target: 'chrome-default', profiles: await this.mainChrome.profiles() };
+    }
     if (input.action === 'tabs')
       return {
         tabs: this.list(owner.workspaceId, owner.conversationId).filter(
@@ -102,7 +115,10 @@ export class BrowserService {
       const page =
         info.target === 'mukai'
           ? await this.embedded?.open(info)
-          : await (info.target === 'chrome-default' ? this.mainChrome : this.chrome).open(info);
+          : await (info.target === 'chrome-default' ? this.mainChrome : this.chrome).open(
+              info,
+              input.profileId,
+            );
       if (!page)
         throw new ApiError(
           503,
@@ -113,6 +129,7 @@ export class BrowserService {
         signal.throwIfAborted();
         throw new ApiError(503, 'Browser is shutting down.');
       }
+      if (page.profile) info.profile = page.profile;
       const entry = { info, driver: new PageDriver(page), queue: Promise.resolve() };
       this.sessions.set(info.id, entry);
       try {

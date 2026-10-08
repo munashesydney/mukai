@@ -8,15 +8,17 @@ import {
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { workspaceBrowserProfile } from './profile';
-import type { BrowserSession } from '../../shared/runtime';
+import type { BrowserSession, ChromeProfile } from '../../shared/runtime';
 import type { BrowserPage } from './types';
 import { browserCommand } from './types';
 import { ApiError } from '../config';
+import { MainChromeProfiles, profileWindowMarker } from './mainChromeProfiles';
 
 export class ChromeHost {
   private contexts = new Map<string, Promise<BrowserContext>>();
   private configured = new WeakSet<BrowserContext>();
   private conversations = new WeakMap<Page, string>();
+  private pageProfiles = new WeakMap<Page, ChromeProfile>();
   private opening = new Set<string>();
   private operations = new Map<string, Promise<unknown>>();
   private attached = new Map<BrowserContext, Browser>();
@@ -26,14 +28,18 @@ export class ChromeHost {
     private dataDir: string,
     private headless = false,
     private profile: 'workspace' | 'main' = 'workspace',
+    private mainProfiles = new MainChromeProfiles(),
   ) {}
   private get mainProfile() {
     return this.profile === 'main';
   }
-  async open(info: BrowserSession): Promise<BrowserPage> {
+  async profiles() {
+    return this.mainProfiles.list();
+  }
+  async open(info: BrowserSession, profileId?: string): Promise<BrowserPage> {
     const key = this.mainProfile ? 'main' : workspaceBrowserProfile(info.workspaceId);
     const conversation = JSON.stringify([info.workspaceId, info.botId, info.conversationId]);
-    return this.serialize(key, () => this.openPage(key, conversation));
+    return this.serialize(key, () => this.openPage(key, conversation, profileId));
   }
   private async connectMain(): Promise<BrowserContext> {
     // Chrome discovers its running default profile and asks the user to allow this connection.
@@ -57,8 +63,16 @@ export class ChromeHost {
     void result.then(clear, clear);
     return result;
   }
-  private async openPage(key: string, conversationId: string): Promise<BrowserPage> {
+  private async openPage(
+    key: string,
+    conversationId: string,
+    profileId?: string,
+  ): Promise<BrowserPage> {
     if (this.closed) throw new ApiError(503, 'Browser is shutting down.');
+    const selectedProfile =
+      this.mainProfile && profileId !== undefined
+        ? await this.mainProfiles.require(profileId)
+        : undefined;
     let contextPromise = this.contexts.get(key);
     if (!contextPromise) {
       contextPromise = this.mainProfile
@@ -103,9 +117,17 @@ export class ChromeHost {
     }
     const opener = context
       .pages()
-      .find((page) => !page.isClosed() && this.conversations.get(page) === conversationId);
+      .reverse()
+      .find(
+        (page) =>
+          !page.isClosed() &&
+          this.conversations.get(page) === conversationId &&
+          (!selectedProfile || this.pageProfiles.get(page)?.id === selectedProfile.id),
+      );
     // Create the first tab in a separate window; additional tabs stay with their conversation.
-    const page = this.headless ? await context.newPage() : await this.newPage(context, opener);
+    const page = this.headless
+      ? await context.newPage()
+      : await this.newPage(context, opener, selectedProfile);
     this.ownedPages.add(page);
     page.once('close', () => this.ownedPages.delete(page));
     this.conversations.set(page, conversationId);
@@ -114,13 +136,22 @@ export class ChromeHost {
       if (!this.opening.has(popup.url())) void popup.close().catch(() => {});
     });
     let client: CDPSession;
+    let actualProfile: ChromeProfile | undefined;
     try {
+      if (this.mainProfile) {
+        actualProfile = await this.mainProfiles.identify(
+          page,
+          selectedProfile || (opener ? this.pageProfiles.get(opener) : undefined),
+        );
+        this.pageProfiles.set(page, actualProfile);
+      }
       client = await context.newCDPSession(page);
     } catch (error) {
       await page.close().catch(() => {});
       throw error;
     }
     return {
+      ...(actualProfile ? { profile: actualProfile } : {}),
       send: async (method, params) => {
         if (method === 'Page.captureScreenshot' && !this.headless) {
           // A loaded DOM can precede the first composited frame in a new native window.
@@ -162,14 +193,23 @@ export class ChromeHost {
       await this.attached.get(context)?.close();
     } else await context.close();
   }
-  private async newPage(context: BrowserContext, opener?: Page): Promise<Page> {
+  private async newPage(
+    context: BrowserContext,
+    opener?: Page,
+    selectedProfile?: ChromeProfile,
+  ): Promise<Page> {
     const browser = context.browser();
     if (!browser) throw new Error('Chrome browser connection is unavailable.');
     const control = await browser.newBrowserCDPSession();
-    const url = 'about:blank#' + randomUUID();
+    let url = 'about:blank#' + randomUUID();
+    let marker: Awaited<ReturnType<typeof profileWindowMarker>> | undefined;
     let targetId: string | undefined;
-    this.opening.add(url);
     try {
+      if (selectedProfile && !opener) {
+        marker = await profileWindowMarker();
+        url = marker.url;
+      }
+      this.opening.add(url);
       if (opener) {
         const client = await context.newCDPSession(opener);
         try {
@@ -182,10 +222,13 @@ export class ChromeHost {
           await client.send('Runtime.evaluate', {
             expression: `window.open(${JSON.stringify(url)}, '_blank'); void 0`,
             contextId: executionContextId,
+            userGesture: true,
           });
         } finally {
           await client.detach().catch(() => {});
         }
+      } else if (selectedProfile) {
+        await this.mainProfiles.openWindow(selectedProfile, url);
       } else {
         ({ targetId } = await control.send('Target.createTarget', { url, newWindow: true }));
       }
@@ -218,7 +261,13 @@ export class ChromeHost {
         };
         const timer = setTimeout(() => {
           cleanup();
-          reject(new Error('Chrome window did not become ready.'));
+          reject(
+            new Error(
+              selectedProfile
+                ? 'The selected Chrome profile window did not become ready. Open that profile manually, finish any Chrome setup or unlock prompt, then retry. No other profile was used.'
+                : 'Chrome window did not become ready.',
+            ),
+          );
         }, 15000);
         context.on('page', observe);
         context.once('close', closed);
@@ -227,10 +276,18 @@ export class ChromeHost {
       });
     } catch (error) {
       if (targetId) await control.send('Target.closeTarget', { targetId }).catch(() => {});
+      else if (marker)
+        await Promise.allSettled(
+          context
+            .pages()
+            .filter((page) => page.url() === url)
+            .map((page) => page.close()),
+        );
       throw error;
     } finally {
       this.opening.delete(url);
       await control.detach().catch(() => {});
+      await marker?.close();
     }
   }
   async shutdown() {

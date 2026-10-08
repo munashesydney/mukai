@@ -11,9 +11,11 @@ function prompt(tools: object, computer: 'local' | 'qemu' = 'local') {
     previousOperations: false,
   });
 }
-it('teaches profile selection and existing logins only when browser tools are available', () => {
+it('teaches general browser use and profile selection only when browser tools are available', () => {
   expect(prompt({ browser: {} })).toContain('chrome-default');
-  expect(prompt({ browser: {} })).toContain('check which browser/profile they used');
+  expect(prompt({ browser: {} })).toContain('whenever web interaction helps the task');
+  expect(prompt({ browser: {} })).toContain('When troubleshooting a missing login');
+  expect(prompt({ browser: {} })).toContain('discover profiles, pass its profileId');
   expect(prompt({ browser: {} })).toContain('Never silently switch profiles');
   expect(prompt({})).not.toContain('chrome-default');
 });

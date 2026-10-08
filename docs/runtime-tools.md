@@ -66,13 +66,14 @@ Example: `{"action":"view","path":"C:\\Users\\sydne\\Downloads\\picture.png"}`.
 
 ## Browser
 
-`browser` supports `open`, `tabs`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`,
+`browser` supports `open`, `profiles`, `tabs`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`,
 `back`, `forward`, `reload`, `screenshot` and `close`.
 
 `npm run test:browser-profiles` checks real Chrome/Electron profile sharing, separate
 conversation windows, workspace isolation, and login persistence using disposable profiles.
 It also checks main Chrome attachment against a disposable profile with an existing login
-cookie, preserving personal tabs and reconnecting. Endpoint discovery and native consent
+cookie, named profile selection with separate cookies/windows, rejecting an intentionally
+misrouted profile window, preserving personal tabs and reconnecting. Endpoint discovery and native consent
 are substituted for this automated check; Chrome's approval dialog needs manual testing.
 
 - `target: "mukai"` embeds a sandboxed Electron WebContentsView in the right browser panel.
@@ -86,7 +87,8 @@ are substituted for this automated check; Chrome's approval dialog needs manual 
   Electron profile. Bots and conversations share logins within each browser target;
   inline and Chrome logins remain independent. Other workspaces have separate profiles.
 - Chrome conversations open in separate native windows. Additional opens in a conversation
-  become tabs in its window. Tab control remains scoped to the creating bot and conversation.
+  become tabs in its window. Selecting another main Chrome profile creates a separate window
+  for that conversation/profile pair. Tab control remains scoped to the creating bot and conversation.
   Profiles retain website logins; live tab IDs last only until the application closes.
 - Existing conversation-scoped profiles are kept on disk, without automatically merging
   accounts. Sign in once in the new workspace profile, or choose main Chrome for existing logins.
@@ -123,6 +125,21 @@ Chrome, never the laptop's. Failed or denied connections return setup instructio
 switch profiles. Main mode opens fresh tool-owned tabs sharing cookies and persistent site
 data; state confined to an existing tab (such as sessionStorage) is not copied. See
 [Chrome's connection documentation](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect).
+
+For named profiles such as Personal and Work, first call `browser` with `{"action":"profiles"}`.
+It reads Chrome's profile metadata on the workspace's computer and returns existing profile
+IDs, display names, and a last-used hint without connecting to Chrome or reading cookies.
+Then open with `{"action":"open","target":"chrome-default","profileId":"Profile 1","url":"https://example.com"}`,
+using an ID from discovery. The returned `tab.profile` identifies the verified actual profile.
+Without `profileId`, further opens continue the conversation's most recently used profile;
+a new conversation uses Chrome's current profile. A tab's profile stays fixed once opened.
+
+Selected profile windows are opened through Chrome's normal launcher, using a temporary
+loopback page to identify the new tab. Mukai verifies its profile path before visiting the
+requested site. No cookie copying, profile merging, or debugging preference changes occur.
+Unknown profiles and mismatches fail without using another profile. Create, rename, unlock,
+or finish setting up profiles in Chrome itself, then retry discovery. Only stable Google
+Chrome's standard user data directory is supported, on Windows, macOS, and Linux.
 
 Example: ask a bot to open a website in the Mukai browser, or explicitly ask it to use Chrome.
 The browser panel opens when a tab is created. Hiding the panel keeps the tab alive; closing

@@ -135,7 +135,7 @@ export function BrowserPanel() {
             aria-selected={active?.id === tab.id}
             key={tab.id}
             onClick={() => setSelected(tab.id)}
-            title={tab.url}
+            title={tab.profile ? `${tab.profile.name} · ${tab.url}` : tab.url}
           >
             {tab.target !== 'mukai' && <ExternalLink size={12} />}
             <span>{tab.title || 'New tab'}</span>
@@ -179,7 +179,7 @@ export function BrowserPanel() {
             <h3>Open in Google Chrome</h3>
             <p>
               {active?.target === 'chrome-default'
-                ? 'This tab shares your main Chrome profile and website logins.'
+                ? `This tab uses your ${active.profile?.name || 'main'} Chrome profile and its existing browser state.`
                 : 'This tab uses the Chrome profile shared by this workspace’s bots.'}
             </p>
           </div>
@@ -192,7 +192,7 @@ export function BrowserPanel() {
       </div>
       <footer>
         {active?.target === 'chrome-default'
-          ? 'Main Chrome · Your browser profile'
+          ? `Main Chrome · ${active.profile?.name || 'Your browser profile'}`
           : active?.target === 'chrome'
             ? 'Chrome · Workspace profile'
             : 'Mukai browser · Workspace inline profile'}

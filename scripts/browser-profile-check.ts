@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { chromium } from 'playwright-core';
 import { ChromeHost } from '../src/server/browser/chromeHost';
+import { MainChromeProfiles } from '../src/server/browser/mainChromeProfiles';
 import { PageDriver } from '../src/server/browser/pageDriver';
 import type { BrowserPage, EmbeddedBrowserHost } from '../src/server/browser/types';
 import type { BrowserSession } from '../src/shared/runtime';
@@ -154,7 +155,8 @@ export async function checkMainChromeProfile(directory: string) {
     endpoint: string,
     options?: { noDefaults?: boolean; timeout?: number },
   ) => ReturnType<typeof connect>;
-  let host = new ChromeHost(directory, false, 'main');
+  const profiles = new MainChromeProfiles(profile);
+  let host = new ChromeHost(directory, false, 'main', profiles);
   try {
     const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
       .trim()
@@ -212,14 +214,84 @@ export async function checkMainChromeProfile(directory: string) {
     assert.equal(personal.isClosed(), false, 'Disconnect must leave the user browser open');
     assert.equal(await personal.title(), 'Main Chrome fixture');
     assert.equal(context.pages().length, 1, 'Only tool-owned tabs should have been closed');
-    host = new ChromeHost(directory, false, 'main');
+    host = new ChromeHost(directory, false, 'main', profiles);
     const reconnected = await host.open({
       ...info('workspace-one', 'one', 'new-chat'),
       target: 'chrome-default',
     });
     assert.equal(await cookie(reconnected, url), 'user-already-signed-in');
+    assert.equal(reconnected.profile?.id, 'Default');
+    // Create another personal profile only in this disposable Chrome data directory.
+    const marker = url + '?bootstrap=' + randomUUID();
+    const before = new Set(context.pages());
+    await profiles.openWindow({ id: 'Profile 1', name: 'Work', lastUsed: false }, marker);
+    let workPersonal = context.pages().find((page) => !before.has(page));
+    let available = await profiles.list();
+    for (
+      let attempt = 0;
+      (!workPersonal || !available.some((item) => item.id === 'Profile 1')) && attempt < 100;
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      workPersonal = context.pages().find((page) => !before.has(page));
+      available = await profiles.list();
+    }
+    assert(workPersonal, 'Chrome must open the requested profile window');
+    assert.equal((await profiles.identify(workPersonal)).id, 'Profile 1');
+    assert(available.some((item) => item.id === 'Default'));
+    assert(available.some((item) => item.id === 'Profile 1'));
+    const workClient = await context.newCDPSession(workPersonal);
+    await workClient.send('Network.setCookie', {
+      name: 'mukai-profile-test',
+      value: 'work-profile',
+      url,
+    });
+    await workClient.detach();
+    const owner = info('profile-selection', 'one', 'same-conversation');
+    const [personalBot, workBot] = await Promise.all([
+      host.open(owner, 'Default'),
+      host.open(owner, 'Profile 1'),
+    ]);
+    assert.equal(personalBot.profile?.id, 'Default');
+    assert.equal(workBot.profile?.id, 'Profile 1');
+    assert.equal(await cookie(personalBot, url), 'user-already-signed-in');
+    assert.equal(await cookie(workBot, url), 'work-profile');
+    assert.notEqual(
+      (await personalBot.send('Browser.getWindowForTarget')).windowId,
+      (await workBot.send('Browser.getWindowForTarget')).windowId,
+    );
+    // Chrome's current profile is Work now. The next Personal tab must still use Personal.
+    const extraPersonal = await host.open(owner, 'Default');
+    assert.equal(extraPersonal.profile?.id, 'Default');
+    assert.equal(await cookie(extraPersonal, url), 'user-already-signed-in');
+    assert.equal(
+      (await personalBot.send('Browser.getWindowForTarget')).windowId,
+      (await extraPersonal.send('Browser.getWindowForTarget')).windowId,
+    );
+    await host.shutdown();
+    assert.equal(personal.isClosed(), false);
+    assert.equal(workPersonal.isClosed(), false);
+    assert.equal(context.pages().length, 2, 'Cleanup must preserve both personal profiles');
+    class MisroutedProfiles extends MainChromeProfiles {
+      override openWindow(
+        profile: Parameters<MainChromeProfiles['openWindow']>[0],
+        marker: string,
+      ) {
+        return super.openWindow({ ...profile, id: 'Default' }, marker);
+      }
+    }
+    const misrouted = new ChromeHost(directory, false, 'main', new MisroutedProfiles(profile));
+    try {
+      await assert.rejects(
+        misrouted.open(info('wrong-profile', 'one', 'verify'), 'Profile 1'),
+        /different profile/,
+      );
+      assert.equal(context.pages().length, 2, 'A mismatched tool-created tab must be closed');
+    } finally {
+      await misrouted.shutdown();
+    }
     console.log(
-      'PASS main Chrome: existing login, conversation windows, same-window tabs, real interactions, personal tabs survive shutdown, reconnect',
+      'PASS main Chrome: existing login, real interactions, named profile discovery/selection, separate cookies and windows, profile remains fixed after switching, mismatches rejected, personal tabs survive shutdown, reconnect',
     );
   } finally {
     await host.shutdown();
