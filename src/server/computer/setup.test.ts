@@ -66,7 +66,7 @@ describe('verified setup downloads', () => {
 });
 
 describe('cloud-init seed', () => {
-  it('encodes bundle files without shell interpolation and only powers down after installation succeeds', () => {
+  it('isolates installer output from the login console and reports its result before shutdown', () => {
     const config = JSON.parse(
       cloudConfig({ 'guest.cjs': Buffer.from('`$(do-not-execute)`') }).slice(
         '#cloud-config\n'.length,
@@ -75,10 +75,10 @@ describe('cloud-init seed', () => {
     expect(Buffer.from(config.write_files[0].content, 'base64').toString()).toBe(
       '`$(do-not-execute)`',
     );
-    expect(config.runcmd[0][2]).toContain('sh install.sh > /dev/ttyS0 2>&1 &&');
-    expect(config.runcmd[0][2]).toContain(
-      'else echo MUKAI_IMAGE_FAILED > /dev/ttyS0; fi; sync; poweroff',
-    );
+    expect(config.bootcmd).toEqual([['systemctl', 'mask', '--now', 'serial-getty@ttyS0.service']]);
+    expect(config.runcmd[0][2]).toContain('sh install.sh > /var/log/mukai-setup.log 2>&1');
+    expect(config.runcmd[0][2]).toContain('if wait "$installer"');
+    expect(config.runcmd[0][2]).toContain('else result=MUKAI_IMAGE_FAILED; fi;');
     expect(config.runcmd[0][2]).toContain('/etc/cloud/cloud-init.disabled');
   });
   it('serves only token-scoped NoCloud metadata on loopback', async () => {

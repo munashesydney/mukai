@@ -5,6 +5,21 @@ import { spawnSync } from 'node:child_process';
 const shell = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
 const installer = readFileSync('scripts/guest/install.sh', 'utf8').replace(/\r\n/g, '\n');
 describe.skipIf(!existsSync(shell))('guest installer virtualization guard', () => {
+  it('installs and loads missing firmware modules before downloading guest runtimes', () => {
+    const preflight = installer.slice(0, installer.indexOf('scratch='));
+    const harness = `systemd-detect-virt() { printf qemu; }
+id() { printf 0; }
+uname() { if [ "$1" = -r ]; then printf 6.8.0-test; else printf x86_64; fi; }
+apt-get() { printf '%s\\n' "$*"; }
+attempt=0
+modprobe() { attempt=$((attempt+1)); [ "$attempt" -gt 1 ]; }
+${preflight}
+printf MODULE_READY`;
+    const result = spawnSync(shell, ['-c', harness], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('install -y linux-modules-extra-6.8.0-test');
+    expect(result.stdout).toContain('MODULE_READY');
+  });
   for (const [hypervisor, vendor, accepted] of [
     ['qemu', 'QEMU', true],
     ['kvm', 'QEMU', true],

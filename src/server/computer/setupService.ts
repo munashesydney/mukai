@@ -372,6 +372,7 @@ export class ComputerSetupService {
     const seed = await setupSeed(this.bundleDir);
     let completed = false;
     let failed = false;
+    let failureDetail: string | undefined;
     let serial = '';
     try {
       const result = await setupProcess(
@@ -381,6 +382,8 @@ export class ComputerSetupService {
           'q35',
           '-accel',
           accelerator,
+          '-cpu',
+          'Nehalem',
           '-m',
           '2048',
           '-smp',
@@ -409,13 +412,18 @@ export class ComputerSetupService {
           this.output(text);
           serial = (serial + text).slice(-12000);
           if (serial.includes('MUKAI_IMAGE_READY')) completed = true;
-          if (serial.includes('MUKAI_IMAGE_FAILED')) failed = true;
+          if (!failed && serial.includes('MUKAI_IMAGE_FAILED')) {
+            failed = true;
+            failureDetail = this.state.detail;
+          }
         },
       );
-      if (result.code !== 0 || !completed || failed)
+      if (result.code !== 0 || !completed || failed) {
+        if (failureDetail) this.state = { ...this.state, detail: failureDetail };
         throw new Error(
           'Linux preparation failed. See Setup details for the installer error, then retry setup.',
         );
+      }
     } finally {
       await seed.close();
     }

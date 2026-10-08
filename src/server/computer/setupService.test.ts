@@ -116,7 +116,10 @@ describe('automatic computer setup', () => {
   });
   it('reports a provisioning failure without verifying or publishing the image', async () => {
     vi.mocked(setupProcess).mockImplementation(async (_binary, args, _signal, _input, onOutput) => {
-      if (args.includes('-smbios')) onOutput?.('installer failed\nMUKAI_IMAGE_FAILED\n');
+      if (args.includes('-smbios')) {
+        onOutput?.('installer failed\nMUKAI_IMAGE_FAILED\n');
+        onOutput?.('shutdown noise\n'.repeat(400));
+      }
       return { code: 0, output: '' };
     });
     const setup = await service();
@@ -124,6 +127,7 @@ describe('automatic computer setup', () => {
     await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
     expect((await setup.status()).message).toContain('Setup details');
     expect((await setup.status()).detail).toContain('installer failed');
+    expect((await setup.status()).detail).not.toContain('shutdown noise');
     expect(guestProbe.request).not.toHaveBeenCalled();
     await expect(readFile(join(directory, 'computer-setup', 'ready.json'))).rejects.toThrow();
   });

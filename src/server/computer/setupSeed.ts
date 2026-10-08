@@ -10,6 +10,8 @@ export function cloudConfig(files: Record<string, Buffer>) {
     JSON.stringify({
       hostname: 'mukai',
       manage_etc_hosts: true,
+      // agetty resets ttyS0 when it starts and can break a running installer's stdout.
+      bootcmd: [['systemctl', 'mask', '--now', 'serial-getty@ttyS0.service']],
       write_files: Object.entries(files).map(([name, bytes]) => ({
         path: '/opt/mukai-bootstrap/' + name,
         encoding: 'b64',
@@ -20,10 +22,10 @@ export function cloudConfig(files: Record<string, Buffer>) {
         [
           'sh',
           '-c',
-          'if cd /opt/mukai-bootstrap && sh install.sh > /dev/ttyS0 2>&1 && touch /etc/cloud/cloud-init.disabled; then sync; echo MUKAI_IMAGE_READY > /dev/ttyS0; else echo MUKAI_IMAGE_FAILED > /dev/ttyS0; fi; sync; poweroff',
+          'cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/ttyS0 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/ttyS0; echo "$result" > /dev/ttyS0; sync; poweroff',
         ],
       ],
-      output: { all: '| tee -a /var/log/cloud-init-output.log /dev/ttyS0' },
+      output: { all: '| tee -a /var/log/cloud-init-output.log /dev/console' },
     }) +
     '\n'
   );

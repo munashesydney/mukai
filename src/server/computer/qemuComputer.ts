@@ -64,6 +64,9 @@ export function qemuArguments(directory: string, port: number, config: QemuConfi
     'q35',
     '-accel',
     config.accelerator,
+    '-cpu',
+    // SSE4.2 baseline for current Node/Chrome/native image dependencies.
+    'Nehalem',
     '-m',
     '2048',
     '-smp',

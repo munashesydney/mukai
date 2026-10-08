@@ -58,6 +58,8 @@ export async function probeAccelerator(
         'q35',
         '-accel',
         accelerator,
+        '-cpu',
+        'Nehalem',
         '-display',
         'none',
         '-nodefaults',

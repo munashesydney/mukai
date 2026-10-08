@@ -15,6 +15,11 @@ esac
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl xz-utils git python3 build-essential sudo
+# Ubuntu's minimal cloud image omits this module used to read the boot identity.
+if ! modprobe qemu_fw_cfg; then
+  apt-get install -y "linux-modules-extra-$(uname -r)"
+  modprobe qemu_fw_cfg
+fi
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 curl -fsS https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt -o "$scratch/SHASUMS256.txt"
@@ -28,7 +33,7 @@ apt-get install -y "$scratch/chrome.deb"
 id mukai >/dev/null 2>&1 || useradd --create-home --shell /bin/bash mukai
 install -d -o mukai -g mukai /home/mukai/workspace /var/lib/mukai-guest
 install -d /opt/mukai-guest
-cp guest.cjs package.json /opt/mukai-guest/
+install -m 0644 guest.cjs package.json /opt/mukai-guest/
 (cd /opt/mukai-guest; /usr/local/bin/npm install --omit=dev)
 # The account has administrator access INSIDE its VM, for package installation.
 printf 'mukai ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/mukai
