@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { guestFiles } from './bundleFiles';
 
 /** No ISO tooling needed: NoCloud reads a temporary, token-scoped host endpoint. */
-export function cloudConfig(files: Record<string, Buffer>) {
+export function cloudConfig(files: Record<string, Buffer>, console: 'ttyS0' | 'ttyAMA0' = 'ttyS0') {
   return (
     '#cloud-config\n' +
     JSON.stringify({
       hostname: 'mukai',
       manage_etc_hosts: true,
-      // agetty resets ttyS0 when it starts and can break a running installer's stdout.
-      bootcmd: [['systemctl', 'mask', '--now', 'serial-getty@ttyS0.service']],
+      // agetty can reset the console and break a running installer's stdout.
+      bootcmd: [['systemctl', 'mask', '--now', `serial-getty@${console}.service`]],
       write_files: Object.entries(files).map(([name, bytes]) => ({
         path: '/opt/mukai-bootstrap/' + name,
         encoding: 'b64',
@@ -23,7 +23,7 @@ export function cloudConfig(files: Record<string, Buffer>) {
         [
           'sh',
           '-c',
-          'cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/ttyS0 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/ttyS0; echo "$result" > /dev/ttyS0; sync; if [ -x /usr/lib/mukai-guest/systemctl ]; then /usr/lib/mukai-guest/systemctl poweroff; else poweroff; fi',
+          `cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/${console} 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/${console}; echo "$result" > /dev/${console}; sync; if [ -x /usr/lib/mukai-guest/systemctl ]; then /usr/lib/mukai-guest/systemctl poweroff; else poweroff; fi`,
         ],
       ],
       output: { all: '| tee -a /var/log/cloud-init-output.log /dev/console' },
@@ -31,13 +31,13 @@ export function cloudConfig(files: Record<string, Buffer>) {
     '\n'
   );
 }
-export async function setupSeed(bundleDir: string) {
+export async function setupSeed(bundleDir: string, console: 'ttyS0' | 'ttyAMA0' = 'ttyS0') {
   const files = Object.fromEntries(
     await Promise.all(
       guestFiles.map(async (name) => [name, await readFile(join(bundleDir, name))] as const),
     ),
   );
-  const userData = cloudConfig(files);
+  const userData = cloudConfig(files, console);
   const token = randomBytes(32).toString('hex');
   const prefix = '/' + token + '/';
   const server = createServer((request, response) => {

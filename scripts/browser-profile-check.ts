@@ -37,8 +37,13 @@ async function setCookie(page: BrowserPage, url: string) {
     expires: Math.floor(Date.now() / 1000) + 3600,
   });
 }
-export async function checkSharedChromeProfiles(directory: string, url: string, headless = false) {
-  let host = new ChromeHost(directory, headless);
+export async function checkSharedChromeProfiles(
+  directory: string,
+  url: string,
+  headless = false,
+  executablePath?: string,
+) {
+  let host = new ChromeHost(directory, headless, 'workspace', undefined, executablePath);
   try {
     const [first, second] = await Promise.all([
       host.open(info('profile-test', 'one', 'conversation-one')),
@@ -89,7 +94,7 @@ export async function checkSharedChromeProfiles(directory: string, url: string, 
       'Closing all windows must preserve logins',
     );
     await host.shutdown();
-    host = new ChromeHost(directory, headless);
+    host = new ChromeHost(directory, headless, 'workspace', undefined, executablePath);
     const restarted = await host.open(info('profile-test', 'four', 'after-restart'));
     assert.equal(
       await cookie(restarted, url),
@@ -131,7 +136,7 @@ export async function checkSharedInlineProfiles(host: EmbeddedBrowserHost, url: 
 /** Uses a disposable daily-browser stand-in; never connects to the developer's personal Chrome.
  * The endpoint override substitutes only discovery/consent, leaving the actual CDP connection real.
  */
-export async function checkMainChromeProfile(directory: string) {
+export async function checkMainChromeProfile(directory: string, executablePath?: string) {
   const server = createServer((_request, response) =>
     response
       .writeHead(200, {
@@ -145,7 +150,7 @@ export async function checkMainChromeProfile(directory: string) {
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
   const profile = join(directory, 'main-chrome-fixture');
   const context = await chromium.launchPersistentContext(profile, {
-    channel: 'chrome',
+    ...(executablePath ? { executablePath } : { channel: 'chrome' }),
     headless: false,
     viewport: null,
     args: ['--remote-debugging-port=0'],
@@ -155,7 +160,7 @@ export async function checkMainChromeProfile(directory: string) {
     endpoint: string,
     options?: { noDefaults?: boolean; timeout?: number },
   ) => ReturnType<typeof connect>;
-  const profiles = new MainChromeProfiles(profile);
+  const profiles = new MainChromeProfiles(profile, executablePath);
   let host = new ChromeHost(directory, false, 'main', profiles);
   try {
     const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
@@ -280,7 +285,12 @@ export async function checkMainChromeProfile(directory: string) {
         return super.openWindow({ ...profile, id: 'Default' }, marker);
       }
     }
-    const misrouted = new ChromeHost(directory, false, 'main', new MisroutedProfiles(profile));
+    const misrouted = new ChromeHost(
+      directory,
+      false,
+      'main',
+      new MisroutedProfiles(profile, executablePath),
+    );
     try {
       await assert.rejects(
         misrouted.open(info('wrong-profile', 'one', 'verify'), 'Profile 1'),

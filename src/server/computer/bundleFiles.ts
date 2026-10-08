@@ -1,5 +1,6 @@
 export const guestScripts = [
   'install.sh',
+  'browser-start.sh',
   'protect.sh',
   'systemctl-guard.sh',
   'mukai-guest.service',

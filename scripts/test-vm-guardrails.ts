@@ -77,9 +77,11 @@ async function main() {
     const profileCheck = await build({
       stdin: {
         contents: `import { checkSharedChromeProfiles, checkMainChromeProfile } from './scripts/browser-profile-check';
+        import { guestBrowserExecutable } from './src/server/computer/guestBrowser';
         (async () => {
-          await checkSharedChromeProfiles('/home/mukai/workspace/profile-acceptance', 'https://mukai-profile.test/');
-          await checkMainChromeProfile('/home/mukai/workspace/profile-acceptance');
+          const executable = guestBrowserExecutable();
+          await checkSharedChromeProfiles('/home/mukai/workspace/profile-acceptance', 'https://mukai-profile.test/', false, executable);
+          await checkMainChromeProfile('/home/mukai/workspace/profile-acceptance', executable);
         })().catch(error => { console.error(error); process.exitCode = 1; });`,
         resolveDir: resolve('.'),
       },

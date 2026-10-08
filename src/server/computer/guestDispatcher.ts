@@ -12,6 +12,7 @@ import { browserDefinition } from '../tools/browser/definition';
 import { imageDefinition } from '../tools/image/definition';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import type { Computer } from './protocol';
+import { guestBrowserExecutable } from './guestBrowser';
 
 /** The same dispatcher can run locally in tests or inside the Linux guest. */
 export class GuestDispatcher implements Computer {
@@ -21,7 +22,12 @@ export class GuestDispatcher implements Computer {
     private folder: string,
     private dataDir: string,
   ) {
-    this.browsers = new BrowserService(dataDir, undefined, !process.env.DISPLAY);
+    this.browsers = new BrowserService(
+      dataDir,
+      undefined,
+      !process.env.DISPLAY,
+      guestBrowserExecutable(),
+    );
   }
   async request(
     method: Parameters<Computer['request']>[0],

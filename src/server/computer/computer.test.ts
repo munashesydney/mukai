@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -10,13 +10,21 @@ import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
 import { DiagnosticService } from '../services/diagnosticService';
 import { BrowserService } from '../services/browserService';
+const host = vi.hoisted(() => ({ architecture: 'x64', platform: process.platform }));
+vi.mock('node:os', async (original) => ({
+  ...(await original<typeof import('node:os')>()),
+  arch: () => host.architecture,
+  platform: () => host.platform,
+}));
 
 let directory: string;
 const cleanup: (() => Promise<unknown>)[] = [];
 const owner = { workspaceId: 'workspace', botId: 'bot', conversationId: 'conversation' };
 const signal = () => new AbortController().signal;
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'mukai-computer-'));
+  host.architecture = 'x64';
+  host.platform = process.platform;
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'mukai-computer-')));
 });
 afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
@@ -301,9 +309,11 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
         options: import('node:child_process').SpawnOptionsWithoutStdio,
       ) => spawn(binary, [script, ...args], options),
     );
+    const firmware = join(directory, 'firmware.fd');
+    await writeFile(firmware, 'firmware fixture');
     const vm = new QemuComputer(
       join(directory, 'vm'),
-      { binary: process.execPath, image, accelerator: 'tcg' },
+      { binary: process.execPath, image, accelerator: 'tcg', firmware },
       launch,
       undefined,
       diagnostics,
@@ -311,6 +321,26 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('boots and restarts the ARM bridge with UEFI while retaining disk contents', async () => {
+    host.architecture = 'arm64';
+    host.platform = 'darwin';
+    const { vm, launch } = await fixture();
+    await vm.request('terminal', { command: 'arm guest' }, owner, signal());
+    const args = launch.mock.calls[0][1];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        'virt,highmem=off',
+        'cortex-a72',
+        '-bios',
+        join(directory, 'firmware.fd'),
+      ]),
+    );
+    await vm.stop();
+    await writeFile(join(directory, 'vm', 'disk.qcow2'), 'ARM workspace files');
+    await vm.start();
+    expect(await readFile(join(directory, 'vm', 'disk.qcow2'), 'utf8')).toBe('ARM workspace files');
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
   it('shares startup, routes owner data, stops and preserves disk across restarts', async () => {
     const { vm, launch } = await fixture();
     const [first, second] = await Promise.all([

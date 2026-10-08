@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir, platform } from 'node:os';
 import { ComputerSetupService } from './setupService';
@@ -8,7 +8,17 @@ import { downloadImage } from './setupDownload';
 import { probeAccelerator } from './setupProbe';
 import { guestFiles } from './bundleFiles';
 
-const guestProbe = vi.hoisted(() => ({ request: vi.fn() }));
+const guestProbe = vi.hoisted(() => ({ request: vi.fn(), create: vi.fn() }));
+const host = vi.hoisted(() => ({ architecture: 'x64', platform: process.platform }));
+vi.mock('node:os', async (original) => ({
+  ...(await original<typeof import('node:os')>()),
+  arch: () => host.architecture,
+  platform: () => host.platform,
+}));
+vi.mock('node:fs/promises', async (original) => ({
+  ...(await original<typeof import('node:fs/promises')>()),
+  statfs: vi.fn(),
+}));
 
 vi.mock('./setupProcess', () => ({ setupProcess: vi.fn() }));
 vi.mock('./setupProbe', () => ({ probeAccelerator: vi.fn() }));
@@ -19,6 +29,9 @@ vi.mock('./setupDownload', async (original) => ({
 vi.mock('./qemuComputer', async (original) => ({
   ...(await original<typeof import('./qemuComputer')>()),
   QemuComputer: class {
+    constructor(...args: unknown[]) {
+      guestProbe.create(...args);
+    }
     request = guestProbe.request;
     shutdown = vi.fn().mockResolvedValue(undefined);
   },
@@ -27,8 +40,13 @@ vi.mock('./qemuComputer', async (original) => ({
 let directory: string, bundle: string;
 const services: ComputerSetupService[] = [];
 beforeEach(async () => {
+  host.architecture = 'x64';
+  host.platform = process.platform;
+  vi.mocked(statfs).mockResolvedValue({ bavail: 20 * 1024 ** 3, bsize: 1 } as Awaited<
+    ReturnType<typeof statfs>
+  >);
   vi.mocked(probeAccelerator).mockResolvedValue({ code: 0, output: '' });
-  guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\nv24\nChrome' });
+  guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\nx86_64\nv24\nChrome' });
   directory = await mkdtemp(join(tmpdir(), 'mukai-auto-setup-'));
   bundle = join(directory, 'bundle');
   await mkdir(bundle);
@@ -69,6 +87,81 @@ async function service() {
   return value;
 }
 describe('automatic computer setup', () => {
+  it('provisions an Apple Silicon image with UEFI, ARM console and matching verification boot', async () => {
+    host.architecture = 'arm64';
+    host.platform = 'darwin';
+    const firmware = join(directory, 'edk2-aarch64-code.fd');
+    await writeFile(firmware, 'firmware');
+    vi.stubEnv('MUKAI_QEMU_FIRMWARE', firmware);
+    vi.stubEnv('MUKAI_QEMU_ACCEL', 'hvf');
+    vi.mocked(fetch).mockImplementation(
+      async () => new Response('b'.repeat(64) + ' *noble-server-cloudimg-arm64.img'),
+    );
+    guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\naarch64\nv24\nChromium' });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(downloadImage).toHaveBeenCalledWith(
+      expect.stringContaining('noble-server-cloudimg-arm64.img'),
+      expect.any(String),
+      'b'.repeat(64),
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+    const args = vi
+      .mocked(setupProcess)
+      .mock.calls.find(([, args]) => args.includes('-smbios'))![1];
+    expect(args).toEqual(expect.arrayContaining(['virt,highmem=off', 'host', '-bios', firmware]));
+    expect(args).not.toContain('Nehalem');
+    expect(probeAccelerator).toHaveBeenCalledWith(
+      process.execPath,
+      'hvf',
+      expect.any(AbortSignal),
+      expect.any(Function),
+      { architecture: 'arm64', accelerator: 'hvf' },
+    );
+    expect(guestProbe.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ architecture: 'arm64', firmware, accelerator: 'hvf' }),
+    );
+    expect(setup.configuration()).toMatchObject({ architecture: 'arm64', firmware });
+    const next = await service();
+    expect((await next.status()).available).toBe(true);
+    expect(downloadImage).toHaveBeenCalledOnce();
+  });
+  it('does not accept a prepared image for the wrong architecture', async () => {
+    guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\naarch64\nv24\nChromium' });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('tool check');
+    await expect(readFile(join(directory, 'computer-setup', 'ready.json'))).rejects.toThrow();
+  });
+  it('keeps legacy x64 manifests available without provisioning again', async () => {
+    const root = join(directory, 'computer-setup');
+    await mkdir(root);
+    const image = join(root, 'old.qcow2');
+    await writeFile(image, 'legacy image');
+    await writeFile(
+      join(root, 'ready.json'),
+      JSON.stringify({ binary: process.execPath, image, accelerator: 'tcg' }),
+    );
+    const setup = await service();
+    expect((await setup.status()).available).toBe(true);
+    expect(setup.configuration().architecture).toBe('x64');
+    expect(downloadImage).not.toHaveBeenCalled();
+  });
+  it('rejects low disk space before installing or downloading', async () => {
+    vi.mocked(statfs).mockResolvedValue({ bavail: 9 * 1024 ** 3, bsize: 1 } as Awaited<
+      ReturnType<typeof statfs>
+    >);
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('12 GiB');
+    expect(setupProcess).not.toHaveBeenCalled();
+    expect(downloadImage).not.toHaveBeenCalled();
+  });
   it('deduplicates requests, prepares Linux and persists ready configuration', async () => {
     const setup = await service();
     await Promise.all([setup.start(), setup.start(), setup.start()]);

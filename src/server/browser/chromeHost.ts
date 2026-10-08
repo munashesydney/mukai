@@ -29,6 +29,7 @@ export class ChromeHost {
     private headless = false,
     private profile: 'workspace' | 'main' = 'workspace',
     private mainProfiles = new MainChromeProfiles(),
+    private executablePath?: string,
   ) {}
   private get mainProfile() {
     return this.profile === 'main';
@@ -80,7 +81,9 @@ export class ChromeHost {
         : chromium.launchPersistentContext(
             join(this.dataDir, 'browser-profiles', 'chrome', 'workspaces', key),
             {
-              channel: 'chrome',
+              ...(this.executablePath
+                ? { executablePath: this.executablePath }
+                : { channel: 'chrome' }),
               headless: this.headless,
               acceptDownloads: false,
               viewport: this.headless ? { width: 1280, height: 800 } : null,
@@ -97,7 +100,9 @@ export class ChromeHost {
         503,
         this.mainProfile
           ? 'Main Chrome could not connect. On this workspace’s computer, open Chrome 144 or newer, enable remote debugging at chrome://inspect/#remote-debugging, then retry and allow Chrome’s connection request. For a VM workspace, do this inside the VM. No other browser profile was opened.'
-          : 'Chrome could not start. Install Google Chrome and try again. Mukai uses a separate browser profile.',
+          : this.executablePath
+            ? 'Chromium could not start. Stop and restart this workspace’s Linux VM, then retry.'
+            : 'Chrome could not start. Install Google Chrome and try again. Mukai uses a separate browser profile.',
       );
     }
     if (this.closed) {

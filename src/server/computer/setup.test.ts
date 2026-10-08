@@ -67,6 +67,12 @@ describe('verified setup downloads', () => {
 });
 
 describe('cloud-init seed', () => {
+  it('uses the ARM UART for provisioning logs and disables its login service', () => {
+    const config = JSON.parse(cloudConfig({}, 'ttyAMA0').slice('#cloud-config\n'.length));
+    expect(config.bootcmd[0]).toContain('serial-getty@ttyAMA0.service');
+    expect(config.runcmd[0][2]).toContain('/dev/ttyAMA0');
+    expect(config.runcmd[0][2]).not.toContain('/dev/ttyS0');
+  });
   it('isolates installer output from the login console and reports its result before shutdown', () => {
     const config = JSON.parse(
       cloudConfig({ 'guest.cjs': Buffer.from('`$(do-not-execute)`') }).slice(

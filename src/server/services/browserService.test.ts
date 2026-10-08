@@ -11,6 +11,38 @@ afterEach(async () => {
   await service?.shutdown();
   vi.restoreAllMocks();
 });
+it('uses an explicitly supplied guest Chromium executable and retains Chrome for local mode', async () => {
+  const launch = vi
+    .spyOn(chromium, 'launchPersistentContext')
+    .mockRejectedValue(new Error('fixture stops before browser launch'));
+  service = new BrowserService('unused', undefined, true, '/usr/local/bin/mukai-browser');
+  await expect(
+    service.execute(
+      owner,
+      { action: 'open', target: 'chrome', url: 'https://example.com' },
+      signal(),
+    ),
+  ).rejects.toThrow('Chromium could not start');
+  expect(launch).toHaveBeenLastCalledWith(
+    expect.any(String),
+    expect.objectContaining({ executablePath: '/usr/local/bin/mukai-browser' }),
+  );
+  expect(launch.mock.calls.at(-1)![1]).not.toHaveProperty('channel');
+  await service.shutdown();
+  service = new BrowserService('unused', undefined, true);
+  await expect(
+    service.execute(
+      owner,
+      { action: 'open', target: 'chrome', url: 'https://example.com' },
+      signal(),
+    ),
+  ).rejects.toThrow('Chrome could not start');
+  expect(launch).toHaveBeenLastCalledWith(
+    expect.any(String),
+    expect.objectContaining({ channel: 'chrome' }),
+  );
+  expect(launch.mock.calls.at(-1)![1]).not.toHaveProperty('executablePath');
+});
 it('lists main Chrome profiles without starting or connecting to a browser', async () => {
   const profiles = [{ id: 'Profile 1', name: 'Work', lastUsed: true }];
   vi.spyOn(MainChromeProfiles.prototype, 'list').mockResolvedValue(profiles);

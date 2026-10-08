@@ -7,7 +7,6 @@ import { createServer, type Socket } from 'node:net';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, copyFile, rename, stat, writeFile, readFile, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
-import { arch, platform } from 'node:os';
 import { z } from 'zod';
 import type { ComputerStatus, QemuSetup } from '../../shared/computer';
 import type { RuntimeOwner } from '../../shared/runtime';
@@ -22,24 +21,44 @@ import {
 import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
 import type { DiagnosticService } from '../services/diagnosticService';
+import {
+  findQemuFirmware,
+  qemuMachineArguments,
+  qemuPlatform,
+  type QemuBootConfig,
+} from './qemuPlatform';
 
-export interface QemuConfig {
+export interface QemuConfig extends QemuBootConfig {
   binary: string;
   image: string;
-  accelerator: string;
 }
 export function qemuConfig(): QemuConfig {
+  let host: ReturnType<typeof qemuPlatform> | undefined;
+  try {
+    host = qemuPlatform();
+  } catch {
+    /* Local mode is still available on other hosts. */
+  }
   return {
     binary: process.env.MUKAI_QEMU_BINARY || '',
     image: process.env.MUKAI_QEMU_IMAGE || '',
-    accelerator:
-      process.env.MUKAI_QEMU_ACCEL ||
-      (platform() === 'win32' ? 'whpx' : platform() === 'darwin' ? 'hvf' : 'kvm'),
+    accelerator: process.env.MUKAI_QEMU_ACCEL || host?.accelerator || 'tcg',
+    architecture: host?.architecture,
+    firmware: process.env.MUKAI_QEMU_FIRMWARE || undefined,
   };
 }
 export async function qemuSetup(config = qemuConfig()): Promise<QemuSetup> {
-  if (arch() !== 'x64')
-    return { available: false, reason: 'VM v1 requires an x64 host and an x86_64 Linux image.' };
+  try {
+    const host = qemuPlatform();
+    if (config.architecture && config.architecture !== host.architecture)
+      return {
+        available: false,
+        reason:
+          'The Linux VM image architecture does not match this computer. Run VM setup on this computer.',
+      };
+  } catch (error) {
+    return { available: false, reason: (error as Error).message };
+  }
   for (const [key, path] of [
     ['MUKAI_QEMU_BINARY', config.binary],
     ['MUKAI_QEMU_IMAGE', config.image],
@@ -57,6 +76,13 @@ export async function qemuSetup(config = qemuConfig()): Promise<QemuSetup> {
   }
   if (!['whpx', 'hvf', 'kvm', 'tcg'].includes(config.accelerator))
     return { available: false, reason: 'Unsupported QEMU accelerator.' };
+  if ((config.architecture || qemuPlatform().architecture) === 'arm64') {
+    try {
+      await findQemuFirmware(config.binary, config.firmware);
+    } catch (error) {
+      return { available: false, reason: (error as Error).message };
+    }
+  }
   return { available: true };
 }
 const optionPath = (value: string) => value.replace(/,/g, ',,');
@@ -70,13 +96,7 @@ export function qemuArguments(
   return [
     '-name',
     'Mukai workspace',
-    '-machine',
-    'q35',
-    '-accel',
-    config.accelerator,
-    '-cpu',
-    // SSE4.2 baseline for current Node/Chrome/native image dependencies.
-    'Nehalem',
+    ...qemuMachineArguments(config),
     '-m',
     '2048',
     '-smp',
@@ -216,6 +236,9 @@ export class QemuComputer implements Computer {
     const setup = await qemuSetup(this.config);
     signal.throwIfAborted();
     if (!setup.available) throw new Error(setup.reason);
+    const bootConfig = { ...this.config };
+    if ((bootConfig.architecture || qemuPlatform().architecture) === 'arm64')
+      bootConfig.firmware = await findQemuFirmware(bootConfig.binary, bootConfig.firmware);
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     // Do not launch a second writer against a disk owned by an orphaned QEMU.
     const pidFile = join(this.directory, 'runtime.pid');
@@ -389,7 +412,7 @@ export class QemuComputer implements Computer {
     );
     const child = this.launch(
       this.config.binary,
-      qemuArguments(this.directory, address.port, this.config, this.control.port, this.desktopPort),
+      qemuArguments(this.directory, address.port, bootConfig, this.control.port, this.desktopPort),
       { windowsHide: true, env },
     );
     this.child = child;

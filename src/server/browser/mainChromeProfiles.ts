@@ -117,7 +117,10 @@ async function chromeExecutable() {
 }
 
 export class MainChromeProfiles {
-  constructor(private directory = chromeUserDataDirectory()) {}
+  constructor(
+    private directory = chromeUserDataDirectory(),
+    private executablePath?: string,
+  ) {}
 
   async list(): Promise<ChromeProfile[]> {
     const path = join(this.directory, 'Local State');
@@ -178,7 +181,7 @@ export class MainChromeProfiles {
   async openWindow(profile: ChromeProfile, url: string) {
     // Chrome's normal process singleton routes the window to this existing profile.
     // Do not launch an automation context, copy cookies, or change debugging preferences.
-    const executable = await chromeExecutable();
+    const executable = this.executablePath || (await chromeExecutable());
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
         executable,

@@ -11,7 +11,7 @@ import {
 } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { arch, platform } from 'node:os';
+import { platform } from 'node:os';
 import { stripVTControlCharacters } from 'node:util';
 import { z } from 'zod';
 import type { QemuSetup } from '../../shared/computer';
@@ -20,11 +20,18 @@ import { setupProcess } from './setupProcess';
 import { downloadImage, imageChecksum } from './setupDownload';
 import { setupSeed } from './setupSeed';
 import { probeAccelerator } from './setupProbe';
+import { findQemuFirmware, qemuMachineArguments, qemuPlatform } from './qemuPlatform';
 
 const UBUNTU = 'https://cloud-images.ubuntu.com/noble/current/';
-const IMAGE = 'noble-server-cloudimg-amd64.img';
 const activePhases = ['checking', 'installing', 'downloading', 'preparing', 'verifying'];
-const manifestSchema = z.object({ binary: z.string(), image: z.string(), accelerator: z.string() });
+const manifestSchema = z.object({
+  binary: z.string(),
+  image: z.string(),
+  accelerator: z.string(),
+  // Manifests written before ARM support always contained x64 images.
+  architecture: z.enum(['x64', 'arm64']).default('x64'),
+  firmware: z.string().optional(),
+});
 
 export class ComputerSetupService {
   private state: QemuSetup = {
@@ -84,6 +91,11 @@ export class ComputerSetupService {
       binary: config.binary || this.binary || this.managed?.binary || '',
       image: config.image || this.managed?.image || '',
       accelerator: process.env.MUKAI_QEMU_ACCEL || this.managed?.accelerator || config.accelerator,
+      architecture: config.image
+        ? config.architecture
+        : this.managed?.architecture || config.architecture,
+      // Rediscover bundled firmware after Homebrew upgrades; never pin a removed Cellar version.
+      firmware: config.firmware,
     };
   }
   async status(): Promise<QemuSetup> {
@@ -153,9 +165,15 @@ export class ComputerSetupService {
   };
   private async findBinary() {
     if (process.env.MUKAI_QEMU_BINARY) return process.env.MUKAI_QEMU_BINARY;
-    const name = platform() === 'win32' ? 'qemu-system-x86_64.exe' : 'qemu-system-x86_64';
+    let host: ReturnType<typeof qemuPlatform>;
+    try {
+      host = qemuPlatform();
+    } catch {
+      return '';
+    }
+    const name = host.binary;
     const candidates = [
-      this.managed?.binary || '',
+      this.managed?.architecture === host.architecture ? this.managed.binary : '',
       ...String(process.env.PATH || '')
         .split(delimiter)
         .filter(Boolean)
@@ -246,7 +264,11 @@ export class ComputerSetupService {
   private async accelerator(signal: AbortSignal) {
     const accelerator = this.configuration().accelerator;
     await this.phase('checking', 'Checking hardware virtualization…');
-    const probe = () => probeAccelerator(this.binary, accelerator, signal, this.output);
+    const probe = () =>
+      probeAccelerator(this.binary, accelerator, signal, this.output, {
+        accelerator,
+        architecture: qemuPlatform().architecture,
+      });
     if ((await probe()).code === 0) return accelerator;
     if (platform() !== 'win32' || accelerator !== 'whpx')
       throw new Error(
@@ -294,8 +316,7 @@ export class ComputerSetupService {
     this.logBytes = 0;
     await writeFile(join(this.root, 'setup.log'), '', { mode: 0o600 });
     await this.phase('checking', 'Checking virtualization and free disk space…');
-    if (arch() !== 'x64')
-      throw new Error('Automatic Linux VM setup currently requires an x64 computer.');
+    const host = qemuPlatform();
     // Check the packaged bundle before triggering any downloads or OS installation.
     try {
       await access(join(this.bundleDir, 'guest.cjs'));
@@ -310,7 +331,14 @@ export class ComputerSetupService {
     this.binary = await this.findBinary();
     if (!this.binary) await this.installQemu(signal);
     const accelerator = await this.accelerator(signal);
-    const config = this.configuration();
+    const config: QemuConfig = {
+      ...this.configuration(),
+      binary: this.binary,
+      accelerator,
+      architecture: host.architecture,
+    };
+    if (host.architecture === 'arm64')
+      config.firmware = await findQemuFirmware(this.binary, config.firmware);
     if (process.env.MUKAI_QEMU_IMAGE) {
       const external = await qemuSetup({ ...config, binary: this.binary, accelerator });
       if (!external.available) throw new Error(external.reason);
@@ -325,10 +353,10 @@ export class ComputerSetupService {
     if (!sumsResponse.ok) throw new Error('Could not fetch Ubuntu image checksums. Retry setup.');
     const sums = await sumsResponse.text();
     if (sums.length > 128000) throw new Error('Invalid Ubuntu checksum response.');
-    const checksum = imageChecksum(sums, IMAGE);
+    const checksum = imageChecksum(sums, host.image);
     const download = join(this.root, 'ubuntu.qcow2');
     await downloadImage(
-      UBUNTU + IMAGE,
+      UBUNTU + host.image,
       download,
       checksum,
       signal,
@@ -339,7 +367,7 @@ export class ComputerSetupService {
     signal.throwIfAborted();
     await this.phase(
       'preparing',
-      'Preparing Linux, Node.js, Chrome and the Mukai guest tools. This can take several minutes…',
+      'Preparing Linux, Node.js, the browser and the Mukai guest tools. This can take several minutes…',
     );
     const buildDir = join(this.root, 'building');
     await mkdir(buildDir, { recursive: true, mode: 0o700 });
@@ -369,7 +397,7 @@ export class ComputerSetupService {
       platform() === 'win32' ? 'qemu-img.exe' : 'qemu-img',
     );
     await this.command(imageTool, ['resize', candidate, '32G'], signal);
-    const seed = await setupSeed(this.bundleDir);
+    const seed = await setupSeed(this.bundleDir, host.console);
     let completed = false;
     let failed = false;
     let failureDetail: string | undefined;
@@ -378,12 +406,7 @@ export class ComputerSetupService {
       const result = await setupProcess(
         this.binary,
         [
-          '-machine',
-          'q35',
-          '-accel',
-          accelerator,
-          '-cpu',
-          'Nehalem',
+          ...qemuMachineArguments(config),
           '-m',
           '2048',
           '-smp',
@@ -428,11 +451,7 @@ export class ComputerSetupService {
       await seed.close();
     }
     await this.phase('verifying', 'Starting the prepared Linux VM to verify its tools…');
-    const verification = new QemuComputer(buildDir, {
-      binary: this.binary,
-      image: candidate,
-      accelerator,
-    });
+    const verification = new QemuComputer(buildDir, { ...config, image: candidate });
     const abort = () => {
       void verification.shutdown();
     };
@@ -441,11 +460,18 @@ export class ComputerSetupService {
       signal.throwIfAborted();
       const result = (await verification.request(
         'terminal',
-        { command: 'uname -s && node --version && google-chrome --version', yieldMs: 30000 },
+        {
+          command: `uname -s && uname -m && node --version && ${host.architecture === 'arm64' ? 'mukai-browser' : 'google-chrome'} --version`,
+          yieldMs: 30000,
+        },
         { workspaceId: 'setup', botId: 'setup', conversationId: 'setup' },
         signal,
       )) as { exitCode: number | null; output: string };
-      if (result.exitCode !== 0 || !result.output.includes('Linux'))
+      if (
+        result.exitCode !== 0 ||
+        !result.output.includes('Linux') ||
+        !result.output.includes(host.architecture === 'arm64' ? 'aarch64' : 'x86_64')
+      )
         throw new Error('Prepared Linux VM failed its tool check. Retry setup.');
     } finally {
       signal.removeEventListener('abort', abort);
@@ -454,7 +480,7 @@ export class ComputerSetupService {
     signal.throwIfAborted();
     const image = join(this.root, 'mukai-linux.qcow2');
     await rename(candidate, image);
-    this.managed = { binary: this.binary, image, accelerator };
+    this.managed = { ...config, image };
     await writeFile(join(this.root, 'ready.json'), JSON.stringify(this.managed), { mode: 0o600 });
     await this.phase('ready', 'Linux VM is ready.');
   }

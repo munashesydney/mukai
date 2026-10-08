@@ -1,5 +1,6 @@
 import { createServer, type Socket } from 'node:net';
 import { setupProcess } from './setupProcess';
+import { qemuMachineArguments, type QemuBootConfig } from './qemuPlatform';
 
 /** Windows QEMU's stdio console can discard piped input. QMP over TCP avoids it. */
 export async function probeAccelerator(
@@ -7,6 +8,7 @@ export async function probeAccelerator(
   accelerator: string,
   signal: AbortSignal,
   onOutput?: (text: string) => void,
+  config: QemuBootConfig = { accelerator },
 ) {
   const sockets = new Set<Socket>();
   let complete = false;
@@ -54,12 +56,7 @@ export async function probeAccelerator(
     const result = await setupProcess(
       binary,
       [
-        '-machine',
-        'q35',
-        '-accel',
-        accelerator,
-        '-cpu',
-        'Nehalem',
+        ...qemuMachineArguments({ ...config, accelerator }, false),
         '-display',
         'none',
         '-nodefaults',

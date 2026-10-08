@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startApiServer } from '../app';
 import type { Workspace, ToolInfo } from '../../shared/ai';
 import { buildBotSystemPrompt } from '../../shared/botSystemPrompt';
+vi.mock('node:os', async (original) => ({
+  ...(await original<typeof import('node:os')>()),
+  arch: () => 'x64',
+}));
 
 let directory: string;
 let api: Awaited<ReturnType<typeof startApiServer>>;
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), 'mukai-vm-api-'));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'mukai-vm-api-')));
   vi.stubEnv('MUKAI_QEMU_BINARY', process.execPath);
   vi.stubEnv('MUKAI_QEMU_IMAGE', join(directory, 'base.qcow2'));
   vi.stubEnv('MUKAI_QEMU_ACCEL', 'tcg');

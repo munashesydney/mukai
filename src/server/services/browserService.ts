@@ -5,6 +5,7 @@ import { ChromeHost } from '../browser/chromeHost';
 import { PageDriver } from '../browser/pageDriver';
 import { ApiError } from '../config';
 import type { BrowserInput } from '../tools/browser/definition';
+import { MainChromeProfiles } from '../browser/mainChromeProfiles';
 
 function browserUrl(value: string) {
   let url: URL;
@@ -30,9 +31,15 @@ export class BrowserService {
     dataDir: string,
     readonly embedded?: EmbeddedBrowserHost,
     headless = false,
+    executablePath?: string,
   ) {
-    this.chrome = new ChromeHost(dataDir, headless);
-    this.mainChrome = new ChromeHost(dataDir, false, 'main');
+    this.chrome = new ChromeHost(dataDir, headless, 'workspace', undefined, executablePath);
+    this.mainChrome = new ChromeHost(
+      dataDir,
+      false,
+      'main',
+      new MainChromeProfiles(undefined, executablePath),
+    );
   }
   list(workspaceId: string, conversationId?: string) {
     for (const [id, entry] of this.sessions)
