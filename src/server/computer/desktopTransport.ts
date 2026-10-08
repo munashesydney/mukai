@@ -1,0 +1,105 @@
+import { randomBytes } from 'node:crypto';
+import { connect } from 'node:net';
+import type { IncomingMessage, Server } from 'node:http';
+import type { Duplex } from 'node:stream';
+import { WebSocket, WebSocketServer } from 'ws';
+import type { QemuComputer } from './qemuComputer';
+import type { ComputerViewSession } from '../../shared/computer';
+
+/** Authenticated HTTP issues short-lived, single-use viewer tickets. No API token in websocket URLs. */
+export class DesktopTransport {
+  private tickets = new Map<
+    string,
+    { computer: QemuComputer; port: number; password: string; expires: number }
+  >();
+  private sockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: 1024 * 1024,
+    perMessageDeflate: false,
+  });
+  private closed = false;
+  async session(computer: QemuComputer): Promise<ComputerViewSession> {
+    if (this.closed) throw new Error('Desktop views are shutting down.');
+    await computer.start();
+    if (this.closed) throw new Error('Desktop views are shutting down.');
+    for (const [key, value] of this.tickets)
+      if (value.expires <= Date.now()) this.tickets.delete(key);
+    if (this.tickets.size >= 32)
+      throw new Error('Too many pending desktop views. Try again shortly.');
+    const connection = computer.desktopConnection();
+    const ticket = randomBytes(32).toString('hex');
+    this.tickets.set(ticket, { computer, ...connection, expires: Date.now() + 30000 });
+    return { path: '/computer-view?ticket=' + ticket, password: connection.password };
+  }
+  attach(server: Server) {
+    server.on('upgrade', this.upgrade);
+  }
+  private upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    socket.on('error', () => socket.destroy());
+    const reject = () => {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    };
+    const origin = request.headers.origin;
+    if (
+      this.closed ||
+      !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(request.headers.host || '') ||
+      (origin &&
+        origin !== 'null' &&
+        origin !== 'file://' &&
+        !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
+    )
+      return reject();
+    let url: URL;
+    try {
+      url = new URL(request.url || '/', 'http://localhost');
+    } catch {
+      return reject();
+    }
+    const key = url.searchParams.get('ticket') || '';
+    const ticket = this.tickets.get(key);
+    if (url.pathname !== '/computer-view' || !ticket || ticket.expires <= Date.now())
+      return reject();
+    this.tickets.delete(key);
+    try {
+      const current = ticket.computer.desktopConnection();
+      if (current.port !== ticket.port || current.password !== ticket.password) return reject();
+    } catch {
+      return reject();
+    }
+    if (this.sockets.clients.size >= 4) return reject();
+    this.sockets.handleUpgrade(request, socket, head, (viewer) => {
+      const upstream = connect(ticket.port, '127.0.0.1');
+      upstream.setTimeout(10000, () => upstream.destroy());
+      upstream.once('connect', () => upstream.setTimeout(0));
+      const close = () => {
+        upstream.destroy();
+        if (viewer.readyState === WebSocket.OPEN) viewer.close();
+      };
+      viewer.on('error', close);
+      viewer.on('close', () => upstream.destroy());
+      upstream.on('error', close);
+      upstream.on('close', close);
+      viewer.on('message', (data, binary) => {
+        if (!binary || upstream.writableLength > 4 * 1024 * 1024) {
+          viewer.close(1008, 'Invalid or excessive desktop input.');
+          return;
+        }
+        upstream.write(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer));
+      });
+      upstream.on('data', (bytes) => {
+        if (viewer.readyState !== WebSocket.OPEN) return;
+        if (viewer.bufferedAmount > 8 * 1024 * 1024) {
+          viewer.close(1008, 'Desktop connection too slow.');
+          return;
+        }
+        viewer.send(bytes, { binary: true });
+      });
+    });
+  };
+  shutdown() {
+    this.closed = true;
+    this.tickets.clear();
+    for (const socket of this.sockets.clients) socket.terminate();
+    this.sockets.close();
+  }
+}

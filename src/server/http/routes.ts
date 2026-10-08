@@ -1,4 +1,5 @@
 import type { SkillService } from '../skills/service';
+import type { DesktopTransport } from '../computer/desktopTransport';
 import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -45,6 +46,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  desktops,
   approvals,
   token,
   startedAt,
@@ -63,6 +65,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  desktops: DesktopTransport;
   approvals: ApprovalService;
   token: string;
   startedAt: number;
@@ -481,6 +484,11 @@ export function createRoutes({
             reason: 'VM computers are unavailable.',
           },
         );
+      if (id && action === 'computer-view' && method === 'POST') {
+        const workspace = workspaces.require(id);
+        if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
+        return send(response, await desktops.session(workspaces.computers.guest(workspace)));
+      }
       if (id && action === 'computer') {
         const workspace = workspaces.require(id);
         if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');

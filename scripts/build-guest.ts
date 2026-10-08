@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { guestScripts } from '../src/server/computer/bundleFiles';
 
 async function main() {
   const directory = resolve('dist/guest');
@@ -38,7 +39,7 @@ async function main() {
       2,
     ) + '\n',
   );
-  for (const file of ['install.sh', 'protect.sh', 'systemctl-guard.sh', 'mukai-guest.service'])
+  for (const file of guestScripts)
     await writeFile(
       resolve(directory, file),
       (await readFile(resolve('scripts/guest', file), 'utf8')).replace(/\r\n/g, '\n'),

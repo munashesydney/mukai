@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { guestFiles } from './bundleFiles';
 
 /** No ISO tooling needed: NoCloud reads a temporary, token-scoped host endpoint. */
 export function cloudConfig(files: Record<string, Buffer>) {
@@ -33,15 +34,7 @@ export function cloudConfig(files: Record<string, Buffer>) {
 export async function setupSeed(bundleDir: string) {
   const files = Object.fromEntries(
     await Promise.all(
-      [
-        'guest.cjs',
-        'guest-worker.cjs',
-        'package.json',
-        'install.sh',
-        'protect.sh',
-        'systemctl-guard.sh',
-        'mukai-guest.service',
-      ].map(async (name) => [name, await readFile(join(bundleDir, name))] as const),
+      guestFiles.map(async (name) => [name, await readFile(join(bundleDir, name))] as const),
     ),
   );
   const userData = cloudConfig(files);

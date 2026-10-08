@@ -32,6 +32,11 @@ async function request<T = Record<string, unknown>>(path: string, method = 'GET'
   return { status: response.status, data: (await response.json()) as T };
 }
 describe('workspace computer choice', () => {
+  it('does not expose a VM viewer for local workspaces or unauthenticated callers', async () => {
+    expect((await request('/workspaces/default/computer-view', 'POST')).status).toBe(400);
+    const denied = await fetch(api.url + '/workspaces/default/computer-view', { method: 'POST' });
+    expect(denied.status).toBe(401);
+  });
   it('persists VM choice without treating guest paths as host folders, and keeps existing workspaces local', async () => {
     const created = await request<Workspace>('/workspaces', 'POST', {
       name: 'Guest project',

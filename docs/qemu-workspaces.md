@@ -7,15 +7,16 @@ Workspace creation offers **Local machine** or **Linux VM (preview)**. Existing 
 - Terminal, background processes, bounded logs, stdin, wait and termination inside Linux.
 - Workspace file operations with change history and downloadable text artifacts.
 - Guest image metadata and vision input, including absolute guest paths.
-- Headless guest Chrome snapshots, interactions and screenshots saved as Mukai artifacts.
+- Visible guest Chrome snapshots, interactions and screenshots saved as Mukai artifacts.
+- Live Linux desktop with mouse/keyboard control, watch mode and automatic display resizing. **View computer** hides navigation and keeps chat at 25% beside the 75% desktop; **Back to workspace** restores the normal layout without stopping the VM.
 - Automatic startup on first computer tool call; manual start/stop/status in Settings → Workspace; shutdown when Mukai closes.
 - Host-side chats, model connections, permissions, bots, memory, skills, web search and pursuits.
 
-Custom tools/routes are unavailable in VM v1, including through management APIs. They never fall back to host Node. There are no host folder mounts, live VM browser/desktop display, preview port forwarding, snapshots, ARM guests, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
+Custom tools/routes are unavailable in VM v1, including through management APIs. They never fall back to host Node. There are no host folder mounts, application preview port forwarding, snapshots, ARM guests, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
 
 ## Automatic setup
 
-Choose **Linux VM** in the workspace creation dialog. Mukai installs missing QEMU, checks hardware acceleration, downloads the official Ubuntu 24.04 x86_64 cloud image over HTTPS, verifies its SHA-256, and prepares Node.js 24, Chrome and the guest tools inside a disposable VM. A second boot verifies the guest bridge and installed tools before publishing the base image. The dialog shows progress and enables workspace creation when setup succeeds. Setup continues if the dialog is closed.
+Choose **Linux VM** in the workspace creation dialog. Mukai installs missing QEMU, checks hardware acceleration, downloads the official Ubuntu 24.04 x86_64 cloud image over HTTPS, verifies its SHA-256, and prepares Node.js 24, Chrome, Xfce and TigerVNC with the guest tools inside a disposable VM. A second boot verifies the guest bridge and installed tools before publishing the base image. The dialog shows progress and enables workspace creation when setup succeeds. Setup continues if the dialog is closed.
 
 Windows uses Winget's `SoftwareFreedomConservancy.QEMU` package and can enable Windows Hypervisor Platform with administrator approval. If Windows requires a reboot, Mukai reports it and resumes when reopened; it never reboots the computer itself. Firmware virtualization must already be enabled. Intel macOS uses an existing Homebrew installation; Ubuntu/Debian uses apt-get with pkexec for administrator approval. Other Linux distributions require manually installing QEMU first. Automatic setup requires an x64 host and at least 12 GiB free on Mukai's data drive. Allow several minutes, internet access and any OS administrator prompts.
 
@@ -38,7 +39,9 @@ The service does not need a network listener or SSH once prepared. Mukai passes 
 
 Ordinary `shutdown`, `poweroff`, `reboot`, `halt` and systemctl power operations are blocked. Attempts to stop, restart, disable or mask the guest bridge through systemctl are also blocked; inspecting it and managing other services remain available. These are accidental-disruption guardrails: full root access can deliberately bypass or remove them. Mukai's host controller still controls VM start/stop through QEMU. There is no bot-facing VM lifecycle tool.
 
-Existing workspace disks automatically receive the updated bridge and protections on their next start, followed by a controlled restart. Project files and the workspace's chosen computer remain intact. An update failure prevents bot tools from starting and reports an error; it never falls back to the host. `process` is accepted as an assignment alias for `terminal`, including when creating child bots; both share one permission.
+Existing workspace disks automatically receive the updated bridge, desktop and protections on their next start, followed by a controlled restart. The first desktop update installs packages inside the guest and can take several minutes; the viewer shows preparation status and expandable output. Project files and the workspace's chosen computer remain intact. An update failure prevents bot tools from starting and reports an error; it never falls back to the host. `process` is accepted as an assignment alias for `terminal`, including when creating child bots; both share one permission.
+
+The viewer uses [noVNC](https://novnc.com/noVNC/docs/API.html) with [TigerVNC](https://tigervnc.org/doc/Xvnc.html). An authenticated API request issues a 30-second, single-use WebSocket ticket tied to the workspace's current boot. The API token never appears in viewer URLs. QEMU forwards only the display port to a dynamically allocated host loopback port; VNC has a separate password rotated on every boot. The renderer requests guest resolution changes to match its panel, with temporary proportional scaling while the guest adjusts. Closing the view disconnects the viewer and leaves apps, bots and the VM running. Clipboard sharing and VM power controls are not exposed by the viewer.
 
 ## Configure Mukai
 
@@ -69,6 +72,8 @@ The guest has outbound user-mode networking and can reach network services, incl
 Automated tests cover framing, process ownership, guest dispatch, routing, cancellation, persistence, launch arguments, API guards, setup retries/resumption, checksum failures, seed delivery and publishing only after successful tool verification. Installation and provisioning orchestration use mocked OS commands in tests. Real Ubuntu provisioning and subsequent boots have also been exercised on Windows WHPX, including terminal commands, file writes, Chrome navigation and browser snapshots. Linux KVM and Intel macOS HVF still require real host validation before shipping this preview.
 
 For an opt-in real VM acceptance test, build the guest bundle, set `MUKAI_QEMU_BINARY`, `MUKAI_QEMU_IMAGE` and optionally `MUKAI_QEMU_ACCEL`, then run `npx tsx scripts/test-vm-guardrails.ts`. It clones the prepared image into a temporary directory, exercises an in-place upgrade, admin access, power/bridge guardrails, Chrome/screenshots/images, shared files, and controller restart persistence, then removes only its test clone.
+
+After `npm run build`, `npx tsx scripts/run-computer-smoke.ts` exercises the real Electron viewer with a temporary profile and cloned disk, including guest resolution changes, visible Chrome, keyboard input, preservation of the chat draft, and reconnecting without stopping the guest. It saves `artifacts/computer-view.png` and cleans up its disposable profile and disk.
 
 Provisioning disables the serial login service and writes installer output to a guest log independently of console delivery. Ubuntu's missing firmware modules are installed before enabling the bridge; its daemon files are readable by the guest account. VM launches use the Nehalem CPU baseline to expose SSE4.2 for current native dependencies. Failure details retain the installer output instead of the subsequent shutdown messages.
 

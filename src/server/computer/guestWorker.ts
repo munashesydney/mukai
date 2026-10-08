@@ -29,6 +29,7 @@ export class GuestWorker implements Computer {
         USER: 'mukai',
         LOGNAME: 'mukai',
         LANG: 'C.UTF-8',
+        DISPLAY: ':0',
       },
     });
     this.child = child;

@@ -32,6 +32,7 @@ import { ToolAssignmentRepository } from './repositories/toolAssignmentRepositor
 import { BotManagementService } from './services/botManagementService';
 import { ProcessService } from './services/processService';
 import { ComputerManager } from './computer/manager';
+import { DesktopTransport } from './computer/desktopTransport';
 import { BrowserService } from './services/browserService';
 import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
@@ -195,7 +196,9 @@ export function createApiServer(options: ApiOptions = {}) {
       if (ownerBotId && ownerBotId !== botId)
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
+    const desktops = new DesktopTransport();
     const route = createRoutes({
+      desktops,
       approvals,
       token,
       startedAt,
@@ -221,6 +224,7 @@ export function createApiServer(options: ApiOptions = {}) {
         sendError(response, error);
       });
     });
+    desktops.attach(server);
 
     server.requestTimeout = 30000;
     server.headersTimeout = 10000;
@@ -235,6 +239,7 @@ export function createApiServer(options: ApiOptions = {}) {
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
+        desktops.shutdown();
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.
         const capabilityShutdown = capabilities.shutdown();

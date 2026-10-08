@@ -3,7 +3,10 @@ export interface ComputerStatus {
   kind: ComputerKind;
   state: 'local' | 'stopped' | 'starting' | 'running' | 'failed';
   error?: string;
+  message?: string;
+  detail?: string;
 }
+export interface ComputerViewSession { path: string; password: string; }
 export interface QemuSetup {
   available: boolean;
   reason?: string;

@@ -21,7 +21,7 @@ export class GuestDispatcher implements Computer {
     private folder: string,
     private dataDir: string,
   ) {
-    this.browsers = new BrowserService(dataDir, undefined, true);
+    this.browsers = new BrowserService(dataDir, undefined, !process.env.DISPLAY);
   }
   async request(
     method: Parameters<Computer['request']>[0],

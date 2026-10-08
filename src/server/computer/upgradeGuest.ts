@@ -2,20 +2,16 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { Computer } from './protocol';
+import { guestFiles } from './bundleFiles';
 
 /** App-owned maintenance through the existing guest bridge; never executes on the host. */
 export async function upgradeGuest(
   bundleDir: string,
   request: Computer['request'],
   signal: AbortSignal,
+  onProgress?: (output: string) => void,
 ) {
-  const names = [
-    'guest.cjs',
-    'guest-worker.cjs',
-    'protect.sh',
-    'systemctl-guard.sh',
-    'mukai-guest.service',
-  ];
+  const names = guestFiles.filter((name) => name !== 'package.json' && name !== 'install.sh');
   const files = Object.fromEntries(
     await Promise.all(
       names.map(
@@ -45,7 +41,7 @@ export async function upgradeGuest(
       {
         command: "python3 -c '" + script + "'",
         background: true,
-        timeoutSeconds: 120,
+        timeoutSeconds: 1200,
       },
       owner,
       signal,
@@ -66,7 +62,7 @@ export async function upgradeGuest(
       exitCode: z.number().nullable(),
       output: z.string(),
     });
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 40; attempt++) {
       const state = stateSchema.parse(
         await request(
           'process',
@@ -75,6 +71,7 @@ export async function upgradeGuest(
           signal,
         ),
       );
+      onProgress?.(state.output.slice(-2000));
       if (state.status !== 'running') {
         if (state.exitCode !== 0)
           throw new Error('Guest update failed: ' + state.output.slice(-4000));

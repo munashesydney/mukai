@@ -1,0 +1,19 @@
+[Unit]
+Description=Mukai workspace desktop
+Requires=mukai-display.service
+After=mukai-display.service
+RefuseManualStop=yes
+
+[Service]
+User=mukai
+Group=mukai
+Environment=HOME=/home/mukai DISPLAY=:0
+WorkingDirectory=/home/mukai
+ExecStartPre=/bin/sh /opt/mukai-guest/bridge/desktop-start.sh --wait
+ExecStart=/bin/sh /opt/mukai-guest/bridge/desktop-start.sh
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

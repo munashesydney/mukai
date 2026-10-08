@@ -21,7 +21,7 @@ done
 if [ "$readonly_call" = false ]; then
   for argument in "$@"; do
     case "$argument" in
-      *mukai-guest*|*shutdown.target*|*poweroff.target*|*reboot.target*|*halt.target*|*kexec.target*|*rescue.target*|*emergency.target*|*sleep.target*|*suspend.target*|*hibernate.target*) deny ;;
+      *mukai-guest*|*mukai-display*|*mukai-desktop*|*shutdown.target*|*poweroff.target*|*reboot.target*|*halt.target*|*kexec.target*|*rescue.target*|*emergency.target*|*sleep.target*|*suspend.target*|*hibernate.target*) deny ;;
     esac
   done
 fi

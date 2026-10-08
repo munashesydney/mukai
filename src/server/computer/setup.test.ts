@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { imageChecksum, downloadImage } from './setupDownload';
 import { cloudConfig, setupSeed } from './setupSeed';
 import { setupProcess } from './setupProcess';
+import { guestFiles } from './bundleFiles';
 
 let directory: string;
 beforeEach(async () => {
@@ -84,16 +85,7 @@ describe('cloud-init seed', () => {
   it('serves only token-scoped NoCloud metadata on loopback', async () => {
     const bundle = join(directory, 'bundle');
     await mkdir(bundle);
-    for (const name of [
-      'guest.cjs',
-      'guest-worker.cjs',
-      'package.json',
-      'install.sh',
-      'protect.sh',
-      'systemctl-guard.sh',
-      'mukai-guest.service',
-    ])
-      await writeFile(join(bundle, name), 'fixture');
+    for (const name of guestFiles) await writeFile(join(bundle, name), 'fixture');
     const seed = await setupSeed(bundle);
     try {
       const url = `http://127.0.0.1:${seed.port}/`;

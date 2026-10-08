@@ -1,6 +1,14 @@
 import type { DesktopBridge } from '../../../shared/contracts';
 
 let connection: Promise<{ url: string; token: string }> | undefined;
+export async function apiWebSocketUrl(path: string) {
+  const config = window.mukai
+    ? await (connection ??= window.mukai.getApiConnection())
+    : { url: '/api', token: '' };
+  const url = new URL(config.url + path, window.location.href);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const bridge = window.mukai as DesktopBridge | undefined;
   const config = bridge

@@ -64,6 +64,7 @@ export function qemuArguments(
   port: number,
   config: QemuConfig,
   controlPort?: number,
+  desktopPort?: number,
 ) {
   return [
     '-name',
@@ -88,7 +89,7 @@ export function qemuArguments(
     '-drive',
     `file=${optionPath(join(directory, 'disk.qcow2'))},format=qcow2,if=virtio`,
     '-netdev',
-    'user,id=net0',
+    'user,id=net0' + (desktopPort ? `,hostfwd=tcp:127.0.0.1:${desktopPort}-:5901` : ''),
     '-device',
     'virtio-net-pci,netdev=net0',
     '-device',
@@ -126,6 +127,9 @@ export class QemuComputer implements Computer {
   private bootController?: AbortController;
   private guestRevision = 1;
   private control?: Awaited<ReturnType<typeof qemuControl>>;
+  private desktopPort?: number;
+  private desktopPassword?: string;
+  private maintenance?: { message: string; detail?: string };
   constructor(
     private directory: string,
     private config = qemuConfig(),
@@ -133,7 +137,20 @@ export class QemuComputer implements Computer {
     private guestBundleDir?: string,
   ) {}
   status(): ComputerStatus {
-    return { ...this.state };
+    return {
+      ...this.state,
+      ...(this.maintenance ? { state: 'starting', ...this.maintenance } : {}),
+    };
+  }
+  desktopConnection() {
+    if (
+      this.state.state !== 'running' ||
+      this.starting ||
+      !this.desktopPort ||
+      !this.desktopPassword
+    )
+      throw new Error('The workspace desktop is unavailable.');
+    return { port: this.desktopPort, password: this.desktopPassword };
   }
   async start() {
     if (this.stopping) await this.stopping;
@@ -154,6 +171,7 @@ export class QemuComputer implements Computer {
       })
       .finally(() => {
         this.starting = undefined;
+        this.maintenance = undefined;
       });
     return this.starting;
   }
@@ -161,7 +179,12 @@ export class QemuComputer implements Computer {
     const signal = this.bootController!.signal;
     await this.boot();
     if (this.guestBundleDir && this.guestRevision < GUEST_REVISION) {
-      await upgradeGuest(this.guestBundleDir, this.exchange.bind(this), signal);
+      this.maintenance = {
+        message: 'Preparing your Linux desktop. The first update may take several minutes.',
+      };
+      await upgradeGuest(this.guestBundleDir, this.exchange.bind(this), signal, (detail) => {
+        this.maintenance = { message: 'Preparing your Linux desktop…', detail };
+      });
       signal.throwIfAborted();
       await this.stopGuest(false);
       signal.throwIfAborted();
@@ -209,6 +232,7 @@ export class QemuComputer implements Computer {
       await rename(temporary, disk);
     }
     const token = randomBytes(32).toString('hex');
+    this.desktopPassword = Buffer.from(token, 'hex').toString('base64').slice(0, 8);
     await writeFile(join(this.directory, 'boot-token'), token, { mode: 0o600 });
     signal.throwIfAborted();
     const server = createServer();
@@ -233,6 +257,16 @@ export class QemuComputer implements Computer {
     if (!address || typeof address === 'string')
       throw new Error('Could not allocate the VM bridge.');
     this.control = await qemuControl();
+    const reservation = createServer();
+    await new Promise<void>((resolve, reject) => {
+      reservation.once('error', reject);
+      reservation.listen(0, '127.0.0.1', resolve);
+    });
+    const desktopAddress = reservation.address();
+    if (!desktopAddress || typeof desktopAddress === 'string')
+      throw new Error('Could not allocate desktop transport.');
+    this.desktopPort = desktopAddress.port;
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
     signal.throwIfAborted();
     let ready!: () => void;
     let failed!: (error: Error) => void;
@@ -316,7 +350,7 @@ export class QemuComputer implements Computer {
     );
     const child = this.launch(
       this.config.binary,
-      qemuArguments(this.directory, address.port, this.config, this.control.port),
+      qemuArguments(this.directory, address.port, this.config, this.control.port, this.desktopPort),
       { windowsHide: true, env },
     );
     this.child = child;
@@ -454,6 +488,8 @@ export class QemuComputer implements Computer {
       this.closeConnection?.();
       this.closeConnection = undefined;
       this.socket = undefined;
+      this.desktopPort = undefined;
+      this.desktopPassword = undefined;
     })().finally(() => {
       this.stopping = undefined;
     });
