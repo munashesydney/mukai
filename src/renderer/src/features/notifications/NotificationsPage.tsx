@@ -88,7 +88,14 @@ export function NotificationsPage({
                 onClick={() => setExpandedId((current) => (current === item.id ? null : item.id))}
               >
                 <span className="notification-card-icon">
-                  <MessageCircle size={16} />
+                  {item.conversationId ? (
+                    <MessageCircle size={16} />
+                  ) : (
+                    <i
+                      className={`notification-status-dot ${item.readAt ? 'is-read' : ''}`}
+                      aria-label={item.readAt ? 'Read update' : 'Unread update'}
+                    />
+                  )}
                 </span>
                 <div className="notification-meta">
                   <strong>{item.botName}</strong>
