@@ -23,6 +23,7 @@ export class BrowserService {
     { info: BrowserSession; driver: PageDriver; queue: Promise<unknown>; image?: Buffer }
   >();
   private chrome: ChromeHost;
+  private mainChrome: ChromeHost;
   private closed = false;
   private activation = 0;
   constructor(
@@ -31,6 +32,7 @@ export class BrowserService {
     headless = false,
   ) {
     this.chrome = new ChromeHost(dataDir, headless);
+    this.mainChrome = new ChromeHost(dataDir, false, 'main');
   }
   list(workspaceId: string, conversationId?: string) {
     for (const [id, entry] of this.sessions)
@@ -98,7 +100,9 @@ export class BrowserService {
         activation: ++this.activation,
       };
       const page =
-        info.target === 'mukai' ? await this.embedded?.open(info) : await this.chrome.open(info);
+        info.target === 'mukai'
+          ? await this.embedded?.open(info)
+          : await (info.target === 'chrome-default' ? this.mainChrome : this.chrome).open(info);
       if (!page)
         throw new ApiError(
           503,
@@ -183,6 +187,7 @@ export class BrowserService {
     this.closed = true;
     await Promise.allSettled([...this.sessions.values()].map((entry) => entry.driver.page.close()));
     await this.chrome.shutdown();
+    await this.mainChrome.shutdown();
     await this.embedded?.shutdown();
     this.sessions.clear();
   }

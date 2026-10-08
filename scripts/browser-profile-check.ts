@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { chromium } from 'playwright-core';
 import { ChromeHost } from '../src/server/browser/chromeHost';
+import { PageDriver } from '../src/server/browser/pageDriver';
 import type { BrowserPage, EmbeddedBrowserHost } from '../src/server/browser/types';
 import type { BrowserSession } from '../src/shared/runtime';
 
@@ -119,5 +124,107 @@ export async function checkSharedInlineProfiles(host: EmbeddedBrowserHost, url: 
     );
   } finally {
     await Promise.all([first.close(), second.close(), isolated.close()]);
+  }
+}
+
+/** Uses a disposable daily-browser stand-in; never connects to the developer's personal Chrome.
+ * The endpoint override substitutes only discovery/consent, leaving the actual CDP connection real.
+ */
+export async function checkMainChromeProfile(directory: string) {
+  const server = createServer((_request, response) =>
+    response
+      .writeHead(200, {
+        'Content-Type': 'text/html',
+      })
+      .end(
+        "<title>Main Chrome fixture</title><h1>Signed in</h1><label>Message<input></label><button onclick=\"document.querySelector('h1').textContent=document.querySelector('input').value\">Apply</button>",
+      ),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+  const profile = join(directory, 'main-chrome-fixture');
+  const context = await chromium.launchPersistentContext(profile, {
+    channel: 'chrome',
+    headless: false,
+    viewport: null,
+    args: ['--remote-debugging-port=0'],
+  });
+  const connect = chromium.connectOverCDP;
+  const connectEndpoint = chromium.connectOverCDP.bind(chromium) as (
+    endpoint: string,
+    options?: { noDefaults?: boolean; timeout?: number },
+  ) => ReturnType<typeof connect>;
+  let host = new ChromeHost(directory, false, 'main');
+  try {
+    const [port, path] = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8'))
+      .trim()
+      .split(/\r?\n/);
+    chromium.connectOverCDP = ((endpoint, options) => {
+      assert.equal(
+        endpoint,
+        'chrome',
+        'Production must discover the local main Chrome, never a remote host',
+      );
+      assert.equal(options?.noDefaults, true, 'Preserve the daily browser settings');
+      return connectEndpoint(`ws://127.0.0.1:${port}${path}`, options);
+    }) as typeof connect;
+    const personal = context.pages()[0];
+    await personal.goto(url);
+    await context.addCookies([
+      { name: 'mukai-profile-test', value: 'user-already-signed-in', url },
+    ]);
+    const [first, second] = await Promise.all([
+      host.open({ ...info('workspace-one', 'one', 'conversation-one'), target: 'chrome-default' }),
+      host.open({ ...info('workspace-two', 'two', 'conversation-two'), target: 'chrome-default' }),
+    ]);
+    assert.equal(await cookie(first, url), 'user-already-signed-in');
+    assert.equal(await cookie(second, url), 'user-already-signed-in');
+    const third = await host.open({
+      ...info('workspace-one', 'one', 'conversation-one'),
+      target: 'chrome-default',
+    });
+    const a = await first.send('Browser.getWindowForTarget');
+    const b = await second.send('Browser.getWindowForTarget');
+    const c = await third.send('Browser.getWindowForTarget');
+    assert.notEqual(a.windowId, b.windowId);
+    assert.equal(a.windowId, c.windowId);
+    const driver = new PageDriver(first);
+    await driver.navigate(url);
+    type Snapshot = { title: string; text: string; controls: { name: string; ref: string }[] };
+    let snapshot = (await driver.snapshot()) as Snapshot;
+    for (let attempt = 0; snapshot.title !== 'Main Chrome fixture' && attempt < 30; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      snapshot = (await driver.snapshot()) as Snapshot;
+    }
+    const input = snapshot.controls.find((control) => control.name === 'Message');
+    const button = snapshot.controls.find((control) => control.name === 'Apply');
+    assert(input && button);
+    await driver.interact('type', input.ref, 'Shared main profile works');
+    await driver.interact('click', button.ref);
+    assert.match((await driver.snapshot()).text, /Shared main profile works/);
+    assert((await driver.screenshot()).length > 1000);
+    await first.close();
+    assert.equal(second.isClosed(), false);
+    assert.equal(personal.isClosed(), false);
+    await host.shutdown();
+    assert.equal(second.isClosed(), true);
+    assert.equal(third.isClosed(), true);
+    assert.equal(personal.isClosed(), false, 'Disconnect must leave the user browser open');
+    assert.equal(await personal.title(), 'Main Chrome fixture');
+    assert.equal(context.pages().length, 1, 'Only tool-owned tabs should have been closed');
+    host = new ChromeHost(directory, false, 'main');
+    const reconnected = await host.open({
+      ...info('workspace-one', 'one', 'new-chat'),
+      target: 'chrome-default',
+    });
+    assert.equal(await cookie(reconnected, url), 'user-already-signed-in');
+    console.log(
+      'PASS main Chrome: existing login, conversation windows, same-window tabs, real interactions, personal tabs survive shutdown, reconnect',
+    );
+  } finally {
+    await host.shutdown();
+    chromium.connectOverCDP = connect;
+    await context.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

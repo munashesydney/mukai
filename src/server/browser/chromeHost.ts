@@ -1,4 +1,10 @@
-import { chromium, type BrowserContext, type Page, type CDPSession } from 'playwright-core';
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type CDPSession,
+} from 'playwright-core';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { workspaceBrowserProfile } from './profile';
@@ -13,14 +19,34 @@ export class ChromeHost {
   private conversations = new WeakMap<Page, string>();
   private opening = new Set<string>();
   private operations = new Map<string, Promise<unknown>>();
+  private attached = new Map<BrowserContext, Browser>();
+  private ownedPages = new Set<Page>();
   private closed = false;
   constructor(
     private dataDir: string,
     private headless = false,
+    private profile: 'workspace' | 'main' = 'workspace',
   ) {}
+  private get mainProfile() {
+    return this.profile === 'main';
+  }
   async open(info: BrowserSession): Promise<BrowserPage> {
-    const key = workspaceBrowserProfile(info.workspaceId);
-    return this.serialize(key, () => this.openPage(key, info.conversationId));
+    const key = this.mainProfile ? 'main' : workspaceBrowserProfile(info.workspaceId);
+    const conversation = JSON.stringify([info.workspaceId, info.botId, info.conversationId]);
+    return this.serialize(key, () => this.openPage(key, conversation));
+  }
+  private async connectMain(): Promise<BrowserContext> {
+    // Chrome discovers its running default profile and asks the user to allow this connection.
+    // noDefaults preserves the user's viewport, focus and download settings.
+    const browser = await chromium.connectOverCDP('chrome', { noDefaults: true, timeout: 20000 });
+    const context = browser.contexts()[0];
+    if (!context) {
+      await browser.close();
+      throw new Error('Chrome did not expose its main profile.');
+    }
+    this.attached.set(context, browser);
+    browser.once('disconnected', () => this.attached.delete(context));
+    return context;
   }
   private serialize<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const result = (this.operations.get(key) || Promise.resolve()).catch(() => {}).then(operation);
@@ -35,15 +61,17 @@ export class ChromeHost {
     if (this.closed) throw new ApiError(503, 'Browser is shutting down.');
     let contextPromise = this.contexts.get(key);
     if (!contextPromise) {
-      contextPromise = chromium.launchPersistentContext(
-        join(this.dataDir, 'browser-profiles', 'chrome', 'workspaces', key),
-        {
-          channel: 'chrome',
-          headless: this.headless,
-          acceptDownloads: false,
-          viewport: this.headless ? { width: 1280, height: 800 } : null,
-        },
-      );
+      contextPromise = this.mainProfile
+        ? this.connectMain()
+        : chromium.launchPersistentContext(
+            join(this.dataDir, 'browser-profiles', 'chrome', 'workspaces', key),
+            {
+              channel: 'chrome',
+              headless: this.headless,
+              acceptDownloads: false,
+              viewport: this.headless ? { width: 1280, height: 800 } : null,
+            },
+          );
       this.contexts.set(key, contextPromise);
     }
     let context: BrowserContext;
@@ -53,16 +81,19 @@ export class ChromeHost {
       if (this.contexts.get(key) === contextPromise) this.contexts.delete(key);
       throw new ApiError(
         503,
-        'Chrome could not start. Install Google Chrome and try again. Mukai uses a separate browser profile.',
+        this.mainProfile
+          ? 'Main Chrome could not connect. On this workspace’s computer, open Chrome 144 or newer, enable remote debugging at chrome://inspect/#remote-debugging, then retry and allow Chrome’s connection request. For a VM workspace, do this inside the VM. No other browser profile was opened.'
+          : 'Chrome could not start. Install Google Chrome and try again. Mukai uses a separate browser profile.',
       );
     }
     if (this.closed) {
-      await context.close();
+      await this.closeContext(context);
       throw new ApiError(503, 'Browser is shutting down.');
     }
-    const emptyPages = !this.configured.has(context)
-      ? context.pages().filter((page) => page.url() === 'about:blank')
-      : [];
+    const emptyPages =
+      !this.mainProfile && !this.configured.has(context)
+        ? context.pages().filter((page) => page.url() === 'about:blank')
+        : [];
     if (!this.configured.has(context)) {
       // Registered once per context, rather than once per tab.
       this.configured.add(context);
@@ -75,6 +106,8 @@ export class ChromeHost {
       .find((page) => !page.isClosed() && this.conversations.get(page) === conversationId);
     // Create the first tab in a separate window; additional tabs stay with their conversation.
     const page = this.headless ? await context.newPage() : await this.newPage(context, opener);
+    this.ownedPages.add(page);
+    page.once('close', () => this.ownedPages.delete(page));
     this.conversations.set(page, conversationId);
     for (const empty of emptyPages) if (!empty.isClosed()) await empty.close();
     page.on('popup', (popup) => {
@@ -88,18 +121,46 @@ export class ChromeHost {
       throw error;
     }
     return {
-      send: (method, params) =>
-        browserCommand(
+      send: async (method, params) => {
+        if (method === 'Page.captureScreenshot' && !this.headless) {
+          // A loaded DOM can precede the first composited frame in a new native window.
+          await browserCommand(page.bringToFront());
+          const { frameTree } = await browserCommand(client.send('Page.getFrameTree'));
+          const { executionContextId } = await browserCommand(
+            client.send('Page.createIsolatedWorld', {
+              frameId: frameTree.frame.id,
+              worldName: 'mukai-browser-capture',
+            }),
+          );
+          await browserCommand(
+            client.send('Runtime.evaluate', {
+              expression:
+                'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))',
+              contextId: executionContextId,
+              awaitPromise: true,
+              timeout: 10000,
+            }),
+          );
+        }
+        return browserCommand(
           client.send(method as Parameters<typeof client.send>[0], params as never),
-        ) as Promise<Record<string, unknown>>,
+        ) as Promise<Record<string, unknown>>;
+      },
       close: async () => {
         await this.serialize(key, async () => {
           await page.close();
-          if (context.pages().length === 0) await context.close();
+          if (!this.mainProfile && context.pages().length === 0) await context.close();
         });
       },
       isClosed: () => page.isClosed(),
     };
+  }
+  private async closeContext(context: BrowserContext) {
+    if (this.mainProfile) {
+      // For a CDP-attached browser, Playwright browser.close() disconnects the transport.
+      // context.close() would close the user's personal browser and tabs.
+      await this.attached.get(context)?.close();
+    } else await context.close();
   }
   private async newPage(context: BrowserContext, opener?: Page): Promise<Page> {
     const browser = context.browser();
@@ -175,8 +236,9 @@ export class ChromeHost {
   async shutdown() {
     this.closed = true;
     await Promise.allSettled([...this.operations.values()]);
+    await Promise.allSettled([...this.ownedPages].map((page) => page.close()));
     await Promise.allSettled(
-      [...this.contexts.values()].map(async (value) => (await value).close()),
+      [...this.contexts.values()].map(async (value) => this.closeContext(await value)),
     );
     this.contexts.clear();
   }

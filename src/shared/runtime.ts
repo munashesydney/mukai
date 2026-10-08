@@ -3,7 +3,7 @@ export interface RuntimeOwner {
   botId: string;
   conversationId: string;
 }
-export type BrowserTarget = 'mukai' | 'chrome';
+export type BrowserTarget = 'mukai' | 'chrome' | 'chrome-default';
 export interface BrowserSession extends RuntimeOwner {
   id: string;
   target: BrowserTarget;

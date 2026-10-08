@@ -9,6 +9,7 @@ import { GuestDispatcher } from './guestDispatcher';
 import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
 import { DiagnosticService } from '../services/diagnosticService';
+import { BrowserService } from '../services/browserService';
 
 let directory: string;
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -46,6 +47,35 @@ describe('guest services', () => {
     cleanup.push(() => computer.shutdown());
     return { computer, folder };
   }
+  it('keeps main Chrome requests in the guest and maps inline to guest workspace Chrome', async () => {
+    const { computer } = await guest();
+    const execute = vi.spyOn(BrowserService.prototype, 'execute').mockResolvedValue({ tabs: [] });
+    try {
+      for (const [target, expected] of [
+        ['mukai', 'chrome'],
+        ['chrome', 'chrome'],
+        ['chrome-default', 'chrome-default'],
+      ] as const) {
+        await computer.request(
+          'browser',
+          { action: 'open', target, url: 'https://example.com' },
+          owner,
+          signal(),
+        );
+        expect(execute).toHaveBeenLastCalledWith(
+          owner,
+          {
+            action: 'open',
+            target: expected,
+            url: 'https://example.com',
+          },
+          expect.any(AbortSignal),
+        );
+      }
+    } finally {
+      execute.mockRestore();
+    }
+  });
   it('writes, patches and downloads files with mutation snapshots', async () => {
     const { computer, folder } = await guest();
     expect(

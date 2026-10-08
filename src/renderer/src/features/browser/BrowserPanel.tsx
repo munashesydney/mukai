@@ -137,7 +137,7 @@ export function BrowserPanel() {
             onClick={() => setSelected(tab.id)}
             title={tab.url}
           >
-            {tab.target === 'chrome' && <ExternalLink size={12} />}
+            {tab.target !== 'mukai' && <ExternalLink size={12} />}
             <span>{tab.title || 'New tab'}</span>
           </button>
         ))}
@@ -173,11 +173,15 @@ export function BrowserPanel() {
         </p>
       )}
       <div ref={viewport} className="browser-viewport">
-        {active?.target === 'chrome' ? (
+        {active?.target !== 'mukai' ? (
           <div className="browser-placeholder">
             <ExternalLink size={30} />
             <h3>Open in Google Chrome</h3>
-            <p>This tab is running in a separate Chrome window with its own Mukai profile.</p>
+            <p>
+              {active?.target === 'chrome-default'
+                ? 'This tab shares your main Chrome profile and website logins.'
+                : 'This tab uses the Chrome profile shared by this workspace’s bots.'}
+            </p>
           </div>
         ) : !window.mukai ? (
           <div className="browser-placeholder">
@@ -187,7 +191,11 @@ export function BrowserPanel() {
         ) : null}
       </div>
       <footer>
-        {active?.target === 'chrome' ? 'Chrome window' : 'Mukai browser'} · Separate browser profile
+        {active?.target === 'chrome-default'
+          ? 'Main Chrome · Your browser profile'
+          : active?.target === 'chrome'
+            ? 'Chrome · Workspace profile'
+            : 'Mukai browser · Workspace inline profile'}
       </footer>
     </aside>
   );

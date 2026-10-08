@@ -76,8 +76,11 @@ async function main() {
     );
     const profileCheck = await build({
       stdin: {
-        contents: `import { checkSharedChromeProfiles } from './scripts/browser-profile-check';
-        checkSharedChromeProfiles('/home/mukai/workspace/profile-acceptance', 'https://mukai-profile.test/').catch(error => { console.error(error); process.exitCode = 1; });`,
+        contents: `import { checkSharedChromeProfiles, checkMainChromeProfile } from './scripts/browser-profile-check';
+        (async () => {
+          await checkSharedChromeProfiles('/home/mukai/workspace/profile-acceptance', 'https://mukai-profile.test/');
+          await checkMainChromeProfile('/home/mukai/workspace/profile-acceptance');
+        })().catch(error => { console.error(error); process.exitCode = 1; });`,
         resolveDir: resolve('.'),
       },
       bundle: true,
@@ -148,6 +151,13 @@ async function main() {
     await vm.start();
     assert.match(await run('cat guardrail-marker.txt'), /preserved/);
     console.log('Verified: controller stop/start and persistent workspace files.');
+  } catch (error) {
+    try {
+      console.error(await run('free -m; xrandr --current; journalctl -b -n 40 --no-pager'));
+    } catch {
+      /* Preserve the original error if the guest is unavailable. */
+    }
+    throw error;
   } finally {
     await vm.shutdown();
     const target = await realpath(directory);

@@ -184,7 +184,7 @@ export class ToolService {
         ? {
             description:
               tool.id === 'browser'
-                ? 'Control headless Chrome inside the workspace Linux VM.'
+                ? 'Control workspace or main Chrome on the Linux VM desktop.'
                 : tool.id === 'image'
                   ? 'Read and view guest images inside the Linux VM.'
                   : tool.id === 'terminal'
@@ -218,7 +218,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image and browser operations run inside that VM. Absolute paths refer to Linux guest paths. Browser is headless. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image and browser operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome is visible on the guest desktop. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }

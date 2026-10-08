@@ -1,11 +1,46 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { BrowserService } from './browserService';
 import type { EmbeddedBrowserHost, BrowserPage } from '../browser/types';
+import { chromium } from 'playwright-core';
 const owner = { workspaceId: 'workspace', botId: 'scout', conversationId: 'chat' };
 const signal = () => new AbortController().signal;
 let service: BrowserService | undefined;
 afterEach(async () => {
   await service?.shutdown();
+  vi.restoreAllMocks();
+});
+it('reports main Chrome setup failures without opening inline or a replacement profile', async () => {
+  const connect = vi.spyOn(chromium, 'connectOverCDP').mockRejectedValue(new Error('Not enabled'));
+  const launch = vi.spyOn(chromium, 'launchPersistentContext');
+  const { service, host } = fixture();
+  await expect(
+    service.execute(
+      owner,
+      {
+        action: 'open',
+        target: 'chrome-default',
+        url: 'https://example.com',
+      },
+      signal(),
+    ),
+  ).rejects.toThrow('chrome://inspect/#remote-debugging');
+  expect(connect).toHaveBeenCalledWith('chrome', { noDefaults: true, timeout: 20000 });
+  expect(host.open).not.toHaveBeenCalled();
+  expect(launch).not.toHaveBeenCalled();
+  expect(service.list(owner.workspaceId)).toEqual([]);
+  // A missing/denied connection must be evicted so a later attempt can ask Chrome again.
+  await expect(
+    service.execute(
+      owner,
+      {
+        action: 'open',
+        target: 'chrome-default',
+        url: 'https://example.com',
+      },
+      signal(),
+    ),
+  ).rejects.toThrow('Main Chrome');
+  expect(connect).toHaveBeenCalledTimes(2);
 });
 function fixture() {
   let closed = false;

@@ -82,7 +82,14 @@ export class GuestDispatcher implements Computer {
       }
       case 'browser': {
         const value = browserDefinition.inputSchema.parse(input);
-        const result = await this.browsers.execute(owner, { ...value, target: 'chrome' }, signal);
+        const result = await this.browsers.execute(
+          owner,
+          {
+            ...value,
+            target: value.target === 'chrome-default' ? 'chrome-default' : 'chrome',
+          },
+          signal,
+        );
         if (
           value.action === 'screenshot' &&
           result &&

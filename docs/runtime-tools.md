@@ -71,10 +71,17 @@ Example: `{"action":"view","path":"C:\\Users\\sydne\\Downloads\\picture.png"}`.
 
 `npm run test:browser-profiles` checks real Chrome/Electron profile sharing, separate
 conversation windows, workspace isolation, and login persistence using disposable profiles.
+It also checks main Chrome attachment against a disposable profile with an existing login
+cookie, preserving personal tabs and reconnecting. Endpoint discovery and native consent
+are substituted for this automated check; Chrome's approval dialog needs manual testing.
 
 - `target: "mukai"` embeds a sandboxed Electron WebContentsView in the right browser panel.
 - `target: "chrome"` launches installed Google Chrome in a separate visible window using
   Playwright Core and a dedicated profile. No browser download is needed.
+- `target: "chrome-default"` connects to the running main Chrome on the workspace's computer,
+  using its existing logins and site data. It creates conversation windows and only controls
+  tool-created tabs; personal tabs stay open when bot tabs or Mukai close. This profile is
+  shared with the user and any other local workspaces choosing main Chrome.
 - Each workspace has one persistent Chrome profile and a separate persistent inline
   Electron profile. Bots and conversations share logins within each browser target;
   inline and Chrome logins remain independent. Other workspaces have separate profiles.
@@ -82,7 +89,7 @@ conversation windows, workspace isolation, and login persistence using disposabl
   become tabs in its window. Tab control remains scoped to the creating bot and conversation.
   Profiles retain website logins; live tab IDs last only until the application closes.
 - Existing conversation-scoped profiles are kept on disk, without automatically merging
-  accounts. Sign in once in the new workspace profile. Everyday Chrome integration is separate.
+  accounts. Sign in once in the new workspace profile, or choose main Chrome for existing logins.
 - The model takes a snapshot before interacting. References are generated in an isolated
   JavaScript world, include open shadow roots, and expire on another snapshot or navigation.
 - Every bot screenshot is saved as a unique PNG artifact in
@@ -102,10 +109,20 @@ conversation windows, workspace isolation, and login persistence using disposabl
   artifact registration happen only after the screenshot invocation is approved.
   Snapshots mask password field values.
 - This first version controls the main document and open shadow roots. Cross-origin iframe
-  controls, file uploads, popups, downloads and permission prompts are not supported.
+  controls, file uploads, popups and permission prompts are not supported. Dedicated profiles
+  disable downloads; main Chrome retains the user's download settings, without a download tool API.
 - Remote pages receive no Mukai preload, Node integration or API token. Browser protocol
   commands have a timeout. The renderer can only place the active embedded view within the
   app's content bounds; dialogs hide it so it cannot cover their controls.
+
+To use main Chrome, open Chrome 144 or newer on the workspace's computer, enable remote
+debugging at `chrome://inspect/#remote-debugging`, and allow Chrome's native connection
+request when the bot opens `target: "chrome-default"`. For VM workspaces this setup happens
+inside the guest. In the VM, `mukai` aliases `chrome`; `chrome-default` uses the guest's main
+Chrome, never the laptop's. Failed or denied connections return setup instructions and never
+switch profiles. Main mode opens fresh tool-owned tabs sharing cookies and persistent site
+data; state confined to an existing tab (such as sessionStorage) is not copied. See
+[Chrome's connection documentation](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect).
 
 Example: ask a bot to open a website in the Mukai browser, or explicitly ask it to use Chrome.
 The browser panel opens when a tab is created. Hiding the panel keeps the tab alive; closing
