@@ -10,6 +10,7 @@ import { MukaiBrowserHost } from '../src/main/embeddedBrowserHost';
 import { BrowserService } from '../src/server/services/browserService';
 import type { BrowserTarget } from '../src/shared/runtime';
 import { checkBrowserPanel } from './browser-panel-check';
+import { checkSharedChromeProfiles, checkSharedInlineProfiles } from './browser-profile-check';
 
 async function main() {
   const dir =
@@ -42,6 +43,9 @@ async function main() {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
   try {
+    await checkSharedChromeProfiles(dir, url);
+    await checkSharedInlineProfiles(host, url);
+    if (process.argv.includes('--profiles-only')) return;
     for (const target of ['mukai', 'chrome'] as BrowserTarget[]) {
       console.log('Checking ' + target);
       const owner = { workspaceId: 'test', botId: 'scout', conversationId: target };

@@ -21,7 +21,11 @@ async function run() {
     const env: NodeJS.ProcessEnv = { ...process.env, MUKAI_BROWSER_SMOKE_DIR: root };
     delete env.ELECTRON_RUN_AS_NODE;
     const code = await new Promise<number>((resolve, reject) => {
-      const child = spawn(executable, [bundle], { env, stdio: 'inherit', windowsHide: true });
+      const child = spawn(executable, [bundle, ...process.argv.slice(2)], {
+        env,
+        stdio: 'inherit',
+        windowsHide: true,
+      });
       child.once('error', reject);
       child.once('close', (code) => resolve(code ?? 1));
     });

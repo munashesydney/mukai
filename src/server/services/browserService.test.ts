@@ -53,6 +53,9 @@ it('owns tabs per conversation and workspace, updates snapshots, and closes sess
       signal(),
     ),
   ).rejects.toThrow('not found');
+  await expect(
+    service.execute({ ...owner, botId: 'other-bot' }, { action: 'close', sessionId: id }, signal()),
+  ).rejects.toThrow('not found');
   await service.execute(owner, { action: 'snapshot', sessionId: id }, signal());
   expect(send).toHaveBeenCalledWith('Page.createIsolatedWorld', {
     frameId: 'main',

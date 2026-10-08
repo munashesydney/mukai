@@ -57,6 +57,8 @@ On Linux/macOS, set those same variables using `export`. `MUKAI_QEMU_ACCEL` opti
 
 Create a workspace, choose **Linux VM**, then create a bot. Try `uname -a`, write a file with `file_operations`, run a background process, and open a page with `browser`. Project directory: `/home/mukai/workspace`. VM size: 2 vCPUs, 2 GiB RAM. Settings → Workspace shows state and start/stop controls. Stopping ends running guest processes and browser sessions. Their session IDs do not survive restart; disk files do.
 
+Tool-controlled Chrome has one persistent profile per workspace inside the VM. Bots and conversations share its website logins, while each conversation uses a separate native window with its own tabs. Tool ownership still prevents controlling another bot's tabs. Chrome opened independently from the Linux desktop continues to use its own profile; attaching to that browser is separate functionality. Old conversation profiles remain on disk and are not automatically merged into the new workspace profile. Sign in once in the shared profile after updating.
+
 ## Storage and failures
 
 Disks live under Mukai's private data directory at `computers/<workspace-id>/disk.qcow2`. Screenshots are copied into managed host artifact storage; their tool result's `path` remains a guest path for the image tool. Text artifact downloads read from the guest through the bridge. File change history records file-tool mutations, as in local mode; shell writes are not automatically tracked.

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { QemuComputer, qemuConfig } from '../src/server/computer/qemuComputer';
 import { z } from 'zod';
+import { build } from 'esbuild';
 
 async function main() {
   const parent = await realpath(tmpdir());
@@ -73,6 +74,28 @@ async function main() {
     await run(
       'sudo -n systemctl is-active mukai-guest; sudo -n systemctl daemon-reload; sudo -n sh -c "printf admin > /root/mukai-admin-test"; sudo -n cat /root/mukai-admin-test',
     );
+    const profileCheck = await build({
+      stdin: {
+        contents: `import { checkSharedChromeProfiles } from './scripts/browser-profile-check';
+        checkSharedChromeProfiles('/home/mukai/workspace/profile-acceptance', 'https://mukai-profile.test/').catch(error => { console.error(error); process.exitCode = 1; });`,
+        resolveDir: resolve('.'),
+      },
+      bundle: true,
+      platform: 'node',
+      packages: 'external',
+      write: false,
+    });
+    await vm.request(
+      'files',
+      {
+        action: 'write_file',
+        path: 'profile-check.cjs',
+        content: profileCheck.outputFiles[0].text,
+      },
+      owner,
+      signal,
+    );
+    console.log(await run('NODE_PATH=/opt/mukai-guest/node_modules node profile-check.cjs'));
     await run('printf "<title>VM guardrails</title><h1>Working</h1>" > guardrail-browser.html');
     const server = z
       .object({ id: z.string() })

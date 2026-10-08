@@ -1,5 +1,5 @@
 import { BrowserWindow, WebContentsView, session } from 'electron';
-import { createHash } from 'node:crypto';
+import { workspaceBrowserProfile } from '../server/browser/profile';
 import type { BrowserBounds, BrowserSession } from '../shared/runtime';
 import type { EmbeddedBrowserHost, BrowserPage } from '../server/browser/types';
 import { browserCommand } from '../server/browser/types';
@@ -19,10 +19,7 @@ export class MukaiBrowserHost implements EmbeddedBrowserHost {
     if (!this.window || this.window.isDestroyed())
       throw new Error('Open the Mukai desktop window to use its browser.');
     const partition =
-      'persist:mukai-browser-' +
-      createHash('sha256')
-        .update(info.workspaceId + '/' + info.botId + '/' + info.conversationId)
-        .digest('hex');
+      'persist:mukai-browser-workspace-' + workspaceBrowserProfile(info.workspaceId);
     const browserSession = session.fromPartition(partition);
     if (!this.configured.has(partition)) {
       browserSession.setPermissionRequestHandler((_contents, _permission, callback) =>
@@ -63,6 +60,7 @@ export class MukaiBrowserHost implements EmbeddedBrowserHost {
       this.views.delete(info.id);
       throw error;
     }
+    const contents = view.webContents;
     return {
       send: async (method, params) => {
         if (method.startsWith('Input.')) {
@@ -98,11 +96,11 @@ export class MukaiBrowserHost implements EmbeddedBrowserHost {
         }
         return browserCommand(view.webContents.debugger.sendCommand(method, params));
       },
-      isClosed: () => view.webContents.isDestroyed(),
+      isClosed: () => contents.isDestroyed(),
       close: async () => {
+        if (!this.views.delete(info.id)) return;
         this.window?.contentView.removeChildView(view);
-        if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
-        this.views.delete(info.id);
+        if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false });
       },
     };
   }

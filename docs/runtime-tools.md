@@ -69,11 +69,20 @@ Example: `{"action":"view","path":"C:\\Users\\sydne\\Downloads\\picture.png"}`.
 `browser` supports `open`, `tabs`, `navigate`, `snapshot`, `click`, `type`, `press`, `scroll`,
 `back`, `forward`, `reload`, `screenshot` and `close`.
 
+`npm run test:browser-profiles` checks real Chrome/Electron profile sharing, separate
+conversation windows, workspace isolation, and login persistence using disposable profiles.
+
 - `target: "mukai"` embeds a sandboxed Electron WebContentsView in the right browser panel.
 - `target: "chrome"` launches installed Google Chrome in a separate visible window using
   Playwright Core and a dedicated profile. No browser download is needed.
-- Profiles are isolated per workspace, bot and conversation. They retain website logins;
-  live tab IDs last only until the application closes.
+- Each workspace has one persistent Chrome profile and a separate persistent inline
+  Electron profile. Bots and conversations share logins within each browser target;
+  inline and Chrome logins remain independent. Other workspaces have separate profiles.
+- Chrome conversations open in separate native windows. Additional opens in a conversation
+  become tabs in its window. Tab control remains scoped to the creating bot and conversation.
+  Profiles retain website logins; live tab IDs last only until the application closes.
+- Existing conversation-scoped profiles are kept on disk, without automatically merging
+  accounts. Sign in once in the new workspace profile. Everyday Chrome integration is separate.
 - The model takes a snapshot before interacting. References are generated in an isolated
   JavaScript world, include open shadow roots, and expire on another snapshot or navigation.
 - Every bot screenshot is saved as a unique PNG artifact in
