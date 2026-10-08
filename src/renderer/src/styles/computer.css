@@ -1,0 +1,250 @@
+.workspace-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  width: 330px;
+  overflow: hidden;
+  transition:
+    width 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 180ms ease,
+    visibility 0s;
+}
+.workspace-navigation.is-compact {
+  width: 76px;
+}
+.workspace-content {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transition: flex-basis 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  container-type: inline-size;
+  position: relative;
+}
+.computer-mode .workspace-navigation {
+  width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    width 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 180ms ease,
+    visibility 0s 260ms;
+}
+.computer-mode .workspace-content {
+  flex: 0 0 25%;
+}
+.computer-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 0%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  background: var(--surface);
+  transition:
+    flex-basis 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s 260ms;
+}
+.computer-panel.is-open {
+  flex-basis: 75%;
+  visibility: visible;
+  border-left: 1px solid var(--line);
+  transition:
+    flex-basis 260ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s;
+}
+.computer-heading {
+  height: 49px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.computer-title,
+.computer-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.computer-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.computer-title strong {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 550;
+}
+.computer-status {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.computer-status.is-connected {
+  color: var(--teal);
+}
+.computer-control,
+.computer-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.computer-control:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+.computer-control.is-active {
+  color: var(--teal);
+}
+.computer-toggle {
+  color: #bdcbd0;
+  border: 1px solid #ffffff24;
+}
+.computer-toggle:hover,
+.computer-toggle.is-active {
+  color: #eaf6f2;
+  background: #ffffff0d;
+  border-color: #ffffff40;
+}
+.computer-display {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+.computer-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.computer-canvas canvas {
+  outline: none;
+}
+.computer-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  text-align: center;
+  gap: 16px;
+}
+.computer-placeholder h2 {
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 550;
+  letter-spacing: -0.3px;
+}
+.computer-placeholder p {
+  max-width: 380px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.computer-placeholder details {
+  max-width: 560px;
+  width: 100%;
+  font-size: 11px;
+  text-align: left;
+}
+.computer-placeholder summary {
+  cursor: pointer;
+  text-align: center;
+}
+.computer-placeholder pre {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  margin-top: 12px;
+  background: var(--surface-muted);
+}
+.computer-loading {
+  width: 140px;
+  height: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.computer-loading span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: var(--teal);
+  animation: computer-progress 1.8s ease-in-out infinite;
+}
+@keyframes computer-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(390%);
+  }
+}
+@container (max-width: 420px) {
+  .conversation-heading {
+    padding-inline: 14px;
+  }
+  .ai-message-feed,
+  .composer-area {
+    padding-inline: 14px;
+  }
+  .computer-mode .conversation-heading {
+    flex-wrap: wrap;
+  }
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .heading-identity h1 {
+    font-size: 16px;
+  }
+  .composer-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .composer-actions {
+    flex-wrap: wrap;
+  }
+  .composer-hint {
+    display: none;
+  }
+  .ai-chat-empty {
+    padding-inline: 14px;
+  }
+  .ai-details {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    width: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-navigation,
+  .workspace-content,
+  .computer-panel {
+    transition: none !important;
+  }
+  .computer-loading span {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}

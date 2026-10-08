@@ -36,7 +36,10 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   return <FileText size={size} />;
 }
 
-function toolScopeNote(tool: ToolInfo, folder: string | null) {
+function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
+  if (vm && ['terminal', 'browser', 'image', 'file_operations'].includes(tool.id))
+    return 'Runs inside the workspace Linux VM';
+  if (vm && tool.id.startsWith('register_custom_')) return 'Unavailable in VM v1';
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
   if (tool.id === 'memory') return 'Workspace memories · Private memories stay with their bot';
   if (tool.id === 'ask')
@@ -57,12 +60,14 @@ function ToolDetail({
   onBack,
   workspaceId,
   bots,
+  vm = false,
 }: {
   tool: ToolInfo;
   folder: string | null;
   onBack: () => void;
   workspaceId: string;
   bots: Bot[];
+  vm?: boolean;
 }) {
   return (
     <div className="tool-detail">
@@ -76,7 +81,7 @@ function ToolDetail({
         <div>
           <h1>{tool.name}</h1>
           <span className={`tool-availability ${tool.available ? 'is-ready' : ''}`}>
-            {tool.available ? 'Ready' : 'Needs a folder'}
+            {tool.available ? 'Ready' : vm ? 'Unavailable in VM v1' : 'Unavailable'}
           </span>
         </div>
       </div>
@@ -95,7 +100,7 @@ function ToolDetail({
       <section className="tool-detail-section">
         <h2>Availability</h2>
         <p>{tool.scope === 'all-bots' ? 'Shared with every bot' : 'Available to assigned bots'}</p>
-        <small>{toolScopeNote(tool, folder)}</small>
+        <small>{toolScopeNote(tool, folder, vm)}</small>
       </section>
       <ToolAssignments
         workspaceId={workspaceId}
@@ -115,6 +120,7 @@ export function ToolsPage({
   selectedToolId,
   capabilitySection,
   onSelectTool,
+  vm = false,
 }: {
   bots: Bot[];
   workspaceId: string;
@@ -123,6 +129,7 @@ export function ToolsPage({
   selectedToolId: string | null;
   capabilitySection?: 'tool' | 'route';
   onSelectTool: (toolId: string | null) => void;
+  vm?: boolean;
 }) {
   const [tools, setTools] = useState<ToolInfo[]>([]),
     [query, setQuery] = useState('');
@@ -169,6 +176,7 @@ export function ToolsPage({
             onBack={() => onSelectTool(null)}
             workspaceId={workspaceId}
             bots={bots}
+            vm={vm}
           />
         ) : (
           <div className="tool-detail">
@@ -195,7 +203,7 @@ export function ToolsPage({
         >
           {tools.length} tool {tools.length === 1 ? 'family' : 'families'}
         </span>
-        <BrowserToggle />
+        {!vm && <BrowserToggle />}
       </div>
       <h1>
         {capabilitySection === 'tool'
@@ -261,7 +269,10 @@ export function ToolsPage({
       {!capabilitySection && !loading && !visible.length && (
         <div className="tools-empty">No tools match “{query}”.</div>
       )}
-      {capabilitySection && (
+      {capabilitySection && vm && (
+        <p className="ai-caption">Custom tools and routes are unavailable in VM v1.</p>
+      )}
+      {capabilitySection && !vm && (
         <CustomCapabilities
           workspaceId={workspaceId}
           query={query}
@@ -273,18 +284,28 @@ export function ToolsPage({
         <FolderOpen size={18} />
         <div>
           <strong>Workspace folder</strong>
-          <p>{folder || 'Give your bots a local folder to work in.'}</p>
+          <p>
+            {vm
+              ? '/home/mukai/workspace · Linux VM'
+              : folder || 'Give your bots a local folder to work in.'}
+          </p>
         </div>
-        {!folder && (
+        {!vm && !folder && (
           <button className="button" onClick={onConnectFolder}>
             Connect folder
           </button>
         )}
       </div>
       <div className="tools-bottom-note">
-        Tools run locally. Your AI provider receives tool output, including page content and command
-        results. File operations enforce folder boundaries. Terminal commands run with your OS
-        account permissions and are not restricted to that folder.
+        {vm ? (
+          'Computer tools run inside the Linux VM. Your AI provider receives tool output. No host folders are mounted.'
+        ) : (
+          <>
+            Tools run locally. Your AI provider receives tool output, including page content and
+            command results. File operations enforce folder boundaries. Terminal commands run with
+            your OS account permissions and are not restricted to that folder.
+          </>
+        )}
       </div>
     </main>
   );

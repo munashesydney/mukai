@@ -4,6 +4,9 @@ import { Avatar } from '../../components/ui/Avatar';
 import type { HealthResponse } from '../../../../shared/contracts';
 import { getHealth } from '../../services/healthService';
 import type { Workspace } from '../../../../shared/ai';
+import { workspaceService } from '../../services/workspaceService';
+import type { ComputerStatus } from '../../../../shared/computer';
+import { errorText } from '../../utils/errors';
 
 export function WorkspacePanel({
   workspace,
@@ -47,7 +50,8 @@ export function WorkspacePanel({
         </div>
         <span className="settings-account-badge">{workspace?.name[0]?.toUpperCase() || 'M'}</span>
       </div>
-      {workspace && (
+      {workspace?.computer === 'qemu' && <VmComputer workspace={workspace} />}
+      {workspace && workspace.computer !== 'qemu' && (
         <section className="settings-card workspace-folder-card">
           <h4>Workspace folder</h4>
           <p>{workspace.folder || 'Connect a folder to let your bots work with local files.'}</p>
@@ -146,5 +150,71 @@ export function WorkspacePanel({
         <span>Runs locally. Your workspace stays on this device.</span>
       </div>
     </>
+  );
+}
+
+function VmComputer({ workspace }: { workspace: Workspace }) {
+  const [status, setStatus] = useState<ComputerStatus>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    const refresh = () =>
+      workspaceService
+        .computerStatus(workspace.id)
+        .then((value) => {
+          if (active) setStatus(value);
+        })
+        .catch((error) => {
+          if (active) setError(errorText(error));
+        });
+    void refresh();
+    const timer = setInterval(() => void refresh(), 3000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [workspace.id]);
+  async function control(action: 'start' | 'stop') {
+    setBusy(true);
+    setError('');
+    try {
+      setStatus(await workspaceService.controlComputer(workspace.id, action));
+    } catch (error) {
+      setError(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="settings-card workspace-folder-card">
+      <h4>Linux VM · Preview</h4>
+      <p>2 CPUs · 2 GiB RAM · Persistent disk · /home/mukai/workspace</p>
+      <p role="status">{status?.state || 'Checking…'}</p>
+      {(error || status?.error) && (
+        <p className="ai-alert" role="alert">
+          {error || status?.error}
+        </p>
+      )}
+      <button
+        className="button"
+        disabled={busy || !status || status.state === 'starting' || status.state === 'running'}
+        onClick={() => void control('start')}
+      >
+        {busy ? 'Please wait…' : 'Start VM'}
+      </button>
+      <button
+        className="button"
+        disabled={busy || !status || status.state === 'stopped'}
+        onClick={() => void control('stop')}
+      >
+        Stop VM
+      </button>
+      <p className="ai-caption">
+        Stopping ends all running guest sessions. Files survive restarts. Bots start the VM
+        automatically when they need it. Browser actions run headlessly; custom tools and routes are
+        unavailable in v1.
+      </p>
+    </section>
   );
 }

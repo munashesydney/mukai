@@ -6,6 +6,7 @@ const workspaceRecord = (row: Row): Workspace => ({
   name: String(row.name),
   folder: row.folder as string | null,
   createdAt: String(row.created_at),
+  computer: row.computer === 'qemu' ? 'qemu' : 'local',
 });
 export class WorkspaceRepository {
   constructor(private database: Database) {}
@@ -28,11 +29,12 @@ export class WorkspaceRepository {
   create(workspace: Workspace) {
     this.database.transaction(() => {
       this.database.run(
-        'INSERT INTO workspaces VALUES (?,?,?,?)',
+        'INSERT INTO workspaces (id,name,folder,created_at,computer) VALUES (?,?,?,?,?)',
         workspace.id,
         workspace.name,
         workspace.folder,
         workspace.createdAt,
+        workspace.computer || 'local',
       );
     });
   }

@@ -177,7 +177,9 @@ describe('Custom tool permission checkpoints', () => {
       "UPDATE capabilities SET definition_json=json_remove(definition_json,'$.permissionMode') WHERE kind='tool'",
     );
     api.store.db.exec('DROP TABLE custom_tool_confirmations');
-    api.store.run('DELETE FROM schema_migrations WHERE version=?', migrations.length);
+    const permissionMigration =
+      migrations.findIndex((sql) => sql.includes('CREATE TABLE custom_tool_confirmations')) + 1;
+    api.store.run('DELETE FROM schema_migrations WHERE version=?', permissionMigration);
     await new Promise<void>((resolve) => api.server.close(() => resolve()));
     api.dispose();
     api = await startApiServer(0, { dataDir: join(root, 'data') });

@@ -60,6 +60,9 @@ else {
       const api = await startApiServer(47831, {
         dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
         embeddedBrowser,
+        guestBundleDir: app.isPackaged
+          ? join(process.resourcesPath, 'guest')
+          : join(app.getAppPath(), 'dist', 'guest'),
       });
       apiServer = api.server;
       shutdownApi = api.shutdown;

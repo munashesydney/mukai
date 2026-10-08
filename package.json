@@ -1,7 +1,7 @@
 {
   "name": "mukai",
   "version": "0.1.0",
-  "description": "Mukai \u2014 a workspace for ideas that move forward.",
+  "description": "Mukai — a workspace for ideas that move forward.",
   "private": true,
   "engines": {
     "node": ">=24.0.0"
@@ -10,6 +10,9 @@
   "author": "Mukai",
   "license": "UNLICENSED",
   "scripts": {
+    "build:guest": "tsx scripts/build-guest.ts",
+    "predev": "npm run build:guest",
+    "predev:server": "npm run build:guest",
     "dev": "electron-vite dev",
     "dev:web": "vite --config vite.web.config.ts --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",
@@ -20,7 +23,7 @@
     "test:capabilities": "tsx scripts/run-capability-smoke.ts",
     "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
-    "build": "npm run typecheck && electron-vite build && tsc -p tsconfig.server.json",
+    "build": "npm run typecheck && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
     "start:server": "node dist/server/src/server/index.js",
@@ -39,6 +42,7 @@
     "@fontsource/inter": "^5.2.6",
     "@huggingface/transformers": "4.3.0",
     "@modelcontextprotocol/sdk": "^1.32.0",
+    "@novnc/novnc": "^1.7.0",
     "ai": "^7.0.127",
     "ajv": "^8.20.0",
     "diff": "9.0.0",
@@ -52,6 +56,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.35.5",
+    "ws": "^8.22.0",
     "yaml": "^2.9.1",
     "yauzl": "^3.4.0",
     "zod": "^4.6.5"
@@ -59,8 +64,10 @@
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@types/node": "^24.0.0",
+    "@types/novnc__novnc": "^1.6.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.2",
     "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^44.5.1",
@@ -89,6 +96,12 @@
       "package.json"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "dist/guest",
+        "to": "guest"
+      }
+    ],
     "asarUnpack": [
       "node_modules/@esbuild/**/*",
       "node_modules/onnxruntime*/**/*",

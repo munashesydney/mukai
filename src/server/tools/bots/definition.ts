@@ -23,7 +23,7 @@ export const botManagementDefinition = {
       .max(100)
       .optional()
       .describe(
-        'Optional complete tool assignment list: built-in tool names, or custom:<registrationId> from register_custom_tool list. [] assigns no optional tools. Skills and routes remain shared.',
+        'Optional complete tool assignment list: built-in tool names, or custom:<registrationId> from register_custom_tool list. terminal includes process; process is accepted as an alias for terminal. [] assigns no optional tools. Skills and routes remain shared.',
       ),
     botId: z.string().min(1).max(80).optional(),
     message: z.string().trim().min(1).max(16000).optional(),

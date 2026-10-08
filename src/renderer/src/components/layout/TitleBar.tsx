@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Search, Minus, Square, X, PanelLeft } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Search, Minus, Square, X, PanelLeft, Monitor } from 'lucide-react';
 import { Brand } from '../ui/Brand';
 import { IconButton } from '../ui/IconButton';
 import { useEffect, useState } from 'react';
@@ -11,6 +11,8 @@ export function TitleBar({
   canBack,
   canForward,
   onToggleSidebar,
+  onComputer,
+  computerOpen = false,
   workspaceName = 'Munashe’s workspace',
 }: {
   onSearch: () => void;
@@ -19,6 +21,8 @@ export function TitleBar({
   canBack: boolean;
   canForward: boolean;
   onToggleSidebar: () => void;
+  onComputer?: () => void;
+  computerOpen?: boolean;
   workspaceName?: string;
 }) {
   const [connection, setConnection] = useState('Connecting…');
@@ -51,7 +55,7 @@ export function TitleBar({
         <IconButton label="Go forward" onClick={onForward} disabled={!canForward}>
           <ArrowRight size={17} />
         </IconButton>
-        <IconButton label="Toggle sidebar" onClick={onToggleSidebar}>
+        <IconButton label="Toggle sidebar" onClick={onToggleSidebar} disabled={computerOpen}>
           <PanelLeft size={16} />
         </IconButton>
       </div>
@@ -61,6 +65,16 @@ export function TitleBar({
         <kbd>Ctrl K</kbd>
       </button>
       <div className="title-right">
+        {onComputer && (
+          <button
+            className={`computer-toggle ${computerOpen ? 'is-active' : ''}`}
+            aria-pressed={computerOpen}
+            onClick={onComputer}
+          >
+            <Monitor size={15} />
+            <span>{computerOpen ? 'Exit computer' : 'View computer'}</span>
+          </button>
+        )}
         <span className="workspace-state">
           <i /> {connection}
         </span>

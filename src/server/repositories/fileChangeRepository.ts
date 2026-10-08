@@ -55,8 +55,14 @@ export class FileChangeRepository {
       : undefined;
   }
   record(botId: string, messageId: string, snapshot: FileMutationSnapshot) {
-    // Windows identifies files without case sensitivity. Retain the first display spelling.
-    const key = process.platform === 'win32' ? snapshot.path.toLowerCase() : snapshot.path;
+    // Guest Linux paths stay case-sensitive even when Mukai runs on Windows.
+    const guest =
+      this.database.get(
+        'SELECT w.computer FROM workspaces w JOIN bots b ON b.workspace_id=w.id WHERE b.id=?',
+        botId,
+      )?.computer === 'qemu';
+    const key =
+      !guest && process.platform === 'win32' ? snapshot.path.toLowerCase() : snapshot.path;
     const previous = this.database.get(
       'SELECT * FROM file_changes WHERE message_id=? AND path_key=?',
       messageId,

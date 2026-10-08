@@ -328,6 +328,8 @@ export class CapabilityService {
   ) {
     signal?.throwIfAborted();
     const input = registrationInput.parse(value);
+    if (this.workspaces.require(workspaceId).computer === 'qemu')
+      throw new ApiError(409, 'Custom tools and routes are unavailable in VM v1.');
     if (kind === 'route' && (input.permissionMode || input.operation === 'set_permission'))
       throw new ApiError(400, 'Permission modes apply only to custom tools.');
     if (kind === 'tool' && input.operation === 'register' && !input.permissionMode)
@@ -609,6 +611,8 @@ export class CapabilityService {
     jobId?: string,
   ) {
     const registration = this.require(id);
+    if (this.workspaces.require(registration.workspaceId).computer === 'qemu')
+      throw new ApiError(409, 'Custom tools and routes are unavailable in VM v1.');
     if (registration.status !== 'ready')
       throw new ApiError(
         409,

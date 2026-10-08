@@ -31,6 +31,8 @@ import { ToolAccessService } from './services/toolAccessService';
 import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
 import { BotManagementService } from './services/botManagementService';
 import { ProcessService } from './services/processService';
+import { ComputerManager } from './computer/manager';
+import { DesktopTransport } from './computer/desktopTransport';
 import { BrowserService } from './services/browserService';
 import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
@@ -47,6 +49,7 @@ export interface ApiOptions {
   /** Deterministic extractor for tests or a host-provided memory model. */
   memoryExtractor?: Extractor;
   memoryReviewIdleMs?: number;
+  guestBundleDir?: string;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -70,7 +73,8 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
-    const workspaces = new WorkspaceService(workspaceRepository, dir);
+    const computers = new ComputerManager(dir, options.guestBundleDir, diagnostics);
+    const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
       diagnostics.registerSecret(value),
     );
@@ -192,7 +196,9 @@ export function createApiServer(options: ApiOptions = {}) {
       if (ownerBotId && ownerBotId !== botId)
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
+    const desktops = new DesktopTransport();
     const route = createRoutes({
+      desktops,
       approvals,
       token,
       startedAt,
@@ -218,6 +224,7 @@ export function createApiServer(options: ApiOptions = {}) {
         sendError(response, error);
       });
     });
+    desktops.attach(server);
 
     server.requestTimeout = 30000;
     server.headersTimeout = 10000;
@@ -232,6 +239,7 @@ export function createApiServer(options: ApiOptions = {}) {
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
+        desktops.shutdown();
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.
         const capabilityShutdown = capabilities.shutdown();
@@ -241,6 +249,7 @@ export function createApiServer(options: ApiOptions = {}) {
         await memory.shutdown();
         await capabilityShutdown;
         await processes.shutdown();
+        await computers.shutdown();
         await browsers.shutdown();
       })());
     server.on('close', () => {
@@ -274,6 +283,7 @@ export function createApiServer(options: ApiOptions = {}) {
       pursuits,
       browsers,
       processes,
+      computers,
       capabilities,
       memory,
       skills,
@@ -287,6 +297,7 @@ export function createApiServer(options: ApiOptions = {}) {
 export async function startApiServer(port = 0, options: ApiOptions = {}) {
   const api = createApiServer(options);
   try {
+    await api.computers.initialize();
     await api.capabilities.initialize();
     await new Promise<void>((resolve, reject) => {
       api.server.once('error', reject);
@@ -296,6 +307,7 @@ export async function startApiServer(port = 0, options: ApiOptions = {}) {
       });
     });
   } catch (error) {
+    await api.shutdown();
     api.dispose();
     throw error;
   }

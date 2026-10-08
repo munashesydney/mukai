@@ -1,4 +1,5 @@
 import type { SkillService } from '../skills/service';
+import type { DesktopTransport } from '../computer/desktopTransport';
 import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -45,6 +46,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  desktops,
   approvals,
   token,
   startedAt,
@@ -63,6 +65,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  desktops: DesktopTransport;
   approvals: ApprovalService;
   token: string;
   startedAt: number;
@@ -469,11 +472,58 @@ export function createRoutes({
     } else if (resource === 'changes' && id && !action && method === 'GET') {
       return send(response, changes.detail(id));
     } else if (resource === 'workspaces') {
+      if (id === 'computer-setup' && !action && method === 'POST') {
+        if (!workspaces.computers) throw new ApiError(503, 'VM setup is unavailable.');
+        return send(response, await workspaces.computers.installer.start(), 202);
+      }
+      if (id === 'computer-setup' && !action && method === 'GET')
+        return send(
+          response,
+          (await workspaces.computers?.setup()) || {
+            available: false,
+            reason: 'VM computers are unavailable.',
+          },
+        );
+      if (id && action === 'computer-view' && method === 'POST') {
+        const workspace = workspaces.require(id);
+        if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
+        return send(response, await desktops.session(workspaces.computers.guest(workspace)));
+      }
+      if (id && action === 'computer') {
+        const workspace = workspaces.require(id);
+        if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
+        if (method === 'GET') return send(response, workspaces.computers.status(workspace));
+        if (method === 'POST') {
+          const value = z
+            .object({ action: z.enum(['start', 'stop']) })
+            .strict()
+            .parse(await jsonBody(request));
+          const computer = workspaces.computers.guest(workspace);
+          try {
+            if (value.action === 'start') await computer.start();
+            else await computer.stop();
+          } catch (error) {
+            throw new ApiError(
+              503,
+              error instanceof Error ? error.message : 'The VM could not complete this operation.',
+            );
+          }
+          return send(response, workspaces.computers.status(workspace));
+        }
+      }
       if (!id && method === 'GET') return send(response, workspaces.list());
       if (!id && method === 'POST')
         return send(
           response,
-          workspaces.create(workspaceSchema.parse(await jsonBody(request))),
+          await (async () => {
+            const input = workspaceSchema.parse(await jsonBody(request));
+            if (input.computer === 'qemu') {
+              const setup = await workspaces.computers?.setup();
+              if (!setup?.available)
+                throw new ApiError(503, setup?.reason || 'VM setup is unavailable.');
+            }
+            return workspaces.create(input);
+          })(),
           201,
         );
       if (id && !action && method === 'PUT')

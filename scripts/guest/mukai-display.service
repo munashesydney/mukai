@@ -1,0 +1,17 @@
+[Unit]
+Description=Mukai workspace display
+After=systemd-udev-settle.service
+ConditionPathExists=/dev/virtio-ports/com.mukai.agent
+RefuseManualStop=yes
+
+[Service]
+User=mukai
+Group=mukai
+Environment=HOME=/home/mukai
+ExecStartPre=+/bin/sh /opt/mukai-guest/bridge/desktop-prepare.sh
+ExecStart=/usr/bin/Xtigervnc :0 -desktop Mukai -geometry 1280x800 -depth 24 -rfbport 5901 -localhost no -SecurityTypes VncAuth -PasswordFile /run/mukai-desktop/passwd -AlwaysShared -AcceptSetDesktopSize -nolisten tcp -ac
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

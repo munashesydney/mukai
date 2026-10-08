@@ -13,6 +13,7 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:47831',
+        ws: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
         configure: (proxy) =>
           proxy.on('proxyReq', (request) => {

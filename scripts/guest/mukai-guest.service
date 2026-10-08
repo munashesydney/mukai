@@ -1,0 +1,21 @@
+[Unit]
+Description=Mukai VM guest bridge
+After=systemd-udev-settle.service network-online.target mukai-desktop.service
+Wants=network-online.target mukai-desktop.service
+ConditionPathExists=/dev/virtio-ports/com.mukai.agent
+RefuseManualStop=yes
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/mukai-guest
+ExecStartPre=/bin/sh -ec 'modprobe qemu_fw_cfg; install -d -o root -g root -m 0700 /run/mukai-guest; cat /sys/firmware/qemu_fw_cfg/by_name/opt/com.mukai/token/raw > /run/mukai-guest/boot-token; chown root:root /run/mukai-guest/boot-token /dev/virtio-ports/com.mukai.agent; chmod 0600 /run/mukai-guest/boot-token /dev/virtio-ports/com.mukai.agent'
+ExecStart=/usr/local/bin/node /opt/mukai-guest/bridge/guest.cjs
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

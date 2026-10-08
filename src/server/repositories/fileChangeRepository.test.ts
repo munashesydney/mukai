@@ -26,6 +26,12 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Per-turn file snapshots', () => {
+  it('keeps Linux guest filenames case-sensitive on every host', () => {
+    database.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+    changes.record('bot', 'turn', { path: 'Foo.ts', before: null, after: 'upper' });
+    changes.record('bot', 'turn', { path: 'foo.ts', before: null, after: 'lower' });
+    expect(changes.forMessage('turn').map((file) => file.path)).toEqual(['Foo.ts', 'foo.ts']);
+  });
   it('retains the first before and last after, without double-counting repeated edits or later turns', () => {
     changes.record('bot', 'turn', { path: 'file.ts', before: 'old\n', after: 'intermediate\n' });
     const id = changes.forMessage('turn')[0].id;

@@ -9,7 +9,10 @@ import { ApiError } from '../config';
 export class ChromeHost {
   private contexts = new Map<string, Promise<BrowserContext>>();
   private pages = new WeakSet<Page>();
-  constructor(private dataDir: string) {}
+  constructor(
+    private dataDir: string,
+    private headless = false,
+  ) {}
   async open(info: BrowserSession): Promise<BrowserPage> {
     const key = createHash('sha256')
       .update(info.workspaceId + '/' + info.botId + '/' + info.conversationId)
@@ -18,7 +21,12 @@ export class ChromeHost {
     if (!contextPromise) {
       contextPromise = chromium.launchPersistentContext(
         join(this.dataDir, 'browser-profiles', 'chrome', key),
-        { channel: 'chrome', headless: false, acceptDownloads: false, viewport: null },
+        {
+          channel: 'chrome',
+          headless: this.headless,
+          acceptDownloads: false,
+          viewport: this.headless ? { width: 1280, height: 800 } : null,
+        },
       );
       this.contexts.set(key, contextPromise);
     }

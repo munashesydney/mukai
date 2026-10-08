@@ -82,10 +82,12 @@ export interface Workspace {
   name: string;
   folder: string | null;
   createdAt: string;
+  computer?: 'local' | 'qemu';
 }
 export interface WorkspaceInput {
   name: string;
   folder: string;
+  computer?: 'local' | 'qemu';
 }
 export interface ChatActivity {
   id: string;
