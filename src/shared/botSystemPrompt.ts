@@ -63,7 +63,7 @@ export function buildBotSystemPrompt(input: {
       .filter(([name]) => Boolean((input.tools as Record<string, unknown>)[name]))
       .map(([name, guidance]) =>
         name === 'terminal' && input.computer === 'qemu'
-          ? 'Terminal commands run inside the workspace Linux VM as the mukai account, with sudo available inside the guest. Use process for running sessions. Commands do not execute on the host. Keep commands relevant to the user task and stop unnecessary background processes.'
+          ? 'Terminal commands run inside the workspace Linux VM as the mukai account, with sudo available inside the guest. All bots in this workspace share this computer and its files. Use process for running sessions. Commands do not execute on the host. Mukai manages VM power and its guest bridge: do not shut down, reboot, or disable the bridge. Keep commands relevant to the user task and stop unnecessary background processes.'
           : guidance,
       ),
     ...(input.previousOperations

@@ -33,12 +33,10 @@ apt-get install -y "$scratch/chrome.deb"
 id mukai >/dev/null 2>&1 || useradd --create-home --shell /bin/bash mukai
 install -d -o mukai -g mukai /home/mukai/workspace /var/lib/mukai-guest
 install -d /opt/mukai-guest
-install -m 0644 guest.cjs package.json /opt/mukai-guest/
+install -m 0644 package.json /opt/mukai-guest/
 (cd /opt/mukai-guest; /usr/local/bin/npm install --omit=dev)
 # The account has administrator access INSIDE its VM, for package installation.
 printf 'mukai ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/mukai
 chmod 0440 /etc/sudoers.d/mukai
-install -m 0644 mukai-guest.service /etc/systemd/system/mukai-guest.service
-systemctl daemon-reload
-systemctl enable mukai-guest.service
+sh ./protect.sh .
 echo 'Guest installed. Shut down before copying this disk as the base image.'

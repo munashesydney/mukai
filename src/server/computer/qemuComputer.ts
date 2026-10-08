@@ -15,9 +15,12 @@ import {
   Frames,
   encodeFrame,
   PROTOCOL_VERSION,
+  GUEST_REVISION,
   type Computer,
   type ComputerMethod,
 } from './protocol';
+import { upgradeGuest } from './upgradeGuest';
+import { qemuControl } from './qemuControl';
 
 export interface QemuConfig {
   binary: string;
@@ -56,7 +59,12 @@ export async function qemuSetup(config = qemuConfig()): Promise<QemuSetup> {
   return { available: true };
 }
 const optionPath = (value: string) => value.replace(/,/g, ',,');
-export function qemuArguments(directory: string, port: number, config: QemuConfig) {
+export function qemuArguments(
+  directory: string,
+  port: number,
+  config: QemuConfig,
+  controlPort?: number,
+) {
   return [
     '-name',
     'Mukai workspace',
@@ -91,6 +99,7 @@ export function qemuArguments(directory: string, port: number, config: QemuConfi
     'virtserialport,chardev=mukai,name=com.mukai.agent',
     '-fw_cfg',
     `name=opt/com.mukai/token,file=${optionPath(join(directory, 'boot-token'))}`,
+    ...(controlPort ? ['-qmp', `tcp:127.0.0.1:${controlPort}`] : []),
   ];
 }
 
@@ -115,20 +124,23 @@ export class QemuComputer implements Computer {
   private exited?: Promise<void>;
   private log = '';
   private bootController?: AbortController;
+  private guestRevision = 1;
+  private control?: Awaited<ReturnType<typeof qemuControl>>;
   constructor(
     private directory: string,
     private config = qemuConfig(),
     private launch: Launcher = spawn,
+    private guestBundleDir?: string,
   ) {}
   status(): ComputerStatus {
     return { ...this.state };
   }
   async start() {
     if (this.stopping) await this.stopping;
-    if (this.state.state === 'running') return;
     if (this.starting) return this.starting;
+    if (this.state.state === 'running') return;
     this.bootController = new AbortController();
-    this.starting = this.boot()
+    this.starting = this.startGuest()
       .catch(async (error: unknown) => {
         const cancelled = this.bootController?.signal.aborted;
         await this.stop();
@@ -144,6 +156,19 @@ export class QemuComputer implements Computer {
         this.starting = undefined;
       });
     return this.starting;
+  }
+  private async startGuest() {
+    const signal = this.bootController!.signal;
+    await this.boot();
+    if (this.guestBundleDir && this.guestRevision < GUEST_REVISION) {
+      await upgradeGuest(this.guestBundleDir, this.exchange.bind(this), signal);
+      signal.throwIfAborted();
+      await this.stopGuest(false);
+      signal.throwIfAborted();
+      await this.boot();
+      if (this.guestRevision < GUEST_REVISION)
+        throw new Error('Guest update did not activate. Restart the workspace VM to retry.');
+    }
   }
   private async boot() {
     const signal = this.bootController!.signal;
@@ -191,6 +216,7 @@ export class QemuComputer implements Computer {
     this.closeConnection = () => {
       for (const socket of sockets) socket.destroy();
       server.close();
+      this.control?.close();
     };
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -206,6 +232,8 @@ export class QemuComputer implements Computer {
     const address = server.address();
     if (!address || typeof address === 'string')
       throw new Error('Could not allocate the VM bridge.');
+    this.control = await qemuControl();
+    signal.throwIfAborted();
     let ready!: () => void;
     let failed!: (error: Error) => void;
     const handshake = new Promise<void>((resolve, reject) => {
@@ -231,12 +259,17 @@ export class QemuComputer implements Computer {
           for (const raw of frames.push(chunk)) {
             if (!authenticated) {
               const hello = z
-                .object({ hello: z.literal(PROTOCOL_VERSION), token: z.string().length(64) })
+                .object({
+                  hello: z.literal(PROTOCOL_VERSION),
+                  token: z.string().length(64),
+                  revision: z.number().int().positive().optional(),
+                })
                 .parse(raw);
               const given = Buffer.from(hello.token);
               if (!timingSafeEqual(given, Buffer.from(token)))
                 throw new Error('VM identity mismatch.');
               authenticated = true;
+              this.guestRevision = hello.revision ?? 1;
               clearTimeout(timer);
               this.socket = socket;
               socket.write(encodeFrame({ ready: PROTOCOL_VERSION }));
@@ -283,7 +316,7 @@ export class QemuComputer implements Computer {
     );
     const child = this.launch(
       this.config.binary,
-      qemuArguments(this.directory, address.port, this.config),
+      qemuArguments(this.directory, address.port, this.config, this.control.port),
       { windowsHide: true, env },
     );
     this.child = child;
@@ -349,6 +382,15 @@ export class QemuComputer implements Computer {
       signal.removeEventListener('abort', abortStart);
     }
     signal.throwIfAborted();
+    return this.exchange(method, input, owner, signal);
+  }
+  private async exchange(
+    method: ComputerMethod,
+    input: unknown,
+    owner: RuntimeOwner,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
     if (!this.socket || this.state.state !== 'running') throw new Error('VM is unavailable.');
     if (this.pending.size >= 32) throw new Error('Too many outstanding VM requests.');
     const id = randomUUID();
@@ -387,14 +429,18 @@ export class QemuComputer implements Computer {
     this.pending.clear();
   }
   stop() {
+    this.bootController?.abort();
+    return this.stopGuest();
+  }
+  private stopGuest(abortBoot = true) {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
-      this.bootController?.abort();
+      if (abortBoot) this.bootController?.abort();
       this.state = { kind: 'qemu', state: 'stopped' };
       this.failPending(new Error('Workspace VM stopped.'));
       const child = this.child;
       if (child) {
-        child.stdin.write('system_powerdown\n');
+        if (!this.control?.powerdown()) child.stdin.write('\nsystem_powerdown\n');
         const timer = setTimeout(() => {
           child.kill();
         }, 15000);

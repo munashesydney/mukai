@@ -34,7 +34,11 @@ You can supply a standalone **x86_64 qcow2** image instead of automatic preparat
 3. Boot a disposable Ubuntu/Debian guest and copy the contents of `dist/guest/` into it, using SSH/SCP or an ISO. Inside the guest, from that directory, run `sudo sh install.sh`. The installer downloads Node 24 (checks its SHA-256), Google Chrome and required packages, creates the guest account, and enables the daemon. It must run inside QEMU/KVM. The guest account has passwordless sudo **inside this guest** for development work.
 4. Shut the guest down cleanly. Use `qemu-img convert -O qcow2 source-disk prepared-mukai.qcow2` if needed to flatten the image. Keep the prepared base offline and unchanged while Mukai uses it. The image must boot without an installer/seed ISO. The guest service activates when Mukai supplies its virtio serial device.
 
-The service does not need a network listener or SSH once prepared. Mukai passes a new identity through QEMU `fw_cfg` on every boot and communicates over a dedicated virtio serial channel. The root service pre-start step loads `qemu_fw_cfg`, reads the boot identity and grants the guest account access to that channel. The daemon itself and shell commands run as `mukai`.
+The service does not need a network listener or SSH once prepared. Mukai passes a new identity through QEMU `fw_cfg` on every boot and communicates over a dedicated virtio serial channel. A root-owned supervisor holds the boot identity and serial channel; bot tools run in a separate `mukai` worker without those credentials or inherited root groups. The account retains passwordless sudo for package installation and administration inside its VM.
+
+Ordinary `shutdown`, `poweroff`, `reboot`, `halt` and systemctl power operations are blocked. Attempts to stop, restart, disable or mask the guest bridge through systemctl are also blocked; inspecting it and managing other services remain available. These are accidental-disruption guardrails: full root access can deliberately bypass or remove them. Mukai's host controller still controls VM start/stop through QEMU. There is no bot-facing VM lifecycle tool.
+
+Existing workspace disks automatically receive the updated bridge and protections on their next start, followed by a controlled restart. Project files and the workspace's chosen computer remain intact. An update failure prevents bot tools from starting and reports an error; it never falls back to the host. `process` is accepted as an assignment alias for `terminal`, including when creating child bots; both share one permission.
 
 ## Configure Mukai
 
@@ -56,13 +60,15 @@ Disks live under Mukai's private data directory at `computers/<workspace-id>/dis
 
 Boot waits up to 120 seconds. An individual bridge request waits up to 45 seconds, independently of a command's configured lifetime. Commands return a process session after their yield time; use `process` for longer work. Abort messages cancel active guest requests. Cancelling a caller waiting for a shared boot does not stop another bot's boot. No failed VM operation executes on the host.
 
-Graceful stop asks the guest to power down, then terminates QEMU after 15 seconds if needed. Forced termination can lose unsaved writes. After a host crash, a recorded live VM PID blocks another launch against the disk. Inspect and close the old QEMU process yourself; Mukai deliberately does not kill an unknown PID or attach to an orphan. A failed bridge with a still-running VM requires Stop before Start.
+Graceful stop sends an ACPI power-down request through a private QMP connection, then terminates QEMU after 15 seconds if needed. The control listener closes once QEMU connects, before the guest boots. Forced termination can lose unsaved writes. After a host crash, a recorded live VM PID blocks another launch against the disk. Inspect and close the old QEMU process yourself; Mukai deliberately does not kill an unknown PID or attach to an orphan. A failed bridge with a still-running VM requires Stop before Start.
 
 ## Boundary and verification
 
 The guest has outbound user-mode networking and can reach network services, including reachable host services. VM mode isolates OS execution and storage; it is not a network deny policy or a guarantee against hypervisor vulnerabilities. Model credentials and the Mukai API token are not passed to QEMU or the guest. The bridge accepts result frames and cannot invoke arbitrary host callbacks.
 
 Automated tests cover framing, process ownership, guest dispatch, routing, cancellation, persistence, launch arguments, API guards, setup retries/resumption, checksum failures, seed delivery and publishing only after successful tool verification. Installation and provisioning orchestration use mocked OS commands in tests. Real Ubuntu provisioning and subsequent boots have also been exercised on Windows WHPX, including terminal commands, file writes, Chrome navigation and browser snapshots. Linux KVM and Intel macOS HVF still require real host validation before shipping this preview.
+
+For an opt-in real VM acceptance test, build the guest bundle, set `MUKAI_QEMU_BINARY`, `MUKAI_QEMU_IMAGE` and optionally `MUKAI_QEMU_ACCEL`, then run `npx tsx scripts/test-vm-guardrails.ts`. It clones the prepared image into a temporary directory, exercises an in-place upgrade, admin access, power/bridge guardrails, Chrome/screenshots/images, shared files, and controller restart persistence, then removes only its test clone.
 
 Provisioning disables the serial login service and writes installer output to a guest log independently of console delivery. Ubuntu's missing firmware modules are installed before enabling the bridge; its daemon files are readable by the guest account. VM launches use the Nehalem CPU baseline to expose SSE4.2 for current native dependencies. Failure details retain the installer output instead of the subsequent shutdown messages.
 

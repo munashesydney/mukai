@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Workspace } from '../../shared/ai';
 import type { ComputerStatus } from '../../shared/computer';
 import { QemuComputer } from './qemuComputer';
@@ -11,7 +11,7 @@ export class ComputerManager {
   readonly installer: ComputerSetupService;
   constructor(
     private dataDir: string,
-    guestBundleDir?: string,
+    private guestBundleDir = resolve('dist/guest'),
   ) {
     this.installer = new ComputerSetupService(dataDir, guestBundleDir);
   }
@@ -30,6 +30,8 @@ export class ComputerManager {
       computer = new QemuComputer(
         join(this.dataDir, 'computers', workspace.id),
         this.installer.configuration(),
+        undefined,
+        this.guestBundleDir,
       );
       this.computers.set(workspace.id, computer);
     }

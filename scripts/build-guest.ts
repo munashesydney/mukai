@@ -6,8 +6,9 @@ async function main() {
   const directory = resolve('dist/guest');
   await mkdir(directory, { recursive: true });
   await build({
-    entryPoints: ['src/server/computer/guest.ts'],
-    outfile: resolve(directory, 'guest.cjs'),
+    entryPoints: ['src/server/computer/guest.ts', 'src/server/computer/guest-worker.ts'],
+    outdir: directory,
+    outExtension: { '.js': '.cjs' },
     bundle: true,
     platform: 'node',
     target: 'node24',
@@ -37,7 +38,7 @@ async function main() {
       2,
     ) + '\n',
   );
-  for (const file of ['install.sh', 'mukai-guest.service'])
+  for (const file of ['install.sh', 'protect.sh', 'systemctl-guard.sh', 'mukai-guest.service'])
     await writeFile(
       resolve(directory, file),
       (await readFile(resolve('scripts/guest', file), 'utf8')).replace(/\r\n/g, '\n'),

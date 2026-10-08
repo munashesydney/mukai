@@ -31,7 +31,15 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'mukai-auto-setup-'));
   bundle = join(directory, 'bundle');
   await mkdir(bundle);
-  for (const name of ['guest.cjs', 'package.json', 'install.sh', 'mukai-guest.service'])
+  for (const name of [
+    'guest.cjs',
+    'guest-worker.cjs',
+    'package.json',
+    'install.sh',
+    'protect.sh',
+    'systemctl-guard.sh',
+    'mukai-guest.service',
+  ])
     await writeFile(join(bundle, name), 'fixture');
   vi.stubEnv('MUKAI_QEMU_BINARY', process.execPath);
   vi.stubEnv('MUKAI_QEMU_IMAGE', '');

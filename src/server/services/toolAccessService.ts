@@ -11,6 +11,7 @@ export class ToolAccessService {
     return bot;
   }
   private valid(workspaceId: string, toolId: string) {
+    toolId = toolId === 'process' ? 'terminal' : toolId;
     if ((workspaceToolIds as readonly string[]).includes(toolId)) return;
     if (
       toolId.startsWith('custom:') &&
@@ -46,6 +47,7 @@ export class ToolAccessService {
     });
   }
   set(workspaceId: string, botId: string, toolId: string, enabled: boolean) {
+    toolId = toolId === 'process' ? 'terminal' : toolId;
     if (this.bot(botId).workspaceId !== workspaceId)
       throw new ApiError(403, 'Bot belongs to another workspace.');
     this.valid(workspaceId, toolId);
@@ -61,6 +63,7 @@ export class ToolAccessService {
       }
   }
   initializeChild(caller: Bot, child: Bot, selected?: string[]) {
+    selected = selected?.map((id) => (id === 'process' ? 'terminal' : id));
     const ids = [
       ...workspaceToolIds,
       ...this.repository.customTools(caller.workspaceId).map((tool) => 'custom:' + tool.id),

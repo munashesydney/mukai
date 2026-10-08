@@ -22,7 +22,7 @@ export function cloudConfig(files: Record<string, Buffer>) {
         [
           'sh',
           '-c',
-          'cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/ttyS0 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/ttyS0; echo "$result" > /dev/ttyS0; sync; poweroff',
+          'cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/ttyS0 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/ttyS0; echo "$result" > /dev/ttyS0; sync; if [ -x /usr/lib/mukai-guest/systemctl ]; then /usr/lib/mukai-guest/systemctl poweroff; else poweroff; fi',
         ],
       ],
       output: { all: '| tee -a /var/log/cloud-init-output.log /dev/console' },
@@ -33,9 +33,15 @@ export function cloudConfig(files: Record<string, Buffer>) {
 export async function setupSeed(bundleDir: string) {
   const files = Object.fromEntries(
     await Promise.all(
-      ['guest.cjs', 'package.json', 'install.sh', 'mukai-guest.service'].map(
-        async (name) => [name, await readFile(join(bundleDir, name))] as const,
-      ),
+      [
+        'guest.cjs',
+        'guest-worker.cjs',
+        'package.json',
+        'install.sh',
+        'protect.sh',
+        'systemctl-guard.sh',
+        'mukai-guest.service',
+      ].map(async (name) => [name, await readFile(join(bundleDir, name))] as const),
     ),
   );
   const userData = cloudConfig(files);

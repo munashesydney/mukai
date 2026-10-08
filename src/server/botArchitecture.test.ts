@@ -620,6 +620,30 @@ describe('Bot architecture', () => {
       enabled: false,
     });
   });
+  it('accepts process as the terminal assignment alias when creating children and changing access', async () => {
+    const main = await bot();
+    const child = await api.botManagement.create(main, input('VM helper'), ['terminal', 'process']);
+    expect(api.access.allowed(child, 'terminal')).toBe(true);
+    expect(api.access.allowed(child, 'process')).toBe(true);
+    expect(api.access.allowed(child, 'browser')).toBe(false);
+    const aliasOnly = await api.botManagement.create(main, input('Process helper'), ['process']);
+    expect(api.access.allowed(aliasOnly, 'terminal')).toBe(true);
+    expect(api.access.allowed(aliasOnly, 'process')).toBe(true);
+    expect(api.access.set('default', child.id, 'process', false)).toEqual({
+      botId: child.id,
+      toolId: 'terminal',
+      enabled: false,
+    });
+    expect(api.access.allowed(child, 'terminal')).toBe(false);
+    expect(api.access.allowed(child, 'process')).toBe(false);
+    api.access.set('default', main.id, 'terminal', false);
+    await expect(api.botManagement.create(main, input('Denied'), ['process'])).rejects.toThrow(
+      'cannot grant',
+    );
+    await expect(
+      api.botManagement.create(main, input('Invalid'), ['unknown-tool']),
+    ).rejects.toThrow('Choose a workspace');
+  });
   it('creates children through manage_bot, bounds their grants, and retains nested creator relationships', async () => {
     const main = await bot(),
       peer = await bot('Peer');

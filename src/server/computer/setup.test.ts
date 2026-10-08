@@ -84,7 +84,15 @@ describe('cloud-init seed', () => {
   it('serves only token-scoped NoCloud metadata on loopback', async () => {
     const bundle = join(directory, 'bundle');
     await mkdir(bundle);
-    for (const name of ['guest.cjs', 'package.json', 'install.sh', 'mukai-guest.service'])
+    for (const name of [
+      'guest.cjs',
+      'guest-worker.cjs',
+      'package.json',
+      'install.sh',
+      'protect.sh',
+      'systemctl-guard.sh',
+      'mukai-guest.service',
+    ])
       await writeFile(join(bundle, name), 'fixture');
     const seed = await setupSeed(bundle);
     try {
