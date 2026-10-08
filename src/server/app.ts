@@ -73,7 +73,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
-    const computers = new ComputerManager(dir, options.guestBundleDir);
+    const computers = new ComputerManager(dir, options.guestBundleDir, diagnostics);
     const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
       diagnostics.registerSecret(value),

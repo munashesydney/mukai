@@ -514,7 +514,6 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         {ai.workspace?.computer === 'qemu' && (
           <ComputerPanel
             workspaceId={ai.workspaceId}
-            name={ai.workspace.name}
             open={viewingComputer}
             onClose={() => setComputerOpen(false)}
           />

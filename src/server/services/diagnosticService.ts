@@ -11,8 +11,10 @@ export type DiagnosticPhase =
   | 'checkpoint'
   | 'response-save'
   | 'provider-test'
-  | 'http-request';
+  | 'http-request'
+  | 'computer';
 export interface DiagnosticContext {
+  workspaceId?: string;
   providerId?: string;
   providerKind?: string;
   model?: string;
@@ -172,6 +174,7 @@ export class DiagnosticService {
     try {
       const metadata: Record<string, unknown> = {};
       for (const key of [
+        'workspaceId',
         'providerId',
         'providerKind',
         'model',

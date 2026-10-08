@@ -6,12 +6,10 @@ import { computerService } from '../../services/computerService';
 
 export function ComputerPanel({
   workspaceId,
-  name,
   open,
   onClose,
 }: {
   workspaceId: string;
-  name: string;
   open: boolean;
   onClose(): void;
 }) {
@@ -122,7 +120,6 @@ export function ComputerPanel({
       <header className="computer-heading">
         <span className="computer-title">
           <Monitor size={16} />
-          <strong>{name}</strong>
           <span className={`computer-status ${state === 'connected' ? 'is-connected' : ''}`}>
             {state === 'connected'
               ? 'Live'

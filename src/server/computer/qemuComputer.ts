@@ -6,7 +6,7 @@ import {
 import { createServer, type Socket } from 'node:net';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, copyFile, rename, stat, writeFile, readFile, unlink } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import { arch, platform } from 'node:os';
 import { z } from 'zod';
 import type { ComputerStatus, QemuSetup } from '../../shared/computer';
@@ -21,6 +21,7 @@ import {
 } from './protocol';
 import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
+import type { DiagnosticService } from '../services/diagnosticService';
 
 export interface QemuConfig {
   binary: string;
@@ -135,7 +136,13 @@ export class QemuComputer implements Computer {
     private config = qemuConfig(),
     private launch: Launcher = spawn,
     private guestBundleDir?: string,
+    private diagnostics?: DiagnosticService,
   ) {}
+  private report(event: string, message: string, error?: unknown) {
+    const context = { workspaceId: basename(this.directory), phase: 'computer' as const };
+    if (error) this.diagnostics?.record(event, error, context, 'error', message);
+    else this.diagnostics?.info(event, message, context);
+  }
   status(): ComputerStatus {
     return {
       ...this.state,
@@ -156,11 +163,17 @@ export class QemuComputer implements Computer {
     if (this.stopping) await this.stopping;
     if (this.starting) return this.starting;
     if (this.state.state === 'running') return;
+    // Failed transport is not failed startup. Never let startup cleanup kill an existing VM.
+    if (this.child)
+      throw new Error(
+        'The VM is still running, but its guest bridge is disconnected. Wait for it to reconnect, or stop/start the workspace VM.',
+      );
     this.bootController = new AbortController();
     this.starting = this.startGuest()
       .catch(async (error: unknown) => {
         const cancelled = this.bootController?.signal.aborted;
-        await this.stop();
+        if (!cancelled) this.report('computer.start_failed', 'VM startup failed.', error);
+        await this.stop('startup failure');
         if (!cancelled)
           this.state = {
             kind: 'qemu',
@@ -233,6 +246,8 @@ export class QemuComputer implements Computer {
     }
     const token = randomBytes(32).toString('hex');
     this.desktopPassword = Buffer.from(token, 'hex').toString('base64').slice(0, 8);
+    this.diagnostics?.registerSecret(token);
+    this.diagnostics?.registerSecret(this.desktopPassword);
     await writeFile(join(this.directory, 'boot-token'), token, { mode: 0o600 });
     signal.throwIfAborted();
     const server = createServer();
@@ -256,7 +271,12 @@ export class QemuComputer implements Computer {
     const address = server.address();
     if (!address || typeof address === 'string')
       throw new Error('Could not allocate the VM bridge.');
-    this.control = await qemuControl();
+    this.control = await qemuControl((event, reason) => {
+      this.report(
+        'computer.qmp.' + event.toLowerCase(),
+        `QEMU ${event}${reason ? ': ' + reason : ''}.`,
+      );
+    });
     const reservation = createServer();
     await new Promise<void>((resolve, reject) => {
       reservation.once('error', reject);
@@ -307,6 +327,9 @@ export class QemuComputer implements Computer {
               clearTimeout(timer);
               this.socket = socket;
               socket.write(encodeFrame({ ready: PROTOCOL_VERSION }));
+              if (this.state.state === 'failed' && this.child && !this.stopping)
+                this.state = { kind: 'qemu', state: 'running' };
+              this.report('computer.bridge_connected', 'Guest bridge authenticated.');
               ready();
               continue;
             }
@@ -326,20 +349,36 @@ export class QemuComputer implements Computer {
             if (message.error) pending.reject(new Error(message.error));
             else pending.resolve(message.result);
           }
-        } catch {
+        } catch (error) {
+          this.report(
+            'computer.bridge_protocol_failed',
+            'Guest bridge sent an invalid frame.',
+            error,
+          );
           socket.destroy();
         }
       });
-      socket.on('error', () => socket.destroy());
+      socket.on('error', (error) => {
+        this.report('computer.bridge_error', 'Guest bridge socket failed.', error);
+        socket.destroy();
+      });
       socket.on('close', () => {
         clearTimeout(timer);
         sockets.delete(socket);
         if (this.socket !== socket) return;
         this.socket = undefined;
-        const error = new Error('VM connection closed. Restart the workspace VM before retrying.');
+        const error = new Error(
+          'VM connection closed. Wait for the guest bridge to reconnect, or use workspace Stop/Start if it does not recover.',
+        );
         this.failPending(error);
-        if (this.state.state !== 'stopped')
+        if (this.state.state !== 'stopped') {
+          this.report(
+            'computer.bridge_disconnected',
+            'Guest bridge disconnected; VM process may still be running.',
+            error,
+          );
           this.state = { kind: 'qemu', state: 'failed', error: error.message };
+        }
       });
     });
     this.log = '';
@@ -354,6 +393,10 @@ export class QemuComputer implements Computer {
       { windowsHide: true, env },
     );
     this.child = child;
+    this.report(
+      'computer.started',
+      `QEMU launched; pid=${child.pid ?? 'unavailable'}, accelerator=${this.config.accelerator}.`,
+    );
     const append = (chunk: Buffer) => {
       this.log = (this.log + chunk.toString()).slice(-4000);
     };
@@ -362,9 +405,17 @@ export class QemuComputer implements Computer {
     child.stdin.on('error', () => {});
     this.exited = new Promise<void>((resolve) => {
       child.once('error', (error) => {
+        this.report('computer.process_error', 'QEMU process failed.', error);
         failed(error);
       });
-      child.once('close', () => {
+      child.once('close', (code, exitSignal) => {
+        const expected = this.state.state === 'stopped';
+        const summary = `QEMU exited; pid=${child.pid ?? 'unavailable'}, code=${code}, signal=${exitSignal}, expected=${expected}.`;
+        this.report(
+          'computer.exited',
+          summary,
+          expected ? undefined : new Error(this.log || summary),
+        );
         if (this.child === child) this.child = undefined;
         this.closeConnection?.();
         this.failPending(new Error('Workspace VM stopped.'));
@@ -394,6 +445,7 @@ export class QemuComputer implements Computer {
       ]);
       if (!this.child || !this.socket) throw new Error('VM stopped during startup.');
       this.state = { kind: 'qemu', state: 'running' };
+      this.report('computer.ready', 'Workspace VM is ready.');
     } finally {
       if (timeout) clearTimeout(timeout);
       signal.removeEventListener('abort', abortBoot);
@@ -442,9 +494,24 @@ export class QemuComputer implements Computer {
         this.pending.delete(id);
         cleanup();
         this.socket?.write(encodeFrame({ cancel: id }));
-        reject(
-          new Error('Guest request timed out. Inspect process status before retrying a command.'),
+        const error = new Error(
+          'Guest request timed out. Inspect process status before retrying a command.',
         );
+        this.diagnostics?.record('computer.request_timeout', error, {
+          phase: 'computer',
+          workspaceId: owner.workspaceId,
+          botId: owner.botId,
+          conversationId: owner.conversationId,
+          tool: method,
+        });
+        const pid = this.child?.pid;
+        void this.control?.status().then((status) => {
+          this.report(
+            'computer.timeout_status',
+            `VM status after request timeout; pid=${pid ?? 'unavailable'}, qmp=${status ?? 'unresponsive or disconnected'}.`,
+          );
+        });
+        reject(error);
       }, 45000);
       const cleanup = () => {
         clearTimeout(timer);
@@ -462,20 +529,29 @@ export class QemuComputer implements Computer {
     }
     this.pending.clear();
   }
-  stop() {
+  stop(reason = 'workspace stop') {
     this.bootController?.abort();
-    return this.stopGuest();
+    return this.stopGuest(true, reason);
   }
-  private stopGuest(abortBoot = true) {
+  private stopGuest(abortBoot = true, reason = 'guest update') {
     if (this.stopping) return this.stopping;
     this.stopping = (async () => {
       if (abortBoot) this.bootController?.abort();
+      if (this.child)
+        this.report(
+          'computer.stop_requested',
+          `Controller requested VM shutdown; reason=${reason}.`,
+        );
       this.state = { kind: 'qemu', state: 'stopped' };
       this.failPending(new Error('Workspace VM stopped.'));
       const child = this.child;
       if (child) {
         if (!this.control?.powerdown()) child.stdin.write('\nsystem_powerdown\n');
         const timer = setTimeout(() => {
+          this.report(
+            'computer.force_stop',
+            'VM did not exit within 15 seconds; terminating the process.',
+          );
           child.kill();
         }, 15000);
         try {
@@ -496,8 +572,8 @@ export class QemuComputer implements Computer {
     return this.stopping;
   }
   async shutdown() {
-    await this.stop();
+    await this.stop('app shutdown');
     await this.starting?.catch(() => {});
-    await this.stop();
+    await this.stop('app shutdown');
   }
 }

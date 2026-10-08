@@ -4,6 +4,7 @@ import type { ComputerStatus } from '../../shared/computer';
 import { QemuComputer } from './qemuComputer';
 import { ApiError } from '../config';
 import { ComputerSetupService } from './setupService';
+import type { DiagnosticService } from '../services/diagnosticService';
 
 export class ComputerManager {
   private computers = new Map<string, QemuComputer>();
@@ -12,6 +13,7 @@ export class ComputerManager {
   constructor(
     private dataDir: string,
     private guestBundleDir = resolve('dist/guest'),
+    private diagnostics?: DiagnosticService,
   ) {
     this.installer = new ComputerSetupService(dataDir, guestBundleDir);
   }
@@ -32,6 +34,7 @@ export class ComputerManager {
         this.installer.configuration(),
         undefined,
         this.guestBundleDir,
+        this.diagnostics,
       );
       this.computers.set(workspace.id, computer);
     }

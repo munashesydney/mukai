@@ -8,6 +8,7 @@ import { Frames, encodeFrame, FRAME_LIMIT } from './protocol';
 import { GuestDispatcher } from './guestDispatcher';
 import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
+import { DiagnosticService } from '../services/diagnosticService';
 
 let directory: string;
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -216,7 +217,7 @@ describe('VM tools', () => {
 
 describe('QEMU lifecycle over a real loopback bridge', () => {
   // A small stand-in interprets the launch arguments; tests do not pretend to boot QEMU.
-  async function fixture(wrongIdentity = false, delay = 0) {
+  async function fixture(wrongIdentity = false, delay = 0, diagnostics?: DiagnosticService) {
     const image = join(directory, 'base.qcow2');
     const script = join(directory, 'guest.cjs');
     await writeFile(image, 'base-image');
@@ -228,18 +229,30 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       const port = Number(/port=(\\d+)/.exec(args[args.indexOf('-chardev')+1])[1]);
       const tokenPath = args[args.indexOf('-fw_cfg')+1].split('file=')[1].replace(/,,/g, ',');
       const token = ${wrongIdentity ? "'0'.repeat(64)" : "fs.readFileSync(tokenPath, 'utf8')"};
-      const socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token})+'\\n'), ${delay}));
+      let disconnected = false;
+      let socket;
+      const connect = () => {
+      disconnected = false;
+      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token})+'\\n'), ${delay}));
       let buffer = '';
       socket.on('data', chunk => { buffer += chunk; let end;
         while((end = buffer.indexOf('\\n')) !== -1) {
           const request = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
           if(request.ready) continue;
           if(request.cancel) { fs.writeFileSync(tokenPath+'.cancel', request.cancel); continue; }
+          if(request.input.command.startsWith('disconnect')) {
+            disconnected = true;
+            socket.destroy();
+            if(request.input.command === 'disconnect-reconnect') setTimeout(connect, 300);
+            continue;
+          }
           if(request.input.command === 'hang') continue;
           socket.write(JSON.stringify({id:request.id,result:{method:request.method,input:request.input,owner:request.owner}})+'\\n');
         }
       });
-      socket.on('close', () => process.exit(0));
+      socket.on('close', () => { if(!disconnected) process.exit(0); });
+      };
+      connect();
       process.stdin.on('data', chunk => { if(chunk.toString().includes('system_powerdown')) process.exit(0); });
     `,
     );
@@ -254,6 +267,8 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       join(directory, 'vm'),
       { binary: process.execPath, image, accelerator: 'tcg' },
       launch,
+      undefined,
+      diagnostics,
     );
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
@@ -294,6 +309,67 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     await vm.stop();
     await stopped;
+  });
+  it('does not power off a live VM when a tool retries after losing the bridge', async () => {
+    const { vm, launch } = await fixture();
+    await expect(
+      vm.request('terminal', { command: 'disconnect' }, owner, signal()),
+    ).rejects.toThrow('connection closed');
+    const child = launch.mock.results[0].value;
+    await expect(vm.request('terminal', { command: 'ls' }, owner, signal())).rejects.toThrow(
+      'still running',
+    );
+    expect(child.exitCode).toBeNull();
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+  it('recovers an authenticated guest reconnection without restarting the VM', async () => {
+    const { vm, launch } = await fixture();
+    await expect(
+      vm.request('terminal', { command: 'disconnect-reconnect' }, owner, signal()),
+    ).rejects.toThrow('connection closed');
+    await vi.waitFor(() => expect(vm.status().state).toBe('running'));
+    expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+      input: { command: 'ls' },
+    });
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+  it('persists unexpected process exits and bridge failures without logging tool inputs or boot secrets', async () => {
+    const diagnostics = new DiagnosticService(directory);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { vm, launch } = await fixture(false, 0, diagnostics);
+      await vm.start();
+      const token = await readFile(join(directory, 'vm', 'boot-token'), 'utf8');
+      await expect(
+        vm.request('terminal', { command: 'disconnect-private-command' }, owner, signal()),
+      ).rejects.toThrow('connection closed');
+      launch.mock.results[0].value.kill();
+      await vi.waitFor(() => expect(vm.status().error).toContain('exited'));
+      const log = await readFile(diagnostics.path, 'utf8');
+      const events = log
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'computer.bridge_disconnected',
+          workspaceId: 'vm',
+          phase: 'computer',
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'computer.exited',
+          message: expect.stringContaining('expected=false'),
+        }),
+      );
+      expect(log).not.toContain(token);
+      expect(log).not.toContain('disconnect-private-command');
+    } finally {
+      info.mockRestore();
+      error.mockRestore();
+    }
   });
   it('rejects a guest with the wrong boot identity', async () => {
     const { vm } = await fixture(true);
