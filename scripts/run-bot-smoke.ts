@@ -25,7 +25,7 @@ async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env, MUKAI_BOT_SMOKE_DIR: dir };
     delete env.ELECTRON_RUN_AS_NODE;
     process.exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn(require('electron') as string, [bundle], {
+      const child = spawn(require('electron') as string, [bundle, ...process.argv.slice(2)], {
         env,
         stdio: 'inherit',
         windowsHide: true,

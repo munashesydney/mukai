@@ -117,7 +117,7 @@ export class ApprovalService {
     if (
       !force &&
       !this.restored(details) &&
-      (details.toolName === 'memory' || this.mode() === 'full-access')
+      (['memory', 'conversations'].includes(details.toolName) || this.mode() === 'full-access')
     )
       return true;
     return (await this.wait(details, signal, onChange)) as boolean;

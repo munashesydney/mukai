@@ -25,6 +25,10 @@ import { FileChangeRepository } from './repositories/fileChangeRepository';
 import { FileChangeService } from './services/fileChangeService';
 import { ConversationRepository } from './repositories/conversationRepository';
 import { ConversationService } from './services/conversationService';
+import { NotificationService } from './services/notificationService';
+import { ConversationHistoryService } from './services/conversationHistoryService';
+import { NotificationRepository } from './repositories/notificationRepository';
+import { ConversationHistoryRepository } from './repositories/conversationHistoryRepository';
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import { ToolAccessService } from './services/toolAccessService';
@@ -122,6 +126,12 @@ export function createApiServer(options: ApiOptions = {}) {
       join(dir, 'uploads'),
     );
     const approvals = new ApprovalService(new ApprovalRepository(store));
+    const notifications = new NotificationService(new NotificationRepository(store), workspaces);
+    const conversationHistory = new ConversationHistoryService(
+      new ConversationHistoryRepository(store),
+      workspaces,
+    );
+    tools.attachCommunication(notifications, conversationHistory);
     const jobs = new ChatJobRepository(store);
     const chats = new ChatService(
       messageRepository,
@@ -198,6 +208,7 @@ export function createApiServer(options: ApiOptions = {}) {
     });
     const desktops = new DesktopTransport();
     const route = createRoutes({
+      notifications,
       desktops,
       approvals,
       token,
@@ -273,6 +284,8 @@ export function createApiServer(options: ApiOptions = {}) {
       memory.start();
     });
     return {
+      notifications,
+      conversationHistory,
       access,
       botManagement,
       server,

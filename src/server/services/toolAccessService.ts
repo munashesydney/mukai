@@ -21,6 +21,7 @@ export class ToolAccessService {
     throw new ApiError(400, 'Choose a workspace or custom tool in this workspace.');
   }
   allowed(bot: Bot, toolId: string) {
+    if (toolId === 'ask') toolId = 'communicate';
     if (toolId === 'skills' || toolId === 'register_custom_route') return true;
     if (toolId === 'process') toolId = 'terminal';
     const current = this.bot(bot.id);

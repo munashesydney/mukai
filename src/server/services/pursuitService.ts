@@ -195,7 +195,7 @@ export class PursuitService {
         {
           requestId: this.chats.pendingRequest(run.conversationId) || randomUUID(),
           text:
-            'Run this pursuit. Work toward its objective, check the success criteria, and summarize what you actually did.\n\nPursuit context:\n' +
+            'Run this pursuit autonomously. Work toward its objective, check the success criteria, and summarize what you actually did. The user is not watching this run; use communicate action notify for a meaningful update when necessary.\n\nPursuit context:\n' +
             context,
           attachmentIds: [],
         },

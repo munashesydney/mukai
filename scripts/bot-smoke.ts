@@ -7,6 +7,9 @@ import { startApiServer } from '../src/server/app';
 import { IPC } from '../src/shared/contracts';
 import type { Bot } from '../src/shared/ai';
 import type { ApprovalState } from '../src/shared/approvals';
+import { randomUUID } from 'node:crypto';
+import { ConversationRepository } from '../src/server/repositories/conversationRepository';
+import type { NotificationInbox } from '../src/shared/notifications';
 
 async function main() {
   const dir = process.env.MUKAI_BOT_SMOKE_DIR;
@@ -127,6 +130,95 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    if (process.argv.includes('--notifications-only')) {
+      const main = (await request<Bot[]>('/bots'))[0];
+      assert.equal(
+        await evaluate('Boolean(document.querySelector(".rail-link .lucide-bell"))'),
+        false,
+      );
+      const source = new ConversationRepository(api.store).create(main.workspaceId, {
+        name: 'Autonomous review',
+        description: '',
+        botIds: [main.id],
+      });
+      api.store.run("UPDATE conversations SET kind='pursuit_run' WHERE id=?", source.id);
+      const messageId = randomUUID();
+      api.store.run(
+        "INSERT INTO messages(id,conversation_id,bot_id,request_id,role,content,status,created_at) VALUES(?,?,?,?,'assistant','','complete',?)",
+        messageId,
+        source.id,
+        main.id,
+        randomUUID(),
+        new Date().toISOString(),
+      );
+      api.notifications.notify(main, messageId, 'notification-smoke', {
+        title: 'Review is ready',
+        message:
+          'I checked the export and verified **all 12 records**.\n\nThe results are ready for your review.',
+      });
+      await wait('Boolean(document.querySelector(".rail-link .lucide-bell"))');
+      await evaluate('document.querySelector(".rail-link .lucide-bell").closest("button").click()');
+      await wait('Boolean(document.querySelector(".notification-card"))');
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".notification-meta").textContent.includes("Pursuit update")',
+        ),
+        true,
+      );
+      assert.equal(await evaluate('document.querySelector(".workspace-sidebar") === null'), true);
+      await capture('notifications-inbox.png');
+      const previousMode = await evaluate<string>('document.documentElement.dataset.mode');
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('notifications-inbox-dark.png');
+      window.setSize(820, 900);
+      await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".notification-card").getBoundingClientRect().right <= window.innerWidth',
+        ),
+        true,
+      );
+      await capture('notifications-inbox-narrow.png');
+      window.setSize(1480, 980);
+      await evaluate(`document.documentElement.dataset.mode=${JSON.stringify(previousMode)}`);
+      await evaluate('document.querySelector(".notification-card-summary").click()');
+      await click('Continue in chat');
+      await wait(
+        'Boolean(document.querySelector(".composer textarea")) && document.querySelector(".ai-message-feed").textContent.includes("all 12 records")',
+      );
+      const inbox = await request<NotificationInbox>('/notifications');
+      assert.equal(inbox.items[0].readAt !== null, true);
+      assert.equal(inbox.items[0].conversationId !== source.id, true);
+      assert.equal(
+        api.store.all(
+          'SELECT * FROM messages WHERE conversation_id=?',
+          inbox.items[0].conversationId!,
+        ).length,
+        1,
+      );
+      await capture('notification-conversation.png');
+      await evaluate('document.querySelector(".rail-link .lucide-bell").closest("button").click()');
+      await wait('Boolean(document.querySelector(".notification-card"))');
+      await evaluate('document.querySelector(".notification-card-summary").click()');
+      await click('Open conversation');
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      assert.equal(
+        (await request<NotificationInbox>('/notifications')).items[0].conversationId,
+        inbox.items[0].conversationId,
+      );
+      await evaluate('document.querySelector(".rail-link .lucide-bell").closest("button").click()');
+      await wait('Boolean(document.querySelector(".notification-card"))');
+      await evaluate('document.querySelector(".notification-card-summary").click()');
+      await click('Dismiss');
+      await wait(
+        '!document.querySelector(".rail-link .lucide-bell") && !document.querySelector(".notification-card")',
+      );
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS notification UI: conditional bell, pursuit update, unread state, continuation, reopen and dismissal.',
+      );
+      return;
+    }
     assert.equal(await evaluate('document.querySelector(".send-button").textContent.trim()'), '');
     assert.equal(
       await evaluate('getComputedStyle(document.querySelector(".send-button")).borderRadius'),
@@ -304,7 +396,7 @@ async function main() {
                         id: `approval-ui-call-${index}`,
                         type: 'function',
                         function: {
-                          name: askFixture ? 'ask' : 'echo',
+                          name: askFixture ? 'communicate' : 'echo',
                           arguments: askFixture
                             ? JSON.stringify({
                                 action: askFixture,

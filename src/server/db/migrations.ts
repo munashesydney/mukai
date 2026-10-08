@@ -290,6 +290,19 @@ export const migrations = [
   `CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
   `ALTER TABLE workspaces ADD COLUMN computer TEXT NOT NULL DEFAULT 'local'
    CHECK(computer IN ('local','qemu'));`,
+  `CREATE TABLE bot_notifications (
+    id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, bot_name TEXT NOT NULL,
+    title TEXT NOT NULL, message TEXT NOT NULL,
+    source_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    tool_call_id TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, dismissed_at TEXT,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+    UNIQUE(source_message_id,tool_call_id));
+  CREATE INDEX notification_inbox ON bot_notifications(workspace_id,dismissed_at,created_at);
+   INSERT OR IGNORE INTO bot_tool_assignments(bot_id,tool_id,enabled)
+     SELECT bot_id,'communicate',enabled FROM bot_tool_assignments WHERE tool_id='ask';
+   DELETE FROM bot_tool_assignments WHERE tool_id='ask';`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

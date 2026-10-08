@@ -1,9 +1,10 @@
-import { Layers3, Target, Puzzle, Settings, Plus } from 'lucide-react';
+import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { TriangleMark } from '../ui/TriangleMark';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
+  { id: 'notifications', label: 'Updates', icon: Bell },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
@@ -16,6 +17,8 @@ export function NavigationRail({
   workspaceName = 'Munashe’s workspace',
   hasBots = true,
   hasPendingApprovals = false,
+  notificationCount = 0,
+  unreadNotifications = 0,
 }: {
   section: Section;
   onNavigate: (section: Section) => void;
@@ -24,6 +27,8 @@ export function NavigationRail({
   workspaceName?: string;
   hasBots?: boolean;
   hasPendingApprovals?: boolean;
+  notificationCount?: number;
+  unreadNotifications?: number;
 }) {
   return (
     <nav className="navigation-rail" aria-label="Main navigation">
@@ -36,27 +41,34 @@ export function NavigationRail({
         <span />
       </button>
       <div className="rail-links">
-        {items.map(({ id, label, icon: Icon }) => (
-          <button
-            className={`rail-link ${section === id ? 'is-active' : ''}`}
-            key={id}
-            disabled={!hasBots && id !== 'bots'}
-            title={!hasBots && id !== 'bots' ? 'Add your first bot to unlock this' : undefined}
-            onClick={() => onNavigate(id)}
-            aria-current={section === id ? 'page' : undefined}
-          >
-            <span className="rail-icon">
-              {Icon ? <Icon size={22} strokeWidth={1.8} /> : <TriangleMark />}
-              {id === 'bots' && hasPendingApprovals && (
-                <i className="rail-notification" aria-label="Pending approvals" />
-              )}
-            </span>
-            <span>{label}</span>
-          </button>
-        ))}
+        {items
+          .filter((item) => item.id !== 'notifications' || notificationCount > 0)
+          .map(({ id, label, icon: Icon }) => (
+            <button
+              className={`rail-link ${section === id ? 'is-active' : ''}`}
+              key={id}
+              disabled={!hasBots && id !== 'bots'}
+              title={!hasBots && id !== 'bots' ? 'Add your first bot to unlock this' : undefined}
+              onClick={() => onNavigate(id)}
+              aria-current={section === id ? 'page' : undefined}
+            >
+              <span className="rail-icon">
+                {Icon ? <Icon size={22} strokeWidth={1.8} /> : <TriangleMark />}
+                {id === 'bots' && hasPendingApprovals && (
+                  <i className="rail-notification" aria-label="Pending approvals" />
+                )}
+                {id === 'notifications' && unreadNotifications > 0 && (
+                  <i className="rail-unread" aria-label={`${unreadNotifications} unread updates`}>
+                    {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                  </i>
+                )}
+              </span>
+              <span>{label}</span>
+            </button>
+          ))}
       </div>
       <div className="rail-bottom">
-        {section !== 'pursuits' && (
+        {section !== 'pursuits' && section !== 'notifications' && (
           <button
             className="rail-add"
             onClick={onCreate}

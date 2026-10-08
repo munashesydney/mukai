@@ -19,7 +19,8 @@ import { registerCustomRouteDefinition } from './register-custom-route/definitio
 import { executeRegisterCustomRoute } from './register-custom-route/execute';
 import type { RegistrationContext } from './custom-registration/shared';
 import { memoryDefinition } from './memory/definition';
-import { askDefinition } from './ask/definition';
+import { communicateDefinition } from './communicate/definition';
+import { conversationsDefinition } from './conversations/definition';
 import { botManagementDefinition } from './bots/definition';
 import { executeBotManagement } from './bots/execute';
 import { webSearchDefinition } from './web-search/definition';
@@ -219,7 +220,8 @@ export function toolCatalog() {
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
       memoryDefinition,
-      askDefinition,
+      communicateDefinition,
+      conversationsDefinition,
       skillsDefinition,
     ].map((definition) => ({
       id: definition.name,

@@ -31,6 +31,8 @@ import { BrowserPanel } from '../features/browser/BrowserPanel';
 import { BrowserLayout, BrowserWorkspace } from '../features/browser/BrowserWorkspace';
 import { ConversationNavigation } from '../features/ai/ConversationNavigation';
 import { ComputerPanel } from '../features/computer/ComputerPanel';
+import { useNotifications } from '../features/notifications/useNotifications';
+import { NotificationsPage } from '../features/notifications/NotificationsPage';
 
 function WorkspaceLayout({
   children,
@@ -61,6 +63,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const pursuitState = usePursuits(ai.workspaceId);
   const botChats = useBotConversations(ai.workspaceId);
   const botPairs = useBotConversations(ai.workspaceId, 'bot');
+  const notifications = useNotifications(ai.workspaceId);
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -211,11 +214,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       <div className={`app-body ${viewingComputer ? 'computer-mode' : ''}`}>
         <div
-          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' ? 'is-compact' : ''}`}
+          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' || location.section === 'notifications' ? 'is-compact' : ''}`}
           inert={viewingComputer}
           aria-hidden={viewingComputer}
         >
           <NavigationRail
+            notificationCount={notifications.total}
+            unreadNotifications={notifications.unread}
             hasPendingApprovals={approvals.pending.length > 0}
             hasBots={hasBots}
             workspaceName={ai.workspace?.name}
@@ -230,7 +235,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                   : setDialog('create-space')
             }
           />
-          {location.section !== 'settings' && (
+          {location.section !== 'settings' && location.section !== 'notifications' && (
             <WorkspaceSidebar
               workspace={ai.workspace}
               workspaces={ai.workspaces}
@@ -277,6 +282,19 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 if (ai.workspace) setEditingWorkspace(ai.workspace);
               }}
               onProvidersChanged={() => void ai.refresh()}
+            />
+          ) : location.section === 'notifications' ? (
+            <NotificationsPage
+              workspaceId={ai.workspaceId}
+              inbox={notifications}
+              onOpen={(conversation) => {
+                botChats.include(conversation);
+                select({
+                  section: 'bots',
+                  item: conversation.ownerBotId!,
+                  conversationId: conversation.id,
+                });
+              }}
             />
           ) : location.section === 'tools' && location.item === 'skills' ? (
             <SkillsPage

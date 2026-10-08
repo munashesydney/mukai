@@ -80,6 +80,7 @@ let mode:
   | 'ask-clarification'
   | 'ask-approval'
   | 'ask-mixed'
+  | 'autonomous-update'
   | 'approval-memory' = 'normal';
 let endpoint = '';
 let project = '';
@@ -407,6 +408,33 @@ beforeEach(async () => {
       res.end('data: [DONE]\n\n');
       return;
     }
+    if (
+      mode === 'autonomous-update' &&
+      !body.messages.some((message: { role: string }) => message.role === 'tool')
+    ) {
+      const delta = {
+        tool_calls: [
+          {
+            index: 0,
+            id: 'autonomous-notify',
+            type: 'function',
+            function: {
+              name: 'communicate',
+              arguments: JSON.stringify({
+                action: 'notify',
+                title: 'Review ready',
+                message: 'I verified the result and it is ready for review.',
+              }),
+            },
+          },
+        ],
+      };
+      res.write(
+        `data: ${JSON.stringify({ id: 'notify', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: 'tool_calls' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (mode === 'image-view') {
       const completed = JSON.stringify(body.messages).includes('"tool_call_id":"image-view"');
       const delta = completed
@@ -470,7 +498,7 @@ beforeEach(async () => {
                             mode === 'ask-mixed' && index === 2
                               ? 'browser'
                               : mode.startsWith('ask-')
-                                ? 'ask'
+                                ? 'communicate'
                                 : mode === 'approval-memory'
                                   ? 'memory'
                                   : 'approval_echo',
@@ -987,6 +1015,25 @@ describe('Mukai bots and AI API', () => {
       enabled: false,
     });
   });
+  it('delivers an autonomous update in the SDK loop and follows up in its seeded conversation', async () => {
+    await configure();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'autonomous-update';
+    await chat('Send an update when the result is verified');
+    const inbox = api.notifications.list('default');
+    expect(inbox.total).toBe(1);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    const thread = api.notifications.continue('default', inbox.items[0].id);
+    const previousCalls = calls.length;
+    mode = 'normal';
+    await privateChat(thread.id, 'What did you verify?');
+    const history = (await request<ChatMessage[]>(`/conversations/${thread.id}/messages`)).data;
+    expect(history).toHaveLength(3);
+    expect(history[0]).toMatchObject({ role: 'assistant', content: inbox.items[0].message });
+    expect(history[1]).toMatchObject({ role: 'user', content: 'What did you verify?' });
+    expect(history[2].status).toBe('complete');
+    expect(JSON.stringify(calls[previousCalls].messages)).toContain(inbox.items[0].message);
+  });
 
   it.each([
     { approvalMode: 'ask-for-approval', answer: 'New customers', restart: false },
@@ -1000,7 +1047,7 @@ describe('Mukai bots and AI API', () => {
       const result = chat('Ask who to focus on');
       const item = await pendingApproval('custom-call-1');
       expect(item).toMatchObject({
-        toolName: 'ask',
+        toolName: 'communicate',
         ask: {
           action: 'clarification',
           options: [
@@ -1043,7 +1090,7 @@ describe('Mukai bots and AI API', () => {
       expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity).toMatchObject(
         [
           {
-            tool: 'ask',
+            tool: 'communicate',
             action: 'clarification',
             status: 'complete',
             summary: expect.stringContaining(answer),

@@ -36,6 +36,7 @@ import { browserDefinition } from '../tools/browser/definition';
 import type { CapabilityService } from '../capabilities/service';
 import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
+import type { NotificationService } from '../services/notificationService';
 
 function uploadName(request: IncomingMessage) {
   try {
@@ -46,6 +47,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  notifications,
   desktops,
   approvals,
   token,
@@ -65,6 +67,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  notifications: NotificationService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
   token: string;
@@ -126,7 +129,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills)(\/|$)/.test(
+      !/^\/(approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -219,6 +222,24 @@ export function createRoutes({
       if (id && !action && method === 'DELETE')
         return send(response, skills.remove(workspaceId, id));
       throw new ApiError(404, 'Not found');
+    }
+    if (resource === 'notifications') {
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      if (!id && method === 'GET') {
+        const offset = z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(100000)
+          .parse(url.searchParams.get('offset') || 0);
+        return send(response, notifications.list(workspaceId, offset));
+      }
+      if (id && method === 'POST') {
+        if (action === 'read' || action === 'dismiss')
+          return send(response, notifications.mark(workspaceId, id, action));
+        if (action === 'continue') return send(response, notifications.continue(workspaceId, id));
+      }
+      throw new ApiError(405, 'Method not allowed.');
     }
     if (resource === 'memory') {
       if (id === 'runs' && action === 'retry' && method === 'POST') {

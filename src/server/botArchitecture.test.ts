@@ -119,7 +119,7 @@ beforeEach(async () => {
             id: 'invalid-ask',
             type: 'function',
             function: {
-              name: 'ask',
+              name: 'communicate',
               arguments: JSON.stringify({ question: 'PRIVATE INVALID QUESTION' }),
             },
           },
@@ -158,7 +158,7 @@ beforeEach(async () => {
                 ? 'manage_bot'
                 : mode === 'delegate-tool-approval'
                   ? 'browser'
-                  : 'ask',
+                  : 'communicate',
               arguments: JSON.stringify(
                 intermediate
                   ? { action: 'send_message', botId: nestedId, message: 'Check the details.' }
@@ -1080,7 +1080,7 @@ describe('Bot architecture', () => {
   it('propagates a nested child approval to every waiting ancestor and restores the chain', async () => {
     const main = await bot();
     await provider();
-    const child = await api.botManagement.create(main, input('Ada'), ['manage_bot', 'ask']);
+    const child = await api.botManagement.create(main, input('Ada'), ['manage_bot', 'communicate']);
     const grandchild = await api.botManagement.create(child, input('Nova'));
     delegatedId = child.id;
     nestedId = grandchild.id;

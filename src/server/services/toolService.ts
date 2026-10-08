@@ -25,13 +25,23 @@ import type { MemoryService } from './memoryService';
 import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
 import { WebSearchService } from './webSearchService';
-import { askTools, type AskHandler } from '../tools/ask/execute';
+import type { AskHandler } from '../tools/ask/execute';
+import { communicateTools } from '../tools/communicate/execute';
+import { conversationTools } from '../tools/conversations/execute';
+import type { NotificationService } from './notificationService';
+import type { ConversationHistoryService } from './conversationHistoryService';
 import { computerTools } from '../computer/tools';
 import { executeWebSearch } from '../tools/web-search/execute';
 import { webSearchDefinition } from '../tools/web-search/definition';
 import { tool } from 'ai';
 
 export class ToolService {
+  private notifications?: NotificationService;
+  private history?: ConversationHistoryService;
+  attachCommunication(notifications: NotificationService, history: ConversationHistoryService) {
+    this.notifications = notifications;
+    this.history = history;
+  }
   private webSearch = new WebSearchService();
   private access?: ToolAccessService;
   private management?: BotManagementService;
@@ -204,10 +214,22 @@ export class ToolService {
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
                   ? workspace.computer !== 'qemu' && Boolean(this.capabilities)
-                  : ['browser', 'image', 'web_search', 'ask'].includes(tool.id)
+                  : ['browser', 'image', 'web_search', 'communicate', 'conversations'].includes(
+                        tool.id,
+                      )
                     ? true
                     : workspace.computer === 'qemu' || Boolean(workspace.folder),
-      counts: tool.id === 'memory' ? memoryCounts : counts[tool.id] || {},
+      counts:
+        tool.id === 'memory'
+          ? memoryCounts
+          : tool.id === 'communicate'
+            ? Object.fromEntries(
+                tool.actions.map((action) => [
+                  action,
+                  (counts.communicate?.[action] || 0) + (counts.ask?.[action] || 0),
+                ]),
+              )
+            : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {
@@ -248,7 +270,23 @@ export class ToolService {
     return this.assigned(
       bot,
       {
-        ...(ask ? askTools({ ask, signal, onActivity }) : {}),
+        ...(ask && this.notifications
+          ? communicateTools({
+              ask,
+              signal,
+              onActivity,
+              notify: (input, toolCallId) =>
+                this.notifications!.notify(bot, messageId, toolCallId, input),
+            })
+          : {}),
+        ...(this.history
+          ? conversationTools({
+              history: this.history,
+              workspaceId: bot.workspaceId,
+              signal,
+              onActivity,
+            })
+          : {}),
         ...(this.skills
           ? skillTools({
               bot,

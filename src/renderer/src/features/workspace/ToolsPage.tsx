@@ -26,7 +26,8 @@ import { CustomCapabilities } from './CustomCapabilities';
 function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'skills') return <BookOpen size={size} />;
   if (toolId === 'memory') return <Brain size={size} />;
-  if (toolId === 'ask') return <MessageCircleQuestion size={size} />;
+  if (toolId === 'communicate') return <MessageCircleQuestion size={size} />;
+  if (toolId === 'conversations') return <Search size={size} />;
   if (toolId === 'manage_pursuit') return <Target size={size} />;
   if (toolId === 'manage_bot') return <Users size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
@@ -42,8 +43,8 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (vm && tool.id.startsWith('register_custom_')) return 'Unavailable in VM v1';
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
   if (tool.id === 'memory') return 'Workspace memories · Private memories stay with their bot';
-  if (tool.id === 'ask')
-    return 'Clarification and approval · Waits for your response in the conversation';
+  if (tool.id === 'communicate') return 'Questions, approvals and autonomous updates';
+  if (tool.id === 'conversations') return 'Workspace conversation and message history';
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
   if (tool.id === 'manage_bot') return 'Creates child bots · Delegates work to descendants';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';

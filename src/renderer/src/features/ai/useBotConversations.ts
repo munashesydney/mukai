@@ -50,6 +50,10 @@ export function useBotConversations(workspaceId: string, kind: 'private' | 'bot'
     loading,
     error,
     create,
+    include: (value: Conversation) => {
+      revision.current++;
+      setConversations((previous) => [value, ...previous.filter((item) => item.id !== value.id)]);
+    },
     refresh: () => setRefreshVersion((value) => value + 1),
   };
 }

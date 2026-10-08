@@ -520,7 +520,7 @@ export class ChatService {
             return this.approvals.ask(
               {
                 toolCallId,
-                toolName: 'ask',
+                toolName: 'communicate',
                 input,
                 botId,
                 botName: bot.name,
@@ -722,6 +722,9 @@ export class ChatService {
         )
         .digest('hex');
       const recoveryCalls = recoveringStep ? this.jobs.approvalStep(assistantId) : [];
+      // Old pending questions retain their recorded tool name after the family rename.
+      if (recoveryCalls.some((call) => call.toolName === 'ask') && tools.communicate)
+        tools.ask = tools.communicate;
       const checkpoint =
         existingUser && (!runtime || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
@@ -997,6 +1000,7 @@ export class ChatService {
             }
             const approved =
               name === 'ask' ||
+              name === 'communicate' ||
               name === 'confirm_custom_tool' ||
               custom?.definition.permissionMode === 'auto_approve' ||
               (name === 'manage_bot' &&
@@ -1075,9 +1079,9 @@ export class ChatService {
                 });
               }
             }
-            // Asking has no external side effect: it remains safely resumable
-            // while waiting, and its answer is checkpointed before the card clears.
-            if (name !== 'ask' && name !== 'confirm_custom_tool')
+            // Questions checkpoint their answers; notifications deduplicate by message/call ID.
+            // Both remain safely resumable across a controller restart.
+            if (name !== 'ask' && name !== 'communicate' && name !== 'confirm_custom_tool')
               this.jobs.beforeTool(assistantId, options.toolCallId);
             executionVersion++;
             const operation = Promise.resolve().then(() =>
