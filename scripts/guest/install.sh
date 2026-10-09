@@ -19,11 +19,11 @@ esac
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl xz-utils git python3 build-essential sudo
-# Ubuntu's minimal cloud image omits this module used to read the boot identity.
-if ! modprobe qemu_fw_cfg; then
-  apt-get install -y "linux-modules-extra-$(uname -r)"
-  modprobe qemu_fw_cfg
-fi
+# Ubuntu's minimal cloud image omits this module used to read the boot identity,
+# and its linux-virtual meta does not keep the modules-extra package in step with
+# later kernels. Install the extras and track them from now on; with set -e a
+# build that cannot read the boot identity fails loudly instead of shipping.
+MUKAI_APT_UPDATED=1 sh ./kernel-modules.sh
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 curl -fsS https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt -o "$scratch/SHASUMS256.txt"

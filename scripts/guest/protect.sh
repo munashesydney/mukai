@@ -31,8 +31,15 @@ fi
 install -o root -g root -m 0755 "$bundle/systemctl-guard.sh" /usr/bin/systemctl
 install -o root -g root -m 0755 "$bundle/resilience.sh" /usr/lib/mukai-guest/resilience.sh
 /bin/sh /usr/lib/mukai-guest/resilience.sh
+install -o root -g root -m 0755 "$bundle/kernel-modules.sh" /usr/lib/mukai-guest/kernel-modules.sh
+# Repair kernel module drift before the controlled reboot. An upgrade that
+# installed a kernel without linux-modules-extra would otherwise boot a guest
+# whose services cannot read the boot identity. Best effort by design: the boot
+# guard retries, and failing the update would not make the guest any safer.
+/bin/sh /usr/lib/mukai-guest/kernel-modules.sh ||
+  echo 'Mukai guest update: kernel module repair deferred to boot.' >&2
 # No policy change to sudo: ordinary administration remains available.
 install -o root -g root -m 0644 "$bundle/mukai-guest.service" /etc/systemd/system/mukai-guest.service
-install -o root -g root -m 0644 "$bundle/mukai-display.service" "$bundle/mukai-desktop.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$bundle/mukai-display.service" "$bundle/mukai-desktop.service" "$bundle/mukai-kernel-guard.service" /etc/systemd/system/
 /usr/lib/mukai-guest/systemctl daemon-reload
-/usr/lib/mukai-guest/systemctl enable mukai-guest.service mukai-display.service mukai-desktop.service
+/usr/lib/mukai-guest/systemctl enable mukai-guest.service mukai-display.service mukai-desktop.service mukai-kernel-guard.service

@@ -1,6 +1,7 @@
 [Unit]
 Description=Mukai workspace display
-After=systemd-udev-settle.service
+After=systemd-udev-settle.service mukai-kernel-guard.service
+Wants=mukai-kernel-guard.service
 ConditionPathExists=/dev/virtio-ports/com.mukai.agent
 RefuseManualStop=yes
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Mukai guest kernel module guard
+After=systemd-udev-settle.service network-online.target
+Wants=network-online.target
+Before=mukai-display.service mukai-guest.service
+ConditionPathExists=/dev/virtio-ports/com.mukai.agent
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A repair may need to download kernel modules; the healthy path is a no-op.
+TimeoutStartSec=300
+ExecStart=/bin/sh /usr/lib/mukai-guest/kernel-modules.sh
+
+[Install]
+WantedBy=multi-user.target

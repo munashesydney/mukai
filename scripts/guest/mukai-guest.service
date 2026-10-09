@@ -1,7 +1,7 @@
 [Unit]
 Description=Mukai VM guest bridge
-After=systemd-udev-settle.service network-online.target mukai-desktop.service
-Wants=network-online.target mukai-desktop.service
+After=systemd-udev-settle.service network-online.target mukai-kernel-guard.service mukai-desktop.service
+Wants=network-online.target mukai-kernel-guard.service mukai-desktop.service
 ConditionPathExists=/dev/virtio-ports/com.mukai.agent
 RefuseManualStop=yes
 
