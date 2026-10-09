@@ -13,11 +13,15 @@ import { imageDefinition } from '../tools/image/definition';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import type { Computer } from './protocol';
 import { guestBrowserExecutable } from './guestBrowser';
+import { ComputerUseService } from '../services/computerUseService';
+import { NativeDesktopBackend } from './computer_use/nativeBackend';
+import { computerUseDefinition } from '../tools/computer_use/definition';
 
 /** The same dispatcher can run locally in tests or inside the Linux guest. */
 export class GuestDispatcher implements Computer {
   private processes = new ProcessService();
   private browsers: BrowserService;
+  private desktop = new ComputerUseService(new NativeDesktopBackend('/opt/mukai-guest/bridge'));
   constructor(
     private folder: string,
     private dataDir: string,
@@ -37,6 +41,24 @@ export class GuestDispatcher implements Computer {
   ): Promise<unknown> {
     signal.throwIfAborted();
     switch (method) {
+      case 'computer_use': {
+        const value = computerUseDefinition.inputSchema.parse(input);
+        const result = await this.desktop.execute(owner, value, signal);
+        if (
+          value.action === 'screenshot' &&
+          result &&
+          typeof result === 'object' &&
+          'image' in result &&
+          typeof result.image === 'string'
+        ) {
+          const directory = join(this.dataDir, 'screenshots');
+          await mkdir(directory, { recursive: true, mode: 0o700 });
+          const path = join(directory, randomUUID() + '.png');
+          await writeFile(path, Buffer.from(result.image, 'base64'), { signal, mode: 0o600 });
+          return { ...result, path };
+        }
+        return result;
+      }
       case 'terminal':
         return this.processes.run(
           owner,
@@ -124,6 +146,10 @@ export class GuestDispatcher implements Computer {
     }
   }
   async shutdown() {
-    await Promise.allSettled([this.processes.shutdown(), this.browsers.shutdown()]);
+    await Promise.allSettled([
+      this.processes.shutdown(),
+      this.browsers.shutdown(),
+      this.desktop.shutdown(),
+    ]);
   }
 }

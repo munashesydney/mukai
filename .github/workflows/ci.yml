@@ -21,3 +21,22 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+
+  desktop-helpers:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:computer-use
+      - run: npx vitest run src/server/services/computerUseService.test.ts src/server/tools/computer_use/computer_use.test.ts src/server/computer/computer_use/nativeBackend.test.ts
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox python3 libx11-6 libxtst6 libxrandr2
+      - if: runner.os == 'Linux'
+        run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a sh -c 'openbox >/tmp/mukai-openbox.log 2>&1 & npm run test:computer-use -- --interactive'

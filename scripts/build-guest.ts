@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { guestScripts } from '../src/server/computer/bundleFiles';
+import { guestScripts, guestDesktopFiles } from '../src/server/computer/bundleFiles';
 
 async function main() {
   const directory = resolve('dist/guest');
@@ -43,6 +43,11 @@ async function main() {
     await writeFile(
       resolve(directory, file),
       (await readFile(resolve('scripts/guest', file), 'utf8')).replace(/\r\n/g, '\n'),
+    );
+  for (const file of guestDesktopFiles)
+    await writeFile(
+      resolve(directory, file),
+      (await readFile(resolve('scripts/computer_use', file), 'utf8')).replace(/\r\n/g, '\n'),
     );
   console.log('Guest bundle ready in dist/guest. See docs/qemu-workspaces.md.');
 }

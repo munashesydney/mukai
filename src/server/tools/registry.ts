@@ -28,6 +28,8 @@ import { executeWebSearch } from './web-search/execute';
 import type { WebSearchService } from '../services/webSearchService';
 import { imageDefinition } from './image/definition';
 import { imageTools } from './image/execute';
+import { computerUseDefinition } from './computer_use/definition';
+import { computerUseTools, type ComputerUseContext } from './computer_use/execute';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
   const actions = context.management.actionsFor(context.bot, context.messageId);
@@ -66,11 +68,13 @@ export function runtimeTools(
     webSearch: WebSearchService;
     folder: string | null;
     vision: boolean;
-    saveScreenshot?: Parameters<typeof executeBrowser>[1]['saveScreenshot'];
+    desktop: ComputerUseContext['desktop'];
+    saveScreenshot: NonNullable<Parameters<typeof executeBrowser>[1]['saveScreenshot']>;
   },
 ): ToolSet {
   return {
     ...imageTools(context),
+    ...computerUseTools(context),
     web_search: tool({
       description: webSearchDefinition.description,
       inputSchema: webSearchDefinition.inputSchema,
@@ -220,6 +224,7 @@ export function toolCatalog() {
       terminalDefinition,
       botManagementDefinition,
       browserDefinition,
+      computerUseDefinition,
       imageDefinition,
       webSearchDefinition,
       registerCustomToolDefinition,

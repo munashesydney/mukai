@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
-import { Frames, encodeFrame, FRAME_LIMIT } from './protocol';
+import { Frames, encodeFrame, FRAME_LIMIT, GUEST_REVISION } from './protocol';
 import { GuestDispatcher } from './guestDispatcher';
 import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
@@ -295,7 +295,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       loseProbe = ${loseFirstReconnectProbe} && connections > 1;
       verified = !loseProbe;
       disconnected = false;
-      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token,revision:health?7:1})+'\\n'), ${delay}));
+      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token,revision:health?${GUEST_REVISION}:1})+'\\n'), ${delay}));
       let buffer = '';
       socket.on('data', chunk => { buffer += chunk; let end;
         while((end = buffer.indexOf('\\n')) !== -1) {

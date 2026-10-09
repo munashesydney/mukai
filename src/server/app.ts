@@ -39,6 +39,8 @@ import { ProcessService } from './services/processService';
 import { ComputerManager } from './computer/manager';
 import { DesktopTransport } from './computer/desktopTransport';
 import { BrowserService } from './services/browserService';
+import { ComputerUseService } from './services/computerUseService';
+import { NativeDesktopBackend } from './computer/computer_use/nativeBackend';
 import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
 import { ApiError } from './config';
@@ -55,6 +57,7 @@ export interface ApiOptions {
   memoryExtractor?: Extractor;
   memoryReviewIdleMs?: number;
   guestBundleDir?: string;
+  desktopHelperDir?: string;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -91,6 +94,7 @@ export function createApiServer(options: ApiOptions = {}) {
     );
     const processes = new ProcessService();
     const browsers = new BrowserService(dir, options.embeddedBrowser);
+    const desktop = new ComputerUseService(new NativeDesktopBackend(options.desktopHelperDir));
     const tools = new ToolService(
       workspaces,
       artifacts,
@@ -99,6 +103,7 @@ export function createApiServer(options: ApiOptions = {}) {
       changes,
       processes,
       browsers,
+      desktop,
     );
     const providers = new ProviderService(
       providerRepository,
@@ -269,6 +274,7 @@ export function createApiServer(options: ApiOptions = {}) {
         await processes.shutdown();
         await computers.shutdown();
         await browsers.shutdown();
+        await desktop.shutdown();
       })());
     server.on('close', () => {
       pursuits.stopScheduling();

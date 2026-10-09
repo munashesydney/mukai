@@ -11,8 +11,11 @@
   "license": "UNLICENSED",
   "scripts": {
     "build:guest": "tsx scripts/build-guest.ts",
-    "predev": "npm run build:guest",
-    "predev:server": "npm run build:guest",
+    "build:computer-use": "tsx scripts/build-computer-use.ts",
+    "test:computer-use": "tsx scripts/run-computer-use-smoke.ts",
+    "test:computer-use:vm": "tsx scripts/run-computer-use-vm-smoke.ts",
+    "predev": "npm run build:computer-use && npm run build:guest",
+    "predev:server": "npm run build:computer-use && npm run build:guest",
     "dev": "electron-vite dev",
     "dev:web": "vite --config vite.web.config.ts --host 127.0.0.1",
     "dev:server": "tsx watch src/server/index.ts",
@@ -25,7 +28,7 @@
     "test:capabilities": "tsx scripts/run-capability-smoke.ts",
     "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
-    "build": "npm run typecheck && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",
+    "build": "npm run typecheck && npm run build:computer-use && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
     "start:server": "node dist/server/src/server/index.js",
@@ -102,6 +105,16 @@
       {
         "from": "dist/guest",
         "to": "guest"
+      },
+      {
+        "from": "dist/computer_use",
+        "to": "computer_use",
+        "filter": [
+          "windows.ps1",
+          "linux.py",
+          "linux_wayland.py",
+          "macos"
+        ]
       }
     ],
     "asarUnpack": [
@@ -118,7 +131,13 @@
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "binaries": [
+        "Contents/Resources/computer_use/macos"
+      ],
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Mukai captures the desktop when you use the computer_use screenshot action."
+      }
     },
     "linux": {
       "target": "AppImage",

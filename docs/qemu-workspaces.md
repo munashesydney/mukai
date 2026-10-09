@@ -43,6 +43,8 @@ Ordinary `shutdown`, `poweroff`, `reboot`, `halt` and systemctl power operations
 
 Existing workspace disks automatically receive the updated bridge, desktop and protections on their next start, followed by a controlled restart. The first desktop update installs packages inside the guest and can take several minutes; the viewer shows preparation status and expandable output. Project files and the workspace's chosen computer remain intact. An update failure prevents bot tools from starting and reports an error; it never falls back to the host. `process` is accepted as an assignment alias for `terminal`, including when creating child bots; both share one permission.
 
+The `computer_use` tool family controls this same guest desktop, with screenshots, mouse input, keyboard shortcuts and Unicode typing. Its coordinates never refer to the host. Guest revision 8 provisions its X11 helpers through the existing update flow. See [Computer use](computer-use.md) for actions and coordinate mapping.
+
 The viewer uses [noVNC](https://novnc.com/noVNC/docs/API.html) with [TigerVNC](https://tigervnc.org/doc/Xvnc.html). An authenticated API request issues a 30-second, single-use WebSocket ticket tied to the workspace's current boot. The API token never appears in viewer URLs. QEMU forwards only the display port to a dynamically allocated host loopback port; VNC has a separate password rotated on every boot. The renderer requests guest resolution changes to match its panel, with temporary proportional scaling while the guest adjusts. Closing the view disconnects the viewer and leaves apps, bots and the VM running. Clipboard sharing and VM power controls are not exposed by the viewer.
 
 ## Configure Mukai

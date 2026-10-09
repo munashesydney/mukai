@@ -34,6 +34,7 @@ import { computerTools } from '../computer/tools';
 import { executeWebSearch } from '../tools/web-search/execute';
 import { webSearchDefinition } from '../tools/web-search/definition';
 import { tool } from 'ai';
+import { ComputerUseService } from './computerUseService';
 
 export class ToolService {
   private notifications?: NotificationService;
@@ -176,6 +177,7 @@ export class ToolService {
     private changes: FileChangeService,
     private processes: ProcessService,
     private browsers: BrowserService,
+    private desktop: ComputerUseService = new ComputerUseService(),
   ) {}
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
@@ -190,16 +192,18 @@ export class ToolService {
     return toolCatalog().map((tool) => ({
       ...tool,
       ...(workspace.computer === 'qemu' &&
-      ['terminal', 'image', 'browser', 'file_operations'].includes(tool.id)
+      ['terminal', 'image', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
         ? {
             description:
-              tool.id === 'browser'
-                ? 'Control workspace or main Chrome on the Linux VM desktop.'
-                : tool.id === 'image'
-                  ? 'Read and view guest images inside the Linux VM.'
-                  : tool.id === 'terminal'
-                    ? 'Run Linux commands and manage guest processes.'
-                    : 'Read, write and organize files inside the workspace Linux VM.',
+              tool.id === 'computer_use'
+                ? 'See and control the workspace Linux VM desktop, mouse, and keyboard.'
+                : tool.id === 'browser'
+                  ? 'Control workspace or main Chrome on the Linux VM desktop.'
+                  : tool.id === 'image'
+                    ? 'Read and view guest images inside the Linux VM.'
+                    : tool.id === 'terminal'
+                      ? 'Run Linux commands and manage guest processes.'
+                      : 'Read, write and organize files inside the workspace Linux VM.',
           }
         : {}),
       scope: ['skills', 'register_custom_route', 'manage_bot'].includes(tool.id)
@@ -216,9 +220,14 @@ export class ToolService {
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
                   ? workspace.computer !== 'qemu' && Boolean(this.capabilities)
-                  : ['browser', 'image', 'web_search', 'communicate', 'conversations'].includes(
-                        tool.id,
-                      )
+                  : [
+                        'browser',
+                        'computer_use',
+                        'image',
+                        'web_search',
+                        'communicate',
+                        'conversations',
+                      ].includes(tool.id)
                     ? true
                     : workspace.computer === 'qemu' || Boolean(workspace.folder),
       counts:
@@ -242,7 +251,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image and browser operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome is visible on the guest desktop. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }
@@ -343,6 +352,7 @@ export class ToolService {
               budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
               processes: this.processes,
               browsers: this.browsers,
+              desktop: this.desktop,
               webSearch: this.webSearch,
               folder: workspace.folder,
               vision,

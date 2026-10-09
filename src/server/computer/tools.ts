@@ -9,6 +9,7 @@ import { browserDefinition } from '../tools/browser/definition';
 import { imageDefinition } from '../tools/image/definition';
 import { resultPreview } from '../services/toolResultPolicy';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
+import { computerUseTools } from '../tools/computer_use/execute';
 
 export function computerTools(
   context: RuntimeToolContext & {
@@ -22,7 +23,7 @@ export function computerTools(
     ): Promise<{ artifactId: string; path: string; width: number; height: number }>;
   },
 ): ToolSet {
-  const output: ToolSet = {};
+  const output: ToolSet = computerUseTools({ ...context, desktop: context.computer });
   const definitions = [
     terminalDefinition,
     processDefinition,

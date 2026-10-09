@@ -918,7 +918,8 @@ export class ChatService {
         if (
           delivery &&
           observation &&
-          ((observation.tool === 'browser' && observation.action === 'screenshot') ||
+          ((['browser', 'computer_use'].includes(observation.tool) &&
+            observation.action === 'screenshot') ||
             (observation.tool === 'image' && observation.action === 'view'))
         ) {
           try {

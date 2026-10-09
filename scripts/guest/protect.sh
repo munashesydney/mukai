@@ -8,6 +8,11 @@ if ! command -v Xtigervnc >/dev/null 2>&1 || ! command -v startxfce4 >/dev/null 
   apt-get update
   apt-get install -y --no-install-recommends tigervnc-standalone-server tigervnc-tools xfce4 xfce4-terminal dbus-x11 x11-utils fonts-dejavu-core polkitd
 fi
+if ! python3 -c 'import ctypes; ctypes.CDLL("libX11.so.6"); ctypes.CDLL("libXtst.so.6"); ctypes.CDLL("libXrandr.so.2")' >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends python3 libx11-6 libxtst6 libxrandr2
+fi
 install -d -o root -g root -m 0755 /etc/polkit-1/rules.d
 cat > /etc/polkit-1/rules.d/00-mukai-power.rules <<'RULES'
 polkit.addRule(function(action, subject) {
@@ -18,6 +23,7 @@ polkit.addRule(function(action, subject) {
 RULES
 install -d -o root -g root -m 0755 /opt/mukai-guest/bridge /usr/lib/mukai-guest
 install -o root -g root -m 0644 "$bundle/guest.cjs" "$bundle/guest-worker.cjs" /opt/mukai-guest/bridge/
+install -o root -g root -m 0644 "$bundle/linux.py" "$bundle/linux_wayland.py" /opt/mukai-guest/bridge/
 install -o root -g root -m 0755 "$bundle/desktop-prepare.sh" "$bundle/desktop-start.sh" /opt/mukai-guest/bridge/
 if ! dpkg-divert --list /usr/bin/systemctl | grep -q /usr/lib/mukai-guest/systemctl; then
   dpkg-divert --local --add --rename --divert /usr/lib/mukai-guest/systemctl /usr/bin/systemctl

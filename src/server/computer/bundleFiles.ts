@@ -10,4 +10,11 @@ export const guestScripts = [
   'mukai-display.service',
   'mukai-desktop.service',
 ];
-export const guestFiles = ['guest.cjs', 'guest-worker.cjs', 'package.json', ...guestScripts];
+export const guestDesktopFiles = ['linux.py', 'linux_wayland.py'];
+export const guestFiles = [
+  'guest.cjs',
+  'guest-worker.cjs',
+  'package.json',
+  ...guestScripts,
+  ...guestDesktopFiles,
+];
