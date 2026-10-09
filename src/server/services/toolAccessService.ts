@@ -25,6 +25,7 @@ export class ToolAccessService {
     if (toolId === 'skills' || toolId === 'register_custom_route') return true;
     if (toolId === 'process') toolId = 'terminal';
     const current = this.bot(bot.id);
+    if (toolId === 'manage_bot') return true;
     const override = this.repository.override(bot.id, toolId);
     if (override !== undefined) return override;
     if (toolId.startsWith('custom:')) {
@@ -52,6 +53,14 @@ export class ToolAccessService {
     if (this.bot(botId).workspaceId !== workspaceId)
       throw new ApiError(403, 'Bot belongs to another workspace.');
     this.valid(workspaceId, toolId);
+    if (toolId === 'manage_bot') {
+      if (!enabled)
+        throw new ApiError(
+          400,
+          'Bots access is required. Available actions are determined by the bot and conversation.',
+        );
+      return { botId, toolId, enabled: true };
+    }
     this.repository.set(botId, toolId, enabled);
     return { botId, toolId, enabled };
   }
@@ -70,7 +79,7 @@ export class ToolAccessService {
       ...this.repository.customTools(caller.workspaceId).map((tool) => 'custom:' + tool.id),
     ];
     this.validateSelection(caller, selected);
-    for (const id of ids)
+    for (const id of ids.filter((id) => id !== 'manage_bot'))
       this.set(
         child.workspaceId,
         child.id,

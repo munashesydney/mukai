@@ -46,7 +46,8 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (tool.id === 'communicate') return 'Questions, approvals and autonomous updates';
   if (tool.id === 'conversations') return 'Workspace conversation and message history';
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
-  if (tool.id === 'manage_bot') return 'Creates child bots · Delegates work to descendants';
+  if (tool.id === 'manage_bot')
+    return 'Required for all bots · Actions depend on bot and conversation';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'image')
     return 'Local images · Includes files outside the workspace · Vision model required to view';

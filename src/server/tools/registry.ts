@@ -30,10 +30,15 @@ import { imageDefinition } from './image/definition';
 import { imageTools } from './image/execute';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
+  const actions = context.management.actionsFor(context.bot, context.messageId);
   return {
     [botManagementDefinition.name]: tool({
-      description: botManagementDefinition.description,
-      inputSchema: botManagementDefinition.inputSchema,
+      description:
+        `Available actions for this run: ${actions.join(', ')}. ` +
+        botManagementDefinition.description,
+      inputSchema: botManagementDefinition.inputSchema.extend({
+        action: botManagementDefinition.inputSchema.shape.action.extract(actions),
+      }),
       execute: (input, options) => executeBotManagement(input, context, options.toolCallId),
     }),
   };

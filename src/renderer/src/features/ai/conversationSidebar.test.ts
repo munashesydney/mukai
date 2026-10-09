@@ -5,7 +5,11 @@ import type { Conversation } from '../../../../shared/conversations';
 import type { Bot } from '../../../../shared/ai';
 import { BotPairConversationsSidebar } from './BotPairConversationsSidebar';
 import { BotConversationStatus, ConversationStatus } from './ConversationStatus';
-import { botConversationGroup, visibleConversations } from './conversationSidebar';
+import {
+  botConversationGroup,
+  botsByRecentInteraction,
+  visibleConversations,
+} from './conversationSidebar';
 
 const chat = (id: string, isWorking = false): Conversation => ({
   id,
@@ -79,4 +83,38 @@ describe('Background conversation activity', () => {
       'owner',
     );
   });
+});
+
+it('orders bots by their latest conversation interaction without pinning the main bot', () => {
+  const bots = [
+    { id: 'main', isMain: true },
+    { id: 'child', isMain: false },
+    { id: 'idle', isMain: false },
+  ] as Bot[];
+  const conversations = [
+    {
+      ...chat('old'),
+      kind: 'private' as const,
+      ownerBotId: 'main',
+      updatedAt: '2026-10-01T00:00:00Z',
+    },
+    {
+      ...chat('new'),
+      kind: 'private' as const,
+      ownerBotId: 'child',
+      updatedAt: '2026-10-02T00:00:00Z',
+    },
+  ];
+  expect(botsByRecentInteraction(bots, conversations).map((bot) => bot.id)).toEqual([
+    'child',
+    'main',
+    'idle',
+  ]);
+  conversations.push({ ...conversations[0], id: 'latest', updatedAt: '2026-10-03T00:00:00Z' });
+  expect(botsByRecentInteraction(bots, conversations).map((bot) => bot.id)).toEqual([
+    'main',
+    'child',
+    'idle',
+  ]);
+  expect(bots.map((bot) => bot.id)).toEqual(['main', 'child', 'idle']);
 });

@@ -2334,14 +2334,17 @@
   color: var(--text-secondary);
   font-size: 11px;
 }
-.assignment-row input {
-  accent-color: var(--theme-accent);
-  width: 17px;
-  height: 17px;
-}
 .rail-link:disabled,
 .rail-settings:disabled {
   opacity: 0.35;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+.main-bot-badge,
+.sidebar-row > svg.main-bot-badge {
+  color: #ad78ed;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-left: 8px;
 }

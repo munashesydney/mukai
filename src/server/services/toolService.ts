@@ -202,7 +202,9 @@ export class ToolService {
                     : 'Read, write and organize files inside the workspace Linux VM.',
           }
         : {}),
-      scope: ['skills', 'register_custom_route'].includes(tool.id) ? 'all-bots' : 'selected-bots',
+      scope: ['skills', 'register_custom_route', 'manage_bot'].includes(tool.id)
+        ? 'all-bots'
+        : 'selected-bots',
       available:
         tool.id === 'skills'
           ? Boolean(this.skills)

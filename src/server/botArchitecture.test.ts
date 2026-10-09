@@ -16,7 +16,9 @@ import type { ApprovalState } from '../shared/approvals';
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
   model: string;
-  tools: { function: { name: string } }[];
+  tools: {
+    function: { name: string; parameters: { properties: { action?: { enum?: string[] } } } };
+  }[];
   messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
 let mode:
@@ -397,7 +399,7 @@ describe('Bot architecture', () => {
     await provider();
     await chat(main);
     await chat(child);
-    expect(calls[0].messages[0].content).toContain('actual human or bot-sounding names');
+    expect(calls[0].messages[0].content).toContain('human or bot-sounding name');
     expect(calls[1].messages[0].content).toContain('"role":"Code architect"');
     expect(api.store.all('PRAGMA table_info(bots)').map((row) => row.name)).not.toContain(
       'description',
@@ -512,7 +514,25 @@ describe('Bot architecture', () => {
       ]),
     );
     expect(names(1)).not.toContain('manage_pursuit');
-    expect(names(1)).not.toContain('manage_bot');
+    expect(names(1)).toContain('manage_bot');
+    expect(
+      calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
+        .properties.action!.enum,
+    ).toEqual(['create', 'update', 'list', 'get', 'send_message']);
+    expect(
+      calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
+        .properties.action!.enum,
+    ).toEqual(['list', 'get', 'send_message']);
+    for (const target of [main, child])
+      expect(
+        (
+          await request('/tools/assignments', 'PUT', {
+            botId: target.id,
+            toolId: 'manage_bot',
+            enabled: false,
+          })
+        ).status,
+      ).toBe(400);
     expect(names(1)).toEqual(
       expect.arrayContaining(['memory', 'browser', 'skills', 'register_custom_route']),
     );
@@ -575,7 +595,10 @@ describe('Bot architecture', () => {
     ).toBe(400);
     expect(api.access.allowed(child, 'skills')).toBe(true);
     expect(api.access.allowed(child, 'register_custom_route')).toBe(true);
-    api.access.set('default', child.id, 'manage_bot', true);
+    api.store.run('INSERT INTO bot_tool_assignments VALUES(?,?,?)', child.id, 'manage_bot', 0);
+    api.store.run('INSERT INTO bot_tool_assignments VALUES(?,?,?)', main.id, 'manage_bot', 0);
+    expect(api.access.allowed(child, 'manage_bot')).toBe(true);
+    expect(api.access.allowed(main, 'manage_bot')).toBe(true);
     api.access.set('default', main.id, 'terminal', false);
     expect(api.access.allowed(main, 'process')).toBe(false);
     await api.shutdown();
@@ -644,12 +667,14 @@ describe('Bot architecture', () => {
       api.botManagement.create(main, input('Invalid'), ['unknown-tool']),
     ).rejects.toThrow('Choose a workspace');
   });
-  it('creates children through manage_bot, bounds their grants, and retains nested creator relationships', async () => {
+  it('reserves creation and updates for the main bot, bounds grants, and requires Bots access', async () => {
     const main = await bot(),
       peer = await bot('Peer');
-    api.access.set('default', peer.id, 'manage_bot', false);
+    expect(() => api.access.set('default', peer.id, 'manage_bot', false)).toThrow(
+      'Bots access is required',
+    );
     await expect(api.botManagement.create(peer, input('Denied'))).rejects.toThrow(
-      'not assigned manage_bot',
+      'Only the workspace main bot',
     );
     api.access.set('default', main.id, 'terminal', false);
     await expect(api.botManagement.create(main, input('Denied'), ['terminal'])).rejects.toThrow(
@@ -676,15 +701,27 @@ describe('Bot architecture', () => {
     expect(child).toMatchObject({ createdBy: main.id, isMain: false });
     expect(api.access.allowed(child, 'manage_bot')).toBe(true);
     expect(api.access.allowed(child, 'memory')).toBe(false);
-    const grandchild = await api.botManagement.create(child, input('Helper'));
-    expect(grandchild.createdBy).toBe(child.id);
-    expect(api.access.allowed(grandchild, 'browser')).toBe(true);
-    expect(api.access.allowed(grandchild, 'memory')).toBe(false);
-    expect(api.access.allowed(grandchild, 'manage_bot')).toBe(false);
-    await expect(api.botManagement.create(grandchild, input('Blocked'))).rejects.toThrow(
-      'not assigned manage_bot',
+    await expect(api.botManagement.create(child, input('Helper'))).rejects.toThrow(
+      'Only the workspace main bot',
     );
-    expect((await request<Bot[]>('/bots')).data).toHaveLength(4);
+    await expect(api.botManagement.update(child, peer.id, { name: 'Renamed' })).rejects.toThrow(
+      'Only the workspace main bot',
+    );
+    expect(api.botManagement.get(child, peer.id).id).toBe(peer.id);
+    const updated = await api.botManagement.update(main, child.id, {
+      name: 'Ada',
+      role: 'Research specialist',
+      toolIds: [],
+    });
+    expect(updated).toMatchObject({
+      name: 'Ada',
+      role: 'Research specialist',
+      isMain: false,
+      createdBy: main.id,
+    });
+    expect(api.access.allowed(updated, 'browser')).toBe(false);
+    expect(api.access.allowed(updated, 'manage_bot')).toBe(true);
+    expect((await request<Bot[]>('/bots')).data).toHaveLength(3);
     for (const target of [main, child]) {
       await expect(
         api.botManagement.sendMessage(child, target.id, 'Work', new AbortController().signal),
@@ -704,7 +741,13 @@ describe('Bot architecture', () => {
       ),
     )!;
     expect(JSON.stringify(childCall.messages)).toContain('Review the notes.');
-    expect(childCall.tools.map((item) => item.function.name)).not.toContain('manage_bot');
+    expect(
+      childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
+        .properties.action!.enum,
+    ).toEqual(['list', 'get']);
+    expect(JSON.stringify(childCall.messages)).toContain(
+      'intentionally unavailable to prevent delegation loops',
+    );
     expect(JSON.stringify(childCall.messages)).toContain(main.name);
     expect(JSON.stringify(childCall.messages)).toContain(main.role);
     expect(JSON.stringify(childCall.messages)).toContain('final reply will be sent directly back');
@@ -1077,37 +1120,40 @@ describe('Bot architecture', () => {
     });
     expect(calls).toHaveLength(2);
   });
-  it('propagates a nested child approval to every waiting ancestor and restores the chain', async () => {
+  it('rejects recursive delegation even when a delegated sub-bot attempts send_message', async () => {
     const main = await bot();
     await provider();
-    const child = await api.botManagement.create(main, input('Ada'), ['manage_bot', 'communicate']);
-    const grandchild = await api.botManagement.create(child, input('Nova'));
+    const child = await api.botManagement.create(main, input('Ada'));
+    const other = await api.botManagement.create(main, input('Nova'));
     delegatedId = child.id;
-    nestedId = grandchild.id;
+    nestedId = other.id;
     mode = 'delegate-nested';
-    const pending = chat(main);
-    await waitFor(async () =>
-      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    await chat(main);
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+    const conversation = (await request<Conversation[]>('/conversations?kind=bot')).data[0];
+    const reply = (
+      await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`)
+    ).data.at(-1)!;
+    expect(api.botManagement.actionsFor(child, reply.id)).toEqual(['list', 'get']);
+    const result = await executeBotManagement(
+      { action: 'send_message', botId: other.id, message: 'Nested work' },
+      {
+        bot: child,
+        management: api.botManagement,
+        messageId: reply.id,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
     );
-    const approval = (await request<ApprovalState>('/approvals')).data.pending[0];
-    expect(approval.botId).toBe(grandchild.id);
-    expect(approval.blockedParents?.map((item) => item.botId).sort()).toEqual(
-      [main.id, child.id].sort(),
-    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('intentionally unavailable'),
+    });
     await restart();
-    await pending;
-    await waitFor(async () =>
-      expect((await request(`/approvals/${approval.id}`, 'POST', { approved: false })).status).toBe(
-        200,
-      ),
-    );
-    await waitFor(async () =>
-      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
-        'complete',
-      ),
-    );
-    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(2);
-    expect(calls).toHaveLength(6);
+    expect(api.botManagement.actionsFor(child, reply.id)).toEqual(['list', 'get']);
+    expect(api.botManagement.actionsFor(main, reply.id)).toContain('send_message');
   });
   it('does not restart an explicitly stopped delegation', async () => {
     const main = await bot();
@@ -1249,8 +1295,10 @@ describe('Bot architecture', () => {
     await provider();
     const ada = await api.botManagement.create(main, input('Ada'), ['manage_bot']);
     const nova = await api.botManagement.create(main, input('Nova'), ['manage_bot']);
-    const junior = await api.botManagement.create(ada, input('Junior'), ['manage_bot']);
-    const colleague = await api.botManagement.create(nova, input('Colleague'));
+    const junior = await api.botManagement.create(main, input('Junior'));
+    const colleague = await api.botManagement.create(main, input('Colleague'));
+    api.store.run('UPDATE bots SET created_by=? WHERE id=?', ada.id, junior.id);
+    api.store.run('UPDATE bots SET created_by=? WHERE id=?', nova.id, colleague.id);
     const signal = new AbortController().signal;
     for (const target of [main, ada, nova])
       await expect(
@@ -1291,11 +1339,11 @@ describe('Bot architecture', () => {
       ]),
     );
     expect(api.access.allowed(junior, 'manage_bot')).toBe(true);
-    const noTools = await api.botManagement.create(ada, input('Restricted'), []);
-    expect(api.access.allowed(noTools, 'manage_bot')).toBe(false);
-    await expect(
-      api.botManagement.sendMessage(noTools, colleague.id, 'Denied', signal),
-    ).rejects.toThrow('not assigned manage_bot');
+    const noTools = await api.botManagement.create(main, input('Restricted'), []);
+    expect(api.access.allowed(noTools, 'manage_bot')).toBe(true);
+    expect(
+      await api.botManagement.sendMessage(noTools, colleague.id, 'Focused help', signal),
+    ).toMatchObject({ status: 'complete' });
   });
   it('rejects cross-workspace and simultaneous messages, propagates cancellation, and releases the child', async () => {
     const main = await bot();

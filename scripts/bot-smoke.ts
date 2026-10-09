@@ -132,6 +132,136 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    if (process.argv.includes('--bot-roles-only')) {
+      const mainBot = (await request<Bot[]>('/bots'))[0];
+      assert.equal(
+        await evaluate(
+          'getComputedStyle(document.querySelector(".bot-conversation-parent .main-bot-badge")).color',
+        ),
+        'rgb(173, 120, 237)',
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(".bot-conversation-parent .main-bot-badge").length',
+        ),
+        1,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(".conversation-heading h1 .main-bot-badge").length',
+        ),
+        1,
+      );
+      await evaluate(`document.querySelector('button[aria-label="Create a bot"]').click()`);
+      await wait('Boolean(document.querySelector(".bot-editor"))');
+      await fill('.bot-editor input', 'Ada');
+      await fill('.bot-editor label:nth-of-type(2) input', 'Research specialist');
+      await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
+      await wait('!document.querySelector(".bot-editor")');
+      const bots = await request<Bot[]>('/bots');
+      const child = bots.find((bot) => bot.name === 'Ada')!;
+      assert.equal(child.isMain, false);
+      assert.equal(bots.filter((bot) => bot.isMain).length, 1);
+      await evaluate(
+        `document.querySelector('button[aria-label="New conversation with Ada"]').click()`,
+      );
+      await wait('document.querySelector(".conversation-heading h1")?.textContent==="Ada"');
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(".conversation-heading h1 .main-bot-badge").length',
+        ),
+        0,
+      );
+      modelFixture = createServer(async (req, res) => {
+        if (req.method === 'GET') {
+          res.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+          return;
+        }
+        for await (const chunk of req) void chunk;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(
+          'data: ' +
+            JSON.stringify({
+              id: 'test',
+              object: 'chat.completion.chunk',
+              created: 1,
+              model: 'fixture',
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: 'assistant', content: 'Task completed.' },
+                  finish_reason: 'stop',
+                },
+              ],
+            }) +
+            '\n\ndata: [DONE]\n\n',
+        );
+      });
+      await new Promise<void>((resolve) => modelFixture!.listen(0, '127.0.0.1', resolve));
+      await request('/providers', 'POST', {
+        name: 'Fixture',
+        kind: 'compatible',
+        baseUrl: `http://127.0.0.1:${(modelFixture.address() as { port: number }).port}/v1`,
+        defaultModel: 'fixture',
+        supportsImages: false,
+        isDefault: true,
+        apiKey: '',
+      });
+      const send = async (bot: Bot) => {
+        const response = await fetch(api.url + `/bots/${bot.id}/chat`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId: randomUUID(), text: 'Do the work', attachmentIds: [] }),
+        });
+        assert(response.ok);
+        await response.text();
+      };
+      await send(mainBot);
+      await send(child);
+      window.reload();
+      await wait('document.querySelector(".bot-conversation-parent")?.textContent.trim()==="Ada"');
+      await capture('bot-roles-sidebar.png');
+      await send(mainBot);
+      await wait(
+        'document.querySelector(".bot-conversation-parent")?.textContent.trim()==="Mukai"',
+      );
+      await click('Bot Hierarchy');
+      await wait('document.querySelectorAll(".bot-tree-card").length===2');
+      assert.equal(
+        await evaluate('document.querySelectorAll(".bot-tree-card .main-bot-badge").length'),
+        1,
+      );
+      await capture('bot-roles-hierarchy.png');
+      await evaluate(
+        `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.includes('Tools')).click()`,
+      );
+      await wait('Boolean(document.querySelector(".tool-family-card"))');
+      await evaluate(
+        `Array.from(document.querySelectorAll('.tool-family-card')).find(b=>b.querySelector('.tool-family-name')?.textContent==='Bots').click()`,
+      );
+      await wait('document.querySelectorAll(".assignment-row").length===2');
+      assert.equal(
+        await evaluate(
+          'Array.from(document.querySelectorAll(".assignment-row input")).every(e=>e.checked && e.disabled && e.classList.contains("themed-checkbox"))',
+        ),
+        true,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".tool-assignments").textContent.includes("delegated sub-bot runs can only list and inspect")',
+        ),
+        true,
+      );
+      await capture('bot-roles-assignments.png');
+      window.setSize(720, 900);
+      await capture('bot-roles-assignments-narrow.png');
+      assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'), true);
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS bot roles UI: unique main bot, stars, recent interaction order, required themed assignments, narrow layout.',
+      );
+      return;
+    }
     if (process.argv.includes('--approvals-only')) {
       let explicit = false;
       let parallel = false;
@@ -1417,12 +1547,14 @@ async function main() {
       contextWindowTokens: null,
     };
     const architect = await api.botManagement.create(main, specialistInput, ['manage_bot']);
-    const engineer = await api.botManagement.create(architect, {
+    const engineer = await api.botManagement.create(main, {
       ...specialistInput,
       name: 'Nova',
       role: 'Software engineer',
       avatar: 'nova',
     });
+    api.store.run('UPDATE bots SET created_by=? WHERE id=?', architect.id, engineer.id);
+    engineer.createdBy = architect.id;
     await api.botManagement.create(main, {
       ...specialistInput,
       name: 'Atlas',

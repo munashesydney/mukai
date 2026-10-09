@@ -8,7 +8,13 @@ import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { errorText } from '../../utils/errors';
 import { BotConversationStatus, ConversationStatus } from './ConversationStatus';
-import { botConversationGroup, visibleConversations } from './conversationSidebar';
+import {
+  botConversationGroup,
+  botsByRecentInteraction,
+  visibleConversations,
+} from './conversationSidebar';
+
+import { MainBotBadge } from '../../components/ui/MainBotBadge';
 
 const INITIAL_CONVERSATION_COUNT = 3;
 
@@ -61,114 +67,112 @@ export function BotConversationsSidebar({
           {error}
         </p>
       )}
-      {[...bots]
-        .sort((a, b) => Number(b.isMain) - Number(a.isMain))
-        .map((bot) => {
-          const open = expanded[bot.id] ?? location.item === bot.id;
-          const chats = conversations
-            .filter((conversation) => botConversationGroup(conversation) === bot.id)
-            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-          const visibleCount = visibleCounts[bot.id] ?? INITIAL_CONVERSATION_COUNT;
-          const visibleChats = visibleConversations(chats, visibleCount);
-          const count = approvals.pending.filter(
-            (request) =>
-              request.botId === bot.id ||
-              request.blockedParents?.some((parent) => parent.botId === bot.id),
-          ).length;
-          return (
-            <section className="bot-conversation-group" key={bot.id}>
-              <div className="bot-conversation-heading">
-                <button
-                  className="sidebar-row bot-row bot-conversation-parent"
-                  aria-expanded={open}
-                  onClick={() => {
-                    setExpanded((previous) => ({ ...previous, [bot.id]: !open }));
-                  }}
-                >
-                  <span className="bot-conversation-toggle">
-                    <Avatar person={bot.avatar} size="xs" />
-                    {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </span>
-                  <span>{bot.name}</span>
-                </button>
-                <IconButton
-                  label={`New conversation with ${bot.name}`}
-                  disabled={Boolean(creating)}
-                  onClick={() => void create(bot.id)}
-                >
-                  <MessageCirclePlus size={17} />
-                </IconButton>
-                {!open && <BotConversationStatus conversations={chats} />}
+      {botsByRecentInteraction(bots, conversations).map((bot) => {
+        const open = expanded[bot.id] ?? location.item === bot.id;
+        const chats = conversations
+          .filter((conversation) => botConversationGroup(conversation) === bot.id)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        const visibleCount = visibleCounts[bot.id] ?? INITIAL_CONVERSATION_COUNT;
+        const visibleChats = visibleConversations(chats, visibleCount);
+        const count = approvals.pending.filter(
+          (request) =>
+            request.botId === bot.id ||
+            request.blockedParents?.some((parent) => parent.botId === bot.id),
+        ).length;
+        return (
+          <section className="bot-conversation-group" key={bot.id}>
+            <div className="bot-conversation-heading">
+              <button
+                className="sidebar-row bot-row bot-conversation-parent"
+                aria-expanded={open}
+                onClick={() => {
+                  setExpanded((previous) => ({ ...previous, [bot.id]: !open }));
+                }}
+              >
+                <span className="bot-conversation-toggle">
+                  <Avatar person={bot.avatar} size="xs" />
+                  {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </span>
+                <span>{bot.name}</span>
+                {bot.isMain && <MainBotBadge />}
+              </button>
+              <IconButton
+                label={`New conversation with ${bot.name}`}
+                disabled={Boolean(creating)}
+                onClick={() => void create(bot.id)}
+              >
+                <MessageCirclePlus size={17} />
+              </IconButton>
+              {!open && <BotConversationStatus conversations={chats} />}
+            </div>
+            {count > 0 && (
+              <button
+                className={`bot-pending-approvals ${location.item === bot.id && location.view === 'pending-approvals' ? 'is-selected' : ''}`}
+                aria-current={
+                  location.item === bot.id && location.view === 'pending-approvals'
+                    ? 'page'
+                    : undefined
+                }
+                onClick={() =>
+                  onSelect({ section: 'bots', item: bot.id, view: 'pending-approvals' })
+                }
+              >
+                <Hand size={13} />
+                <span>Pending Approvals</span>
+                <span className="pending-approval-count">{count}</span>
+              </button>
+            )}
+            {open && (
+              <div className="bot-conversation-list">
+                {visibleChats.map((chat) => (
+                  <button
+                    key={chat.id}
+                    className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                    aria-current={
+                      !location.view && location.conversationId === chat.id ? 'page' : undefined
+                    }
+                    title={chat.name}
+                    onClick={() =>
+                      onSelect(
+                        chat.kind === 'bot'
+                          ? {
+                              section: 'spaces',
+                              item: 'bot-conversations',
+                              conversationId: chat.id,
+                            }
+                          : { section: 'bots', item: bot.id, conversationId: chat.id },
+                      )
+                    }
+                  >
+                    <span>{chat.name}</span>
+                    <ConversationStatus
+                      chatId={`${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`}
+                      updatedAt={chat.updatedAt}
+                      isWorking={chat.isWorking}
+                    >
+                      {age(chat.updatedAt)}
+                    </ConversationStatus>
+                  </button>
+                ))}
+                {chats.length > visibleChats.length && (
+                  <button
+                    className="bot-conversations-load-more"
+                    onClick={() =>
+                      setVisibleCounts((previous) => ({
+                        ...previous,
+                        [bot.id]: visibleCount + INITIAL_CONVERSATION_COUNT,
+                      }))
+                    }
+                  >
+                    Load {Math.min(INITIAL_CONVERSATION_COUNT, chats.length - visibleChats.length)}{' '}
+                    more
+                  </button>
+                )}
               </div>
-              {count > 0 && (
-                <button
-                  className={`bot-pending-approvals ${location.item === bot.id && location.view === 'pending-approvals' ? 'is-selected' : ''}`}
-                  aria-current={
-                    location.item === bot.id && location.view === 'pending-approvals'
-                      ? 'page'
-                      : undefined
-                  }
-                  onClick={() =>
-                    onSelect({ section: 'bots', item: bot.id, view: 'pending-approvals' })
-                  }
-                >
-                  <Hand size={13} />
-                  <span>Pending Approvals</span>
-                  <span className="pending-approval-count">{count}</span>
-                </button>
-              )}
-              {open && (
-                <div className="bot-conversation-list">
-                  {visibleChats.map((chat) => (
-                    <button
-                      key={chat.id}
-                      className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
-                      aria-current={
-                        !location.view && location.conversationId === chat.id ? 'page' : undefined
-                      }
-                      title={chat.name}
-                      onClick={() =>
-                        onSelect(
-                          chat.kind === 'bot'
-                            ? {
-                                section: 'spaces',
-                                item: 'bot-conversations',
-                                conversationId: chat.id,
-                              }
-                            : { section: 'bots', item: bot.id, conversationId: chat.id },
-                        )
-                      }
-                    >
-                      <span>{chat.name}</span>
-                      <ConversationStatus
-                        chatId={`${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`}
-                        updatedAt={chat.updatedAt}
-                        isWorking={chat.isWorking}
-                      >
-                        {age(chat.updatedAt)}
-                      </ConversationStatus>
-                    </button>
-                  ))}
-                  {chats.length > visibleChats.length && (
-                    <button
-                      className="bot-conversations-load-more"
-                      onClick={() =>
-                        setVisibleCounts((previous) => ({
-                          ...previous,
-                          [bot.id]: visibleCount + INITIAL_CONVERSATION_COUNT,
-                        }))
-                      }
-                    >
-                      Load{' '}
-                      {Math.min(INITIAL_CONVERSATION_COUNT, chats.length - visibleChats.length)}{' '}
-                      more
-                    </button>
-                  )}
-                </div>
-              )}
-            </section>
-          );
-        })}
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }

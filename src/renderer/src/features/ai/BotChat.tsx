@@ -1,3 +1,4 @@
+import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { useEffect, useRef, useState } from 'react';
 import {
   FileText,
@@ -133,7 +134,10 @@ export function BotChat({
                 <Avatar person={bot.avatar} />
               )}
               <div>
-                <h1>{title}</h1>
+                <h1>
+                  {title}
+                  {!readOnly && bot.isMain && <MainBotBadge />}
+                </h1>
                 <p title={conversation.name}>{conversation.name}</p>
               </div>
             </div>

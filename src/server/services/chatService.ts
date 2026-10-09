@@ -123,6 +123,14 @@ export class ChatService {
   hasActiveResponses() {
     return this.active.size > 0;
   }
+  delegatedMessage(messageId: string) {
+    const message = this.messages.message(messageId);
+    return Boolean(
+      message.conversationId &&
+      message.requestId &&
+      this.messages.botSender(message.conversationId, message.requestId),
+    );
+  }
   pendingRequest(conversationId: string) {
     const request = this.approvals
       ?.checkpoints()
@@ -675,6 +683,7 @@ export class ChatService {
           workspaceFolder: scope.folder,
           computer: scope.computer,
           tools,
+          delegated: Boolean(messageSender),
           runtimeSystem:
             [
               runtime?.system,

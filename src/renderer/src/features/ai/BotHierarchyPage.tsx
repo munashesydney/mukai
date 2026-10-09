@@ -1,3 +1,4 @@
+import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { ArrowUpRight, ChevronDown, ChevronUp, Focus, GitBranch, Minus, Plus } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Bot } from '../../../../shared/ai';
@@ -84,7 +85,10 @@ export function BotHierarchyPage({
         >
           <Avatar person={bot.avatar} />
           <span className="bot-tree-copy">
-            <strong>{bot.name}</strong>
+            <strong>
+              {bot.name}
+              {bot.isMain && <MainBotBadge />}
+            </strong>
             <span className="bot-tree-role" title={bot.role}>
               {bot.role}
             </span>

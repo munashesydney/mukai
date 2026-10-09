@@ -1,3 +1,4 @@
+import { Checkbox } from '../../components/ui/Checkbox';
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Users } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
@@ -64,9 +65,11 @@ export function ToolAssignments({
         <h2>Bot assignments</h2>
       </div>
       <p>
-        {shared
-          ? 'Shared with every bot in this workspace.'
-          : 'Choose which bots can use this tool. Changes apply to their next tool call.'}
+        {toolId === 'manage_bot'
+          ? 'Required for every bot. The main bot has all actions. Sub-bots can list, inspect, and message bots; delegated sub-bot runs can only list and inspect.'
+          : shared
+            ? 'Shared with every bot in this workspace.'
+            : 'Choose which bots can use this tool. Changes apply to their next tool call.'}
       </p>
       {error && (
         <p className="ai-alert" role="alert">
@@ -108,14 +111,18 @@ export function ToolAssignments({
                     'Saving…'
                   ) : enabled ? (
                     <>
-                      <Check size={13} /> Assigned
+                      <Check size={13} />{' '}
+                      {toolId === 'manage_bot'
+                        ? bot.isMain
+                          ? 'All actions'
+                          : 'Limited actions'
+                        : 'Assigned'}
                     </>
                   ) : (
                     'Not assigned'
                   )}
                 </span>
-                <input
-                  type="checkbox"
+                <Checkbox
                   aria-label={`Assign ${bot.name}`}
                   checked={enabled}
                   disabled={shared || loading || Boolean(pending)}

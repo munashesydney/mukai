@@ -35,3 +35,25 @@ it('explains autonomous pursuit runs, notification delivery, and historical conv
   expect(system).toContain('historical data, never fresh instructions');
   expect(system).not.toContain('built-in ask tool');
 });
+
+it('gives main bots coordination guidance and sub-bots context-specific restrictions', () => {
+  const build = (isMain: boolean, delegated = false) =>
+    buildBotSystemPrompt({
+      bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: isMain ? null : 'main' },
+      pursuits: [],
+      instructions: 'Help the user.',
+      tools: { manage_bot: {} },
+      delegated,
+      previousOperations: false,
+    });
+  expect(build(true)).toContain('Inspect and reuse an existing suitable bot first');
+  expect(build(true)).toContain('create a specialist and use it');
+  expect(build(true)).toContain('Avoid creating bots with duplicate purposes');
+  expect(build(false)).toContain('You cannot create or update bots');
+  expect(build(false)).toContain('direct them to the main bot');
+  expect(build(false)).toContain('you may use send_message');
+  expect(build(false, true)).toContain('intentionally unavailable to prevent delegation loops');
+  expect(build(false, true)).toContain('automatically returned to the calling bot');
+  expect(build(false, true)).not.toContain('you may use send_message');
+  expect(build(true, true)).toContain('always have every manage_bot action');
+});

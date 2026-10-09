@@ -8,6 +8,10 @@ import type { ToolAccessService } from './toolAccessService';
 import type { ProviderService } from './providerService';
 import type { ChatJobRepository } from '../repositories/chatJobRepository';
 import { pausePursuitTask } from './pursuitScheduler';
+import type { z } from 'zod';
+import { botManagementDefinition } from '../tools/bots/definition';
+
+type BotAction = z.infer<typeof botManagementDefinition.inputSchema>['action'];
 
 export class BotManagementService {
   private reserved = new Map<string, string>();
@@ -19,6 +23,51 @@ export class BotManagementService {
     private providers: ProviderService,
     private jobs: ChatJobRepository,
   ) {}
+  actionsFor(caller: Bot, messageId?: string): BotAction[] {
+    const current = this.bots.require(caller.id);
+    if (current.isMain) return ['create', 'update', 'list', 'get', 'send_message'];
+    return messageId && this.chats.delegatedMessage(messageId)
+      ? ['list', 'get']
+      : ['list', 'get', 'send_message'];
+  }
+  requireAction(caller: Bot, action: BotAction, messageId?: string) {
+    this.access.require(caller, 'manage_bot');
+    if (!this.actionsFor(caller, messageId).includes(action))
+      throw new ApiError(
+        403,
+        action === 'send_message'
+          ? 'send_message is intentionally unavailable in a delegated sub-bot run to prevent delegation loops. Return your final reply to the calling bot.'
+          : 'Only the workspace main bot can create or update bots. Ask the user to discuss this with the main bot.',
+      );
+  }
+  get(caller: Bot, botId: string) {
+    this.requireAction(caller, 'get');
+    const target = this.bots.require(botId);
+    if (target.workspaceId !== caller.workspaceId)
+      throw new ApiError(403, 'Bot belongs to another workspace.');
+    return { ...target, hierarchyLevel: this.level(target) };
+  }
+  async update(
+    caller: Bot,
+    botId: string,
+    patch: Pick<
+      z.infer<typeof botManagementDefinition.inputSchema>,
+      'name' | 'role' | 'instructions' | 'avatar' | 'toolIds'
+    >,
+  ) {
+    this.requireAction(caller, 'update');
+    const target = this.get(caller, botId);
+    if (Object.values(patch).every((value) => value === undefined))
+      throw new ApiError(400, 'Update requires at least one field.');
+    this.access.validateSelection(caller, patch.toolIds);
+    const { toolIds, ...fields } = patch;
+    const defined = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    );
+    const updated = this.bots.save({ ...target, ...defined }, target.id);
+    if (toolIds !== undefined) this.access.initializeChild(caller, updated, toolIds);
+    return updated;
+  }
   list(caller: Bot) {
     this.access.require(caller, 'manage_bot');
     return this.bots.list(caller.workspaceId).map((bot) => ({
@@ -31,7 +80,7 @@ export class BotManagementService {
     }));
   }
   async create(caller: Bot, input: BotInput, toolIds?: string[]) {
-    this.access.require(caller, 'manage_bot');
+    this.requireAction(caller, 'create');
     this.access.validateSelection(caller, toolIds);
     await this.providers.validateModel(input.providerId, input.model);
     return this.bots.save(input, undefined, caller.workspaceId, caller.id, (child) => {
@@ -61,6 +110,7 @@ export class BotManagementService {
     if (
       caller.workspaceId !== target.workspaceId ||
       caller.id === target.id ||
+      (!caller.isMain && target.isMain) ||
       this.level(target) < this.level(caller)
     )
       throw new ApiError(
@@ -87,6 +137,7 @@ export class BotManagementService {
     },
   ) {
     signal.throwIfAborted();
+    this.requireAction(caller, 'send_message', delegation?.parentMessageId);
     const target = this.requireMessageTarget(caller, botId);
     caller = this.bots.require(caller.id);
     const saved = delegation?.parentMessageId

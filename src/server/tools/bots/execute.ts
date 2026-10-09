@@ -24,9 +24,22 @@ export async function executeBotManagement(
   context.onActivity(activity);
   try {
     context.signal.throwIfAborted();
+    context.management.requireAction(context.bot, input.action, context.messageId);
     let result;
     if (input.action === 'list') result = context.management.list(context.bot);
-    else if (input.action === 'create') {
+    else if (input.action === 'get') {
+      if (!input.botId) throw new Error('get requires botId.');
+      result = context.management.get(context.bot, input.botId);
+    } else if (input.action === 'update') {
+      if (!input.botId) throw new Error('update requires botId.');
+      result = await context.management.update(context.bot, input.botId, {
+        name: input.name,
+        role: input.role,
+        instructions: input.instructions,
+        avatar: input.avatar,
+        toolIds: input.toolIds,
+      });
+    } else if (input.action === 'create') {
       if (!input.name || !input.role?.trim() || !input.instructions)
         throw new Error('Create requires name, role, and instructions.');
       const caller = context.bot;
