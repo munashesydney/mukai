@@ -287,13 +287,26 @@ export class PursuitService {
     try {
       const p = run.snapshot,
         bot = this.bots.require(p.ownerBotId!);
-      const previous = this.repository
-        .runs(p.id)
+      const recentRuns = this.repository.runs(p.id);
+      const totalRuns = this.repository.runCount(p.id);
+      const runIndex = recentRuns.findIndex((item) => item.id === run.id);
+      const runNumber = runIndex < 0 ? totalRuns : totalRuns - runIndex;
+      const previous = recentRuns
         .filter((item) => item.id !== run.id)
         .slice(0, 3)
-        .map((item) => ({ status: item.status, summary: item.summary, error: item.error }));
+        .map((item) => ({
+          runNumber: totalRuns - recentRuns.findIndex((recent) => recent.id === item.id),
+          runId: item.id,
+          conversationId: item.conversationId,
+          status: item.status,
+          summary: item.summary,
+          error: item.error,
+        }));
       const context = JSON.stringify({
         pursuitId: p.id,
+        runNumber,
+        runId: run.id,
+        conversationId: run.conversationId,
         name: p.name,
         objective: p.objective,
         successCriteria: p.successCriteria,
@@ -309,7 +322,7 @@ export class PursuitService {
         {
           requestId: this.chats.pendingRequest(run.conversationId) || randomUUID(),
           text:
-            'Run this pursuit autonomously. Work toward its objective, check the success criteria, and summarize what you actually did. The user is not watching this run; use communicate action notify for a meaningful update when necessary.\n\nPursuit context:\n' +
+            `Pursuit: ${p.name} · Run ${runNumber}\nRun this pursuit autonomously. Work toward its objective, check the success criteria, and summarize what you actually did. The user is not watching this run; use communicate action notify for a meaningful update when necessary.\n\nPursuit context:\n` +
             context,
           attachmentIds: [],
         },

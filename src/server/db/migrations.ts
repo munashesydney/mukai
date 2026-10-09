@@ -316,6 +316,10 @@ export const migrations = [
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1);
    CREATE INDEX pursuit_workpad ON pursuit_workpad_entries(pursuit_id,status,type,updated_at);`,
+  `ALTER TABLE workspaces ADD COLUMN vm_memory_mib INTEGER NOT NULL DEFAULT 4096
+     CHECK(vm_memory_mib BETWEEN 1024 AND 65536 AND vm_memory_mib % 256 = 0);
+   ALTER TABLE workspaces ADD COLUMN vm_vcpus INTEGER NOT NULL DEFAULT 2
+     CHECK(vm_vcpus BETWEEN 1 AND 32);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

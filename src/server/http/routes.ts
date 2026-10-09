@@ -39,6 +39,7 @@ import type { CapabilityService } from '../capabilities/service';
 import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
 import type { NotificationService } from '../services/notificationService';
+import { vmResourcesSchema } from '../../shared/computer';
 
 function uploadName(request: IncomingMessage) {
   try {
@@ -551,6 +552,12 @@ export function createRoutes({
         const workspace = workspaces.require(id);
         if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
         return send(response, await desktops.session(workspaces.computers.guest(workspace)));
+      }
+      if (id && action === 'computer-resources' && method === 'PUT') {
+        return send(
+          response,
+          workspaces.updateComputerResources(id, vmResourcesSchema.parse(await jsonBody(request))),
+        );
       }
       if (id && action === 'computer') {
         const workspace = workspaces.require(id);

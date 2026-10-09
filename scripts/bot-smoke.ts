@@ -132,6 +132,72 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    if (process.argv.includes('--vm-resources-only')) {
+      // Only this disposable fixture uses a VM workspace without launching QEMU.
+      api.store.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+      await new Promise<void>((resolve) => {
+        window.webContents.once('did-finish-load', () => resolve());
+        window.reload();
+      });
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await evaluate('document.querySelector(".rail-settings").click()');
+      await wait('Boolean(document.querySelector("#settings-tab-workspace"))');
+      await click('Workspace');
+      await wait(
+        'Boolean(document.querySelector("#vm-memory")) && !document.querySelector("#vm-memory").disabled',
+      );
+      assert.equal(await evaluate('document.querySelector("#vm-memory").value'), '4');
+      assert.equal(await evaluate('document.querySelector("#vm-cpus").value'), '2');
+      await capture('vm-resource-settings.png');
+      await fill('#vm-memory', '8');
+      await fill('#vm-cpus', '4');
+      await click('Save resources');
+      await wait('Boolean(document.querySelector(".vm-settings-card .ai-notice"))');
+      assert.deepEqual(new WorkspaceRepository(api.store).find('default')!.computerResources, {
+        memoryMiB: 8192,
+        vcpus: 4,
+      });
+      await new Promise<void>((resolve) => {
+        window.webContents.once('did-finish-load', () => resolve());
+        window.reload();
+      });
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await evaluate('document.querySelector(".rail-settings").click()');
+      await wait('Boolean(document.querySelector("#settings-tab-workspace"))');
+      await click('Workspace');
+      await wait(
+        'Boolean(document.querySelector("#vm-memory")) && !document.querySelector("#vm-memory").disabled',
+      );
+      assert.equal(await evaluate('document.querySelector("#vm-memory").value'), '8');
+      assert.equal(await evaluate('document.querySelector("#vm-cpus").value'), '4');
+      await fill('#vm-cpus', '1.5');
+      assert.equal(
+        await evaluate('document.querySelector(".vm-resource-actions button").disabled'),
+        true,
+      );
+      await click('Use defaults');
+      await click('Save resources');
+      await wait('Boolean(document.querySelector(".vm-settings-card .ai-notice"))');
+      assert.deepEqual(new WorkspaceRepository(api.store).find('default')!.computerResources, {
+        memoryMiB: 4096,
+        vcpus: 2,
+      });
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('vm-resource-settings-dark.png');
+      window.setSize(820, 900);
+      await capture('vm-resource-settings-narrow.png');
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".vm-settings-card").scrollWidth <= document.querySelector(".vm-settings-card").clientWidth',
+        ),
+        true,
+      );
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS VM resource settings: defaults, save, reload, validation, reset, dark and narrow layouts.',
+      );
+      return;
+    }
     if (process.argv.includes('--bot-roles-only')) {
       const mainBot = (await request<Bot[]>('/bots'))[0];
       assert.equal(

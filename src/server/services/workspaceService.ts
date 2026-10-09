@@ -5,6 +5,7 @@ import type { WorkspaceInput } from '../../shared/ai';
 import { ApiError } from '../config';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import type { ComputerManager } from '../computer/manager';
+import { DEFAULT_VM_RESOURCES, vmResourcesSchema, type VmResources } from '../../shared/computer';
 
 export class WorkspaceService {
   constructor(
@@ -50,6 +51,7 @@ export class WorkspaceService {
       name: input.name,
       folder,
       computer,
+      ...(computer === 'qemu' ? { computerResources: { ...DEFAULT_VM_RESOURCES } } : {}),
       createdAt: new Date().toISOString(),
     };
     this.workspaces.create(workspace);
@@ -74,5 +76,13 @@ export class WorkspaceService {
     const updated = { ...workspace, name: input.name, folder };
     this.workspaces.update(updated);
     return updated;
+  }
+  updateComputerResources(id: string, input: VmResources) {
+    const workspace = this.require(id);
+    if (workspace.computer !== 'qemu')
+      throw new ApiError(400, 'Computer resources apply only to Linux VM workspaces.');
+    const resources = vmResourcesSchema.parse(input);
+    this.workspaces.updateComputerResources(id, resources);
+    return this.require(id);
   }
 }

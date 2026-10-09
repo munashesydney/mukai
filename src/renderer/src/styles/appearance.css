@@ -610,6 +610,118 @@
   border-bottom: 1px solid var(--line);
   background: var(--surface-muted);
 }
+.vm-settings-card .settings-card-heading > .service-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.vm-settings-card form {
+  padding: 20px 17px 16px;
+}
+.vm-resource-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.vm-resource-field label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+}
+.vm-resource-field label svg {
+  color: var(--text-secondary);
+}
+.vm-resource-input {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+.vm-resource-input:focus-within {
+  border-color: var(--theme-accent);
+}
+.vm-resource-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.vm-resource-input > span {
+  padding-right: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.vm-resource-field p,
+.vm-resource-help,
+.vm-lifecycle-help,
+.vm-active-resources {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.vm-resource-field p {
+  margin-top: 8px;
+}
+.vm-resource-help {
+  margin-top: 16px;
+}
+.vm-resource-actions,
+.vm-lifecycle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.vm-resource-actions {
+  margin-top: 16px;
+}
+.vm-active-resources,
+.vm-restart-note,
+.vm-settings-card > .ai-alert,
+.vm-settings-card > .ai-notice {
+  margin: 0 17px 14px;
+}
+.vm-restart-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.vm-restart-note svg {
+  flex-shrink: 0;
+}
+.vm-lifecycle-actions {
+  padding: 14px 17px 0;
+  border-top: 1px solid var(--line);
+}
+.vm-lifecycle-help {
+  padding: 10px 17px 17px;
+}
+@media (max-width: 620px) {
+  .vm-resource-fields {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .vm-settings-card .settings-card-heading {
+    flex-wrap: wrap;
+  }
+}
 .settings-card-icon {
   width: 33px;
   height: 33px;

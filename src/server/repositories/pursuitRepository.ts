@@ -122,6 +122,13 @@ export class PursuitRepository {
       )
       .map((row) => this.run(row));
   }
+  runCount(id: string) {
+    const row = this.database.get(
+      'SELECT COUNT(*) AS count FROM pursuit_runs WHERE pursuit_id=?',
+      id,
+    );
+    return Number(row?.count || 0);
+  }
   findRun(id: string) {
     const row = this.database.get('SELECT * FROM pursuit_runs WHERE id=?', id);
     return row ? this.run(row) : undefined;

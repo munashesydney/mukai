@@ -321,6 +321,29 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('keeps saved resource changes pending until the next boot, without interrupting tools', async () => {
+    const { vm, launch } = await fixture();
+    await vm.start();
+    expect(launch.mock.calls[0][1]).toEqual(expect.arrayContaining(['-m', '4096', '-smp', '2']));
+    vm.configureResources({ memoryMiB: 8192, vcpus: 4 });
+    expect(vm.status()).toMatchObject({
+      state: 'running',
+      restartRequired: true,
+      activeResources: { memoryMiB: 4096, vcpus: 2 },
+      resources: { memoryMiB: 8192, vcpus: 4 },
+    });
+    await vm.request('terminal', { command: 'ls' }, owner, signal());
+    expect(launch).toHaveBeenCalledTimes(1);
+    await vm.stop();
+    expect(vm.status()).toMatchObject({ state: 'stopped', restartRequired: false });
+    expect(vm.status().activeResources).toBeUndefined();
+    await vm.start();
+    expect(launch.mock.calls[1][1]).toEqual(expect.arrayContaining(['-m', '8192', '-smp', '4']));
+    expect(vm.status()).toMatchObject({
+      activeResources: { memoryMiB: 8192, vcpus: 4 },
+      restartRequired: false,
+    });
+  });
   it('boots and restarts the ARM bridge with UEFI while retaining disk contents', async () => {
     host.architecture = 'arm64';
     host.platform = 'darwin';

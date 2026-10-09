@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { migrations } from './migrations';
 import { startApiServer } from '../app';
 import type { Attachment, Bot, ChatMessage } from '../../shared/ai';
+import { WorkspaceRepository } from '../repositories/workspaceRepository';
 
 let dir = '';
 afterEach(() => {
@@ -15,6 +16,35 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('gives existing VM workspaces resource defaults without changing their computer or identity', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
+    db.exec('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
+    migrations.slice(0, -1).forEach((sql, index) => {
+      db.exec(sql);
+      db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
+    });
+    db.exec(
+      "INSERT INTO workspaces(id,name,folder,created_at,computer) VALUES('vm','My computer',NULL,'2026-10-01','qemu')",
+    );
+    db.close();
+    const api = await startApiServer(0, { dataDir: dir });
+    try {
+      expect(new WorkspaceRepository(api.store).find('vm')).toEqual({
+        id: 'vm',
+        name: 'My computer',
+        folder: null,
+        createdAt: '2026-10-01',
+        computer: 'qemu',
+        computerResources: { memoryMiB: 4096, vcpus: 2 },
+      });
+      expect(new WorkspaceRepository(api.store).find('default')?.computer).toBe('local');
+      expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      await api.shutdown();
+      await new Promise<void>((resolve) => api.server.close(() => resolve()));
+    }
+  });
   it('removes installed run budgets while preserving bot settings and saved progress', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     const db = new DatabaseSync(join(dir, 'mukai.sqlite'));

@@ -8,7 +8,13 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, copyFile, rename, stat, writeFile, readFile, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
-import type { ComputerStatus, QemuSetup } from '../../shared/computer';
+import {
+  DEFAULT_VM_RESOURCES,
+  vmResourcesSchema,
+  type VmResources,
+  type ComputerStatus,
+  type QemuSetup,
+} from '../../shared/computer';
 import type { RuntimeOwner } from '../../shared/runtime';
 import {
   Frames,
@@ -31,6 +37,7 @@ import {
 export interface QemuConfig extends QemuBootConfig {
   binary: string;
   image: string;
+  resources?: VmResources;
 }
 export function qemuConfig(): QemuConfig {
   let host: ReturnType<typeof qemuPlatform> | undefined;
@@ -98,9 +105,9 @@ export function qemuArguments(
     'Mukai workspace',
     ...qemuMachineArguments(config),
     '-m',
-    '2048',
+    String(config.resources?.memoryMiB ?? DEFAULT_VM_RESOURCES.memoryMiB),
     '-smp',
-    '2',
+    String(config.resources?.vcpus ?? DEFAULT_VM_RESOURCES.vcpus),
     '-display',
     'none',
     '-serial',
@@ -151,6 +158,7 @@ export class QemuComputer implements Computer {
   private desktopPort?: number;
   private desktopPassword?: string;
   private maintenance?: { message: string; detail?: string };
+  private activeResources?: VmResources;
   constructor(
     private directory: string,
     private config = qemuConfig(),
@@ -164,10 +172,21 @@ export class QemuComputer implements Computer {
     else this.diagnostics?.info(event, message, context);
   }
   status(): ComputerStatus {
+    const resources = this.config.resources || DEFAULT_VM_RESOURCES;
     return {
       ...this.state,
+      resources: { ...resources },
+      ...(this.activeResources ? { activeResources: { ...this.activeResources } } : {}),
+      restartRequired: Boolean(
+        this.activeResources &&
+        (this.activeResources.memoryMiB !== resources.memoryMiB ||
+          this.activeResources.vcpus !== resources.vcpus),
+      ),
       ...(this.maintenance ? { state: 'starting', ...this.maintenance } : {}),
     };
+  }
+  configureResources(resources: VmResources) {
+    this.config = { ...this.config, resources: vmResourcesSchema.parse(resources) };
   }
   desktopConnection() {
     if (
@@ -236,7 +255,10 @@ export class QemuComputer implements Computer {
     const setup = await qemuSetup(this.config);
     signal.throwIfAborted();
     if (!setup.available) throw new Error(setup.reason);
-    const bootConfig = { ...this.config };
+    const bootConfig = {
+      ...this.config,
+      resources: { ...(this.config.resources || DEFAULT_VM_RESOURCES) },
+    };
     if ((bootConfig.architecture || qemuPlatform().architecture) === 'arm64')
       bootConfig.firmware = await findQemuFirmware(bootConfig.binary, bootConfig.firmware);
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -416,9 +438,10 @@ export class QemuComputer implements Computer {
       { windowsHide: true, env },
     );
     this.child = child;
+    this.activeResources = bootConfig.resources;
     this.report(
       'computer.started',
-      `QEMU launched; pid=${child.pid ?? 'unavailable'}, accelerator=${this.config.accelerator}.`,
+      `QEMU launched; pid=${child.pid ?? 'unavailable'}, accelerator=${bootConfig.accelerator}, memoryMiB=${bootConfig.resources.memoryMiB}, vcpus=${bootConfig.resources.vcpus}.`,
     );
     const append = (chunk: Buffer) => {
       this.log = (this.log + chunk.toString()).slice(-4000);
@@ -439,7 +462,10 @@ export class QemuComputer implements Computer {
           summary,
           expected ? undefined : new Error(this.log || summary),
         );
-        if (this.child === child) this.child = undefined;
+        if (this.child === child) {
+          this.child = undefined;
+          this.activeResources = undefined;
+        }
         this.closeConnection?.();
         this.failPending(new Error('Workspace VM stopped.'));
         if (this.state.state !== 'stopped')

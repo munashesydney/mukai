@@ -1,4 +1,5 @@
 import type { FileChangeSummary } from './fileChanges';
+import type { VmResources } from './computer';
 
 export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
 export interface ChatGPTAccount {
@@ -83,6 +84,7 @@ export interface Workspace {
   folder: string | null;
   createdAt: string;
   computer?: 'local' | 'qemu';
+  computerResources?: VmResources;
 }
 export interface WorkspaceInput {
   name: string;

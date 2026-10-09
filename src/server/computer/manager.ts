@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import type { Workspace } from '../../shared/ai';
-import type { ComputerStatus } from '../../shared/computer';
+import { DEFAULT_VM_RESOURCES, type ComputerStatus } from '../../shared/computer';
 import { QemuComputer } from './qemuComputer';
 import { ApiError } from '../config';
 import { ComputerSetupService } from './setupService';
@@ -38,12 +38,22 @@ export class ComputerManager {
       );
       this.computers.set(workspace.id, computer);
     }
+    computer.configureResources(workspace.computerResources || DEFAULT_VM_RESOURCES);
     return computer;
   }
   status(workspace: Workspace): ComputerStatus {
-    return workspace.computer === 'qemu'
-      ? this.computers.get(workspace.id)?.status() || { kind: 'qemu', state: 'stopped' }
-      : { kind: 'local', state: 'local' };
+    if (workspace.computer !== 'qemu') return { kind: 'local', state: 'local' };
+    const computer = this.computers.get(workspace.id);
+    const resources = workspace.computerResources || DEFAULT_VM_RESOURCES;
+    computer?.configureResources(resources);
+    return (
+      computer?.status() || {
+        kind: 'qemu',
+        state: 'stopped',
+        resources: { ...resources },
+        restartRequired: false,
+      }
+    );
   }
   async shutdown() {
     this.closed = true;

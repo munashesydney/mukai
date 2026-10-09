@@ -1,5 +1,6 @@
 import type { Workspace } from '../../shared/ai';
 import type { Database, Row } from '../db/database';
+import type { VmResources } from '../../shared/computer';
 
 const workspaceRecord = (row: Row): Workspace => ({
   id: String(row.id),
@@ -7,6 +8,11 @@ const workspaceRecord = (row: Row): Workspace => ({
   folder: row.folder as string | null,
   createdAt: String(row.created_at),
   computer: row.computer === 'qemu' ? 'qemu' : 'local',
+  ...(row.computer === 'qemu'
+    ? {
+        computerResources: { memoryMiB: Number(row.vm_memory_mib), vcpus: Number(row.vm_vcpus) },
+      }
+    : {}),
 });
 export class WorkspaceRepository {
   constructor(private database: Database) {}
@@ -44,6 +50,14 @@ export class WorkspaceRepository {
       workspace.name,
       workspace.folder,
       workspace.id,
+    );
+  }
+  updateComputerResources(id: string, resources: VmResources) {
+    this.database.run(
+      'UPDATE workspaces SET vm_memory_mib=?,vm_vcpus=? WHERE id=?',
+      resources.memoryMiB,
+      resources.vcpus,
+      id,
     );
   }
 }
