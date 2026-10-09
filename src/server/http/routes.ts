@@ -30,6 +30,7 @@ import { body, jsonBody, send, chatOutput } from './transport';
 import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
+import { workpadQuerySchema } from '../tools/pursuits/workpad';
 import { z } from 'zod';
 import type { BrowserService } from '../services/browserService';
 import { browserDefinition } from '../tools/browser/definition';
@@ -415,6 +416,23 @@ export function createRoutes({
       if (!id && method === 'GET')
         return send(response, pursuits.list(url.searchParams.get('workspaceId') || 'default'));
       if (id && !action && method === 'GET') return send(response, pursuits.detail(id));
+      if (id && action === 'workpad' && method === 'GET') {
+        if (url.searchParams.has('entryId'))
+          return send(
+            response,
+            pursuits.workpadEntry(id, z.string().uuid().parse(url.searchParams.get('entryId'))),
+          );
+        const query = workpadQuerySchema.parse({
+          type: url.searchParams.get('type') || undefined,
+          status: url.searchParams.get('status') || undefined,
+          includeArchived: url.searchParams.get('includeArchived') === 'true',
+          limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+          offset: url.searchParams.has('offset')
+            ? Number(url.searchParams.get('offset'))
+            : undefined,
+        });
+        return send(response, pursuits.workpad(id, query));
+      }
       if (id && action === 'status' && method === 'PUT') {
         const input = z
           .object({ status: z.enum(['paused', 'active']) })
@@ -423,6 +441,11 @@ export function createRoutes({
       }
       if (id && action === 'run' && method === 'POST')
         return send(response, pursuits.runNow(id), 201);
+      if (id && action === 'run' && method === 'GET')
+        return send(
+          response,
+          pursuits.runDetail(id, z.string().uuid().parse(url.searchParams.get('runId'))),
+        );
     } else if (resource === 'conversations') {
       if (!id && method === 'GET') {
         const workspaceId = url.searchParams.get('workspaceId') || 'default';

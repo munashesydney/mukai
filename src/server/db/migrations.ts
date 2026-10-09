@@ -303,6 +303,19 @@ export const migrations = [
    INSERT OR IGNORE INTO bot_tool_assignments(bot_id,tool_id,enabled)
      SELECT bot_id,'communicate',enabled FROM bot_tool_assignments WHERE tool_id='ask';
    DELETE FROM bot_tool_assignments WHERE tool_id='ask';`,
+  `CREATE TABLE pursuit_workpad_entries (
+    id TEXT PRIMARY KEY,
+    pursuit_id TEXT NOT NULL REFERENCES pursuits(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK(type IN ('work_item','decision','blocker','reference','note')),
+    title TEXT NOT NULL, content TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('todo','in_progress','done','open','resolved','active','archived')),
+    links_json TEXT NOT NULL DEFAULT '[]',
+    author_bot_id TEXT REFERENCES bots(id) ON DELETE SET NULL,
+    origin_run_id TEXT REFERENCES pursuit_runs(id) ON DELETE SET NULL,
+    updated_run_id TEXT REFERENCES pursuit_runs(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1);
+   CREATE INDEX pursuit_workpad ON pursuit_workpad_entries(pursuit_id,status,type,updated_at);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

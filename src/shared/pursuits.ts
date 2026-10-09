@@ -35,6 +35,81 @@ export interface PursuitDetail {
   pursuit: Pursuit;
   runs: PursuitRun[];
 }
+export const workpadEntryTypes = ['work_item', 'decision', 'blocker', 'reference', 'note'] as const;
+export type WorkpadEntryType = (typeof workpadEntryTypes)[number];
+export const workpadStatuses = [
+  'todo',
+  'in_progress',
+  'done',
+  'open',
+  'resolved',
+  'active',
+  'archived',
+] as const;
+export type WorkpadStatus = (typeof workpadStatuses)[number];
+export const workpadTypeLabels: Record<WorkpadEntryType, string> = {
+  work_item: 'Work item',
+  decision: 'Decision',
+  blocker: 'Blocker',
+  reference: 'Reference',
+  note: 'Note',
+};
+export const workpadStatusLabels: Record<WorkpadStatus, string> = {
+  todo: 'To do',
+  in_progress: 'In progress',
+  done: 'Done',
+  open: 'Open',
+  resolved: 'Resolved',
+  active: 'Active',
+  archived: 'Archived',
+};
+export function validWorkpadStatus(type: WorkpadEntryType, status: WorkpadStatus) {
+  return (
+    status === 'archived' ||
+    (type === 'work_item'
+      ? ['todo', 'in_progress', 'done'].includes(status)
+      : type === 'blocker'
+        ? ['open', 'resolved'].includes(status)
+        : status === 'active')
+  );
+}
+export interface WorkpadLink {
+  kind: 'file' | 'url' | 'conversation' | 'artifact' | 'entry';
+  target: string;
+  label: string;
+}
+export interface WorkpadEntryInput {
+  type: WorkpadEntryType;
+  title: string;
+  content: string;
+  status?: WorkpadStatus;
+  links?: WorkpadLink[];
+}
+export type WorkpadEntryPatch = Partial<Omit<WorkpadEntryInput, 'type'>>;
+export interface WorkpadEntry extends Omit<WorkpadEntryInput, 'status' | 'links'> {
+  id: string;
+  pursuitId: string;
+  status: WorkpadStatus;
+  links: WorkpadLink[];
+  authorBotId: string | null;
+  originRunId: string | null;
+  updatedRunId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+}
+export interface WorkpadQuery {
+  type?: WorkpadEntryType;
+  status?: WorkpadStatus;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+export interface WorkpadPage {
+  entries: WorkpadEntry[];
+  total: number;
+  nextOffset: number | null;
+}
 export const pursuitStatusLabels: Record<PursuitStatus, string> = {
   active: 'Active',
   waiting: 'Waiting',

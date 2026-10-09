@@ -14,12 +14,18 @@ import {
   type PursuitDetail,
   type PursuitRun,
   type PursuitInput,
+  type WorkpadEntry,
+  type WorkpadPage,
 } from '../shared/pursuits';
 import type { Bot, ChatMessage, ToolInfo } from '../shared/ai';
 import type { ApprovalState } from '../shared/approvals';
 import { pursuitActionSchema, pursuitDefinition } from './tools/pursuits/definition';
 import { z } from 'zod';
 import { pursuitReportProblem, pursuitReportSchema } from './tools/pursuits/report';
+import { executePursuit } from './tools/pursuits/execute';
+import { WorkspaceRepository } from './repositories/workspaceRepository';
+import { BotRepository } from './repositories/botRepository';
+import { scoutBot } from './services/botService';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, dir: string;
 let mode:
@@ -32,11 +38,14 @@ let mode:
   | 'slow'
   | 'reminder'
   | 'report-fail'
+  | 'workpad'
+  | 'workpad-fail'
   | 'invalid-report' = 'create';
 let calls: { messages: { role: string; content: unknown }[] }[] = [];
 let nextWake: string,
   reportAttempts = 0;
 let reportOverride: Record<string, unknown> = {};
+let workpadPursuitId = '';
 const wakeReason = 'Allow time for the export to finish.';
 const wakeInstructions =
   'Check the export status, then validate the output against the success criteria.';
@@ -88,6 +97,7 @@ beforeEach(async () => {
   nextWake = new Date(Date.now() + 2 * 3600000).toISOString();
   reportAttempts = 0;
   reportOverride = {};
+  workpadPursuitId = '';
   dir = mkdtempSync(join(tmpdir(), 'mukai-pursuit-test-'));
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -114,7 +124,10 @@ beforeEach(async () => {
       return;
     }
     calls.push(body);
-    if (mode === 'report-fail' && body.messages.some((m: { role: string }) => m.role === 'tool')) {
+    if (
+      ['report-fail', 'workpad-fail'].includes(mode) &&
+      body.messages.some((m: { role: string }) => m.role === 'tool')
+    ) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -158,20 +171,53 @@ beforeEach(async () => {
       if (res.destroyed) return;
     }
     const hasTool = body.messages.some((m: { role: string }) => m.role === 'tool');
+    if (['workpad', 'workpad-fail'].includes(mode) && !hasTool) {
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'call-' + randomUUID(),
+            type: 'function',
+            function: {
+              name: 'manage_pursuit',
+              arguments: JSON.stringify({
+                action: 'add_entry',
+                pursuitId: workpadPursuitId,
+                entry: {
+                  type: 'work_item',
+                  title: 'Verify exported rows',
+                  content: 'The export is saved; validate the row count next.',
+                  status: 'in_progress',
+                },
+              }),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     const reminded = body.messages.some(
       (m: { role: string; content: unknown }) =>
         m.role === 'system' &&
         String(m.content).includes('This run finished without reporting a valid pursuit outcome'),
     );
     if (
-      (!hasTool || (mode === 'invalid-report' && reportAttempts === 1)) &&
+      (!hasTool ||
+        (mode === 'invalid-report' && reportAttempts === 1) ||
+        (mode === 'workpad' && reportAttempts === 0)) &&
       mode !== 'no-report' &&
       mode !== 'slow' &&
       (mode !== 'reminder' || reminded)
     ) {
       const name = mode === 'create' ? 'manage_pursuit' : 'report_pursuit';
       const outcome =
-        mode === 'reminder' || mode === 'invalid-report' || mode === 'report-fail'
+        mode === 'reminder' ||
+        mode === 'invalid-report' ||
+        mode === 'report-fail' ||
+        mode === 'workpad'
           ? 'waiting'
           : mode;
       const args =
@@ -235,6 +281,448 @@ afterEach(async () => {
   }
 });
 describe('AI-owned pursuits and scheduled runs', () => {
+  it.each(['workpad', 'workpad-fail'] as const)(
+    'persists model-authored entries with run provenance when the run is %s',
+    async (runMode) => {
+      const p = await createWithAI();
+      workpadPursuitId = p.id;
+      mode = runMode;
+      await request(`/pursuits/${p.id}/run`, 'POST');
+      const result = await settled(p.id);
+      const workpad = api.pursuits.workpad(p.id);
+      expect(workpad.entries).toHaveLength(1);
+      expect(workpad.entries[0]).toMatchObject({
+        title: 'Verify exported rows',
+        status: 'in_progress',
+        authorBotId: 'scout',
+        originRunId: result.runs[0].id,
+        updatedRunId: result.runs[0].id,
+      });
+      expect(result.runs[0].status).toBe(runMode === 'workpad' ? 'complete' : 'failed');
+      expect(result.pursuit.status).toBe(runMode === 'workpad' ? 'waiting' : 'waiting_for_you');
+    },
+  );
+  async function workpadTool(
+    value: Parameters<typeof executePursuit>[0],
+    conversationId?: string,
+    bot?: Bot,
+  ) {
+    return executePursuit(
+      value,
+      {
+        bot: bot || (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!,
+        pursuits: api.pursuits,
+        onActivity() {},
+        signal: new AbortController().signal,
+        scheduledRun: Boolean(conversationId),
+        conversationId,
+      },
+      randomUUID(),
+    );
+  }
+  it('validates Workpad actions without changing the object provider schema', () => {
+    const pursuitId = randomUUID();
+    expect(
+      pursuitActionSchema.safeParse({
+        action: 'add_entry',
+        pursuitId,
+        entry: { type: 'blocker', title: 'Access', content: 'Need access', status: 'done' },
+      }).success,
+    ).toBe(false);
+    expect(
+      pursuitActionSchema.safeParse({
+        action: 'add_entry',
+        pursuitId,
+        entry: {
+          type: 'note',
+          title: 'Source',
+          content: 'Reviewed',
+          links: [{ kind: 'url', label: 'Bad URL', target: 'javascript:alert(1)' }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      pursuitActionSchema.safeParse({
+        action: 'update_entry',
+        pursuitId,
+        entryId: randomUUID(),
+        expectedRevision: 1,
+        patch: {},
+      }).success,
+    ).toBe(false);
+    expect(
+      pursuitActionSchema.safeParse({
+        action: 'update_entry',
+        pursuitId,
+        entryId: randomUUID(),
+        patch: { content: 'Updated' },
+      }).success,
+    ).toBe(false);
+    expect(z.toJSONSchema(pursuitDefinition.inputSchema).type).toBe('object');
+  });
+  it('adds and updates entries through the tool, preserves provenance and rejects stale overwrites', async () => {
+    const p = await createWithAI(),
+      repository = new PursuitRepository(api.store);
+    const run = repository.claim(p.id, 'manual', Date.now())!;
+    const added = await workpadTool(
+      {
+        action: 'add_entry',
+        pursuitId: p.id,
+        entry: {
+          type: 'work_item',
+          title: 'Validate export',
+          content: 'Check row counts against the source.',
+          links: [{ kind: 'file', target: 'exports/results.csv', label: 'Export' }],
+        },
+      },
+      run.conversationId,
+    );
+    expect(added.ok).toBe(true);
+    const entry = added.result as WorkpadEntry;
+    expect(entry).toMatchObject({
+      status: 'todo',
+      authorBotId: 'scout',
+      originRunId: run.id,
+      updatedRunId: run.id,
+      revision: 1,
+    });
+    const updated = await workpadTool(
+      {
+        action: 'update_entry',
+        pursuitId: p.id,
+        entryId: entry.id,
+        expectedRevision: 1,
+        patch: { status: 'done', content: 'Verified all 42 source rows are present.' },
+      },
+      run.conversationId,
+    );
+    expect(updated.result).toMatchObject({
+      id: entry.id,
+      status: 'done',
+      revision: 2,
+      links: entry.links,
+    });
+    expect(
+      (
+        await workpadTool({
+          action: 'update_entry',
+          pursuitId: p.id,
+          entryId: entry.id,
+          expectedRevision: 1,
+          patch: { content: 'Stale edit' },
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await workpadTool({
+          action: 'update_entry',
+          pursuitId: p.id,
+          entryId: entry.id,
+          expectedRevision: 2,
+          patch: { status: 'resolved' },
+        })
+      ).ok,
+    ).toBe(false);
+    const read = await workpadTool({ action: 'get_entry', pursuitId: p.id, entryId: entry.id });
+    expect(read.result).toMatchObject({
+      content: 'Verified all 42 source rows are present.',
+      revision: 2,
+    });
+    repository.finish(
+      run.id,
+      'failed',
+      'Provider failed after saving progress.',
+      'Provider failure',
+      'waiting_for_you',
+      Date.now(),
+    );
+    expect(api.pursuits.workpad(p.id).entries).toHaveLength(1);
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect(api.pursuits.workpadEntry(p.id, entry.id)).toMatchObject({
+      status: 'done',
+      originRunId: run.id,
+      revision: 2,
+    });
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('filters, paginates, resolves and archives current state through tools and the read API', async () => {
+    const p = await createWithAI(),
+      bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!;
+    const blocker = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'blocker',
+      title: 'Needs access',
+      content: 'Provide export access.',
+    });
+    for (let i = 0; i < 22; i++)
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'note',
+        title: `Finding ${i}`,
+        content: `Verified finding ${i}.`,
+      });
+    const first = await workpadTool({ action: 'list_entries', pursuitId: p.id, limit: 10 });
+    expect(first.result).toMatchObject({ total: 23, nextOffset: 10 });
+    expect((first.result as WorkpadPage).entries[0].id).toBe(blocker.id);
+    const second = await workpadTool({
+      action: 'list_entries',
+      pursuitId: p.id,
+      limit: 10,
+      offset: 10,
+    });
+    expect(
+      (second.result as WorkpadPage).entries.some((entry) =>
+        (first.result as WorkpadPage).entries.some((old) => old.id === entry.id),
+      ),
+    ).toBe(false);
+    api.pursuits.updateEntryOwned(bot, p.id, blocker.id, { status: 'resolved' }, 1);
+    const filtered = await request<WorkpadPage>(
+      `/pursuits/${p.id}/workpad?type=blocker&status=resolved`,
+    );
+    expect(filtered.data.entries).toHaveLength(1);
+    api.pursuits.updateEntryOwned(bot, p.id, blocker.id, { status: 'archived' }, 2);
+    expect(api.pursuits.workpad(p.id).total).toBe(22);
+    expect(api.pursuits.workpad(p.id, { includeArchived: true }).total).toBe(23);
+    expect(
+      (await request<WorkpadPage>(`/pursuits/${p.id}/workpad?status=archived`)).data.entries[0].id,
+    ).toBe(blocker.id);
+    expect(
+      (await request<WorkpadEntry>(`/pursuits/${p.id}/workpad?entryId=${blocker.id}`)).data.status,
+    ).toBe('archived');
+    expect((await request(`/pursuits/${p.id}/workpad?limit=0`)).response.status).toBe(400);
+  });
+  it('enforces pursuit ownership, run scope and reference scope', async () => {
+    const p = await createWithAI(),
+      bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!;
+    const other = (
+      await request<Bot>('/bots', 'POST', {
+        name: 'Other',
+        role: 'Assistant',
+        instructions: 'Help.',
+        providerId: null,
+        model: null,
+        supportsImages: null,
+        avatar: 'atlas',
+      })
+    ).data;
+    const entry = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'decision',
+      title: 'Use CSV',
+      content: 'CSV matches the receiving system.',
+    });
+    expect(
+      (
+        await workpadTool(
+          { action: 'get_entry', pursuitId: p.id, entryId: entry.id },
+          undefined,
+          other,
+        )
+      ).ok,
+    ).toBe(false);
+    expect(
+      (await workpadTool({ action: 'list_entries', pursuitId: p.id }, undefined, other)).ok,
+    ).toBe(false);
+    expect(
+      (
+        await workpadTool(
+          {
+            action: 'update_entry',
+            pursuitId: p.id,
+            entryId: entry.id,
+            expectedRevision: 1,
+            patch: { content: 'Unauthorized' },
+          },
+          undefined,
+          other,
+        )
+      ).ok,
+    ).toBe(false);
+    const second = api.pursuits.create(bot, { ...input, name: 'Another pursuit' });
+    const run = new PursuitRepository(api.store).claim(p.id, 'manual', Date.now())!;
+    expect(() =>
+      api.pursuits.addEntryOwned(
+        bot,
+        second.id,
+        { type: 'note', title: 'Wrong run', content: 'Wrong pursuit.' },
+        run.conversationId,
+      ),
+    ).toThrow('own Workpad');
+    expect(() => api.pursuits.getEntryOwned(bot, second.id, entry.id)).toThrow('not found');
+    expect(() =>
+      api.pursuits.addEntryOwned(bot, second.id, {
+        type: 'reference',
+        title: 'Wrong entry',
+        content: 'Linked entry',
+        links: [{ kind: 'entry', target: entry.id, label: 'Decision' }],
+      }),
+    ).toThrow('not found');
+    expect(() =>
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'reference',
+        title: 'Missing conversation',
+        content: 'Link',
+        links: [{ kind: 'conversation', target: 'missing', label: 'Conversation' }],
+      }),
+    ).toThrow('workspace');
+    expect(() =>
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'reference',
+        title: 'Missing artifact',
+        content: 'Link',
+        links: [{ kind: 'artifact', target: 'missing', label: 'Artifact' }],
+      }),
+    ).toThrow('workspace');
+    new WorkspaceRepository(api.store).create({
+      id: 'other-workspace',
+      name: 'Other workspace',
+      folder: null,
+      createdAt: new Date().toISOString(),
+    });
+    const foreignBot = scoutBot('other-workspace', 'foreign-bot');
+    new BotRepository(api.store).create(foreignBot);
+    expect(() =>
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'reference',
+        title: 'Foreign conversation',
+        content: 'Link',
+        links: [{ kind: 'conversation', target: 'bot-foreign-bot', label: 'Foreign conversation' }],
+      }),
+    ).toThrow('workspace');
+    const linked = api.pursuits.addEntryOwned(
+      bot,
+      p.id,
+      {
+        type: 'reference',
+        title: 'Supporting context',
+        content: 'Why CSV was selected.',
+        links: [
+          { kind: 'entry', target: entry.id, label: 'Decision' },
+          { kind: 'conversation', target: run.conversationId, label: 'Run' },
+        ],
+      },
+      run.conversationId,
+    );
+    expect(linked.links).toHaveLength(2);
+    new PursuitRepository(api.store).finish(
+      run.id,
+      'complete',
+      'Recorded context.',
+      null,
+      'completed',
+      Date.now(),
+    );
+  });
+  it('retrieves provenance runs older than the recent run list and scopes them to their pursuit', async () => {
+    const p = await createWithAI(),
+      bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!,
+      repository = new PursuitRepository(api.store);
+    const report = pursuitReportSchema.parse({
+      status: 'waiting',
+      summary: 'Work saved.',
+      nextRunAt: nextWake,
+      nextRunReason: wakeReason,
+      nextRunInstructions: wakeInstructions,
+    });
+    const first = repository.claim(p.id, 'manual', Date.now())!;
+    const entry = api.pursuits.addEntryOwned(
+      bot,
+      p.id,
+      { type: 'decision', title: 'Initial decision', content: 'Preserve this context.' },
+      first.conversationId,
+    );
+    repository.finish(first.id, 'complete', report.summary, null, 'waiting', Date.now(), report);
+    for (let i = 0; i < 100; i++) {
+      const run = repository.claim(p.id, 'manual', Date.now())!;
+      repository.finish(run.id, 'complete', report.summary, null, 'waiting', Date.now(), report);
+    }
+    expect(repository.runs(p.id)).toHaveLength(100);
+    expect(repository.runs(p.id).some((run) => run.id === first.id)).toBe(false);
+    expect(
+      (await request<PursuitRun>(`/pursuits/${p.id}/run?runId=${entry.originRunId}`)).data.id,
+    ).toBe(first.id);
+    const other = api.pursuits.create(bot, { ...input, name: 'Other pursuit' });
+    expect((await request(`/pursuits/${other.id}/run?runId=${first.id}`)).response.status).toBe(
+      404,
+    );
+  });
+  it('bounds the automatic digest, prioritizes blockers, and includes it in fresh run context', async () => {
+    const p = await createWithAI(),
+      bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!,
+      repository = new PursuitRepository(api.store);
+    for (let i = 0; i < 35; i++)
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'note',
+        title: `Finding ${i}`,
+        content: 'Evidence. '.repeat(600),
+      });
+    for (let i = 0; i < 24; i++)
+      api.pursuits.addEntryOwned(bot, p.id, {
+        type: 'blocker',
+        title: `Obstacle ${i}`,
+        content: 'Resolve before final delivery.',
+      });
+    const decision = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'decision',
+      title: 'Use CSV',
+      content: 'CSV matches the receiving system.',
+      links: [
+        { kind: 'url', target: 'https://example.com/' + 'a'.repeat(600), label: 'Long source' },
+        { kind: 'url', target: 'https://example.com/evidence', label: 'Evidence' },
+      ],
+    });
+    const completed = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'work_item',
+      title: 'Export rows',
+      content: 'All source rows exported.',
+      status: 'done',
+    });
+    const blocker = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'blocker',
+      title: 'Export approval',
+      content: 'Need approval to publish the completed export.',
+    });
+    const archived = api.pursuits.addEntryOwned(bot, p.id, {
+      type: 'note',
+      title: 'Stale finding',
+      content: 'Superseded.',
+      status: 'archived',
+    });
+    const digest = repository.workpad.digest(p.id);
+    expect(JSON.stringify(digest).length).toBeLessThan(11000);
+    expect(digest.entries.length).toBeLessThanOrEqual(16);
+    expect(digest.entries[0]).toMatchObject({ id: blocker.id });
+    expect(digest.entries.some((entry) => 'id' in entry && entry.id === decision.id)).toBe(true);
+    expect(digest.entries.some((entry) => 'id' in entry && entry.id === completed.id)).toBe(true);
+    expect(digest.entries.find((entry) => 'id' in entry && entry.id === decision.id)).toMatchObject(
+      {
+        linksTruncated: true,
+        links: [{ kind: 'url', target: 'https://example.com/evidence', label: 'Evidence' }],
+      },
+    );
+    expect(digest.entries.some((entry) => 'id' in entry && entry.id === archived.id)).toBe(false);
+    expect(digest.omittedCount).toBeGreaterThan(0);
+    mode = 'waiting';
+    await request(`/pursuits/${p.id}/run`, 'POST');
+    const result = await settled(p.id);
+    expect(result.pursuit.status).toBe('waiting');
+    expect(
+      calls
+        .at(-1)!
+        .messages.some(
+          (message) => message.role === 'user' && String(message.content).includes(blocker.id),
+        ),
+    ).toBe(true);
+    expect(
+      calls
+        .at(-1)!
+        .messages.some(
+          (message) =>
+            message.role === 'system' &&
+            String(message.content).includes('Entry creation is optional'),
+        ),
+    ).toBe(true);
+  });
   it('publishes an object tool schema while validating required fields for each action', () => {
     const schema = z.toJSONSchema(pursuitDefinition.inputSchema);
     expect(schema.type).toBe('object');

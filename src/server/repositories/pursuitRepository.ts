@@ -9,12 +9,16 @@ import {
 } from '../../shared/pursuits';
 import { pursuitReportProblem, type PursuitReport } from '../tools/pursuits/report';
 import { resumableDelegationMessages } from './chatJobRepository';
+import { WorkpadRepository } from './workpadRepository';
 
 const resumableConversations = `SELECT m.conversation_id FROM pending_tool_approvals a JOIN messages m ON m.id=a.message_id
   UNION SELECT conversation_id FROM messages WHERE id IN (${resumableDelegationMessages}) AND status IN ('streaming','interrupted')`;
 
 export class PursuitRepository {
-  constructor(private database: Database) {}
+  readonly workpad: WorkpadRepository;
+  constructor(private database: Database) {
+    this.workpad = new WorkpadRepository(database);
+  }
   private project(row: Row): Pursuit {
     return {
       id: String(row.id),
@@ -124,6 +128,13 @@ export class PursuitRepository {
   }
   isRunConversation(id: string) {
     return Boolean(this.database.get('SELECT id FROM pursuit_runs WHERE conversation_id=?', id));
+  }
+  runForConversation(conversationId: string) {
+    const row = this.database.get(
+      'SELECT * FROM pursuit_runs WHERE conversation_id=?',
+      conversationId,
+    );
+    return row ? this.run(row) : undefined;
   }
   due(now: number) {
     const date = new Date(now).toISOString();

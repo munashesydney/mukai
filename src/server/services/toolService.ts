@@ -361,7 +361,14 @@ export class ToolService {
             })
           : {}),
         ...(this.pursuits
-          ? pursuitTools({ bot, pursuits: this.pursuits, onActivity, signal, scheduledRun })
+          ? pursuitTools({
+              bot,
+              pursuits: this.pursuits,
+              onActivity,
+              signal,
+              scheduledRun,
+              conversationId,
+            })
           : {}),
         ...(this.management
           ? botManagementTools({ bot, management: this.management, signal, onActivity, messageId })

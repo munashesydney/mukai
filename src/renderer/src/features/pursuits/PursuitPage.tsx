@@ -5,6 +5,7 @@ import {
   pursuitStatusLabels,
   scheduledStatus,
   type PursuitDetail,
+  type PursuitRun,
 } from '../../../../shared/pursuits';
 import { pursuitService } from '../../services/pursuitService';
 import { errorText } from '../../utils/errors';
@@ -12,6 +13,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { WakeCountdown } from './WakeCountdown';
 import { PursuitRunView } from './PursuitRunView';
 import { PursuitRuns } from './PursuitRuns';
+import { PursuitWorkpad } from './PursuitWorkpad';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
 import { BrowserToggle } from '../browser/BrowserToggle';
 export function PursuitPage({
@@ -30,6 +32,26 @@ export function PursuitPage({
     [busy, setBusy] = useState(false),
     [tab, setTab] = useState('Overview'),
     [selectedRun, setSelectedRun] = useState<string | null>(runId || null);
+  const [olderRun, setOlderRun] = useState<PursuitRun | null>(null);
+  const knownRun = Boolean(detail?.runs.some((run) => run.id === selectedRun));
+  useEffect(() => {
+    if (!selectedRun || knownRun) return;
+    let alive = true;
+    void pursuitService
+      .runDetail(id, selectedRun)
+      .then((value) => {
+        if (alive) {
+          setOlderRun(value);
+          setError('');
+        }
+      })
+      .catch((caught) => {
+        if (alive) setError(errorText(caught));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id, selectedRun, knownRun]);
   useEffect(() => {
     let alive = true,
       pending = false;
@@ -75,7 +97,9 @@ export function PursuitPage({
     );
   const { pursuit: p, runs } = detail,
     owner = bots.find((b) => b.id === p.ownerBotId),
-    run = runs.find((item) => item.id === selectedRun);
+    run =
+      runs.find((item) => item.id === selectedRun) ||
+      (olderRun?.id === selectedRun ? olderRun : undefined);
   const scheduledFrom = runs.reduce(
     (latest, item) =>
       item.finishedAt && Date.parse(item.finishedAt) > Date.parse(latest)
@@ -115,7 +139,7 @@ export function PursuitPage({
           <span>Owns this pursuit</span>
         </div>
         <div className="conversation-tabs" role="tablist" aria-label="Pursuit views">
-          {['Overview', 'Runs'].map((name) => (
+          {['Overview', 'Workpad', 'Runs'].map((name) => (
             <button
               key={name}
               role="tab"
@@ -134,7 +158,9 @@ export function PursuitPage({
         </p>
       )}
       <div className="pursuit-content">
-        {tab === 'Runs' ? (
+        {tab === 'Workpad' ? (
+          <PursuitWorkpad id={id} bots={bots} runs={runs} onRun={setSelectedRun} />
+        ) : tab === 'Runs' ? (
           <PursuitRuns runs={runs} onSelect={setSelectedRun} />
         ) : (
           <>

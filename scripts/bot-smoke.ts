@@ -10,6 +10,7 @@ import type { ApprovalState } from '../src/shared/approvals';
 import { randomUUID } from 'node:crypto';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
 import type { NotificationInbox } from '../src/shared/notifications';
+import { PursuitRepository } from '../src/server/repositories/pursuitRepository';
 
 async function main() {
   const dir = process.env.MUKAI_BOT_SMOKE_DIR;
@@ -130,6 +131,228 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    if (process.argv.includes('--workpad-only')) {
+      const main = (await request<Bot[]>('/bots'))[0];
+      const pursuit = api.pursuits.create(main, {
+        name: 'Prepare the supplier shortlist',
+        objective: 'Compare suppliers and prepare a shortlist with evidence.',
+        successCriteria: 'Three verified candidates within the agreed budget.',
+        firstRunAt: new Date(Date.now() + 3600000).toISOString(),
+        deadline: null,
+      });
+      await click('Pursuits');
+      await wait(
+        'document.querySelector(".pursuit-title h1")?.textContent==="Prepare the supplier shortlist"',
+      );
+      await click('Workpad');
+      await wait('Boolean(document.querySelector(".pursuit-workpad .pursuit-empty-runs"))');
+      assert.equal(
+        await evaluate('document.querySelectorAll(".pursuit-workpad select").length'),
+        0,
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".pursuit-workpad .themed-checkbox").length'),
+        1,
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".pursuit-workpad .dropdown-trigger").length'),
+        2,
+      );
+      assert(
+        await evaluate(
+          'Math.abs(document.querySelector(".pursuit-workpad").getBoundingClientRect().left-document.querySelector(".pursuit-content").getBoundingClientRect().left-parseFloat(getComputedStyle(document.querySelector(".pursuit-content")).paddingLeft))<2',
+        ),
+      );
+      await capture('pursuit-workpad-empty.png');
+      const repository = new PursuitRepository(api.store);
+      const run = repository.claim(pursuit.id, 'manual', Date.now())!;
+      const decision = api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'decision',
+          title: 'Prioritize local delivery',
+          content:
+            'Prefer suppliers with delivery within five business days. This keeps the launch on schedule.',
+          links: [{ kind: 'conversation', target: 'bot-' + main.id, label: 'Original request' }],
+        },
+        run.conversationId,
+      );
+      const active = api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'work_item',
+          title: 'Compare the remaining two suppliers',
+          status: 'in_progress',
+          content:
+            'Verify shipping terms and compare the final quotes against the **$2,000 budget**.',
+          links: [
+            {
+              kind: 'file',
+              target: 'research/supplier-comparison.csv',
+              label: 'Supplier comparison',
+            },
+            { kind: 'entry', target: decision.id, label: 'Delivery decision' },
+          ],
+        },
+        run.conversationId,
+      );
+      api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'blocker',
+          title: 'Need the delivery address',
+          content:
+            'The suppliers need a destination postal code to confirm shipping costs. Ask the user before finalizing the total.',
+        },
+        run.conversationId,
+      );
+      api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'work_item',
+          title: 'Verify the first supplier',
+          content: 'Confirmed stock, minimum order quantity, and a three-day dispatch window.',
+          status: 'done',
+          links: [
+            { kind: 'url', target: 'https://example.com/supplier', label: 'Supplier source' },
+          ],
+        },
+        run.conversationId,
+      );
+      api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'reference',
+          title: 'Shortlist research',
+          content: 'Use this comparison when drafting the recommendation.',
+          links: [{ kind: 'file', target: 'research/shortlist.md', label: 'Shortlist notes' }],
+        },
+        run.conversationId,
+      );
+      api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'note',
+          title: 'Pricing excludes tax',
+          content: 'All three quotes exclude tax. Compare suppliers using the same basis.',
+        },
+        run.conversationId,
+      );
+      api.pursuits.addEntryOwned(
+        main,
+        pursuit.id,
+        {
+          type: 'note',
+          title: 'Old shipping estimate',
+          content: 'Superseded by the current quotes.',
+          status: 'archived',
+        },
+        run.conversationId,
+      );
+      repository.finish(
+        run.id,
+        'complete',
+        'Compared suppliers and recorded current work.',
+        null,
+        'waiting_for_you',
+        Date.now(),
+      );
+      await wait('document.querySelectorAll(".workpad-entry").length===6');
+      await evaluate('document.querySelectorAll(".workpad-entry summary")[1].click()');
+      await capture('pursuit-workpad.png');
+      await evaluate(`document.querySelector('button[aria-label="Workpad entry type"]').click()`);
+      await wait(
+        `document.querySelector('button[aria-label="Workpad entry type"]').getAttribute('aria-expanded')==='true'`,
+      );
+      await evaluate(
+        'Array.from(document.querySelectorAll(".dropdown-option")).find(e=>e.textContent.trim()==="Blocker").click()',
+      );
+      await wait('document.querySelectorAll(".workpad-entry").length===1');
+      assert.equal(
+        await evaluate(
+          'Array.from(document.querySelectorAll(".workpad-filter:nth-child(2) .dropdown-option")).some(e=>e.textContent.trim()==="To do")',
+        ),
+        false,
+      );
+      await click('Clear filters');
+      await wait('document.querySelectorAll(".workpad-entry").length===6');
+      await evaluate('document.querySelector(".workpad-archive-toggle input").click()');
+      await wait('document.querySelectorAll(".workpad-entry").length===7');
+      await evaluate('document.querySelector(".workpad-archive-toggle input").click()');
+      await wait('document.querySelectorAll(".workpad-entry").length===6');
+      await evaluate('document.querySelectorAll(".workpad-entry summary")[1].click()');
+      await click('Delivery decision');
+      await wait('Boolean(document.querySelector("dialog[open]"))');
+      assert.equal(
+        await evaluate('document.querySelector("dialog[open] h2").textContent'),
+        'Prioritize local delivery',
+      );
+      await click('Original request');
+      await wait('document.querySelector("dialog[open] h2")?.textContent==="Original request"');
+      assert.equal(await evaluate('document.querySelectorAll("dialog[open]").length'), 1);
+      await evaluate(
+        `document.querySelector('dialog[open] button[aria-label="Close dialog"]').click()`,
+      );
+      api.pursuits.updateEntryOwned(
+        main,
+        pursuit.id,
+        active.id,
+        {
+          status: 'done',
+          content: 'Verified shipping and final quotes. Both are within the agreed budget.',
+        },
+        active.revision,
+      );
+      await wait(
+        'document.querySelector(".pursuit-workpad").textContent.includes("Verified shipping and final quotes")',
+      );
+      await evaluate('document.documentElement.dataset.mode="dark"');
+      assert(
+        await evaluate(`(()=>{
+        const luminance=color=>{
+          const channels=color.match(/[\\d.]+/g).slice(0,3).map(Number).map(value=>value/255).map(value=>value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4);
+          return channels[0]*0.2126+channels[1]*0.7152+channels[2]*0.0722;
+        };
+        const foreground=luminance(getComputedStyle(document.querySelector('.workpad-links button')).color);
+        const background=luminance(getComputedStyle(document.querySelector('.workpad-entry')).backgroundColor);
+        return (Math.max(foreground,background)+0.05)/(Math.min(foreground,background)+0.05)>=4.5;
+      })()`),
+      );
+      await capture('pursuit-workpad-dark.png');
+      await evaluate('document.documentElement.dataset.mode="light"');
+      window.setSize(900, 800);
+      await capture('pursuit-workpad-narrow.png');
+      assert(
+        await evaluate(
+          'document.querySelector(".pursuit-content").scrollWidth<=document.querySelector(".pursuit-content").clientWidth+1',
+        ),
+      );
+      window.setSize(700, 800);
+      await capture('pursuit-workpad-compact.png');
+      assert(
+        await evaluate(
+          'document.querySelector(".pursuit-content").scrollWidth<=document.querySelector(".pursuit-content").clientWidth+1',
+        ),
+      );
+      window.setSize(1480, 980);
+      await evaluate(
+        'document.querySelector(".workpad-entry[open] .workpad-provenance button").click()',
+      );
+      await wait('Boolean(document.querySelector(".pursuit-run-context"))');
+      await click('All runs');
+      await wait('Boolean(document.querySelector(".pursuit-workpad"))');
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS Workpad UI: shared controls, left alignment, empty state, entries, type-aware filters, archives, linked entries, live updates, run provenance, dark mode and narrow layout.',
+      );
+      return;
+    }
     if (process.argv.includes('--notifications-only')) {
       const main = (await request<Bot[]>('/bots'))[0];
       assert.equal(
