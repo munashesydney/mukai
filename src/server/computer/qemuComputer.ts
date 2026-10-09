@@ -135,6 +135,10 @@ export function qemuArguments(
   ];
 }
 
+// Host sleep freezes the timers that sample the guest, so a heartbeat gap larger than
+// any transient hiccup means the computer was suspended rather than the guest stalling.
+const SUSPEND_GAP_MS = 120000;
+
 interface Pending {
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -336,6 +340,55 @@ export class QemuComputer implements Computer {
     });
     return this.reconnecting;
   }
+  /**
+   * Heal the guest bridge after the host computer resumed from sleep. A bridge that
+   * survived the suspend answers a probe and is left untouched; otherwise the
+   * transport is reconnected, and a VM that never answers is restarted.
+   */
+  async recoverAfterHostResume(reason = 'host resume') {
+    if (!this.child || this.starting || this.stopping) return 'skipped' as const;
+    try {
+      // The guest may still be waking; a reply rules out any recovery.
+      await this.inspectHealth(AbortSignal.timeout(6000));
+      return 'skipped' as const;
+    } catch {
+      /* Unreachable: reconnect the transport below, then restart if it stays silent. */
+    }
+    return this.healStalledBridge(reason);
+  }
+  /**
+   * Reconnect the transport first, then rebuild the VM process when the guest never
+   * re-announces itself. `disk.qcow2` keeps the workspace files, but running guest
+   * state is lost, so this is only reached once transport recovery has failed.
+   */
+  private async healStalledBridge(reason: string) {
+    if (!this.child || this.starting || this.stopping || this.pending.size)
+      return 'skipped' as const;
+    try {
+      await this.recoverBridge(reason);
+      return 'reconnected' as const;
+    } catch {
+      /* The guest stayed silent; fall through and rebuild the transport from scratch. */
+    }
+    if (!this.child || this.starting || this.stopping || this.pending.size)
+      return 'skipped' as const;
+    this.report(
+      'computer.bridge_restart',
+      `Restarting the workspace VM; the guest bridge stayed unreachable after a reconnect; reason=${reason}.`,
+    );
+    try {
+      await this.stop('bridge recovery restart');
+      await this.start();
+      return 'restarted' as const;
+    } catch (error) {
+      this.report(
+        'computer.bridge_restart_failed',
+        'Could not restart the workspace VM after a failed bridge recovery.',
+        error,
+      );
+      return 'failed' as const;
+    }
+  }
   private recordHealth(sample: GuestHealth) {
     const previous = this.lastHealth?.sample;
     // A buffered reply is evidence of its sample time, not a fresh heartbeat.
@@ -417,14 +470,18 @@ export class QemuComputer implements Computer {
           )
             return;
           this.missedHealth++;
-          if (this.missedHealth < 3) return;
           const age = this.lastHealth ? Date.now() - this.lastHealth.receivedAt : undefined;
+          // A suspend freezes host timers, so the first sample after a wake shows a gap no
+          // transient hiccup could produce; heal it instead of waiting for three misses.
+          const suspended = Boolean(age !== undefined && age >= SUSPEND_GAP_MS);
+          if (this.missedHealth < 3 && !suspended) return;
           this.report(
             'computer.health_unresponsive',
-            `Guest heartbeat missing; lastSampleAgeMs=${age ?? 'unavailable'}, activeRequests=${this.pending.size}.`,
+            `Guest heartbeat missing; lastSampleAgeMs=${age ?? 'unavailable'}, activeRequests=${this.pending.size}, suspended=${suspended}.`,
           );
-          if (!this.pending.size && Date.now() - this.lastRecoveryAt >= 60000)
-            await this.recoverBridge('missing guest heartbeat').catch(() => {});
+          if (this.pending.size || Date.now() - this.lastRecoveryAt < 60000) return;
+          if (suspended) await this.healStalledBridge('host sleep gap');
+          else await this.recoverBridge('missing guest heartbeat').catch(() => {});
         })
         .finally(() => {
           this.checkingHealth = false;

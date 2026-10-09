@@ -286,6 +286,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
         bridgePid:123,workerPid:456,memory:{totalKiB:6291456,availableKiB:4000000,swapTotalKiB:2097152,swapFreeKiB:2097152},
         loadAverage:[0,0,0],pressure:{memory:null,cpu:null,io:null},oomKillCount:0,processes:[],errors:[]};
       let disconnected = false;
+      let wedged = false;
       let connections = 0;
       let loseProbe = false;
       let verified = true;
@@ -301,6 +302,8 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
         while((end = buffer.indexOf('\\n')) !== -1) {
           const request = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
           if(request.ready) continue;
+          if(request.input && request.input.command === 'wedge') { socket.write(JSON.stringify({id:request.id,result:{wedged:true}}) + String.fromCharCode(10)); wedged = true; continue; }
+          if(wedged) continue;
           if(request.health) { if(loseProbe) { loseProbe=false; continue; } verified=true; diagnostics.sampledAt=new Date().toISOString(); diagnostics.uptimeSeconds=process.uptime(); socket.write(JSON.stringify({health:request.health,diagnostics})+'\\n'); continue; }
           if(!verified && request.method) fs.writeFileSync(tokenPath+'.premature-tool', 'sent before probe acknowledgement');
           if(request.cancel) { fs.writeFileSync(tokenPath+'.cancel', request.cancel); continue; }
@@ -319,7 +322,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
           socket.write(JSON.stringify({id:request.id,result:{method:request.method,input:request.input,owner:request.owner}})+'\\n');
         }
       });
-      socket.on('close', () => { if(!disconnected) { if(health) setTimeout(connect,30); else process.exit(0); } });
+      socket.on('close', () => { if(!disconnected && !wedged) { if(health) setTimeout(connect,30); else process.exit(0); } });
       };
       connect();
       process.stdin.on('data', chunk => { if(chunk.toString().includes('system_powerdown')) process.exit(0); });
@@ -435,6 +438,61 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       memory: { availableKiB: 4000000 },
     });
   });
+  it('leaves a healthy VM untouched when the host resumes from sleep', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    await expect(vm.recoverAfterHostResume()).resolves.toBe('skipped');
+    expect(vm.status().state).toBe('running');
+    expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+      input: { command: 'ls' },
+    });
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+  it('restarts the VM when a host resume finds a bridge that never reconnects', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    await expect(
+      vm.request('terminal', { command: 'disconnect' }, owner, signal()),
+    ).rejects.toThrow('connection closed');
+    await expect(vm.recoverAfterHostResume()).resolves.toBe('restarted');
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(vm.status().state).toBe('running');
+    expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+      input: { command: 'ls' },
+    });
+  }, 30000);
+  it('restarts a wedged VM when the health monitor observes a host suspend gap', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    await vm.inspectHealth(signal());
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const restarted = new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('VM was not restarted')), 60000);
+      const poll = setInterval(() => {
+        if (launch.mock.calls.length < 2) return;
+        clearInterval(poll);
+        clearTimeout(deadline);
+        resolve();
+      }, 250);
+    });
+    try {
+      // The guest stops answering both health probes and tool calls while its socket
+      // stays open, which is how a hypervisor-wedged bridge looks from the host.
+      expect(await vm.request('terminal', { command: 'wedge' }, owner, signal())).toMatchObject({
+        wedged: true,
+      });
+      // Jump the clock as if the host had slept for ten minutes mid-heartbeat.
+      vi.setSystemTime(Date.now() + 600000);
+      await restarted;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(vm.status().state).toBe('running');
+    expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+      input: { command: 'ls' },
+    });
+  }, 60000);
   it('boots and restarts the ARM bridge with UEFI while retaining disk contents', async () => {
     host.architecture = 'arm64';
     host.platform = 'darwin';

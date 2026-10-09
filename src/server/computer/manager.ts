@@ -55,6 +55,25 @@ export class ComputerManager {
       }
     );
   }
+  /**
+   * Heal every started workspace VM whose guest bridge may have wedged while the host
+   * computer slept. Healthy bridges are detected by a probe and left alone.
+   */
+  async hostResumed() {
+    if (this.closed) return [];
+    const entries = [...this.computers];
+    const results = await Promise.allSettled(
+      entries.map(async ([workspaceId, computer]) => ({
+        workspaceId,
+        outcome: await computer.recoverAfterHostResume(),
+      })),
+    );
+    return results.map((result, index) =>
+      result.status === 'fulfilled'
+        ? result.value
+        : { workspaceId: entries[index][0], outcome: 'failed' as const },
+    );
+  }
   async shutdown() {
     this.closed = true;
     await this.installer.shutdown();

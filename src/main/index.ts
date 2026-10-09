@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, session, shell } from 'electron';
 import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
@@ -70,6 +70,12 @@ else {
       apiServer = api.server;
       shutdownApi = api.shutdown;
       apiUrl = api.url;
+      // Sleep can leave a guest bridge unable to reconnect on its own. Once the host
+      // wakes, give the guest a moment to thaw, then reconnect it — or restart the VM
+      // if it stays silent. The guest health monitor covers missing resume events.
+      powerMonitor.on('resume', () => {
+        setTimeout(() => void api.computers.hostResumed(), 10000).unref();
+      });
       session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
         callback(false),
       );
