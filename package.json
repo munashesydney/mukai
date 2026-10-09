@@ -13,6 +13,7 @@
     "build:guest": "tsx scripts/build-guest.ts",
     "build:computer-use": "tsx scripts/build-computer-use.ts",
     "test:computer-use": "tsx scripts/run-computer-use-smoke.ts",
+    "test:computer-use:windows-search": "tsx scripts/run-computer-use-windows-search-smoke.ts",
     "test:computer-use:vm": "tsx scripts/run-computer-use-vm-smoke.ts",
     "predev": "npm run build:computer-use && npm run build:guest",
     "predev:server": "npm run build:computer-use && npm run build:guest",

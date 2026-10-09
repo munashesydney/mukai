@@ -31,6 +31,8 @@ describe('computer_use tool family', () => {
     expect(toolCatalog().find((tool) => tool.id === 'computer_use')?.actions).toContain('drag');
     expect(parseKeys('Command+ArrowLeft', 'darwin')).toEqual(['SUPER', 'LEFT']);
     expect(parseKeys('CMD+A', 'linux')).toEqual(['CTRL', 'A']);
+    expect(parseKeys('win+s', 'win32')).toEqual(['SUPER', 'S']);
+    expect(parseKeys('Windows', 'win32')).toEqual(['SUPER']);
     expect(() => parseKeys('A+CTRL')).toThrow('modifiers');
     expect(() => parseKeys('CTRL+CTRL')).toThrow('Invalid');
   });

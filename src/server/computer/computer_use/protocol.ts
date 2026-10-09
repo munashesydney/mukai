@@ -29,6 +29,8 @@ const aliases: Record<string, string> = {
   CONTROL: 'CTRL',
   COMMAND: 'CMD',
   META: 'SUPER',
+  WIN: 'SUPER',
+  WINDOWS: 'SUPER',
   OPTION: 'ALT',
   RETURN: 'ENTER',
   ESC: 'ESCAPE',

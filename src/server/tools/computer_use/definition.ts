@@ -28,8 +28,11 @@ export const computerUseDefinition = {
     'Without screenshotId, x/y are global desktop logical coordinates; displays reports bounds including negative origins. ' +
     'drag uses x/y as its start and endX/endY as its destination in the same coordinate space. ' +
     'click supports left/right/middle and clicks=1 or 2. scroll uses direction=up/down/left/right and pixels. ' +
-    'type inserts literal Unicode text at the focused control without using the clipboard. ' +
-    'press accepts a key or chord such as CTRL+L, CMD+L, SHIFT+TAB, ENTER, or a single letter. ' +
+    'type sends literal Unicode text to the currently focused control without using the clipboard; ' +
+    'completion confirms input was sent, not that the control accepted it. Verify the text with a screenshot. ' +
+    'press accepts a key or chord such as CTRL+L, CMD+L, WIN+S, SHIFT+TAB, ENTER, or a single letter. ' +
+    'WIN/WINDOWS are aliases for SUPER (the Windows key on Windows). To search Windows, press WIN+S, ' +
+    'wait for the search box, then type; clicking the results panel or its headings can remove text focus. ' +
     'key_down/key_up hold/release one key; holds expire after ten seconds and are released on interruption or owner changes. ' +
     'wait pauses for durationMs (maximum five seconds). Screenshot pixels are delivered to vision models; ' +
     'other models receive the saved artifact metadata. Native OS permissions and an unlocked interactive desktop are required. ' +

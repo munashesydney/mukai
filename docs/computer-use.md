@@ -14,13 +14,15 @@
 | `drag`                | `x`, `y`, `endX`, `endY`; optional `button`, `durationMs` (default 500).                                                                                                                 |
 | `scroll`              | `direction`: up/down/left/right; optional `pixels` (1–5000, default 500), and position. X11/Windows wheel scrolling is approximate; applications determine distance per wheel increment. |
 | `type`                | Literal `text`, at most 4000 UTF-16 code units; inserts rather than replacing. Does not use the clipboard.                                                                               |
-| `press`               | `key`, e.g. `CTRL+L`, `CMD+L`, `SHIFT+TAB`, `ENTER`, `F5`. CMD maps to Command on macOS and Control elsewhere.                                                                           |
+| `press`               | `key`, e.g. `CTRL+L`, `CMD+L`, `WIN+S`, `SHIFT+TAB`, `ENTER`, `F5`. CMD maps to Command on macOS and Control elsewhere; WIN/WINDOWS alias SUPER.                                         |
 | `key_down` / `key_up` | One named `key`. Holds are owned by the calling conversation and expire after ten seconds.                                                                                               |
 | `wait`                | `durationMs`, at most 5000.                                                                                                                                                              |
 
 With `screenshotId`, coordinates are image pixels. The service maps them to the captured display’s desktop coordinates, accounting for resizing and scale. IDs are conversation-scoped, expire after five minutes, and become invalid when monitor geometry changes. Without a capture ID, coordinates are global desktop units; with `displayId`, they are relative to that display’s origin. Negative global coordinates are supported.
 
 Vision models receive PNG pixels. Other models receive saved artifact metadata. Activity summaries omit image bytes. Calls share the normal runtime budget and cancellation signal. One service serializes operations across the local machine; each VM has its own service. Interrupted gestures release injected keys/buttons, and shutdown closes native helpers. Explicit holds are released when another conversation takes control. The tool cannot prevent human input from changing focus during an operation.
+
+`type` confirms that input was sent to the focused control; it cannot confirm that the control accepted the text. Verify the field with a fresh screenshot. For Windows search, use `press` with `WIN+S`, wait for the search box, then type. Depending on Windows settings, the editable search box may be in the taskbar while the floating panel only contains results. Clicking that panel's headings removes text focus.
 
 ## Native backends
 
@@ -46,3 +48,5 @@ VM guest revision 8 deploys this tool through the existing upgrade mechanism whi
 ## Validation
 
 Run `npm run typecheck`, `npm test`, `npm run build`, and `npm run test:computer-use` for a read-only native status/display/screenshot check. `npm run test:computer-use -- --interactive` opens a disposable Electron window and verifies real mouse/keyboard input, Unicode typing, shortcuts, scrolling, and drag gestures. The interactive check temporarily focuses that test window. `npm run test:computer-use:vm -- --data-dir PATH` boots a disposable copy of that installation’s prepared Linux base, applies the current guest bundle and verifies actual X11 events through the VM protocol; personal workspace disks are never opened. Run `npm run build:guest` first. This requires a prepared VM installation and may install missing dependencies inside the disposable copy. VM routing is also tested through the guest dispatcher and tool assembly tests. Cross-platform CI builds helpers and runs the X11 test in a virtual desktop; macOS permission-gated capture and Wayland consent require a graphical session.
+
+On an interactive Windows desktop, `npm run test:computer-use:windows-search` opens Windows search with `WIN+S`, checks that an editable search control has focus, types `notepad` through the real Unicode input path, and verifies its value with read-only Windows UI Automation. It dismisses search afterward and never presses Enter or opens a result.
