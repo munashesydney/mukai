@@ -1,4 +1,5 @@
-import { Layers3, Palette, KeyRound, Brain, Globe } from 'lucide-react';
+import { Layers3, Palette, KeyRound, Brain, Globe, Gauge } from 'lucide-react';
+import { LimitsPanel } from './LimitsPanel';
 import { Brand } from '../../components/ui/Brand';
 import { AppearancePanel } from './AppearancePanel';
 import { WorkspacePanel } from './WorkspacePanel';
@@ -16,6 +17,7 @@ const sections = [
   { id: 'providers', label: 'Providers', icon: KeyRound },
   { id: 'environment', label: 'Environment variables', icon: KeyRound },
   { id: 'memory', label: 'Memory', icon: Brain },
+  { id: 'limits', label: 'Limits', icon: Gauge },
 ] as const;
 
 export function SettingsPage({
@@ -82,6 +84,8 @@ export function SettingsPage({
             <WorkspacePanel workspace={workspace} onConnectFolder={onConnectFolder} />
           ) : section === 'appearance' ? (
             <AppearancePanel />
+          ) : section === 'limits' ? (
+            <LimitsPanel />
           ) : section === 'memory' ? (
             <MemoryPanel
               key={workspace?.id || 'default'}

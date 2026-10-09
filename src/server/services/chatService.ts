@@ -37,6 +37,7 @@ import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
 import { customToolReceipt } from './customToolReceipt';
 import { GenerationTimeout } from './generationTimeout';
+import { pursuitSession } from './pursuitScheduler';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
 import {
   ContextError,
@@ -124,8 +125,8 @@ export class ChatService {
   }
   pendingRequest(conversationId: string) {
     const request = this.approvals
-      ?.state()
-      .pending.find((item) => item.conversationId === conversationId);
+      ?.checkpoints()
+      .find((item) => item.conversationId === conversationId);
     return request
       ? this.messages.message(request.messageId).requestId
       : this.jobs.delegationRequest(conversationId);
@@ -136,7 +137,7 @@ export class ChatService {
   restorePending(requireBot: (id: string) => BotRecord) {
     const seen = new Set<string>();
     const roots = this.jobs.delegationRoots();
-    const pending = (this.approvals?.state().pending || []).filter(
+    const pending = (this.approvals?.checkpoints() || []).filter(
       (request) =>
         !this.jobs.delegatedRequest(
           request.conversationId,
@@ -208,7 +209,7 @@ export class ChatService {
       active.reason = 'stopped';
       active.controller.abort();
     } else {
-      const request = this.approvals?.state().pending.find((item) => item.conversationId === id);
+      const request = this.approvals?.checkpoints().find((item) => item.conversationId === id);
       if (request && !this.approvals?.suspending(request.messageId)) {
         const message = this.messages.message(request.messageId);
         this.approvals?.discard(request.messageId);
@@ -322,6 +323,7 @@ export class ChatService {
     restoreSavedStep = false,
   ) {
     const botId = String(bot.id);
+    const scheduling = pursuitSession();
     const running = this.active.get(conversationId);
     if (running?.requestId === value.requestId && running.botId === botId) {
       output.start();
@@ -359,7 +361,7 @@ export class ChatService {
       if (assistant.botId !== botId) throw new ApiError(409, 'Retry with the original bot.');
       assistantId = String(assistant.id);
       recoveringStep =
-        Boolean(this.approvals?.waiting(assistantId)) ||
+        Boolean(this.approvals?.hasCheckpoint(assistantId)) ||
         this.jobs.resumableDelegation(assistantId) ||
         (restoreSavedStep && this.jobs.approvalStep(assistantId).length > 0);
       if (
@@ -1106,6 +1108,11 @@ export class ChatService {
             }
           },
         };
+        if (scheduling) {
+          const guarded = tools[name].execute!;
+          tools[name].execute = (input, options) =>
+            scheduling.tool(() => Promise.resolve(guarded(input, options)), stepSignal);
+        }
       };
       for (const [name, definition] of Object.entries(tools)) guardTool(name, definition);
       if (recoveringStep) {
@@ -1250,6 +1257,7 @@ export class ChatService {
         const stepController = new AbortController();
         approvalBatchId = randomUUID();
         stepSignal = AbortSignal.any([signal, stepController.signal]);
+        await scheduling?.provider(stepSignal);
         const result = streamText({
           model: config.model,
           system: attemptSystem,
@@ -1270,7 +1278,10 @@ export class ChatService {
           },
         });
         const timeout = new GenerationTimeout(
-          () => pendingTools.size > 0 || Boolean(this.approvals?.waiting(assistantId)),
+          () =>
+            pendingTools.size > 0 ||
+            Boolean(this.approvals?.waiting(assistantId)) ||
+            Boolean(scheduling?.waiting()),
           stepController,
           RESPONSE_TIMEOUT_MS,
           45000,
@@ -1446,6 +1457,7 @@ export class ChatService {
           }
           throw caught;
         } finally {
+          scheduling?.endProvider();
           timeout.dispose();
           // A failed provider stream must also cancel any pending human decisions.
           stepController.abort();

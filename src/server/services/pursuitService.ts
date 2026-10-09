@@ -12,6 +12,13 @@ import {
 } from '../../shared/pursuits';
 import { ApiError } from '../config';
 import { PursuitRepository } from '../repositories/pursuitRepository';
+import { LimitsRepository } from '../repositories/limitsRepository';
+import {
+  DEFAULT_PURSUIT_CONCURRENCY,
+  MAX_PURSUIT_CONCURRENCY,
+  type LimitsSettings,
+} from '../../shared/limits';
+import { PursuitExecution, PursuitScheduler } from './pursuitScheduler';
 import type { BotService } from './botService';
 import type { ChatService, ChatOutput } from './chatService';
 import { pursuitInputSchema } from '../tools/pursuits/definition';
@@ -29,6 +36,8 @@ import {
 } from '../tools/pursuits/report';
 export class PursuitService {
   private jobs = new Map<string, Promise<void>>();
+  private executions = new Map<string, PursuitExecution>();
+  private scheduler = new PursuitScheduler(() => this.limits().pursuitConcurrency);
   private timer: ReturnType<typeof setInterval> | undefined;
   private closing = false;
   constructor(
@@ -36,13 +45,44 @@ export class PursuitService {
     private bots: BotService,
     private chats: ChatService,
     private now: () => number = Date.now,
+    private settings?: LimitsRepository,
   ) {}
+  limits(): LimitsSettings {
+    return this.settings?.get() || { pursuitConcurrency: DEFAULT_PURSUIT_CONCURRENCY };
+  }
+  setLimits(value: LimitsSettings) {
+    if (
+      !Number.isInteger(value.pursuitConcurrency) ||
+      value.pursuitConcurrency < 1 ||
+      value.pursuitConcurrency > MAX_PURSUIT_CONCURRENCY
+    )
+      throw new ApiError(
+        400,
+        `Concurrent pursuits must be an integer between 1 and ${MAX_PURSUIT_CONCURRENCY}.`,
+      );
+    if (!this.settings) throw new ApiError(503, 'Limits settings are unavailable.');
+    const saved = this.settings.save(value);
+    this.scheduler.drain();
+    this.tick();
+    return saved;
+  }
+  private enqueue(run: PursuitRun) {
+    const execution = new PursuitExecution(this.scheduler);
+    this.executions.set(run.id, execution);
+    const job = execution
+      .run(() => this.execute(run))
+      .finally(() => {
+        this.jobs.delete(run.id);
+        this.executions.delete(run.id);
+        this.tick();
+      });
+    this.jobs.set(run.id, job);
+    void job.catch(() => {});
+  }
   start() {
     this.repository.recover(this.now());
     for (const run of this.repository.pendingRuns()) {
-      const job = this.execute(run).finally(() => this.jobs.delete(run.id));
-      this.jobs.set(run.id, job);
-      void job.catch(() => {});
+      this.enqueue(run);
     }
     this.timer = setInterval(() => this.tick(), 5000);
     this.timer.unref();
@@ -202,7 +242,7 @@ export class PursuitService {
     if (!scheduledStatus(p.status))
       throw new ApiError(409, 'Resume this pursuit before running it.');
     if (p.currentRunId) throw new ApiError(409, 'This pursuit is already running.');
-    if (this.closing || this.jobs.size >= 2)
+    if (this.closing || this.scheduler.used >= this.limits().pursuitConcurrency)
       throw new ApiError(409, 'The scheduler is busy. Try again shortly.');
     const run = this.launch(id, 'manual');
     if (!run) throw new ApiError(409, 'This pursuit cannot wake. Check its deadline and status.');
@@ -212,7 +252,7 @@ export class PursuitService {
     if (this.closing) return;
     // Claims are synchronous and transactional; overlapping ticks cannot duplicate a run.
     for (const id of this.repository.due(this.now())) {
-      if (this.jobs.size >= 2) break;
+      if (this.scheduler.used >= this.limits().pursuitConcurrency) break;
       this.launch(id, 'schedule');
     }
   }
@@ -224,10 +264,7 @@ export class PursuitService {
     }
     const run = this.repository.claim(id, trigger, this.now());
     if (!run) return null;
-    const job = this.execute(run).finally(() => this.jobs.delete(run.id));
-    this.jobs.set(run.id, job);
-    // The run retains its error; never let an asynchronous scheduler failure escape.
-    void job.catch(() => {});
+    this.enqueue(run);
     return run;
   }
   private async execute(run: PursuitRun) {
@@ -373,6 +410,7 @@ export class PursuitService {
     this.stopScheduling();
     for (const runId of this.jobs.keys())
       this.chats.stopConversation(this.repository.findRun(runId)!.conversationId);
+    for (const execution of this.executions.values()) execution.close();
     await Promise.allSettled([...this.jobs.values()]);
   }
   hasActiveRuns() {

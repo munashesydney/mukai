@@ -452,6 +452,105 @@
 .settings-panel-heading {
   margin-bottom: 25px;
 }
+.limits-panel {
+  width: 100%;
+  text-align: left;
+}
+.limits-card {
+  max-width: 640px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 24px;
+  background: var(--surface);
+}
+.limits-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.limits-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--teal-soft);
+  color: var(--teal-dark);
+}
+.limits-card h4 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 15px;
+}
+.limits-card-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.limits-field-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.limits-field-heading label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-body);
+}
+.limits-stepper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.limits-stepper input {
+  width: 80px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  font: inherit;
+}
+.limits-stepper input:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+.limits-stepper .button {
+  width: 36px;
+  justify-content: center;
+  font-size: 18px;
+  padding: 8px;
+}
+.limits-behavior {
+  margin: 22px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.limits-behavior p {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-body);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.limits-behavior svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+@media (max-width: 760px) {
+  .limits-card {
+    padding: 18px;
+  }
+}
 .settings-eyebrow {
   display: block;
   line-height: 1.5;

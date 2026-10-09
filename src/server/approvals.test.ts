@@ -8,6 +8,9 @@ import { ApprovalRepository } from './repositories/approvalRepository';
 import { seedTestBot } from './testFixtures';
 import { ConversationRepository } from './repositories/conversationRepository';
 import { PursuitRepository } from './repositories/pursuitRepository';
+import { WorkspaceRepository } from './repositories/workspaceRepository';
+import { BotRepository } from './repositories/botRepository';
+import { scoutBot } from './services/botService';
 
 let store: Database;
 let service: ApprovalService;
@@ -40,7 +43,81 @@ afterEach(() => {
   expect(dir.startsWith(join(tmpdir(), 'mukai-approvals-'))).toBe(true);
   rmSync(dir, { recursive: true, force: true });
 });
-describe('Global tool approvals', () => {
+describe('Workspace tool approvals', () => {
+  it('isolates mode changes across workspaces and uses the invoking conversation workspace', async () => {
+    new WorkspaceRepository(store).create({
+      id: 'other',
+      name: 'Other',
+      folder: null,
+      createdAt: new Date().toISOString(),
+      computer: 'local',
+    });
+    new BotRepository(store).create(scoutBot('other', 'other-bot'));
+    const conversation = new ConversationRepository(store).createPrivate('other', 'other-bot');
+    service.setMode('ask-for-approval', 'default');
+    expect(service.mode('other')).toBe('full-access');
+    expect(
+      await service.request(
+        { ...details, botId: 'other-bot', conversationId: conversation.id },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).toBe(true);
+    service.setMode('ask-for-approval', 'other');
+    service.setMode('full-access', 'default');
+    const pending = service.request(
+      { ...details, botId: 'other-bot', conversationId: conversation.id },
+      new AbortController().signal,
+      () => {},
+    );
+    expect(service.state('other').mode).toBe('ask-for-approval');
+    expect(service.state().pending).toHaveLength(1);
+    service.decide(service.state().pending[0].id, true);
+    expect(await pending).toBe(true);
+    expect(new ApprovalRepository(store).mode('other')).toBe('ask-for-approval');
+  });
+  it('migrates a legacy policy to existing workspaces without overwriting a scoped policy', () => {
+    new WorkspaceRepository(store).create({
+      id: 'other',
+      name: 'Other',
+      folder: null,
+      createdAt: new Date().toISOString(),
+      computer: 'local',
+    });
+    store.run('INSERT INTO metadata(key,value) VALUES(?,?)', 'approval-mode', 'ask-for-approval');
+    service.setMode('full-access', 'default');
+    const migrated = new ApprovalRepository(store);
+    expect(migrated.mode('default')).toBe('full-access');
+    expect(migrated.mode('other')).toBe('ask-for-approval');
+    expect(store.get('SELECT value FROM metadata WHERE key=?', 'approval-mode')).toBeUndefined();
+    migrated.setMode('full-access', 'other');
+    expect(new ApprovalRepository(store).mode('other')).toBe('full-access');
+  });
+  it('automatically permits pursuit outcome reports without creating an approval card', async () => {
+    service.setMode('ask-for-approval');
+    expect(
+      await service.request(
+        { ...details, toolName: 'report_pursuit' },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).toBe(true);
+    expect(service.state().pending).toEqual([]);
+    expect(new ApprovalRepository(store).pending()).toEqual([]);
+  });
+  it('clears legacy pending pursuit reports when their exact invocation is restored', async () => {
+    service.setMode('ask-for-approval');
+    const report = { ...details, toolName: 'report_pursuit' };
+    const repository = new ApprovalRepository(store);
+    repository.save({ ...report, id: 'legacy-report', createdAt: new Date().toISOString() });
+    service = new ApprovalService(repository);
+    expect(service.state().pending).toHaveLength(1);
+    const changed = vi.fn();
+    expect(await service.request(report, new AbortController().signal, changed)).toBe(true);
+    expect(changed).toHaveBeenCalledOnce();
+    expect(service.state().pending).toEqual([]);
+    expect(repository.pending()).toEqual([]);
+  });
   it('always exempts every built-in memory action in ask-for-approval mode', async () => {
     service.setMode('ask-for-approval');
     for (const action of ['add', 'search', 'forget']) {

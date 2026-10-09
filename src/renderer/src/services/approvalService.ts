@@ -2,12 +2,35 @@ import type { ApprovalMode, ApprovalState } from '../../../shared/approvals';
 import { api } from './http';
 
 export const approvalService = {
-  state: () => api<ApprovalState>('/approvals'),
-  setMode: (mode: ApprovalMode) => api<ApprovalState>('/approvals', 'PUT', { mode }),
-  decide: (id: string, approved: boolean) =>
-    api<ApprovalState>(`/approvals/${encodeURIComponent(id)}`, 'POST', { approved }),
-  answer: (id: string, answer: string) =>
-    api<ApprovalState>(`/approvals/${encodeURIComponent(id)}`, 'POST', { answer }),
-  decideBatch: (conversationId: string, batchId: string, ids: string[], approved: boolean) =>
-    api<ApprovalState>('/approvals/batch', 'POST', { conversationId, batchId, ids, approved }),
+  state: (workspaceId: string) =>
+    api<ApprovalState>(`/approvals?workspaceId=${encodeURIComponent(workspaceId)}`),
+  setMode: (mode: ApprovalMode, workspaceId: string) =>
+    api<ApprovalState>(`/approvals?workspaceId=${encodeURIComponent(workspaceId)}`, 'PUT', {
+      mode,
+    }),
+  decide: (id: string, approved: boolean, workspaceId: string) =>
+    api<ApprovalState>(
+      `/approvals/${encodeURIComponent(id)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+      'POST',
+      { approved },
+    ),
+  answer: (id: string, answer: string, workspaceId: string) =>
+    api<ApprovalState>(
+      `/approvals/${encodeURIComponent(id)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+      'POST',
+      { answer },
+    ),
+  decideBatch: (
+    conversationId: string,
+    batchId: string,
+    ids: string[],
+    approved: boolean,
+    workspaceId: string,
+  ) =>
+    api<ApprovalState>(`/approvals/batch?workspaceId=${encodeURIComponent(workspaceId)}`, 'POST', {
+      conversationId,
+      batchId,
+      ids,
+      approved,
+    }),
 };

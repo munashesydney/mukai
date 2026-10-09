@@ -1,4 +1,6 @@
 import { PopupMenu } from '../../components/ui/PopupMenu';
+import { Checkbox } from '../../components/ui/Checkbox';
+import { Tooltip } from '../../components/ui/Tooltip';
 import { Check, ChevronDown, ChevronUp, Hand, ShieldAlert } from 'lucide-react';
 import { approvalStore, useApprovals } from './approvalStore';
 import type { ApprovalMode, ToolApproval } from '../../../../shared/approvals';
@@ -8,7 +10,7 @@ const choices = [
   {
     mode: 'ask-for-approval',
     label: 'Ask for approval',
-    description: 'Ask before tool calls, except memory',
+    description: 'Review tool calls before they run',
     icon: Hand,
   },
   {
@@ -29,14 +31,14 @@ export function ApprovalModePicker() {
   }
   return (
     <PopupMenu
-      label="Tool approval mode for all bots"
+      label="Tool approval mode for this workspace"
       title="How should Mukai tools be approved?"
       placement="top"
       className="approval-mode-picker"
       menuClassName="approval-mode-menu"
       buttonClassName={`approval-mode-trigger ${state.mode}`}
       disabled={!state.loaded || state.saving}
-      footer="Applies to all bots and conversations. Memory always runs without approval."
+      footer="Applies to all bots and conversations in this workspace. Explicit confirmations still require your response."
       trigger={
         <>
           <Icon size={15} />
@@ -173,6 +175,7 @@ function ToolApprovalCard({
   deciding: string[];
   delegated?: boolean;
 }) {
+  const state = useApprovals();
   return (
     <section className="tool-approval-card" aria-label={`Approval for ${request.toolName}`}>
       <div className="tool-approval-heading">
@@ -193,6 +196,26 @@ function ToolApprovalCard({
         <summary>Review tool arguments</summary>
         <pre>{JSON.stringify(request.input, null, 2)}</pre>
       </details>
+      <div className="tool-approval-full-access">
+        <label>
+          <Checkbox
+            checked={state.loaded && state.mode === 'full-access'}
+            disabled={
+              !state.loaded ||
+              state.saving ||
+              Boolean(request.target && request.target.workspaceId !== state.workspaceId)
+            }
+            onChange={(event) =>
+              void approvalStore.setMode(event.target.checked ? 'full-access' : 'ask-for-approval')
+            }
+          />
+          Enable Full Access Mode
+        </label>
+        <Tooltip
+          label="About Full Access Mode"
+          content="Changes the tool approval mode for every bot and conversation in this workspace. Future tools governed by this mode run without asking. Existing pending tool calls still need approval, and explicit confirmations and questions still need your response. Other workspaces are unaffected. You can switch back using the approval mode picker."
+        />
+      </div>
       <div className="tool-approval-actions">
         <button
           type="button"

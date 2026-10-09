@@ -31,6 +31,7 @@ import { NotificationRepository } from './repositories/notificationRepository';
 import { ConversationHistoryRepository } from './repositories/conversationHistoryRepository';
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
+import { LimitsRepository } from './repositories/limitsRepository';
 import { ToolAccessService } from './services/toolAccessService';
 import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
 import { BotManagementService } from './services/botManagementService';
@@ -180,7 +181,13 @@ export function createApiServer(options: ApiOptions = {}) {
         conversation.id,
       );
     });
-    const pursuits = new PursuitService(new PursuitRepository(store), bots, chats);
+    const pursuits = new PursuitService(
+      new PursuitRepository(store),
+      bots,
+      chats,
+      Date.now,
+      new LimitsRepository(store),
+    );
     tools.attachPursuits(pursuits);
     const conversations = new ConversationService(
       new ConversationRepository(store),

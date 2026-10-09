@@ -1,8 +1,30 @@
 import type { ApprovalMode, ApprovalTarget, ToolApproval } from '../../shared/approvals';
 import type { Database } from '../db/database';
 
+export type ApprovalCheckpoint = ToolApproval & { decision?: boolean | string };
+
 export class ApprovalRepository {
-  constructor(private store: Database) {}
+  constructor(private store: Database) {
+    // Copy the old installation-wide policy to existing workspaces exactly once.
+    const legacy = store.get('SELECT value FROM metadata WHERE key=?', 'approval-mode');
+    if (legacy)
+      store.transaction(() => {
+        store.run(
+          "INSERT OR IGNORE INTO metadata(key,value) SELECT 'approval-mode:' || id, ? FROM workspaces",
+          legacy.value,
+        );
+        store.run('DELETE FROM metadata WHERE key=?', 'approval-mode');
+      });
+  }
+  workspaceId(details: Pick<ToolApproval, 'conversationId' | 'botId'>) {
+    return (
+      this.target(details.conversationId)?.workspaceId ||
+      String(
+        this.store.get('SELECT workspace_id FROM bots WHERE id=?', details.botId)?.workspace_id ||
+          'default',
+      )
+    );
+  }
   blockedParents(request: ToolApproval): NonNullable<ToolApproval['blockedParents']> {
     return this.store
       .all(
@@ -25,12 +47,12 @@ export class ApprovalRepository {
         botName: String(row.name),
       }));
   }
-  pending(): ToolApproval[] {
+  pending(): ApprovalCheckpoint[] {
     return this.store
       .all('SELECT request_json FROM pending_tool_approvals ORDER BY rowid')
-      .map((row) => JSON.parse(String(row.request_json)) as ToolApproval);
+      .map((row) => JSON.parse(String(row.request_json)) as ApprovalCheckpoint);
   }
-  save(request: ToolApproval) {
+  save(request: ApprovalCheckpoint) {
     this.store.run(
       'INSERT OR REPLACE INTO pending_tool_approvals VALUES(?,?,?)',
       request.id,
@@ -58,17 +80,19 @@ export class ApprovalRepository {
       ...(row.run_id ? { pursuitId: String(row.pursuit_id), runId: String(row.run_id) } : {}),
     };
   }
-  mode(): ApprovalMode {
+  mode(workspaceId = 'default'): ApprovalMode {
     // Preserve existing behavior when upgrading an installation without a saved policy.
-    return this.store.get('SELECT value FROM metadata WHERE key = ?', 'approval-mode')?.value ===
-      'ask-for-approval'
+    return this.store.get(
+      'SELECT value FROM metadata WHERE key = ?',
+      'approval-mode:' + workspaceId,
+    )?.value === 'ask-for-approval'
       ? 'ask-for-approval'
       : 'full-access';
   }
-  setMode(mode: ApprovalMode) {
+  setMode(mode: ApprovalMode, workspaceId = 'default') {
     this.store.run(
       'INSERT INTO metadata (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      'approval-mode',
+      'approval-mode:' + workspaceId,
       mode,
     );
   }

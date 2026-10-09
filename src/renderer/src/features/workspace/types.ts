@@ -1,6 +1,6 @@
 export type Section = 'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications';
 export type SettingsSection =
-  'workspace' | 'appearance' | 'providers' | 'environment' | 'memory' | 'routes';
+  'workspace' | 'appearance' | 'providers' | 'environment' | 'memory' | 'routes' | 'limits';
 export type BotId = 'atlas' | 'nova' | 'scout';
 export type PersonId = BotId | 'munashe';
 export interface Bot {

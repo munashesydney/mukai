@@ -281,6 +281,82 @@ afterEach(async () => {
   }
 });
 describe('AI-owned pursuits and scheduled runs', () => {
+  it('defaults to five shared slots, validates changes and persists limits across a restart', async () => {
+    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 5 });
+    for (const value of [0, -1, 1.5, 51, '3']) {
+      expect((await request('/limits', 'PUT', { pursuitConcurrency: value })).response.status).toBe(
+        400,
+      );
+    }
+    expect((await request('/limits', 'PUT', { pursuitConcurrency: 3 })).data).toEqual({
+      pursuitConcurrency: 3,
+    });
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir });
+    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 3 });
+  });
+  it('shares capacity across bots and workspaces instead of allowing five per workspace', async () => {
+    const bots = new BotRepository(api.store);
+    new WorkspaceRepository(api.store).create({
+      id: 'other',
+      name: 'Other',
+      folder: null,
+      createdAt: new Date().toISOString(),
+      computer: 'local',
+    });
+    bots.create(scoutBot('other', 'other-bot'));
+    mode = 'slow';
+    const pursuits = Array.from({ length: 6 }, (_, index) =>
+      api.pursuits.create(bots.find(index % 2 ? 'other-bot' : 'scout')!, input),
+    );
+    for (const p of pursuits.slice(0, 5)) api.pursuits.runNow(p.id);
+    expect(() => api.pursuits.runNow(pursuits[5].id)).toThrow('scheduler is busy');
+    expect(pursuits.slice(0, 5).every((p) => api.pursuits.detail(p.id).runs.length === 1)).toBe(
+      true,
+    );
+    for (const p of pursuits.slice(0, 5)) api.pursuits.control(p.id, 'paused');
+    await Promise.all(pursuits.slice(0, 5).map((p) => settled(p.id)));
+  });
+  it.each([false, true])(
+    'queues an approved continuation behind unrelated work (restart: %s)',
+    async (restart) => {
+      const first = await createWithAI();
+      await request('/limits', 'PUT', { pursuitConcurrency: 1 });
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      workpadPursuitId = first.id;
+      mode = 'workpad';
+      api.pursuits.runNow(first.id);
+      const pending = await vi.waitFor(async () => {
+        const state = (await request<ApprovalState>('/approvals')).data;
+        expect(state.pending).toHaveLength(1);
+        return state.pending[0];
+      });
+      const other = api.pursuits.create(new BotRepository(api.store).find('scout')!, input);
+      mode = 'slow';
+      api.pursuits.runNow(other.id);
+      expect(api.pursuits.detail(first.id).runs[0].status).toBe('running');
+      await request(`/approvals/${pending.id}`, 'POST', { approved: true });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(api.pursuits.workpad(first.id).entries).toHaveLength(0);
+      if (restart) {
+        await api.shutdown();
+        expect(api.pursuits.detail(first.id).runs[0].status).toBe('running');
+        await close(api.server);
+        mode = 'workpad';
+        api = await startApiServer(0, { dataDir: dir });
+      } else {
+        api.pursuits.control(other.id, 'paused');
+        mode = 'workpad';
+        await settled(other.id);
+      }
+      const finished = await settled(first.id);
+      expect(finished.runs[0]).toMatchObject({ status: 'complete', error: null });
+      expect(api.pursuits.workpad(first.id).entries).toHaveLength(1);
+      expect(api.pursuits.detail(first.id).runs).toHaveLength(1);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    },
+  );
   it.each(['workpad', 'workpad-fail'] as const)(
     'persists model-authored entries with run provenance when the run is %s',
     async (runMode) => {
@@ -1026,10 +1102,36 @@ describe('AI-owned pursuits and scheduled runs', () => {
     expect(result.pursuit.status).toBe('waiting_for_you');
     expect(result.pursuit.nextRunAt).toBeNull();
   });
-  it('restores the exact pursuit run and pending approval after app shutdown', async () => {
+  it.each(['waiting', 'completed', 'blocked', 'waiting_for_you'] as const)(
+    'automatically reports %s in ask-for-approval mode',
+    async (outcome) => {
+      const pursuit = await createWithAI();
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      mode = outcome;
+      api.pursuits.runNow(pursuit.id);
+      const detail = await settled(pursuit.id);
+      expect(detail.runs[0]).toMatchObject({ status: 'complete', error: null });
+      expect(detail.pursuit.status).toBe(outcome);
+      expect(detail.pursuit.nextRunAt).toBe(outcome === 'waiting' ? nextWake : null);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    },
+  );
+  it('still validates automatic reports and lets the bot repair invalid scheduling', async () => {
     const pursuit = await createWithAI();
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
-    mode = 'completed';
+    mode = 'invalid-report';
+    reportOverride = { nextRunAt: null };
+    api.pursuits.runNow(pursuit.id);
+    const detail = await settled(pursuit.id);
+    expect(reportAttempts).toBe(2);
+    expect(detail.pursuit).toMatchObject({ status: 'waiting', nextRunAt: nextWake });
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+  });
+  it('restores the exact run and Workpad approval after shutdown, then reports automatically', async () => {
+    const pursuit = await createWithAI();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    workpadPursuitId = pursuit.id;
+    mode = 'workpad';
     const run = api.pursuits.runNow(pursuit.id);
     const pending = await vi.waitFor(async () => {
       const value = (await request<ApprovalState>('/approvals')).data.pending;
@@ -1037,7 +1139,8 @@ describe('AI-owned pursuits and scheduled runs', () => {
       return value[0];
     });
     expect(pending.conversationId).toBe(run.conversationId);
-    expect(pending.toolName).toBe('report_pursuit');
+    expect(pending.toolName).toBe('manage_pursuit');
+    expect(pending.input).toMatchObject({ action: 'add_entry' });
     await api.shutdown();
     expect(api.pursuits.detail(pursuit.id).runs[0].status).toBe('running');
     await close(api.server);
@@ -1060,7 +1163,9 @@ describe('AI-owned pursuits and scheduled runs', () => {
       status: 'complete',
       error: null,
     });
-    expect(detail.pursuit.status).toBe('completed');
+    expect(detail.pursuit.status).toBe('waiting');
+    expect(reportAttempts).toBe(1);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
   });
 
   it('preserves the AI-selected continuation across a restart', async () => {

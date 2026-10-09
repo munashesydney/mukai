@@ -1,15 +1,15 @@
 # Tool approvals (V1)
 
-One setting applies to every bot and conversation in every workspace, including scheduled pursuit runs and custom capability wake-ups. It is stored in the installation database's metadata, independent of a bot or conversation.
+Each workspace has its own approval mode, shared by every bot and conversation in that workspace, including scheduled pursuit runs and custom capability wake-ups. It is stored in the installation database's metadata. On upgrade, the previous installation-wide policy is copied to every existing workspace; subsequent changes affect only the selected workspace.
 
-- **Ask for approval** pauses before each tool invocation, including reads, workspace tools, runtime tools, skills, management tools, and custom tools. Built-in memory functions (add, search, forget) always run without approval.
+- **Ask for approval** pauses before tool invocations, including reads, workspace tools, runtime tools, skills, and management tools. Built-in memory functions, conversation retrieval, and `report_pursuit` always run without approval. Custom tools retain their explicit permission policies.
 - **Full access** runs permitted tools without an approval prompt. Existing tool assignments and workspace boundaries still apply to file operations. The `image` family accepts absolute local image paths outside the workspace in either mode; Ask for approval gates the exact invocation before file access.
 
 V1 deliberately has no “Approve for me” mode. Full access remains the default to preserve the execution behavior of existing installations. Selecting Ask for approval immediately governs subsequent invocations, including in running conversations.
 
 The central chat execution wrapper requests approval before calling the tool or marking its side effects as started. Each request describes the bot, tool, and exact arguments. Approve grants only that invocation; Reject returns a rejection result to the model without executing the tool. Calls from the same model step share a batch ID and appear in an accordion with individual decisions and an **Approve all** button. Bulk approval grants only the IDs shown when clicked; later calls remain pending. The server validates the entire batch belongs to one conversation and model step before granting anything.
 
-Pending approval cards appear above bot and space composers and in pursuit run views, exclusively in the conversation that triggered them. Background requests can be found through the bot's Pending Approvals page. The dropdown opens upward and changes the shared server policy, not a local or per-chat preference.
+Pending approval cards appear above bot and space composers and in pursuit run views, including ancestor chats waiting on delegated bots. Background requests can be found through the bot's Pending Approvals page. The dropdown opens upward and changes the current workspace's server policy. Each tool approval card also includes **Enable Full Access Mode**, using the same mode change as the picker. Its reusable, keyboard-accessible tooltip explains the scope and pending-call behavior. Explicit bot questions and confirmations do not include this checkbox.
 
 The built-in [ask tool](ask-tool.md) shares this pending flow. Its clarification action shows suggestions, exactly one recommendation, and a free-text answer field. Its approval action shows Approve and Deny. Explicit questions always wait for the user, including in Full access, and do not receive a redundant tool-permission prompt. Clarifications cannot be approved through a boolean decision or a bulk grant. User answers are saved atomically with removal of the pending card, so a resolved question is not repeated during restart recovery.
 
@@ -21,12 +21,16 @@ The model's next step waits for the tool decision. Provider response timeouts ex
 
 A disconnected UI can recover pending requests through authenticated `GET /approvals`. Stop and failed provider steps cancel requests and remove their durable records. Shutdown preserves waiting requests; responses without a pending approval still become interrupted and can be retried. Animated activity icons are clipped within fixed-size containers to keep their rotation from changing scroll bounds.
 
+The pursuit scheduler defaults to five concurrent runs across all bots and workspaces. **Settings → Limits** configures this installation-wide pool from 1 to 50. Human approval and clarification waits release their slot; approved continuations queue in order and reacquire capacity before executing. A parallel sibling that is still working keeps its pursuit's slot. Delegated bots share their parent pursuit's slot. Decisions queued for capacity remain durable across restarts. Raising the limit makes capacity available immediately; lowering it allows current work to finish and holds new or resumed work until capacity is available. Ordinary chats are outside this pool.
+
 Authenticated API endpoints:
 
-- `GET /approvals`: global mode and all pending requests.
-- `PUT /approvals` with `{ "mode": "ask-for-approval" | "full-access" }`: persist the global mode.
+- `GET /approvals?workspaceId=...`: the selected workspace's mode and all pending requests. Omitted workspace IDs use `default` for compatibility.
+- `PUT /approvals?workspaceId=...` with `{ "mode": "ask-for-approval" | "full-access" }`: persist that workspace's mode.
 - `POST /approvals/:id` with `{ "approved": true | false }`: resolve exactly one live request. Expired or duplicate decisions return 409.
 - `POST /approvals/:id` with `{ "answer": "..." }`: answer one live clarification with a suggested choice or custom text (1–16000 trimmed characters). Approval requests require a boolean instead.
 - `POST /approvals/batch` with `{ "conversationId", "batchId", "ids": [...], "approved": true | false }`: resolve an explicit snapshot of pending calls from one model step. Mixed or stale batches return 409 without granting any calls; empty or duplicate IDs return 400.
+- All decision endpoints accept `workspaceId` in the query to select the mode included in their response.
+- `GET /limits` and `PUT /limits` with `{ "pursuitConcurrency": 5 }`: read or update the shared pursuit concurrency limit.
 
 Implementation plan: central persisted policy and cancellable gate → authenticated approval API → shared renderer state, dropup, and cards → stop/reconnect/timeout behavior → regression tests covering real SDK workspace and custom-tool dispatch.

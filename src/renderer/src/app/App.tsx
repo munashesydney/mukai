@@ -1,6 +1,6 @@
 import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target, Plus } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
@@ -19,7 +19,7 @@ import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
 import { BotHierarchyPage } from '../features/ai/BotHierarchyPage';
 import { PendingApprovalsPage } from '../features/ai/PendingApprovalsPage';
-import { useApprovals } from '../features/ai/approvalStore';
+import { approvalStore, useApprovals } from '../features/ai/approvalStore';
 import { approvalLocation } from '../features/ai/approvalLocation';
 import { useBotConversations } from '../features/ai/useBotConversations';
 import { BotEditor } from '../features/ai/BotEditor';
@@ -57,6 +57,9 @@ export function App() {
   );
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
+  useLayoutEffect(() => {
+    approvalStore.setWorkspace(ai.workspaceId);
+  }, [ai.workspaceId]);
   const approvals = useApprovals();
   const workspace = useWorkspace(ai.workspaceId);
   const spaceState = useSpaces(ai.workspaceId);
@@ -272,6 +275,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 location.item === 'providers' ||
                 location.item === 'environment' ||
                 location.item === 'routes' ||
+                location.item === 'limits' ||
                 location.item === 'memory'
                   ? location.item
                   : 'workspace'

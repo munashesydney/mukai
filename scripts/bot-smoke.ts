@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
 import type { NotificationInbox } from '../src/shared/notifications';
 import { PursuitRepository } from '../src/server/repositories/pursuitRepository';
+import { WorkspaceRepository } from '../src/server/repositories/workspaceRepository';
 
 async function main() {
   const dir = process.env.MUKAI_BOT_SMOKE_DIR;
@@ -131,6 +132,229 @@ async function main() {
     await capture('bot-first-editor.png');
     await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
     await wait('Boolean(document.querySelector(".composer textarea"))');
+    if (process.argv.includes('--approvals-only')) {
+      let explicit = false;
+      let parallel = false;
+      modelFixture = createServer(async (req, res) => {
+        if (req.method === 'GET') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ data: [{ id: 'fixture' }] }));
+          return;
+        }
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        const input = JSON.parse(raw) as { messages: { role: string }[] };
+        const lastUser = input.messages.map((message) => message.role).lastIndexOf('user');
+        const completed = input.messages
+          .slice(lastUser + 1)
+          .some((message) => message.role === 'tool');
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        const delta = completed
+          ? { role: 'assistant', content: 'Approval check complete.' }
+          : {
+              role: 'assistant',
+              tool_calls: Array.from({ length: parallel ? 3 : 1 }, (_, index) => ({
+                index,
+                id: randomUUID(),
+                type: 'function',
+                function: {
+                  name: explicit ? 'communicate' : 'manage_pursuit',
+                  arguments: JSON.stringify(
+                    explicit
+                      ? { action: 'approval', question: 'May I publish this draft?' }
+                      : { action: 'list' },
+                  ),
+                },
+              })),
+            };
+        res.write(
+          `data: ${JSON.stringify({ id: 'approval-check', object: 'chat.completion.chunk', created: 1, model: 'fixture', choices: [{ index: 0, delta, finish_reason: completed ? 'stop' : 'tool_calls' }] })}\n\n`,
+        );
+        res.end('data: [DONE]\n\n');
+      });
+      await new Promise<void>((resolve) => modelFixture!.listen(0, '127.0.0.1', resolve));
+      const address = modelFixture.address();
+      if (!address || typeof address === 'string') throw new Error('Fixture failed');
+      await request('/providers', 'POST', {
+        name: 'Fixture',
+        kind: 'compatible',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        defaultModel: 'fixture',
+        supportsImages: false,
+        isDefault: true,
+        apiKey: 'test-only',
+      });
+      new WorkspaceRepository(api.store).create({
+        id: 'isolation',
+        name: 'Other workspace',
+        folder: null,
+        createdAt: new Date().toISOString(),
+        computer: 'local',
+      });
+      await request('/approvals?workspaceId=isolation', 'PUT', { mode: 'ask-for-approval' });
+      await request('/bots', 'POST', {
+        workspaceId: 'isolation',
+        name: 'Other bot',
+        role: 'Main Bot/Orchestrator',
+        instructions: 'Review pursuits.',
+        providerId: null,
+        model: null,
+        supportsImages: null,
+        avatar: 'scout',
+      });
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      window.reload();
+      await wait(
+        'Boolean(document.querySelector(".composer textarea")) && document.querySelector(".approval-mode-trigger")?.textContent.includes("Ask for approval")',
+      );
+      const send = async (text: string) => {
+        await fill('.composer textarea', text);
+        await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+      };
+      await send('Review pursuits.');
+      await wait('Boolean(document.querySelector(".tool-approval-full-access input"))');
+      await evaluate(
+        `(()=>{const button=document.querySelector('button[aria-label="About Full Access Mode"]');button.focus();button.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));})()`,
+      );
+      await wait('Boolean(document.querySelector("[role=tooltip]"))');
+      await capture('tool-approval-tooltip.png');
+      await evaluate(
+        'document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))',
+      );
+      await wait('!document.querySelector("[role=tooltip]")');
+      await evaluate('document.querySelector(".tool-approval-full-access input").click()');
+      await wait(
+        'document.querySelector(".tool-approval-full-access input").checked && !document.querySelector(".tool-approval-full-access input").disabled',
+      );
+      assert.equal((await request<ApprovalState>('/approvals')).mode, 'full-access');
+      assert.equal(
+        (await request<ApprovalState>('/approvals?workspaceId=isolation')).mode,
+        'ask-for-approval',
+      );
+      assert.equal((await request<ApprovalState>('/approvals')).pending.length, 1);
+      await capture('tool-approval-full-access.png');
+      await click('Approve tool call');
+      await wait(
+        `!document.querySelector('.tool-approval-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+      );
+      await evaluate(`document.querySelector('button[aria-label="Choose workspace"]').click()`);
+      await wait('Boolean(document.querySelector(".workspace-picker-menu"))');
+      await evaluate(
+        `Array.from(document.querySelectorAll('.workspace-choice')).find(button=>button.textContent.includes('Other workspace')).click()`,
+      );
+      await wait(
+        'document.querySelector(".approval-mode-trigger")?.textContent.includes("Ask for approval") && !document.querySelector(".approval-mode-trigger").disabled',
+      );
+      await evaluate(`document.querySelector('button[aria-label="Choose workspace"]').click()`);
+      await wait('Boolean(document.querySelector(".workspace-picker-menu"))');
+      await evaluate(
+        `Array.from(document.querySelectorAll('.workspace-choice')).find(button=>!button.textContent.includes('Other workspace')).click()`,
+      );
+      await wait(
+        'document.querySelector(".approval-mode-trigger")?.textContent.includes("Full access") && !document.querySelector(".approval-mode-trigger").disabled',
+      );
+      explicit = true;
+      await send('Ask for explicit confirmation.');
+      await wait('Boolean(document.querySelector(".ask-request-card"))');
+      assert.equal(
+        await evaluate('document.querySelector(".ask-request-card .themed-checkbox")'),
+        null,
+      );
+      assert.equal((await request<ApprovalState>('/approvals')).mode, 'full-access');
+      await capture('explicit-approval-full-access.png');
+      await click('Deny');
+      await wait(
+        `!document.querySelector('.ask-request-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+      );
+      explicit = false;
+      parallel = true;
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      await send('Review three parallel tool calls.');
+      await wait('document.querySelectorAll(".tool-approval-card").length===3');
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(".tool-approval-full-access .themed-checkbox").length',
+        ),
+        3,
+      );
+      await evaluate('document.querySelector(".tool-approval-batch details").open=true');
+      window.setSize(900, 900);
+      await capture('tool-approval-cards-narrow.png');
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('tool-approval-cards-dark.png');
+      await click('Approve all');
+      await wait(
+        `!document.querySelector('.tool-approval-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+      );
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS approval UI: Full Access checkbox, workspace isolation, pending-call preservation, explicit confirmations, parallel cards, tooltip keyboard handling, dark and narrow layouts.',
+      );
+      return;
+    }
+    if (process.argv.includes('--limits-only')) {
+      await evaluate('document.querySelector(".rail-settings").click()');
+      await wait('Boolean(document.querySelector("#settings-tab-limits"))');
+      await click('Limits');
+      await wait(
+        'document.querySelector("#pursuit-concurrency")?.value==="5" && !document.querySelector("#pursuit-concurrency").disabled',
+      );
+      assert.equal(await evaluate('document.querySelectorAll(".limits-panel select").length'), 0);
+      assert(
+        await evaluate(
+          'Math.abs(document.querySelector(".limits-card").getBoundingClientRect().left-document.querySelector(".settings-panel-heading").getBoundingClientRect().left)<2',
+        ),
+      );
+      await capture('settings-limits.png');
+      await fill('#pursuit-concurrency', '0');
+      assert.equal(
+        await evaluate('document.querySelector(".limits-card button[type=submit]").disabled'),
+        true,
+      );
+      await fill('#pursuit-concurrency', '7');
+      await click('Save limit');
+      await wait('Boolean(document.querySelector(".limits-card [role=status]"))');
+      assert.equal(
+        (await request<{ pursuitConcurrency: number }>('/limits')).pursuitConcurrency,
+        7,
+      );
+      window.reload();
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await evaluate('document.querySelector(".rail-settings").click()');
+      await wait('Boolean(document.querySelector("#settings-tab-limits"))');
+      await click('Limits');
+      await wait(
+        'document.querySelector("#pursuit-concurrency")?.value==="7" && !document.querySelector("#pursuit-concurrency").disabled',
+      );
+      await evaluate(
+        `(()=>{const button=document.querySelector('button[aria-label="About the pursuit limit"]');button.focus();button.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));})()`,
+      );
+      await wait('Boolean(document.querySelector("[role=tooltip]"))');
+      assert(
+        await evaluate(
+          '(()=>{const r=document.querySelector("[role=tooltip]").getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight})()',
+        ),
+      );
+      await capture('settings-limits-tooltip.png');
+      await evaluate(
+        'document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))',
+      );
+      await wait('!document.querySelector("[role=tooltip]")');
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('settings-limits-dark.png');
+      window.setSize(700, 800);
+      await capture('settings-limits-narrow.png');
+      assert(
+        await evaluate(
+          'document.querySelector(".settings-panel").scrollWidth<=document.querySelector(".settings-panel").clientWidth+1',
+        ),
+      );
+      assert.equal(errors.length, 0, errors.join('\n'));
+      console.log(
+        'PASS Limits UI: default, validation, persistence, left alignment, tooltip keyboard behavior, dark and narrow layouts.',
+      );
+      return;
+    }
     if (process.argv.includes('--workpad-only')) {
       const main = (await request<Bot[]>('/bots'))[0];
       const pursuit = api.pursuits.create(main, {
@@ -844,6 +1068,43 @@ async function main() {
       ),
     );
     await evaluate('document.querySelector(".tool-approval-card details").open=true');
+    await evaluate(
+      `(()=>{const button=document.querySelector('button[aria-label="About Full Access Mode"]');button.focus();button.dispatchEvent(new FocusEvent('focusin',{bubbles:true}));})()`,
+    );
+    await wait('Boolean(document.querySelector("[role=tooltip]"))');
+    assert(
+      await evaluate(
+        'document.querySelector("[role=tooltip]").textContent.includes("Other workspaces are unaffected")',
+      ),
+    );
+    await capture('tool-approval-tooltip.png');
+    await evaluate(
+      'document.activeElement.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}))',
+    );
+    await wait('!document.querySelector("[role=tooltip]")');
+    new WorkspaceRepository(api.store).create({
+      id: 'approval-isolation',
+      name: 'Separate workspace',
+      folder: null,
+      createdAt: new Date().toISOString(),
+      computer: 'local',
+    });
+    await request('/approvals?workspaceId=approval-isolation', 'PUT', { mode: 'ask-for-approval' });
+    await evaluate('document.querySelector(".tool-approval-full-access input").click()');
+    await wait(
+      'document.querySelector(".tool-approval-full-access input").checked && !document.querySelector(".tool-approval-full-access input").disabled',
+    );
+    assert.equal((await request<ApprovalState>('/approvals')).mode, 'full-access');
+    assert.equal(
+      (await request<ApprovalState>('/approvals?workspaceId=approval-isolation')).mode,
+      'ask-for-approval',
+    );
+    assert.equal((await request<ApprovalState>('/approvals')).pending[0].id, pendingChat.id);
+    await capture('tool-approval-full-access.png');
+    await evaluate('document.querySelector(".tool-approval-full-access input").click()');
+    await wait(
+      '!document.querySelector(".tool-approval-full-access input").checked && !document.querySelector(".tool-approval-full-access input").disabled',
+    );
     await capture('tool-approval-card.png');
     window.setSize(900, 800);
     await capture('tool-approval-card-narrow.png');

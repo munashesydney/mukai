@@ -31,6 +31,7 @@ import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
 import { workpadQuerySchema } from '../tools/pursuits/workpad';
+import { MAX_PURSUIT_CONCURRENCY } from '../../shared/limits';
 import { z } from 'zod';
 import type { BrowserService } from '../services/browserService';
 import { browserDefinition } from '../tools/browser/definition';
@@ -130,7 +131,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -142,14 +143,26 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'limits' && !id) {
+      if (method === 'GET') return send(response, pursuits.limits());
+      if (method === 'PUT') {
+        const input = z
+          .object({ pursuitConcurrency: z.number().int().min(1).max(MAX_PURSUIT_CONCURRENCY) })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, pursuits.setLimits(input));
+      }
+    }
     if (resource === 'approvals') {
-      if (!id && method === 'GET') return send(response, approvals.state());
+      const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      workspaces.require(workspaceId);
+      if (!id && method === 'GET') return send(response, approvals.state(workspaceId));
       if (!id && method === 'PUT') {
         const input = z
           .object({ mode: z.enum(['ask-for-approval', 'full-access']) })
           .strict()
           .parse(await jsonBody(request));
-        return send(response, approvals.setMode(input.mode));
+        return send(response, approvals.setMode(input.mode, workspaceId));
       }
       if (id === 'batch' && !action && method === 'POST') {
         const input = z
@@ -163,7 +176,13 @@ export function createRoutes({
           .parse(await jsonBody(request));
         return send(
           response,
-          approvals.decideBatch(input.conversationId, input.batchId, input.ids, input.approved),
+          approvals.decideBatch(
+            input.conversationId,
+            input.batchId,
+            input.ids,
+            input.approved,
+            workspaceId,
+          ),
         );
       }
       if (id && !action && method === 'POST') {
@@ -176,8 +195,8 @@ export function createRoutes({
         return send(
           response,
           'answer' in input
-            ? approvals.answer(id, input.answer)
-            : approvals.decide(id, input.approved),
+            ? approvals.answer(id, input.answer, workspaceId)
+            : approvals.decide(id, input.approved, workspaceId),
         );
       }
       throw new ApiError(404, 'Not found');

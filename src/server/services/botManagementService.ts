@@ -7,6 +7,7 @@ import type { ConversationService } from './conversationService';
 import type { ToolAccessService } from './toolAccessService';
 import type { ProviderService } from './providerService';
 import type { ChatJobRepository } from '../repositories/chatJobRepository';
+import { pausePursuitTask } from './pursuitScheduler';
 
 export class BotManagementService {
   private reserved = new Map<string, string>();
@@ -145,27 +146,29 @@ export class BotManagementService {
     this.reserved.set(target.id, requestId);
     let response: ChatMessage | undefined;
     try {
-      await this.chats.respond(
-        target,
-        {
-          requestId,
-          text: message,
-          attachmentIds: [],
-        },
-        {
-          start() {},
-          emit(event) {
-            if (event.type === 'done' || event.type === 'error') response = event.message;
+      await pausePursuitTask(() =>
+        this.chats.respond(
+          target,
+          {
+            requestId,
+            text: message,
+            attachmentIds: [],
           },
-          onDisconnect() {
-            return () => {};
+          {
+            start() {},
+            emit(event) {
+              if (event.type === 'done' || event.type === 'error') response = event.message;
+            },
+            onDisconnect() {
+              return () => {};
+            },
+            end() {},
           },
-          end() {},
-        },
-        conversation.id,
-        undefined,
-        caller,
-        Boolean(saved),
+          conversation.id,
+          undefined,
+          caller,
+          Boolean(saved),
+        ),
       );
       signal.throwIfAborted();
       if (!response) throw new ApiError(500, 'The bot did not return a saved response.');
