@@ -16,6 +16,9 @@ export class GuestWorker implements Computer {
     private uid: number,
     private gid: number,
   ) {}
+  get pid() {
+    return this.child?.pid ?? null;
+  }
   private start() {
     if (this.closed) throw new Error('Guest worker is shutting down.');
     if (this.child) return this.child;

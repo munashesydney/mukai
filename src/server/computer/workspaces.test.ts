@@ -48,7 +48,7 @@ describe('workspace computer choice', () => {
     });
     expect(created.status).toBe(201);
     expect(created.data).toMatchObject({ computer: 'qemu', folder: null });
-    expect((await request(`/workspaces/${created.data.id}/computer`)).data).toEqual({
+    expect((await request(`/workspaces/${created.data.id}/computer`)).data).toMatchObject({
       kind: 'qemu',
       state: 'stopped',
     });

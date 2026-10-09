@@ -15,7 +15,8 @@ describe.skipIf(!existsSync(shell))('guest installer virtualization guard', () =
       '/opt/mukai-guest/chromium',
       `'${executable.replaceAll("'", "'\\''")}'`,
     );
-    const home = join(directory, 'home');
+    // The guest uses POSIX paths. MSYS rewrites a Windows TEMP-based HOME to /tmp.
+    const home = '/mukai-launcher-test-home';
     const launch = (args: string[]) =>
       spawnSync(shell, ['-c', launcher, 'launcher', ...args], {
         encoding: 'utf8',

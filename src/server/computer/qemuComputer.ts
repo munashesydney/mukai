@@ -8,6 +8,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, copyFile, rename, stat, writeFile, readFile, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
+import { freemem, totalmem } from 'node:os';
 import {
   DEFAULT_VM_RESOURCES,
   vmResourcesSchema,
@@ -26,6 +27,8 @@ import {
 } from './protocol';
 import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
+import { guestHealthSchema, type GuestHealth } from './guestHealth';
+import { ComputerLog } from './computerLog';
 import type { DiagnosticService } from '../services/diagnosticService';
 import {
   findQemuFirmware,
@@ -111,9 +114,9 @@ export function qemuArguments(
     '-display',
     'none',
     '-serial',
-    'none',
+    'mon:stdio',
     '-monitor',
-    'stdio',
+    'none',
     '-drive',
     `file=${optionPath(join(directory, 'disk.qcow2'))},format=qcow2,if=virtio`,
     '-netdev',
@@ -159,13 +162,28 @@ export class QemuComputer implements Computer {
   private desktopPassword?: string;
   private maintenance?: { message: string; detail?: string };
   private activeResources?: VmResources;
+  private healthPending = new Map<string, Pending>();
+  private lastHealth?: { sample: GuestHealth; receivedAt: number };
+  private healthTimer?: NodeJS.Timeout;
+  private checkingHealth = false;
+  private missedHealth = 0;
+  private lastRecoveryAt = 0;
+  private lastHealthNoticeAt = 0;
+  private reconnecting?: Promise<void>;
+  private reconnectWaiters = new Set<{ resolve(): void; reject(error: Error): void }>();
+  private healthLog: ComputerLog;
+  private consoleLog: ComputerLog;
   constructor(
     private directory: string,
     private config = qemuConfig(),
     private launch: Launcher = spawn,
     private guestBundleDir?: string,
     private diagnostics?: DiagnosticService,
-  ) {}
+  ) {
+    const failedLog = () => this.report('computer.log_failed', 'Could not persist VM diagnostics.');
+    this.healthLog = new ComputerLog(join(directory, 'health.log'), undefined, failedLog);
+    this.consoleLog = new ComputerLog(join(directory, 'console.log'), undefined, failedLog);
+  }
   private report(event: string, message: string, error?: unknown) {
     const context = { workspaceId: basename(this.directory), phase: 'computer' as const };
     if (error) this.diagnostics?.record(event, error, context, 'error', message);
@@ -197,6 +215,247 @@ export class QemuComputer implements Computer {
     )
       throw new Error('The workspace desktop is unavailable.');
     return { port: this.desktopPort, password: this.desktopPassword };
+  }
+  /** Root bridge probe; does not execute a command or depend on the tools worker. */
+  inspectHealth(signal: AbortSignal): Promise<GuestHealth> {
+    signal.throwIfAborted();
+    const socket = this.socket;
+    if (!socket || this.state.state !== 'running' || this.guestRevision < 7)
+      return Promise.reject(new Error('Guest health checks are unavailable.'));
+    if (this.healthPending.size >= 4)
+      return Promise.reject(new Error('Too many outstanding guest health checks.'));
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const finish = (error: Error) => {
+        this.healthPending.delete(id);
+        cleanup();
+        reject(error);
+      };
+      const abort = () =>
+        finish(
+          signal.reason instanceof Error ? signal.reason : new Error('Health check cancelled.'),
+        );
+      const timer = setTimeout(() => finish(new Error('Guest health check timed out.')), 5000);
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', abort);
+      };
+      this.healthPending.set(id, {
+        resolve: (value) => resolve(value as GuestHealth),
+        reject,
+        cleanup,
+      });
+      signal.addEventListener('abort', abort, { once: true });
+      socket.write(encodeFrame({ health: id }), (error) => {
+        if (error && this.healthPending.has(id)) finish(error);
+      });
+    });
+  }
+  /** Reconnect only the transport. Never reboot, restart a worker, or replay a tool call. */
+  recoverBridge(reason = 'manual health check', signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    if (this.reconnecting) return this.reconnecting;
+    if (!this.child || this.starting || this.stopping)
+      return Promise.reject(
+        new Error('VM bridge recovery is unavailable during a lifecycle change.'),
+      );
+    if (this.pending.size)
+      return Promise.reject(
+        new Error('Wait for active VM operations before reconnecting the bridge.'),
+      );
+    if (this.guestRevision < 7)
+      return Promise.reject(new Error('Update the guest before reconnecting its bridge.'));
+    this.lastRecoveryAt = Date.now();
+    this.report(
+      'computer.bridge_recovery',
+      'Reconnecting the guest bridge while keeping the VM running.',
+    );
+    const socket = this.socket;
+    this.socket = undefined;
+    this.state = { kind: 'qemu', state: 'failed', error: 'Reconnecting the guest bridge…' };
+    this.failPending(new Error('Guest bridge reconnecting; operation completion is unknown.'));
+    this.reconnecting = new Promise<void>((resolve, reject) => {
+      const verification = new AbortController();
+      let finished = false;
+      let verifying = false;
+      const finish = (error?: Error) => {
+        if (finished) return;
+        finished = true;
+        verification.abort();
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        this.reconnectWaiters.delete(waiter);
+        if (error) reject(error);
+        else resolve();
+      };
+      // A buffered hello can arrive while the guest's serial port is reopening.
+      // Verify host-to-guest delivery before releasing tool callers. Only health
+      // probes may be retried; uncertain tool actions are never replayed.
+      const verify = async () => {
+        if (verifying || finished) return;
+        verifying = true;
+        while (!finished) {
+          try {
+            await this.inspectHealth(verification.signal);
+            finish();
+            return;
+          } catch (error) {
+            if (finished) return;
+            if (!this.child || this.stopping) {
+              finish(error instanceof Error ? error : new Error('VM stopped during recovery.'));
+              return;
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          }
+        }
+      };
+      const waiter = {
+        resolve: () => {
+          void verify();
+        },
+        reject: (error: Error) => finish(error),
+      };
+      const abort = () =>
+        finish(
+          signal?.reason instanceof Error ? signal.reason : new Error('Bridge recovery cancelled.'),
+        );
+      const timer = setTimeout(() => {
+        const error = new Error('Guest bridge did not reconnect. The VM was left running.');
+        this.report(
+          'computer.bridge_recovery_failed',
+          `Bridge reconnect failed; reason=${reason}.`,
+          error,
+        );
+        finish(error);
+      }, 10000);
+      this.reconnectWaiters.add(waiter);
+      signal?.addEventListener('abort', abort, { once: true });
+      socket?.destroy();
+    }).finally(() => {
+      this.reconnecting = undefined;
+    });
+    return this.reconnecting;
+  }
+  private recordHealth(sample: GuestHealth) {
+    const previous = this.lastHealth?.sample;
+    // A buffered reply is evidence of its sample time, not a fresh heartbeat.
+    if (previous && previous.bridgePid === sample.bridgePid) {
+      if (previous.uptimeSeconds !== null && sample.uptimeSeconds !== null) {
+        if (sample.uptimeSeconds <= previous.uptimeSeconds) return;
+      } else if (Date.parse(sample.sampledAt) <= Date.parse(previous.sampledAt)) return;
+    }
+    const now = Date.now();
+    this.lastHealth = { sample, receivedAt: now };
+    this.missedHealth = 0;
+    this.healthLog.append(
+      JSON.stringify({
+        receivedAt: new Date(now).toISOString(),
+        workspaceId: basename(this.directory),
+        qemuPid: this.child?.pid,
+        resources: this.activeResources,
+        hostMemory: {
+          totalKiB: Math.round(totalmem() / 1024),
+          freeKiB: Math.round(freemem() / 1024),
+        },
+        ...sample,
+      }) + '\n',
+    );
+    const available = sample.memory.availableKiB;
+    const total = sample.memory.totalKiB;
+    const pressure =
+      available !== null && total !== null && available < Math.max(65536, total * 0.05);
+    const previousAvailable = previous?.memory.availableKiB;
+    const previousTotal = previous?.memory.totalKiB;
+    const enteredPressure =
+      pressure &&
+      !(
+        previousAvailable != null &&
+        previousTotal != null &&
+        previousAvailable < Math.max(65536, previousTotal * 0.05)
+      );
+    const oom =
+      previous?.oomKillCount !== null &&
+      previous?.oomKillCount !== undefined &&
+      sample.oomKillCount !== null &&
+      sample.oomKillCount > previous.oomKillCount;
+    if (oom || enteredPressure || now - this.lastHealthNoticeAt >= 60000) {
+      this.lastHealthNoticeAt = now;
+      const message = `Guest health; availableKiB=${available ?? 'unknown'}, swapFreeKiB=${sample.memory.swapFreeKiB ?? 'unknown'}, oomKills=${sample.oomKillCount ?? 'unknown'}, load=${sample.loadAverage?.join(',') ?? 'unknown'}, workerPid=${sample.workerPid ?? 'none'}, memoryPressure=${pressure}.`;
+      if (pressure || oom)
+        this.diagnostics?.record(
+          oom ? 'computer.guest_oom' : 'computer.memory_pressure',
+          new Error(message),
+          { workspaceId: basename(this.directory), phase: 'computer' },
+          'warn',
+        );
+      else this.report('computer.health', message);
+    }
+  }
+  private startHealthMonitor() {
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    if (this.guestRevision < 7) return;
+    this.healthTimer = setInterval(() => {
+      if (
+        this.checkingHealth ||
+        !this.child ||
+        this.stopping ||
+        this.starting ||
+        this.reconnecting ||
+        this.state.state !== 'running' ||
+        (this.lastHealth && Date.now() - this.lastHealth.receivedAt < 20000)
+      )
+        return;
+      this.checkingHealth = true;
+      const checkedChild = this.child;
+      void this.inspectHealth(AbortSignal.timeout(6000))
+        .catch(async () => {
+          if (
+            !this.child ||
+            this.child !== checkedChild ||
+            this.stopping ||
+            this.state.state !== 'running'
+          )
+            return;
+          this.missedHealth++;
+          if (this.missedHealth < 3) return;
+          const age = this.lastHealth ? Date.now() - this.lastHealth.receivedAt : undefined;
+          this.report(
+            'computer.health_unresponsive',
+            `Guest heartbeat missing; lastSampleAgeMs=${age ?? 'unavailable'}, activeRequests=${this.pending.size}.`,
+          );
+          if (!this.pending.size && Date.now() - this.lastRecoveryAt >= 60000)
+            await this.recoverBridge('missing guest heartbeat').catch(() => {});
+        })
+        .finally(() => {
+          this.checkingHealth = false;
+        });
+    }, 10000);
+    this.healthTimer.unref();
+  }
+  private async diagnoseTimeout() {
+    const checkedChild = this.child;
+    const pid = this.child?.pid;
+    const status = await this.control?.status();
+    this.report(
+      'computer.timeout_status',
+      `VM status after request timeout; pid=${pid ?? 'unavailable'}, qmp=${status ?? 'unresponsive or disconnected'}.`,
+    );
+    if (this.guestRevision < 7 || this.stopping || !this.child || this.child !== checkedChild)
+      return;
+    try {
+      await this.inspectHealth(AbortSignal.timeout(6000));
+      this.report(
+        'computer.worker_unresponsive',
+        'Root guest bridge responds; a tool or tools worker did not finish. The operation was not replayed.',
+      );
+    } catch {
+      this.report(
+        'computer.health_unresponsive',
+        'Root guest bridge did not respond after a tool timeout.',
+      );
+      if (!this.pending.size && !this.reconnecting && Date.now() - this.lastRecoveryAt >= 60000)
+        await this.recoverBridge('guest request timeout').catch(() => {});
+    }
   }
   async start() {
     if (this.stopping) await this.stopping;
@@ -252,6 +511,10 @@ export class QemuComputer implements Computer {
       throw new Error('The VM process is still running. Stop it before starting again.');
     }
     this.state = { kind: 'qemu', state: 'starting' };
+    this.lastHealth = undefined;
+    this.missedHealth = 0;
+    this.lastRecoveryAt = 0;
+    this.lastHealthNoticeAt = 0;
     const setup = await qemuSetup(this.config);
     signal.throwIfAborted();
     if (!setup.available) throw new Error(setup.reason);
@@ -354,6 +617,7 @@ export class QemuComputer implements Computer {
       let authenticated = false;
       const timer = setTimeout(() => socket.destroy(), 125000);
       socket.on('data', (chunk) => {
+        if (authenticated && this.socket !== socket) return;
         try {
           for (const raw of frames.push(chunk)) {
             if (!authenticated) {
@@ -375,11 +639,33 @@ export class QemuComputer implements Computer {
               if (this.state.state === 'failed' && this.child && !this.stopping)
                 this.state = { kind: 'qemu', state: 'running' };
               this.report('computer.bridge_connected', 'Guest bridge authenticated.');
+              this.startHealthMonitor();
+              for (const waiter of this.reconnectWaiters) waiter.resolve();
               ready();
               continue;
             }
             // A hello may already be queued before the guest receives ready.
-            if (raw && typeof raw === 'object' && 'hello' in raw) continue;
+            if (raw && typeof raw === 'object' && 'hello' in raw) {
+              socket.write(encodeFrame({ ready: PROTOCOL_VERSION }));
+              continue;
+            }
+            if (raw && typeof raw === 'object' && 'telemetry' in raw) {
+              this.recordHealth(guestHealthSchema.parse(raw.telemetry));
+              continue;
+            }
+            if (raw && typeof raw === 'object' && 'health' in raw) {
+              const message = z
+                .object({ health: z.string().uuid(), diagnostics: guestHealthSchema })
+                .parse(raw);
+              const pending = this.healthPending.get(message.health);
+              if (pending) {
+                this.recordHealth(message.diagnostics);
+                this.healthPending.delete(message.health);
+                pending.cleanup();
+                pending.resolve(message.diagnostics);
+              }
+              continue;
+            }
             const message = z
               .object({
                 id: z.string().uuid(),
@@ -445,6 +731,7 @@ export class QemuComputer implements Computer {
     );
     const append = (chunk: Buffer) => {
       this.log = (this.log + chunk.toString()).slice(-4000);
+      this.consoleLog.append(chunk);
     };
     child.stdout.on('data', append);
     child.stderr.on('data', append);
@@ -468,6 +755,10 @@ export class QemuComputer implements Computer {
         }
         this.closeConnection?.();
         this.failPending(new Error('Workspace VM stopped.'));
+        if (this.healthTimer) clearInterval(this.healthTimer);
+        this.healthTimer = undefined;
+        for (const waiter of this.reconnectWaiters)
+          waiter.reject(new Error('Workspace VM stopped.'));
         if (this.state.state !== 'stopped')
           this.state = { kind: 'qemu', state: 'failed', error: this.log || 'Workspace VM exited.' };
         failed(new Error(this.log || 'QEMU exited before the guest was ready.'));
@@ -506,7 +797,7 @@ export class QemuComputer implements Computer {
     let abortStart!: () => void;
     try {
       await Promise.race([
-        this.start(),
+        (this.reconnecting ?? this.start()).then(() => this.reconnecting),
         new Promise<never>((_, reject) => {
           abortStart = () => reject(signal.reason);
           if (signal.aborted) abortStart();
@@ -553,13 +844,7 @@ export class QemuComputer implements Computer {
           conversationId: owner.conversationId,
           tool: method,
         });
-        const pid = this.child?.pid;
-        void this.control?.status().then((status) => {
-          this.report(
-            'computer.timeout_status',
-            `VM status after request timeout; pid=${pid ?? 'unavailable'}, qmp=${status ?? 'unresponsive or disconnected'}.`,
-          );
-        });
+        void this.diagnoseTimeout().catch(() => {});
         reject(error);
       }, 45000);
       const cleanup = () => {
@@ -577,6 +862,11 @@ export class QemuComputer implements Computer {
       pending.reject(error);
     }
     this.pending.clear();
+    for (const pending of this.healthPending.values()) {
+      pending.cleanup();
+      pending.reject(error);
+    }
+    this.healthPending.clear();
   }
   stop(reason = 'workspace stop') {
     this.bootController?.abort();
@@ -592,10 +882,14 @@ export class QemuComputer implements Computer {
           `Controller requested VM shutdown; reason=${reason}.`,
         );
       this.state = { kind: 'qemu', state: 'stopped' };
+      if (this.healthTimer) clearInterval(this.healthTimer);
+      this.healthTimer = undefined;
+      for (const waiter of this.reconnectWaiters) waiter.reject(new Error('Workspace VM stopped.'));
       this.failPending(new Error('Workspace VM stopped.'));
       const child = this.child;
       if (child) {
-        if (!this.control?.powerdown()) child.stdin.write('\nsystem_powerdown\n');
+        // mon:stdio starts on the serial console; Ctrl-A C selects its HMP monitor.
+        if (!this.control?.powerdown()) child.stdin.write('\x01csystem_powerdown\n');
         const timer = setTimeout(() => {
           this.report(
             'computer.force_stop',
@@ -615,6 +909,7 @@ export class QemuComputer implements Computer {
       this.socket = undefined;
       this.desktopPort = undefined;
       this.desktopPassword = undefined;
+      await Promise.all([this.healthLog.flush(), this.consoleLog.flush()]);
     })().finally(() => {
       this.stopping = undefined;
     });

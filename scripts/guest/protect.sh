@@ -23,6 +23,8 @@ if ! dpkg-divert --list /usr/bin/systemctl | grep -q /usr/lib/mukai-guest/system
   dpkg-divert --local --add --rename --divert /usr/lib/mukai-guest/systemctl /usr/bin/systemctl
 fi
 install -o root -g root -m 0755 "$bundle/systemctl-guard.sh" /usr/bin/systemctl
+install -o root -g root -m 0755 "$bundle/resilience.sh" /usr/lib/mukai-guest/resilience.sh
+/bin/sh /usr/lib/mukai-guest/resilience.sh
 # No policy change to sudo: ordinary administration remains available.
 install -o root -g root -m 0644 "$bundle/mukai-guest.service" /etc/systemd/system/mukai-guest.service
 install -o root -g root -m 0644 "$bundle/mukai-display.service" "$bundle/mukai-desktop.service" /etc/systemd/system/

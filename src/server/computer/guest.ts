@@ -1,8 +1,10 @@
-import { createReadStream, createWriteStream, readFileSync, openSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { GuestWorker } from './guestWorker';
-import { Frames, encodeFrame, guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from './protocol';
+import { guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from './protocol';
+import { collectGuestHealth, GuestHealthLog, GUEST_HEALTH_INTERVAL_MS } from './guestHealth';
+import { GuestTransport, openGuestChannel } from './guestTransport';
 
 // This entry point runs ONLY inside a prepared Linux guest, never in Electron.
 if (process.getuid?.() !== 0)
@@ -12,7 +14,6 @@ process.title = 'mukai-bridge';
 process.setgroups!([]);
 const token = readFileSync('/run/mukai-guest/boot-token', 'utf8').trim();
 if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Missing Mukai boot identity.');
-const device = '/dev/virtio-ports/com.mukai.agent';
 const account = readFileSync('/etc/passwd', 'utf8')
   .split('\n')
   .find((line) => line.startsWith('mukai:'))
@@ -22,56 +23,89 @@ const uid = Number(account?.[2]),
 if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid <= 0)
   throw new Error('Missing unprivileged guest account.');
 const dispatcher = new GuestWorker(join(__dirname, 'guest-worker.cjs'), uid, gid);
-const fd = openSync(device, 'r+');
-const reader = createReadStream(device, { fd, autoClose: false });
-const writer = createWriteStream(device, { fd, autoClose: false });
-const frames = new Frames();
 const pending = new Map<string, AbortController>();
-const send = (value: unknown) => writer.write(encodeFrame(value));
-// Handshake is repeated because the host may connect after systemd starts us.
-const hello = setInterval(
-  () => send({ hello: PROTOCOL_VERSION, revision: GUEST_REVISION, token }),
-  500,
-);
-reader.on('data', (chunk) => {
+const healthLog = new GuestHealthLog();
+let sample: ReturnType<typeof collectGuestHealth> | undefined;
+let stopping = false;
+let logFailed = false;
+let telemetryRunning = false;
+const health = () => {
+  if (!sample)
+    sample = collectGuestHealth({ workerPid: dispatcher.pid }).finally(() => {
+      sample = undefined;
+    });
+  return sample;
+};
+const telemetry = async () => {
+  if (stopping || telemetryRunning) return;
+  telemetryRunning = true;
   try {
-    for (const raw of frames.push(Buffer.from(chunk))) {
-      const control = z.object({ cancel: z.string().uuid() }).safeParse(raw);
-      if (control.success) {
-        pending.get(control.data.cancel)?.abort();
-        continue;
-      }
-      const ready = z.object({ ready: z.literal(PROTOCOL_VERSION) }).safeParse(raw);
-      if (ready.success) {
-        clearInterval(hello);
-        continue;
-      }
-      const request = guestRequest.parse(raw);
-      if (pending.size >= 32 || pending.has(request.id)) {
-        send({ id: request.id, error: 'Guest is busy. Retry after outstanding calls finish.' });
-        continue;
-      }
-      const controller = new AbortController();
-      pending.set(request.id, controller);
-      void dispatcher
-        .request(request.method, request.input, request.owner, controller.signal)
-        .then((result) => send({ id: request.id, result }))
-        .catch((error) =>
-          send({
-            id: request.id,
-            error: error instanceof Error ? error.message : 'Guest operation failed.',
-          }),
-        )
-        .finally(() => pending.delete(request.id));
-    }
-  } catch (error) {
-    console.error(error);
-    process.exit(1);
+    const diagnostics = await health();
+    if (stopping) return;
+    transport.send({ telemetry: diagnostics }, true);
+    await healthLog.append(diagnostics);
+    logFailed = false;
+  } catch {
+    // Never interrupt tool execution if the evidence log's filesystem is unavailable.
+    if (!logFailed) console.error('Guest health log unavailable.');
+    logFailed = true;
+  } finally {
+    telemetryRunning = false;
   }
+};
+const transport = new GuestTransport({
+  open: () => openGuestChannel('/dev/virtio-ports/com.mukai.agent'),
+  hello: { hello: PROTOCOL_VERSION, revision: GUEST_REVISION, token },
+  onReady: () => {
+    void telemetry();
+  },
+  onError: () => console.error('Guest transport unavailable; reconnecting.'),
+  onFrame: (raw) => {
+    const control = z.object({ cancel: z.string().uuid() }).safeParse(raw);
+    if (control.success) {
+      pending.get(control.data.cancel)?.abort();
+      return;
+    }
+    const probe = z.object({ health: z.string().uuid() }).safeParse(raw);
+    if (probe.success) {
+      void health()
+        .then((diagnostics) => transport.send({ health: probe.data.health, diagnostics }))
+        .catch(() => {});
+      return;
+    }
+    const request = guestRequest.parse(raw);
+    if (pending.size >= 32 || pending.has(request.id)) {
+      transport.send({
+        id: request.id,
+        error: 'Guest is busy. Retry after outstanding calls finish.',
+      });
+      return;
+    }
+    const controller = new AbortController();
+    pending.set(request.id, controller);
+    void dispatcher
+      .request(request.method, request.input, request.owner, controller.signal)
+      .then((result) => transport.send({ id: request.id, result }))
+      .catch((error) =>
+        transport.send({
+          id: request.id,
+          error: error instanceof Error ? error.message : 'Guest operation failed.',
+        }),
+      )
+      .finally(() => pending.delete(request.id));
+  },
 });
-writer.on('error', () => process.exit(1));
-reader.on('error', () => process.exit(1));
+transport.start();
+// Local evidence continues while disconnected; host delivery requires authentication.
+const healthTimer = setInterval(() => {
+  void telemetry();
+}, GUEST_HEALTH_INTERVAL_MS);
+healthTimer.unref();
 const stop = () => {
+  if (stopping) return;
+  stopping = true;
+  clearInterval(healthTimer);
+  transport.close();
   for (const controller of pending.values()) controller.abort();
   void dispatcher.shutdown().finally(() => process.exit(0));
 };

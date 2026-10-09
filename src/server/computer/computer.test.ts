@@ -263,7 +263,13 @@ describe('VM tools', () => {
 
 describe('QEMU lifecycle over a real loopback bridge', () => {
   // A small stand-in interprets the launch arguments; tests do not pretend to boot QEMU.
-  async function fixture(wrongIdentity = false, delay = 0, diagnostics?: DiagnosticService) {
+  async function fixture(
+    wrongIdentity = false,
+    delay = 0,
+    diagnostics?: DiagnosticService,
+    health = false,
+    loseFirstReconnectProbe = false,
+  ) {
     const image = join(directory, 'base.qcow2');
     const script = join(directory, 'guest.cjs');
     await writeFile(image, 'base-image');
@@ -275,17 +281,34 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       const port = Number(/port=(\\d+)/.exec(args[args.indexOf('-chardev')+1])[1]);
       const tokenPath = args[args.indexOf('-fw_cfg')+1].split('file=')[1].replace(/,,/g, ',');
       const token = ${wrongIdentity ? "'0'.repeat(64)" : "fs.readFileSync(tokenPath, 'utf8')"};
+      const health = ${health};
+      const diagnostics = {version:1,sampledAt:new Date().toISOString(),uptimeSeconds:10,
+        bridgePid:123,workerPid:456,memory:{totalKiB:6291456,availableKiB:4000000,swapTotalKiB:2097152,swapFreeKiB:2097152},
+        loadAverage:[0,0,0],pressure:{memory:null,cpu:null,io:null},oomKillCount:0,processes:[],errors:[]};
       let disconnected = false;
+      let connections = 0;
+      let loseProbe = false;
+      let verified = true;
       let socket;
       const connect = () => {
+      connections++;
+      loseProbe = ${loseFirstReconnectProbe} && connections > 1;
+      verified = !loseProbe;
       disconnected = false;
-      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token})+'\\n'), ${delay}));
+      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token,revision:health?7:1})+'\\n'), ${delay}));
       let buffer = '';
       socket.on('data', chunk => { buffer += chunk; let end;
         while((end = buffer.indexOf('\\n')) !== -1) {
           const request = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
           if(request.ready) continue;
+          if(request.health) { if(loseProbe) { loseProbe=false; continue; } verified=true; diagnostics.sampledAt=new Date().toISOString(); diagnostics.uptimeSeconds=process.uptime(); socket.write(JSON.stringify({health:request.health,diagnostics})+'\\n'); continue; }
+          if(!verified && request.method) fs.writeFileSync(tokenPath+'.premature-tool', 'sent before probe acknowledgement');
           if(request.cancel) { fs.writeFileSync(tokenPath+'.cancel', request.cancel); continue; }
+          if(request.input.command === 'stale-health') {
+            const stale = {...diagnostics,memory:{...diagnostics.memory,availableKiB:0},oomKillCount:999};
+            socket.write(JSON.stringify({health:'00000000-0000-4000-8000-000000000000',diagnostics:{...stale,uptimeSeconds:100000}})+'\\n');
+            socket.write(JSON.stringify({telemetry:{...stale,uptimeSeconds:0}})+'\\n');
+          }
           if(request.input.command.startsWith('disconnect')) {
             disconnected = true;
             socket.destroy();
@@ -296,7 +319,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
           socket.write(JSON.stringify({id:request.id,result:{method:request.method,input:request.input,owner:request.owner}})+'\\n');
         }
       });
-      socket.on('close', () => { if(!disconnected) process.exit(0); });
+      socket.on('close', () => { if(!disconnected) { if(health) setTimeout(connect,30); else process.exit(0); } });
       };
       connect();
       process.stdin.on('data', chunk => { if(chunk.toString().includes('system_powerdown')) process.exit(0); });
@@ -342,6 +365,74 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     expect(vm.status()).toMatchObject({
       activeResources: { memoryMiB: 8192, vcpus: 4 },
       restartRequired: false,
+    });
+  });
+  it('probes the root bridge while a tool is stuck and persists counters without private inputs', async () => {
+    const { vm } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    const controller = new AbortController();
+    const hanging = vm.request('terminal', { command: 'hang' }, owner, controller.signal);
+    const cancelled = expect(hanging).rejects.toThrow('cancelled');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const health = await vm.inspectHealth(signal());
+    expect(health.memory.availableKiB).toBe(4000000);
+    expect(health.workerPid).toBe(456);
+    await expect(vm.recoverBridge()).rejects.toThrow('active VM operations');
+    controller.abort(new Error('cancelled'));
+    await cancelled;
+    await vm.stop();
+    const log = await readFile(join(directory, 'vm', 'health.log'), 'utf8');
+    expect(JSON.parse(log.trim())).toMatchObject({ memory: { swapTotalKiB: 2097152 } });
+    expect(log).not.toContain('hang');
+    expect(log).not.toContain(await readFile(join(directory, 'vm', 'boot-token'), 'utf8'));
+  });
+  it('reconnects only the transport without relaunching QEMU or changing worker identity', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    const before = await vm.inspectHealth(signal());
+    await vm.recoverBridge('test reconnect');
+    const after = await vm.inspectHealth(signal());
+    expect(vm.status().state).toBe('running');
+    expect(after.bridgePid).toBe(before.bridgePid);
+    expect(after.workerPid).toBe(before.workerPid);
+    expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+      input: { command: 'ls' },
+    });
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+  it('waits for a bidirectional probe and holds tool calls when the first reconnect probe is lost', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true, true);
+    await vm.start();
+    const recovering = vm.recoverBridge('lost first probe');
+    const tool = vm.request('terminal', { command: 'preserved session' }, owner, signal());
+    await recovering;
+    expect(await tool).toMatchObject({ input: { command: 'preserved session' } });
+    await expect(
+      readFile(join(directory, 'vm', 'boot-token.premature-tool')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(launch).toHaveBeenCalledTimes(1);
+  }, 15000);
+  it('rejects a reconnect waiter on stop without relaunching or leaving recovery pending', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    const recovering = vm.recoverBridge('test interrupted reconnect');
+    const stopped = expect(recovering).rejects.toThrow('stopped');
+    await vm.stop();
+    await stopped;
+    expect(vm.status().state).toBe('stopped');
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+  it('does not refresh heartbeat or replace counters with unmatched or older buffered samples', async () => {
+    const { vm } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    await vm.inspectHealth(signal());
+    await vm.request('terminal', { command: 'stale-health' }, owner, signal());
+    await vm.stop();
+    const lines = (await readFile(join(directory, 'vm', 'health.log'), 'utf8')).trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      oomKillCount: 0,
+      memory: { availableKiB: 4000000 },
     });
   });
   it('boots and restarts the ARM bridge with UEFI while retaining disk contents', async () => {
