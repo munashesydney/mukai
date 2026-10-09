@@ -1,5 +1,5 @@
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   FileText,
   Info,
@@ -12,7 +12,7 @@ import {
   Square,
   X,
 } from 'lucide-react';
-import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
 import { ACCEPTED_FILES } from '../../../../shared/ai';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
@@ -118,6 +118,17 @@ export function BotChat({
       void chatStore.send(chatId);
     }
   }
+  const openReview = useCallback(
+    (changes: FileChangeSummary[], selectedId: string) => setReview({ changes, selectedId }),
+    [],
+  );
+  const retryResponse = useCallback(
+    (requestId: string) => {
+      follow.current = true;
+      void chatStore.send(chatId, requestId);
+    },
+    [chatId],
+  );
   return (
     <div className="conversation-layout">
       <main className="conversation">
@@ -225,103 +236,19 @@ export function BotChat({
                   {state.error}
                 </p>
               )}
-              {state.messages.map((message) => {
-                const delegation = message.activity?.find(
-                  (activity) => activity.status === 'running' && activity.delegation,
-                )?.delegation;
-                const author = readOnly
-                  ? bots.find((item) => item.id === message.botId)
-                  : undefined;
-                return (
-                  <article className={`ai-message ai-message--${message.role}`} key={message.id}>
-                    <Avatar
-                      person={
-                        readOnly
-                          ? author?.avatar || bot.avatar
-                          : message.role === 'user'
-                            ? 'munashe'
-                            : bot.avatar
-                      }
-                      size="sm"
-                    />
-                    <div className="ai-message-body">
-                      <div className="ai-message-meta">
-                        <strong>
-                          {readOnly
-                            ? author?.name || message.authorName || 'Bot'
-                            : message.role === 'user'
-                              ? 'You'
-                              : bot.name}
-                        </strong>
-                        {(readOnly || message.role === 'assistant') && (
-                          <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>
-                            BOT
-                          </span>
-                        )}
-                        <time dateTime={message.createdAt}>
-                          {new Date(message.createdAt).toLocaleTimeString([], {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}
-                        </time>
-                      </div>
-                      {message.role === 'assistant' && <ResponseActivity message={message} />}
-                      {message.role === 'assistant' && (
-                        <FileChanges
-                          message={message}
-                          onReview={(changes, selectedId) => setReview({ changes, selectedId })}
-                        />
-                      )}
-                      {message.role === 'user' && message.content && (
-                        <MessageMarkdown text={message.content} />
-                      )}
-                      {!!message.attachments.length && (
-                        <div className="ai-attachments">
-                          {message.attachments.map((file) => (
-                            <AttachmentCard attachment={file} key={file.id} />
-                          ))}
-                        </div>
-                      )}
-                      {message.status === 'streaming' && (
-                        <div className="ai-response-status" role="status">
-                          <span className="typing-dots">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                          {delegation
-                            ? `Waiting for ${delegation.botName}’s response…`
-                            : message.activity?.some((activity) => activity.status === 'running')
-                              ? 'Working with files…'
-                              : message.content
-                                ? 'Responding…'
-                                : message.reasoning
-                                  ? `${bot.name} is thinking…`
-                                  : 'Waiting for the model…'}
-                        </div>
-                      )}
-                      {['failed', 'stopped', 'interrupted'].includes(message.status) && (
-                        <div className="ai-response-status">
-                          <span>{message.error || 'Response stopped.'}</span>
-                          {!readOnly && message.id === latestAssistant?.id && (
-                            <button
-                              className="text-button"
-                              disabled={state.busy}
-                              onClick={() => {
-                                follow.current = true;
-                                void chatStore.send(chatId, message.requestId);
-                              }}
-                            >
-                              <RotateCcw size={13} />
-                              Retry response
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
+              {state.messages.map((message) => (
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  bot={bot}
+                  author={readOnly ? bots.find((item) => item.id === message.botId) : undefined}
+                  readOnly={readOnly}
+                  busy={state.busy}
+                  canRetry={!readOnly && message.id === latestAssistant?.id}
+                  onReview={openReview}
+                  onRetry={retryResponse}
+                />
+              ))}
             </div>
             {readOnly && hasRequests && (
               <div className="bot-conversation-requests">
@@ -547,3 +474,102 @@ export function BotChat({
     </div>
   );
 }
+
+// One message row, memoized so composer keystrokes and stream deltas only
+// re-render the message whose object identity actually changed in the store.
+const MessageRow = memo(function MessageRow({
+  message,
+  bot,
+  author,
+  readOnly,
+  busy,
+  canRetry,
+  onReview,
+  onRetry,
+}: {
+  message: ChatMessage;
+  bot: Bot;
+  author?: Bot;
+  readOnly: boolean;
+  busy: boolean;
+  canRetry: boolean;
+  onReview: (changes: FileChangeSummary[], selectedId: string) => void;
+  onRetry: (requestId: string) => void;
+}) {
+  const delegation = message.activity?.find(
+    (activity) => activity.status === 'running' && activity.delegation,
+  )?.delegation;
+  return (
+    <article className={`ai-message ai-message--${message.role}`}>
+      <Avatar
+        person={
+          readOnly ? author?.avatar || bot.avatar : message.role === 'user' ? 'munashe' : bot.avatar
+        }
+        size="sm"
+      />
+      <div className="ai-message-body">
+        <div className="ai-message-meta">
+          <strong>
+            {readOnly
+              ? author?.name || message.authorName || 'Bot'
+              : message.role === 'user'
+                ? 'You'
+                : bot.name}
+          </strong>
+          {(readOnly || message.role === 'assistant') && (
+            <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
+          )}
+          <time dateTime={message.createdAt}>
+            {new Date(message.createdAt).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+          </time>
+        </div>
+        {message.role === 'assistant' && <ResponseActivity message={message} />}
+        {message.role === 'assistant' && <FileChanges message={message} onReview={onReview} />}
+        {message.role === 'user' && message.content && <MessageMarkdown text={message.content} />}
+        {!!message.attachments.length && (
+          <div className="ai-attachments">
+            {message.attachments.map((file) => (
+              <AttachmentCard attachment={file} key={file.id} />
+            ))}
+          </div>
+        )}
+        {message.status === 'streaming' && (
+          <div className="ai-response-status" role="status">
+            <span className="typing-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            {delegation
+              ? `Waiting for ${delegation.botName}’s response…`
+              : message.activity?.some((activity) => activity.status === 'running')
+                ? 'Working with files…'
+                : message.content
+                  ? 'Responding…'
+                  : message.reasoning
+                    ? `${bot.name} is thinking…`
+                    : 'Waiting for the model…'}
+          </div>
+        )}
+        {['failed', 'stopped', 'interrupted'].includes(message.status) && (
+          <div className="ai-response-status">
+            <span>{message.error || 'Response stopped.'}</span>
+            {canRetry && (
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => onRetry(message.requestId)}
+              >
+                <RotateCcw size={13} />
+                Retry response
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+});

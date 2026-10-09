@@ -1,4 +1,4 @@
-import { useContext, useState } from 'react';
+import { memo, useContext, useState } from 'react';
 import { ConversationNavigation } from './ConversationNavigation';
 import {
   Brain,
@@ -326,7 +326,11 @@ function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: 
   );
 }
 
-export function ResponseActivity({ message }: { message: ChatMessage }) {
+export const ResponseActivity = memo(function ResponseActivity({
+  message,
+}: {
+  message: ChatMessage;
+}) {
   const { process, answer } = responsePresentation(message);
   return (
     <>
@@ -343,4 +347,4 @@ export function ResponseActivity({ message }: { message: ChatMessage }) {
       {!!answer && <MessageMarkdown text={answer} />}
     </>
   );
-}
+});

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LoaderCircle, ArrowUp, Square } from 'lucide-react';
-import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { botHandle, mentionedBot } from '../../../../shared/mentions';
@@ -39,7 +39,10 @@ export function SpaceChat({
 }) {
   const id = 'space:' + space.id,
     state = useChat(id);
-  const members = bots.filter((bot) => space.botIds.includes(bot.id));
+  const members = useMemo(
+    () => bots.filter((bot) => space.botIds.includes(bot.id)),
+    [bots, space.botIds],
+  );
   const [selectedBot, setSelectedBot] = useState<string | null>(null),
     [mentionError, setMentionError] = useState('');
   const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
@@ -52,6 +55,19 @@ export function SpaceChat({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const matchingBots =
     mentionQuery === null ? [] : members.filter((bot) => botHandle(bot).includes(mentionQuery));
+  const openReview = useCallback(
+    (changes: FileChangeSummary[], selectedId: string) => setReview({ changes, selectedId }),
+    [],
+  );
+  const openMention = useCallback((mentioned: Bot) => void onOpenBot(mentioned.id), [onOpenBot]);
+  const toggleSaved = useCallback(
+    (messageId: string, saved: boolean) => void chatStore.save(id, messageId, saved),
+    [id],
+  );
+  const retryResponse = useCallback(
+    (requestId: string, botId?: string) => void chatStore.send(id, requestId, botId),
+    [id],
+  );
 
   function completeMention(bot: Bot) {
     const cursor = input.current?.selectionStart ?? state.text.length;
@@ -137,73 +153,22 @@ export function SpaceChat({
                 </div>
               )
             )}
-            {messages.map((message) => {
-              const bot = bots.find((bot) => bot.id === message.botId);
-              return (
-                <article className={`ai-message ai-message--${message.role}`} key={message.id}>
-                  <Avatar
-                    person={message.role === 'user' ? 'munashe' : bot?.avatar || 'scout'}
-                    size="sm"
-                  />
-                  <div className="ai-message-body">
-                    <div className="ai-message-meta">
-                      <strong>
-                        {message.role === 'user' ? 'You' : bot?.name || message.authorName || 'Bot'}
-                      </strong>
-                      {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
-                      <time dateTime={message.createdAt}>
-                        {new Date(message.createdAt).toLocaleTimeString([], {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </time>
-                    </div>
-                    {message.role === 'assistant' ? (
-                      <>
-                        <ResponseActivity message={message} />
-                        <FileChanges
-                          message={message}
-                          onReview={(changes, selectedId) => setReview({ changes, selectedId })}
-                        />
-                      </>
-                    ) : (
-                      <MessageMarkdown
-                        text={message.content}
-                        mentionBots={members}
-                        onMention={(mentioned) => void onOpenBot(mentioned.id)}
-                      />
-                    )}
-                    {message.status === 'streaming' && (
-                      <p className="ai-response-status" role="status">
-                        {bot?.name || 'Bot'} is responding…
-                      </p>
-                    )}
-                    {['failed', 'stopped', 'interrupted'].includes(message.status) && (
-                      <div className="ai-response-status">
-                        <span>{message.error || 'Response stopped.'}</span>
-                        {message.id === latestAssistant?.id &&
-                          message.requestId === latestUser?.requestId && (
-                            <button
-                              className="text-button"
-                              disabled={state.busy}
-                              onClick={() =>
-                                void chatStore.send(id, message.requestId, message.botId)
-                              }
-                            >
-                              Retry response
-                            </button>
-                          )}
-                      </div>
-                    )}
-                    <MessageActions
-                      text={message.content}
-                      saved={Boolean(message.saved)}
-                      onSave={() => void chatStore.save(id, message.id, !message.saved)}
-                    />
-                  </div>
-                </article>
-              );
-            })}
+            {messages.map((message) => (
+              <MessageRow
+                key={message.id}
+                message={message}
+                bot={bots.find((item) => item.id === message.botId)}
+                members={members}
+                busy={state.busy}
+                canRetry={
+                  message.id === latestAssistant?.id && message.requestId === latestUser?.requestId
+                }
+                onMention={openMention}
+                onSave={toggleSaved}
+                onReview={openReview}
+                onRetry={retryResponse}
+              />
+            ))}
           </div>
           {!savedOpen && (
             <div className="composer-area ai-composer-area">
@@ -353,3 +318,79 @@ export function SpaceChat({
     </>
   );
 }
+
+// One message row, memoized so composer keystrokes and stream deltas only
+// re-render the message whose object identity actually changed in the store.
+const MessageRow = memo(function MessageRow({
+  message,
+  bot,
+  members,
+  busy,
+  canRetry,
+  onMention,
+  onSave,
+  onReview,
+  onRetry,
+}: {
+  message: ChatMessage;
+  bot?: Bot;
+  members: Bot[];
+  busy: boolean;
+  canRetry: boolean;
+  onMention: (mentioned: Bot) => void;
+  onSave: (messageId: string, saved: boolean) => void;
+  onReview: (changes: FileChangeSummary[], selectedId: string) => void;
+  onRetry: (requestId: string, botId?: string) => void;
+}) {
+  return (
+    <article className={`ai-message ai-message--${message.role}`}>
+      <Avatar person={message.role === 'user' ? 'munashe' : bot?.avatar || 'scout'} size="sm" />
+      <div className="ai-message-body">
+        <div className="ai-message-meta">
+          <strong>
+            {message.role === 'user' ? 'You' : bot?.name || message.authorName || 'Bot'}
+          </strong>
+          {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
+          <time dateTime={message.createdAt}>
+            {new Date(message.createdAt).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+          </time>
+        </div>
+        {message.role === 'assistant' ? (
+          <>
+            <ResponseActivity message={message} />
+            <FileChanges message={message} onReview={onReview} />
+          </>
+        ) : (
+          <MessageMarkdown text={message.content} mentionBots={members} onMention={onMention} />
+        )}
+        {message.status === 'streaming' && (
+          <p className="ai-response-status" role="status">
+            {bot?.name || 'Bot'} is responding…
+          </p>
+        )}
+        {['failed', 'stopped', 'interrupted'].includes(message.status) && (
+          <div className="ai-response-status">
+            <span>{message.error || 'Response stopped.'}</span>
+            {canRetry && (
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() => onRetry(message.requestId, message.botId)}
+              >
+                Retry response
+              </button>
+            )}
+          </div>
+        )}
+        <MessageActions
+          text={message.content}
+          saved={Boolean(message.saved)}
+          onSave={() => onSave(message.id, !message.saved)}
+        />
+      </div>
+    </article>
+  );
+});
