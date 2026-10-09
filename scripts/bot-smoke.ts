@@ -308,12 +308,12 @@ async function main() {
       await capture('settings-limits.png');
       await fill('#pursuit-concurrency', '0');
       assert.equal(
-        await evaluate('document.querySelector(".limits-card button[type=submit]").disabled'),
+        await evaluate('document.querySelector(".limits-form button[type=submit]").disabled'),
         true,
       );
       await fill('#pursuit-concurrency', '7');
       await click('Save limit');
-      await wait('Boolean(document.querySelector(".limits-card [role=status]"))');
+      await wait('Boolean(document.querySelector(".limits-form [role=status]"))');
       assert.equal(
         (await request<{ pursuitConcurrency: number }>('/limits')).pursuitConcurrency,
         7,

@@ -324,7 +324,6 @@ export function SpaceChat({
                         onClick={() => void chatStore.stop(id)}
                       >
                         <Square size={13} fill="currentColor" />
-                        Stop
                       </button>
                     ) : (
                       <button

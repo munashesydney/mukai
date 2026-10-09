@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Layers3, Pause, Zap } from 'lucide-react';
 import { limitsService } from '../../services/limitsService';
 import { errorText } from '../../utils/errors';
 import { DEFAULT_PURSUIT_CONCURRENCY, MAX_PURSUIT_CONCURRENCY } from '../../../../shared/limits';
@@ -69,94 +68,85 @@ export function LimitsPanel() {
         </div>
       )}
       <form
-        className="limits-card"
+        className="limits-form"
         onSubmit={(event) => {
           event.preventDefault();
           void save();
         }}
       >
-        <div className="limits-card-heading">
-          <span className="limits-icon">
-            <Zap size={20} />
-          </span>
-          <div>
-            <h4>Concurrent pursuit runs</h4>
-            <p>One shared pool for all bots and workspaces.</p>
+        <div className="limits-card">
+          <div className="limits-card-heading">
+            <div>
+              <h4>Concurrent pursuit runs</h4>
+              <p>One shared pool for all bots and workspaces.</p>
+            </div>
           </div>
-        </div>
-        <div className="limits-field-heading">
-          <label htmlFor="pursuit-concurrency">Maximum active runs</label>
-          <Tooltip
-            label="About the pursuit limit"
-            content="A pursuit uses a slot while its bot is working. Waiting for approval or an answer releases that slot. Once you respond, the run queues for a slot before continuing. Lowering the limit lets existing work finish; new and resumed work waits until capacity is available."
-          />
-        </div>
-        <div className="limits-stepper">
-          <button
-            type="button"
-            className="button"
-            aria-label="Decrease pursuit limit"
-            disabled={saved === null || saving || parsed <= 1}
-            onClick={() => {
-              setValue(String(Math.max(1, (valid ? parsed : DEFAULT_PURSUIT_CONCURRENCY) - 1)));
-              setNotice('');
-            }}
-          >
-            −
-          </button>
-          <input
-            id="pursuit-concurrency"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]+"
-            value={value}
-            disabled={saved === null || saving}
-            aria-describedby="pursuit-limit-help"
-            aria-invalid={!valid}
-            onChange={(event) => {
-              setValue(event.target.value);
-              setNotice('');
-            }}
-          />
-          <button
-            type="button"
-            className="button"
-            aria-label="Increase pursuit limit"
-            disabled={saved === null || saving || parsed >= MAX_PURSUIT_CONCURRENCY}
-            onClick={() => {
-              setValue(
-                String(
-                  Math.min(
-                    MAX_PURSUIT_CONCURRENCY,
-                    (valid ? parsed : DEFAULT_PURSUIT_CONCURRENCY) + 1,
-                  ),
-                ),
-              );
-              setNotice('');
-            }}
-          >
-            +
-          </button>
-        </div>
-        <p id="pursuit-limit-help" className="ai-caption">
-          {saved === null
-            ? 'Loading limit…'
-            : `Between 1 and ${MAX_PURSUIT_CONCURRENCY} runs. Default: ${DEFAULT_PURSUIT_CONCURRENCY}.`}
-        </p>
-        {!valid && (
-          <p role="alert" className="ai-alert">
-            Enter a whole number between 1 and {MAX_PURSUIT_CONCURRENCY}.
-          </p>
-        )}
-        <div className="limits-behavior">
-          <p>
-            <Layers3 size={16} />
-            Applies across all workspaces and bots.
-          </p>
-          <p>
-            <Pause size={16} />
-            Runs waiting for you leave room for other work.
-          </p>
+          <div className="limits-field">
+            <div className="limits-field-heading">
+              <label htmlFor="pursuit-concurrency">Maximum active runs</label>
+              <Tooltip
+                label="About the pursuit limit"
+                content="A pursuit uses a slot while its bot is working. Waiting for approval or an answer releases that slot. Once you respond, the run queues for a slot before continuing. Lowering the limit lets existing work finish; new and resumed work waits until capacity is available."
+              />
+            </div>
+            <div className="limits-stepper">
+              <button
+                type="button"
+                className="button"
+                aria-label="Decrease pursuit limit"
+                disabled={saved === null || saving || parsed <= 1}
+                onClick={() => {
+                  setValue(String(Math.max(1, (valid ? parsed : DEFAULT_PURSUIT_CONCURRENCY) - 1)));
+                  setNotice('');
+                }}
+              >
+                −
+              </button>
+              <input
+                id="pursuit-concurrency"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]+"
+                value={value}
+                disabled={saved === null || saving}
+                aria-describedby="pursuit-limit-help"
+                aria-invalid={!valid}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                  setNotice('');
+                }}
+              />
+              <button
+                type="button"
+                className="button"
+                aria-label="Increase pursuit limit"
+                disabled={saved === null || saving || parsed >= MAX_PURSUIT_CONCURRENCY}
+                onClick={() => {
+                  setValue(
+                    String(
+                      Math.min(
+                        MAX_PURSUIT_CONCURRENCY,
+                        (valid ? parsed : DEFAULT_PURSUIT_CONCURRENCY) + 1,
+                      ),
+                    ),
+                  );
+                  setNotice('');
+                }}
+              >
+                +
+              </button>
+            </div>
+            <p id="pursuit-limit-help" className="ai-caption">
+              {saved === null
+                ? 'Loading limit…'
+                : `Between 1 and ${MAX_PURSUIT_CONCURRENCY} runs. Default: ${DEFAULT_PURSUIT_CONCURRENCY}.`}
+            </p>
+            {!valid && (
+              <p role="alert" className="ai-alert">
+                Enter a whole number between 1 and {MAX_PURSUIT_CONCURRENCY}.
+              </p>
+            )}
+          </div>
         </div>
         <button
           type="submit"

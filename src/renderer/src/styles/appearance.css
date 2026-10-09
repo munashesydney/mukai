@@ -457,28 +457,25 @@
   text-align: left;
 }
 .limits-card {
-  max-width: 640px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   padding: 24px;
   background: var(--surface);
 }
 .limits-card-heading {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 28px;
+  min-width: 0;
 }
-.limits-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  flex-shrink: 0;
-  border-radius: 12px;
-  background: var(--teal-soft);
-  color: var(--teal-dark);
+.limits-field {
+  justify-self: end;
+  text-align: right;
+}
+.limits-form > .button {
+  margin-top: 18px;
 }
 .limits-card h4 {
   margin: 0 0 6px;
@@ -496,6 +493,7 @@
   align-items: center;
   gap: 5px;
   margin-bottom: 8px;
+  justify-content: flex-end;
 }
 .limits-field-heading label {
   font-size: 12px;
@@ -506,6 +504,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 .limits-stepper input {
   width: 80px;
@@ -528,23 +527,10 @@
   font-size: 18px;
   padding: 8px;
 }
-.limits-behavior {
-  margin: 22px 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-.limits-behavior p {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  color: var(--text-body);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.limits-behavior svg {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--text-secondary);
+@media (max-width: 900px) {
+  .limits-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 760px) {
   .limits-card {

@@ -963,8 +963,10 @@
 }
 .ai-stop {
   margin-left: auto;
-  min-width: 74px;
+  min-width: 29px;
+  width: 29px;
   height: 29px;
+  padding: 0;
 }
 .ai-stop svg {
   transform: none;

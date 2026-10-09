@@ -439,7 +439,6 @@ export function BotChat({
                           onClick={() => void chatStore.stop(chatId)}
                         >
                           <Square size={13} fill="currentColor" />
-                          Stop
                         </button>
                       ) : (
                         <button
