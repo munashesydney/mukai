@@ -4,6 +4,7 @@ export const guestScripts = [
   'protect.sh',
   'resilience.sh',
   'kernel-modules.sh',
+  'whpx-cet.sh',
   'systemctl-guard.sh',
   'mukai-guest.service',
   'desktop-prepare.sh',

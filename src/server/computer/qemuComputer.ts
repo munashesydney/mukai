@@ -29,6 +29,7 @@ import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
 import { guestHealthSchema, type GuestHealth } from './guestHealth';
 import { ComputerLog } from './computerLog';
+import { captureGuestCrash } from './crashCapture';
 import type { DiagnosticService } from '../services/diagnosticService';
 import {
   findQemuFirmware,
@@ -123,6 +124,8 @@ export function qemuArguments(
     'user,id=net0' + (desktopPort ? `,hostfwd=tcp:127.0.0.1:${desktopPort}-:5901` : ''),
     '-device',
     'virtio-net-pci,netdev=net0',
+    // Linux publishes kernel layout information for usable crash dumps under KASLR.
+    ...(config.architecture === 'arm64' ? [] : ['-device', 'vmcoreinfo']),
     '-device',
     'virtio-serial-pci',
     '-chardev',
@@ -135,8 +138,8 @@ export function qemuArguments(
   ];
 }
 
-// Host sleep freezes the timers that sample the guest, so a heartbeat gap larger than
-// any transient hiccup means the computer was suspended rather than the guest stalling.
+// A long heartbeat gap warrants immediate recovery. It can mean either host sleep
+// or a stalled guest; the gap alone does not identify which happened.
 const SUSPEND_GAP_MS = 120000;
 
 interface Pending {
@@ -175,6 +178,11 @@ export class QemuComputer implements Computer {
   private lastHealthNoticeAt = 0;
   private reconnecting?: Promise<void>;
   private reconnectWaiters = new Set<{ resolve(): void; reject(error: Error): void }>();
+  private guestPanicked = false;
+  private panicTail = '';
+  private automaticRestarts: number[] = [];
+  private crashCapture?: Promise<void>;
+  private recoveryGeneration = 0;
   private healthLog: ComputerLog;
   private consoleLog: ComputerLog;
   constructor(
@@ -212,8 +220,11 @@ export class QemuComputer implements Computer {
   }
   desktopConnection() {
     if (
-      this.state.state !== 'running' ||
+      !this.child ||
+      this.guestPanicked ||
+      !['running', 'failed'].includes(this.state.state) ||
       this.starting ||
+      this.stopping ||
       !this.desktopPort ||
       !this.desktopPassword
     )
@@ -359,25 +370,39 @@ export class QemuComputer implements Computer {
   /**
    * Reconnect the transport first, then rebuild the VM process when the guest never
    * re-announces itself. `disk.qcow2` keeps the workspace files, but running guest
-   * state is lost, so this is only reached once transport recovery has failed.
+   * state is lost, so this is only reached once transport recovery has failed or
+   * the serial console confirms that Linux panicked.
    */
   private async healStalledBridge(reason: string) {
     if (!this.child || this.starting || this.stopping || this.pending.size)
       return 'skipped' as const;
-    try {
-      await this.recoverBridge(reason);
-      return 'reconnected' as const;
-    } catch {
-      /* The guest stayed silent; fall through and rebuild the transport from scratch. */
+    if (!this.guestPanicked) {
+      try {
+        await this.recoverBridge(reason);
+        return 'reconnected' as const;
+      } catch {
+        /* The guest stayed silent; fall through and rebuild the transport from scratch. */
+      }
     }
     if (!this.child || this.starting || this.stopping || this.pending.size)
       return 'skipped' as const;
+    this.automaticRestarts = this.automaticRestarts.filter((at) => Date.now() - at < 600000);
+    if (this.automaticRestarts.length >= 3) {
+      const error =
+        'Automatic VM recovery stopped after three restarts in ten minutes. Stop/start the workspace VM to retry.';
+      this.state = { kind: 'qemu', state: 'failed', error };
+      this.report('computer.recovery_exhausted', error);
+      return 'failed' as const;
+    }
+    this.automaticRestarts.push(Date.now());
+    const generation = this.recoveryGeneration;
     this.report(
       'computer.bridge_restart',
-      `Restarting the workspace VM; the guest bridge stayed unreachable after a reconnect; reason=${reason}.`,
+      `Restarting the workspace VM; ${this.guestPanicked ? 'Linux reported a kernel panic' : 'the guest bridge stayed unreachable after a reconnect'}; reason=${reason}.`,
     );
     try {
       await this.stop('bridge recovery restart');
+      if (generation !== this.recoveryGeneration) return 'skipped' as const;
       await this.start();
       return 'restarted' as const;
     } catch (error) {
@@ -454,8 +479,11 @@ export class QemuComputer implements Computer {
         this.stopping ||
         this.starting ||
         this.reconnecting ||
-        this.state.state !== 'running' ||
-        (this.lastHealth && Date.now() - this.lastHealth.receivedAt < 20000)
+        !['running', 'failed'].includes(this.state.state) ||
+        (this.state.state === 'running' &&
+          !this.guestPanicked &&
+          this.lastHealth &&
+          Date.now() - this.lastHealth.receivedAt < 20000)
       )
         return;
       this.checkingHealth = true;
@@ -466,22 +494,32 @@ export class QemuComputer implements Computer {
             !this.child ||
             this.child !== checkedChild ||
             this.stopping ||
-            this.state.state !== 'running'
+            !['running', 'failed'].includes(this.state.state)
           )
             return;
           this.missedHealth++;
           const age = this.lastHealth ? Date.now() - this.lastHealth.receivedAt : undefined;
-          // A suspend freezes host timers, so the first sample after a wake shows a gap no
-          // transient hiccup could produce; heal it instead of waiting for three misses.
+          // A long gap can also be a dead guest, not only a suspended host.
           const suspended = Boolean(age !== undefined && age >= SUSPEND_GAP_MS);
-          if (this.missedHealth < 3 && !suspended) return;
+          if (this.missedHealth < 3 && !suspended && !this.guestPanicked) return;
           this.report(
             'computer.health_unresponsive',
             `Guest heartbeat missing; lastSampleAgeMs=${age ?? 'unavailable'}, activeRequests=${this.pending.size}, suspended=${suspended}.`,
           );
-          if (this.pending.size || Date.now() - this.lastRecoveryAt < 60000) return;
-          if (suspended) await this.healStalledBridge('host sleep gap');
-          else await this.recoverBridge('missing guest heartbeat').catch(() => {});
+          // A confirmed kernel panic cannot recover on its own. The restart cap still
+          // prevents repeated crashes from creating an unbounded reboot loop.
+          if (
+            this.pending.size ||
+            (!this.guestPanicked && Date.now() - this.lastRecoveryAt < 60000)
+          )
+            return;
+          await this.healStalledBridge(
+            this.guestPanicked
+              ? 'guest kernel panic'
+              : suspended
+                ? 'long guest heartbeat gap'
+                : 'missing guest heartbeat',
+          );
         })
         .finally(() => {
           this.checkingHealth = false;
@@ -521,7 +559,10 @@ export class QemuComputer implements Computer {
     // Failed transport is not failed startup. Never let startup cleanup kill an existing VM.
     if (this.child)
       throw new Error(
-        'The VM is still running, but its guest bridge is disconnected. Wait for it to reconnect, or stop/start the workspace VM.',
+        this.state.state === 'failed' &&
+          (this.guestPanicked || this.state.error?.startsWith('Automatic VM recovery stopped'))
+          ? this.state.error
+          : 'The VM is still running, but its guest bridge is disconnected. Automatic VM recovery is in progress; try again shortly, or stop/start the workspace VM.',
       );
     this.bootController = new AbortController();
     this.starting = this.startGuest()
@@ -568,6 +609,9 @@ export class QemuComputer implements Computer {
       throw new Error('The VM process is still running. Stop it before starting again.');
     }
     this.state = { kind: 'qemu', state: 'starting' };
+    this.guestPanicked = false;
+    this.panicTail = '';
+    this.crashCapture = undefined;
     this.lastHealth = undefined;
     this.missedHealth = 0;
     this.lastRecoveryAt = 0;
@@ -674,6 +718,7 @@ export class QemuComputer implements Computer {
       let authenticated = false;
       const timer = setTimeout(() => socket.destroy(), 125000);
       socket.on('data', (chunk) => {
+        if (this.guestPanicked) return;
         if (authenticated && this.socket !== socket) return;
         try {
           for (const raw of frames.push(chunk)) {
@@ -789,6 +834,61 @@ export class QemuComputer implements Computer {
     const append = (chunk: Buffer) => {
       this.log = (this.log + chunk.toString()).slice(-4000);
       this.consoleLog.append(chunk);
+      const consoleText = this.panicTail + chunk.toString();
+      this.panicTail = consoleText.slice(-512);
+      if (!this.guestPanicked && /Kernel panic - not syncing:/.test(consoleText)) {
+        this.guestPanicked = true;
+        const error = new Error('Linux guest crashed (kernel panic). Recovering the workspace VM.');
+        this.report('computer.guest_panicked', error.message, error);
+        this.state = { kind: 'qemu', state: 'failed', error: error.message };
+        this.failPending(error);
+        this.crashCapture = captureGuestCrash(
+          this.directory,
+          this.control,
+          {
+            qemuPid: child.pid,
+            resources: this.activeResources,
+            lastHealth: this.lastHealth,
+            consoleTail: this.log,
+            consoleDroppedBytes: this.consoleLog.droppedBytes,
+            accelerator: bootConfig.accelerator,
+            architecture: bootConfig.architecture,
+          },
+          bootConfig.resources.memoryMiB,
+          bootConfig.resources.vcpus,
+        )
+          .then(async (capture) => {
+            await Promise.all([this.consoleLog.flush(), this.healthLog.flush()]);
+            await Promise.all([
+              copyFile(this.consoleLog.path, join(this.directory, 'crash', 'console.log')),
+              copyFile(this.healthLog.path, join(this.directory, 'crash', 'health.log')).catch(
+                (failure: NodeJS.ErrnoException) => {
+                  if (failure.code !== 'ENOENT') throw failure;
+                },
+              ),
+            ]);
+            this.report(
+              'computer.crash_captured',
+              capture.memoryDumpFile
+                ? 'Saved local guest crash diagnostics and memory dump.'
+                : 'Saved local guest crash diagnostics; memory dump was disabled or unsuccessful.',
+            );
+            if (capture.captureError)
+              this.report(
+                'computer.crash_capture_failed',
+                'Guest memory capture failed; recovery will continue.',
+                new Error(String(capture.captureError)),
+              );
+          })
+          .catch((failure: unknown) =>
+            this.report(
+              'computer.crash_capture_failed',
+              'Could not save guest crash diagnostics.',
+              failure,
+            ),
+          );
+        failed(error);
+      }
     };
     child.stdout.on('data', append);
     child.stderr.on('data', append);
@@ -926,6 +1026,10 @@ export class QemuComputer implements Computer {
     this.healthPending.clear();
   }
   stop(reason = 'workspace stop') {
+    if (reason !== 'bridge recovery restart' && reason !== 'startup failure') {
+      this.automaticRestarts = [];
+      this.recoveryGeneration++;
+    }
     this.bootController?.abort();
     return this.stopGuest(true, reason);
   }
@@ -943,6 +1047,8 @@ export class QemuComputer implements Computer {
       this.healthTimer = undefined;
       for (const waiter of this.reconnectWaiters) waiter.reject(new Error('Workspace VM stopped.'));
       this.failPending(new Error('Workspace VM stopped.'));
+      // The capture has its own deadline; a failed dump must not prevent recovery.
+      await this.crashCapture;
       const child = this.child;
       if (child) {
         // mon:stdio starts on the serial console; Ctrl-A C selects its HMP monitor.

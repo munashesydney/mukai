@@ -87,6 +87,46 @@ async function service() {
   return value;
 }
 describe('automatic computer setup', () => {
+  it('passes WHPX to image provisioning and checks the effective boot policy', async () => {
+    host.platform = 'win32';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', 'whpx');
+    let command = '';
+    vi.mocked(setupProcess).mockImplementation(async (_binary, args, _signal, _input, onOutput) => {
+      if (args.includes('-smbios')) {
+        const smbios = args[args.indexOf('-smbios') + 1];
+        const url = smbios.slice(smbios.indexOf('http://')).replace('10.0.2.2', '127.0.0.1');
+        // setup downloads are mocked, but read the real token-scoped seed server.
+        const response = await new Promise<string>((resolve, reject) => {
+          import('node:http')
+            .then(({ get }) => {
+              get(url + 'user-data', (response) => {
+                let text = '';
+                response.on('data', (chunk) => {
+                  text += chunk;
+                });
+                response.on('end', () => resolve(text));
+              }).on('error', reject);
+            })
+            .catch(reject);
+        });
+        command = JSON.parse(response.slice('#cloud-config\n'.length)).runcmd[0][2];
+        onOutput?.('MUKAI_IMAGE_READY\n');
+      }
+      return { code: 0, output: '' };
+    });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(command).toContain('sh install.sh whpx >');
+    expect(guestProbe.request).toHaveBeenCalledWith(
+      'terminal',
+      expect.objectContaining({
+        command: expect.stringContaining("grep -F -w -- 'clearcpuid=519,596'"),
+      }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+    );
+  });
   it('provisions an Apple Silicon image with UEFI, ARM console and matching verification boot', async () => {
     host.architecture = 'arm64';
     host.platform = 'darwin';

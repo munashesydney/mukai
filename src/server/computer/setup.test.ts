@@ -67,6 +67,21 @@ describe('verified setup downloads', () => {
 });
 
 describe('cloud-init seed', () => {
+  it('selects the CET workaround only for x64 WHPX image installation', () => {
+    for (const [console, accelerator, selected] of [
+      ['ttyS0', 'whpx', true],
+      ['ttyS0', 'kvm', false],
+      ['ttyS0', 'hvf', false],
+      ['ttyS0', 'tcg', false],
+      ['ttyAMA0', 'whpx', false],
+      ['ttyS0', undefined, false],
+    ] as const) {
+      const config = JSON.parse(
+        cloudConfig({}, console, accelerator).slice('#cloud-config\n'.length),
+      );
+      expect(config.runcmd[0][2].includes('sh install.sh whpx >')).toBe(selected);
+    }
+  });
   it('uses the ARM UART for provisioning logs and disables its login service', () => {
     const config = JSON.parse(cloudConfig({}, 'ttyAMA0').slice('#cloud-config\n'.length));
     expect(config.bootcmd[0]).toContain('serial-getty@ttyAMA0.service');

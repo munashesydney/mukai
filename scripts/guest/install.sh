@@ -24,6 +24,9 @@ apt-get install -y ca-certificates curl xz-utils git python3 build-essential sud
 # later kernels. Install the extras and track them from now on; with set -e a
 # build that cannot read the boot identity fails loudly instead of shipping.
 MUKAI_APT_UPDATED=1 sh ./kernel-modules.sh
+# Only new images receive this host-selected boot policy. Trusted guest updates
+# do not change CET settings on existing workspace disks.
+sh ./whpx-cet.sh "${1:-}"
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 curl -fsS https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt -o "$scratch/SHASUMS256.txt"

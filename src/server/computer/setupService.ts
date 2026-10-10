@@ -397,7 +397,7 @@ export class ComputerSetupService {
       platform() === 'win32' ? 'qemu-img.exe' : 'qemu-img',
     );
     await this.command(imageTool, ['resize', candidate, '32G'], signal);
-    const seed = await setupSeed(this.bundleDir, host.console);
+    const seed = await setupSeed(this.bundleDir, host.console, accelerator);
     let completed = false;
     let failed = false;
     let failureDetail: string | undefined;
@@ -461,7 +461,11 @@ export class ComputerSetupService {
       const result = (await verification.request(
         'terminal',
         {
-          command: `uname -s && uname -m && node --version && ${host.architecture === 'arm64' ? 'mukai-browser' : 'google-chrome'} --version`,
+          command:
+            `uname -s && uname -m && node --version && ${host.architecture === 'arm64' ? 'mukai-browser' : 'google-chrome'} --version` +
+            (host.architecture === 'x64' && accelerator === 'whpx'
+              ? " && grep -F -w -- 'clearcpuid=519,596' /proc/cmdline && grep -F -w -- 'nousershstk' /proc/cmdline && ! grep -w user_shstk /proc/cpuinfo"
+              : ''),
           yieldMs: 30000,
         },
         { workspaceId: 'setup', botId: 'setup', conversationId: 'setup' },

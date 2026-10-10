@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import { guestFiles } from './bundleFiles';
 
 /** No ISO tooling needed: NoCloud reads a temporary, token-scoped host endpoint. */
-export function cloudConfig(files: Record<string, Buffer>, console: 'ttyS0' | 'ttyAMA0' = 'ttyS0') {
+export function cloudConfig(
+  files: Record<string, Buffer>,
+  console: 'ttyS0' | 'ttyAMA0' = 'ttyS0',
+  accelerator?: string,
+) {
+  const installer =
+    console === 'ttyS0' && accelerator === 'whpx' ? 'install.sh whpx' : 'install.sh';
   return (
     '#cloud-config\n' +
     JSON.stringify({
@@ -23,7 +29,7 @@ export function cloudConfig(files: Record<string, Buffer>, console: 'ttyS0' | 't
         [
           'sh',
           '-c',
-          `cd /opt/mukai-bootstrap || exit 1; sh install.sh > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/${console} 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/${console}; echo "$result" > /dev/${console}; sync; if [ -x /usr/lib/mukai-guest/systemctl ]; then /usr/lib/mukai-guest/systemctl poweroff; else poweroff; fi`,
+          `cd /opt/mukai-bootstrap || exit 1; sh ${installer} > /var/log/mukai-setup.log 2>&1 & installer=$!; tail -n +1 -f /var/log/mukai-setup.log > /dev/${console} 2>/dev/null & logger=$!; if wait "$installer" && touch /etc/cloud/cloud-init.disabled; then result=MUKAI_IMAGE_READY; else result=MUKAI_IMAGE_FAILED; fi; kill "$logger" 2>/dev/null || true; tail -n 60 /var/log/mukai-setup.log > /dev/${console}; echo "$result" > /dev/${console}; sync; if [ -x /usr/lib/mukai-guest/systemctl ]; then /usr/lib/mukai-guest/systemctl poweroff; else poweroff; fi`,
         ],
       ],
       output: { all: '| tee -a /var/log/cloud-init-output.log /dev/console' },
@@ -31,13 +37,17 @@ export function cloudConfig(files: Record<string, Buffer>, console: 'ttyS0' | 't
     '\n'
   );
 }
-export async function setupSeed(bundleDir: string, console: 'ttyS0' | 'ttyAMA0' = 'ttyS0') {
+export async function setupSeed(
+  bundleDir: string,
+  console: 'ttyS0' | 'ttyAMA0' = 'ttyS0',
+  accelerator?: string,
+) {
   const files = Object.fromEntries(
     await Promise.all(
       guestFiles.map(async (name) => [name, await readFile(join(bundleDir, name))] as const),
     ),
   );
-  const userData = cloudConfig(files, console);
+  const userData = cloudConfig(files, console, accelerator);
   const token = randomBytes(32).toString('hex');
   const prefix = '/' + token + '/';
   const server = createServer((request, response) => {
