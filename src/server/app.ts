@@ -15,6 +15,8 @@ import { ChatService } from './services/chatService';
 import { ApprovalService } from './services/approvalService';
 import { ApprovalRepository } from './repositories/approvalRepository';
 import { createRoutes } from './http/routes';
+import { ChatOutputService } from './services/chatOutputService';
+import { ChatOutputRepository } from './repositories/chatOutputRepository';
 import { sendError } from './http/transport';
 import { WorkspaceRepository } from './repositories/workspaceRepository';
 import { ArtifactRepository } from './repositories/artifactRepository';
@@ -235,7 +237,16 @@ export function createApiServer(options: ApiOptions = {}) {
       await processes.stopWorkspace(id);
       await browsers.stopWorkspace(id);
     });
+    const chatOutputs = new ChatOutputService(
+      new ChatOutputRepository(store),
+      conversations,
+      workspaces,
+      processes,
+      computers,
+      browsers,
+    );
     const route = createRoutes({
+      chatOutputs,
       notifications,
       desktops,
       approvals,

@@ -58,6 +58,7 @@ export async function executeBotManagement(
         },
         input.toolIds,
       );
+      activity.createdBotId = result.id;
     } else if (input.action === 'get_last_message') {
       if (!input.botId || !input.conversationId)
         throw new Error('get_last_message requires botId and conversationId.');

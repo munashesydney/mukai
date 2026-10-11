@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   Square,
   X,
+  ListTree,
 } from 'lucide-react';
 import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
 import { ACCEPTED_FILES } from '../../../../shared/ai';
@@ -33,6 +34,8 @@ import { ApprovalModePicker, ToolApprovalCards } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { useApprovals } from './approvalStore';
 import { approvalBlocksConversation } from '../../../../shared/approvals';
+import { useChatActivity } from './useChatActivity';
+import { ChatActivityDrawer } from './ChatActivityDrawer';
 
 export function BotChat({
   bot,
@@ -43,6 +46,8 @@ export function BotChat({
   onEdit,
   onProviders,
   onBotChanged,
+  onOpenBot,
+  onViewComputer,
 }: {
   bot: Bot;
   bots: Bot[];
@@ -52,10 +57,13 @@ export function BotChat({
   onEdit: () => void;
   onProviders: () => void;
   onBotChanged: (bot: Bot) => void;
+  onOpenBot?: (id: string) => Promise<void>;
+  onViewComputer?: () => void;
 }) {
   const readOnly = conversation.kind === 'bot';
   const chatId = (readOnly ? 'space:' : 'private:') + conversation.id;
   const state = useChat(chatId, readOnly);
+  const activity = useChatActivity(conversation.id, state.messages, bots, bot.id);
   const approvals = useApprovals();
   const hasRequests = approvals.pending.some((request) =>
     approvalBlocksConversation(request, conversation.id),
@@ -130,7 +138,9 @@ export function BotChat({
     [chatId],
   );
   return (
-    <div className="conversation-layout">
+    <div
+      className={`conversation-layout ${activity.open && !detailsOpen ? 'has-chat-activity' : ''}`}
+    >
       <main className="conversation">
         <header className="conversation-header conversation-header--minimal">
           <div className="conversation-heading">
@@ -170,10 +180,29 @@ export function BotChat({
               >
                 <FileText size={18} />
               </IconButton>
+              {activity.count > 0 && (
+                <IconButton
+                  label={
+                    activity.open && !detailsOpen ? 'Hide chat activity' : 'Show chat activity'
+                  }
+                  className={activity.open && !detailsOpen ? 'is-on' : ''}
+                  aria-expanded={activity.open && !detailsOpen}
+                  aria-controls="chat-activity-drawer"
+                  onClick={() => {
+                    activity.setOpen(!activity.open || detailsOpen);
+                    setDetailsOpen(false);
+                  }}
+                >
+                  <ListTree size={18} />
+                </IconButton>
+              )}
               <IconButton
                 label="Bot details"
                 className={detailsOpen ? 'is-on' : ''}
-                onClick={() => setDetailsOpen(!detailsOpen)}
+                onClick={() => {
+                  setDetailsOpen(!detailsOpen);
+                  activity.setOpen(false);
+                }}
               >
                 <Info size={18} />
               </IconButton>
@@ -420,6 +449,17 @@ export function BotChat({
           </>
         )}
       </main>
+      {activity.open && !detailsOpen && (
+        <ChatActivityDrawer
+          data={activity}
+          bots={bots}
+          workspaceId={bot.workspaceId}
+          onClose={() => activity.setOpen(false)}
+          onReview={openReview}
+          onOpenBot={onOpenBot}
+          onViewComputer={onViewComputer}
+        />
+      )}
       {review && (
         <DiffDrawer
           changes={review.changes}

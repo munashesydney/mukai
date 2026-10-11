@@ -10,7 +10,7 @@ import {
   CircleHelp,
   SlidersHorizontal,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { bots } from '../workspace/data';
@@ -30,6 +30,7 @@ export function ConversationHeader({
   onSettings,
   onSaved,
   members,
+  headerActions,
 }: {
   location: Location;
   space?: Space;
@@ -41,6 +42,7 @@ export function ConversationHeader({
   onSettings: () => void;
   onSaved: () => void;
   members?: Bot[];
+  headerActions?: ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const browser = useBrowserPanel();
@@ -108,6 +110,7 @@ export function ConversationHeader({
         </div>
         <div className="header-actions">
           <BrowserToggle />
+          {headerActions}
           {!bot && !pursuit && (
             <button
               className="member-stack"

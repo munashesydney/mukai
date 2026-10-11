@@ -105,6 +105,9 @@ export interface ChatActivity {
   status: 'running' | 'complete' | 'failed' | 'interrupted';
   summary: string;
   delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
+  createdBotId?: string;
+  processSessionId?: string;
+  serverUrls?: string[];
 }
 export interface FileArtifact {
   kind?: 'file' | 'image';

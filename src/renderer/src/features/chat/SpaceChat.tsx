@@ -27,6 +27,7 @@ export function SpaceChat({
   providers,
   onProviders,
   onOpenBot,
+  onReview,
 }: {
   space: Conversation;
   bots: Bot[];
@@ -36,6 +37,7 @@ export function SpaceChat({
   providers: ProviderSettings[];
   onProviders: () => void;
   onOpenBot: (botId: string) => Promise<void>;
+  onReview?: (changes: FileChangeSummary[], selectedId: string) => void;
 }) {
   const id = 'space:' + space.id,
     state = useChat(id);
@@ -56,8 +58,11 @@ export function SpaceChat({
   const matchingBots =
     mentionQuery === null ? [] : members.filter((bot) => botHandle(bot).includes(mentionQuery));
   const openReview = useCallback(
-    (changes: FileChangeSummary[], selectedId: string) => setReview({ changes, selectedId }),
-    [],
+    (changes: FileChangeSummary[], selectedId: string) => {
+      if (onReview) onReview(changes, selectedId);
+      else setReview({ changes, selectedId });
+    },
+    [onReview],
   );
   const openMention = useCallback((mentioned: Bot) => void onOpenBot(mentioned.id), [onOpenBot]);
   const toggleSaved = useCallback(

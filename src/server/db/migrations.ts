@@ -324,6 +324,13 @@ export const migrations = [
    ALTER TABLE workspaces ADD COLUMN deletion_files_json TEXT;
    CREATE TABLE workspace_capability_versions (
      version TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE);`,
+  `CREATE TABLE conversation_server_outputs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL, url TEXT NOT NULL,
+    UNIQUE(conversation_id,session_id,url));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

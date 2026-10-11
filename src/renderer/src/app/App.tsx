@@ -1,19 +1,16 @@
 import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target, Plus } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { TitleBar } from '../components/layout/TitleBar';
 import { NavigationRail } from '../components/layout/NavigationRail';
 import { WorkspaceSidebar } from '../components/layout/WorkspaceSidebar';
-import { ConversationHeader } from '../features/chat/ConversationHeader';
-import { ActivityView } from '../features/chat/ConversationViews';
 import { SearchDialog } from '../features/workspace/SearchDialog';
 import { WorkspaceDialogs } from '../features/workspace/WorkspaceDialogs';
 import { ToolsPage } from '../features/workspace/ToolsPage';
 import { useWorkspace } from '../features/workspace/useWorkspace';
 import { useAIWorkspace } from '../features/ai/useAIWorkspace';
 import { useSpaces } from '../features/workspace/useSpaces';
-import { SpaceChat } from '../features/chat/SpaceChat';
-import { SpaceDetails } from '../features/chat/SpaceDetails';
+import { SpaceConversation } from '../features/chat/SpaceConversation';
 import { usePursuits } from '../features/pursuits/usePursuits';
 import { PursuitPage } from '../features/pursuits/PursuitPage';
 import { BotChat } from '../features/ai/BotChat';
@@ -177,6 +174,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   async function createBotConversation(botId: string) {
     const conversation = await botChats.create(botId);
     select({ section: 'bots', item: botId, conversationId: conversation.id });
+  }
+  async function openBotConversation(botId: string) {
+    const existing = botChats.conversations
+      .filter((chat) => chat.ownerBotId === botId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    if (existing) select({ section: 'bots', item: botId, conversationId: existing.id });
+    else await createBotConversation(botId);
   }
   const openDialog = (kind: DialogKind) => {
     if (kind === 'create-bot') setEditingBot('new');
@@ -417,6 +421,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 onEdit={() => setEditingBot(bot)}
                 onProviders={() => openSettings('providers')}
                 onBotChanged={ai.updateBot}
+                onOpenBot={openBotConversation}
+                onViewComputer={() => setComputerOpen(true)}
               />
             ) : (
               <main className="conversation ai-main-state workspace-onboarding">
@@ -448,6 +454,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 onEdit={() => setEditingBot(pairBot)}
                 onProviders={() => openSettings('providers')}
                 onBotChanged={ai.updateBot}
+                onOpenBot={openBotConversation}
+                onViewComputer={() => setComputerOpen(true)}
               />
             ) : (
               <main className="conversation ai-main-state">
@@ -465,70 +473,59 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               </main>
             )
           ) : location.section === 'spaces' ? (
-            <div className="conversation-layout">
-              <main className="conversation">
-                {spaceState.loading ? (
-                  <p className="ai-caption">Loading spaces…</p>
-                ) : spaceState.error ? (
-                  <div className="ai-main-state">
-                    <p role="alert">{spaceState.error}</p>
-                    <button className="button" onClick={() => void spaceState.refresh()}>
-                      Try again
-                    </button>
-                  </div>
-                ) : space ? (
-                  <Fragment key={space.id}>
-                    <ConversationHeader
-                      location={location}
-                      space={space}
-                      tab={tab}
-                      onTab={(next) => {
-                        setTab(next);
-                        setSavedOpen(false);
-                      }}
-                      detailsOpen={detailsOpen}
-                      onDetails={() => setDetailsOpen(!detailsOpen)}
-                      onSettings={() => openSettings('workspace')}
-                      onSaved={() => setSavedOpen(true)}
-                      members={ai.bots.filter((bot) => space.botIds.includes(bot.id))}
-                    />
-                    {tab === 'Activity' && !savedOpen ? (
-                      <ActivityView onPursuit={openPursuit} onDraft={() => setDialog('draft')} />
-                    ) : (
-                      <SpaceChat
-                        space={space}
-                        providers={ai.providers}
-                        onProviders={() => openSettings('providers')}
-                        onOpenBot={createBotConversation}
-                        bots={ai.bots}
-                        tab={tab}
-                        savedOpen={savedOpen}
-                        onCloseSaved={() => setSavedOpen(false)}
-                      />
-                    )}
-                  </Fragment>
-                ) : (
-                  <div className="ai-chat-empty">
-                    <h2>Create a space.</h2>
-                    <p>Choose its bots, then start a conversation.</p>
-                    <button
-                      className="button button--primary"
-                      onClick={() => setDialog('create-space')}
-                    >
-                      Create space
-                    </button>
-                  </div>
-                )}
-              </main>
-              {detailsOpen && space && (
-                <SpaceDetails
-                  space={space}
-                  bots={ai.bots}
-                  onClose={() => setDetailsOpen(false)}
-                  onSelectBot={(id) => select({ section: 'bots', item: id })}
-                />
-              )}
-            </div>
+            space && !spaceState.loading && !spaceState.error ? (
+              <SpaceConversation
+                key={space.id}
+                space={space}
+                bots={ai.bots}
+                providers={ai.providers}
+                location={location}
+                tab={tab}
+                onTab={(next) => {
+                  setTab(next);
+                  setSavedOpen(false);
+                }}
+                savedOpen={savedOpen}
+                onSaved={() => setSavedOpen(true)}
+                onCloseSaved={() => setSavedOpen(false)}
+                detailsOpen={detailsOpen}
+                onDetails={() => setDetailsOpen(!detailsOpen)}
+                onCloseDetails={() => setDetailsOpen(false)}
+                onSelectBot={(id) => select({ section: 'bots', item: id })}
+                onProviders={() => openSettings('providers')}
+                onSettings={() => openSettings('workspace')}
+                onOpenBot={openBotConversation}
+                onViewComputer={() => setComputerOpen(true)}
+                onPursuit={openPursuit}
+                onDraft={() => setDialog('draft')}
+              />
+            ) : (
+              <div className="conversation-layout">
+                <main className="conversation">
+                  {spaceState.loading ? (
+                    <p className="ai-caption">Loading spaces…</p>
+                  ) : spaceState.error ? (
+                    <div className="ai-main-state">
+                      <p role="alert">{spaceState.error}</p>
+                      <button className="button" onClick={() => void spaceState.refresh()}>
+                        Try again
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="ai-chat-empty">
+                      <h2>Create a space.</h2>
+                      <p>Choose its bots, then start a conversation.</p>
+                      <button
+                        className="button button--primary"
+                        onClick={() => setDialog('create-space')}
+                      >
+                        Create space
+                      </button>
+                    </div>
+                  )}
+                </main>
+              </div>
+            )
           ) : pursuitState.loading ? (
             <main className="conversation ai-main-state">
               <p>Loading pursuits…</p>

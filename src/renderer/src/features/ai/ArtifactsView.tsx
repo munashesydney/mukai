@@ -90,7 +90,13 @@ export function ArtifactsView({
   );
 }
 
-function ArtifactCard({ artifact }: { artifact: FileArtifact }) {
+export function ArtifactCard({
+  artifact,
+  compact = false,
+}: {
+  artifact: FileArtifact;
+  compact?: boolean;
+}) {
   const [preview, setPreview] = useState<string | null>(null),
     [imageUrl, setImageUrl] = useState(''),
     [busy, setBusy] = useState(false),
@@ -140,43 +146,70 @@ function ArtifactCard({ artifact }: { artifact: FileArtifact }) {
   }
   return (
     <>
-      <article className="file-list-row artifact-row">
-        {isImage && imageUrl ? (
-          <button
-            className="artifact-thumbnail"
-            aria-label={`Preview ${artifact.name}`}
-            onClick={() => setPreview(imageUrl)}
-          >
-            <img src={imageUrl} alt={artifact.name} />
-          </button>
-        ) : (
-          <span className="card-symbol card-symbol--purple">
-            {isImage ? <Image size={24} /> : <FileText size={24} />}
-          </span>
-        )}
-        <div className="artifact-row-name">
-          <strong>{artifact.name}</strong>
-          <small title={artifact.path}>
-            {artifact.path} · {isImage ? 'Screenshot' : 'Workspace file'}
-          </small>
-        </div>
+      {compact ? (
         <button
-          className="icon-button"
-          aria-label={`Preview ${artifact.name}`}
+          className="chat-activity-row"
           disabled={busy || (isImage && !imageUrl)}
+          title={artifact.path}
+          aria-label={`Preview ${artifact.name}`}
           onClick={() => void open()}
         >
-          <Eye size={17} />
+          {isImage ? <Image size={17} /> : <FileText size={17} />}
+          <span className="chat-activity-row-copy">
+            <strong>{artifact.name}</strong>
+            <small>
+              {artifact.path === artifact.name
+                ? isImage
+                  ? 'Saved screenshot'
+                  : 'Workspace file'
+                : artifact.path}
+            </small>
+          </span>
+          {busy ? (
+            <LoaderCircle size={14} className="is-spinning" />
+          ) : (
+            <Eye size={14} className="chat-activity-row-end" />
+          )}
         </button>
-        <button
-          className="icon-button"
-          aria-label={`Download ${artifact.name}`}
-          disabled={busy}
-          onClick={() => void open(true)}
-        >
-          <Download size={17} />
-        </button>
-      </article>
+      ) : (
+        <article className="file-list-row artifact-row">
+          {isImage && imageUrl ? (
+            <button
+              className="artifact-thumbnail"
+              aria-label={`Preview ${artifact.name}`}
+              onClick={() => setPreview(imageUrl)}
+            >
+              <img src={imageUrl} alt={artifact.name} />
+            </button>
+          ) : (
+            <span className="card-symbol card-symbol--purple">
+              {isImage ? <Image size={24} /> : <FileText size={24} />}
+            </span>
+          )}
+          <div className="artifact-row-name">
+            <strong>{artifact.name}</strong>
+            <small title={artifact.path}>
+              {artifact.path} · {isImage ? 'Screenshot' : 'Workspace file'}
+            </small>
+          </div>
+          <button
+            className="icon-button"
+            aria-label={`Preview ${artifact.name}`}
+            disabled={busy || (isImage && !imageUrl)}
+            onClick={() => void open()}
+          >
+            <Eye size={17} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label={`Download ${artifact.name}`}
+            disabled={busy}
+            onClick={() => void open(true)}
+          >
+            <Download size={17} />
+          </button>
+        </article>
+      )}
       {error && (
         <p className="ai-alert" role="alert">
           {error}

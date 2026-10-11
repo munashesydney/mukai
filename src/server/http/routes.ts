@@ -1,4 +1,5 @@
 import type { SkillService } from '../skills/service';
+import type { ChatOutputService } from '../services/chatOutputService';
 import type { DesktopTransport } from '../computer/desktopTransport';
 import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -50,6 +51,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  chatOutputs,
   notifications,
   desktops,
   approvals,
@@ -70,6 +72,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  chatOutputs: ChatOutputService;
   notifications: NotificationService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
@@ -488,6 +491,12 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
+        if (action === 'outputs' && method === 'GET')
+          return send(response, await chatOutputs.list(id));
+        if (action === 'open-output' && method === 'POST') {
+          const input = z.object({ outputId: z.string().uuid() }).parse(await jsonBody(request));
+          return send(response, await chatOutputs.open(id, input.outputId));
+        }
         if (action === 'messages' && method === 'GET')
           return send(response, conversations.history(id));
         if (action === 'chat' && method === 'POST') {
