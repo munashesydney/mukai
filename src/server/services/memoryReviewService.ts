@@ -110,6 +110,9 @@ export class MemoryReviewService {
       String(row.conversation_id),
     );
   }
+  async waitForIdle() {
+    await this.processing?.catch(() => {});
+  }
   drain(signal: AbortSignal): Promise<string[]> {
     if (this.processing) return this.processing;
     // Set the guard before starting work, including callbacks that may enqueue more.

@@ -7,7 +7,7 @@ import type { ConversationService } from './conversationService';
 import type { ToolAccessService } from './toolAccessService';
 import type { ProviderService } from './providerService';
 import type { ChatJobRepository } from '../repositories/chatJobRepository';
-import { pausePursuitTask } from './pursuitScheduler';
+import { outsidePursuitExecution, pausePursuitTask } from './pursuitScheduler';
 import type { z } from 'zod';
 import { botManagementDefinition } from '../tools/bots/definition';
 
@@ -25,10 +25,11 @@ export class BotManagementService {
   ) {}
   actionsFor(caller: Bot, messageId?: string): BotAction[] {
     const current = this.bots.require(caller.id);
-    if (current.isMain) return ['create', 'update', 'list', 'get', 'send_message'];
+    if (current.isMain)
+      return ['create', 'update', 'list', 'get', 'send_message', 'get_last_message'];
     return messageId && this.chats.delegatedMessage(messageId)
-      ? ['list', 'get']
-      : ['list', 'get', 'send_message'];
+      ? ['list', 'get', 'get_last_message']
+      : ['list', 'get', 'send_message', 'get_last_message'];
   }
   requireAction(caller: Bot, action: BotAction, messageId?: string) {
     this.access.require(caller, 'manage_bot');
@@ -119,6 +120,21 @@ export class BotManagementService {
       );
     return target;
   }
+  getLastMessage(caller: Bot, botId: string, conversationId: string) {
+    this.requireAction(caller, 'get_last_message');
+    const target = this.requireMessageTarget(caller, botId);
+    this.conversations.botChat(this.bots.require(caller.id), target, '', conversationId);
+    const reply = this.conversations.latestBotReply(conversationId, target.id);
+    return {
+      botId: target.id,
+      conversationId,
+      requestId: reply?.requestId ?? null,
+      messageId: reply?.id ?? null,
+      status: reply?.status ?? 'empty',
+      response: reply?.content.slice(-12000) ?? '',
+      error: reply?.error ?? null,
+    };
+  }
   async sendMessage(
     caller: Bot,
     botId: string,
@@ -135,6 +151,7 @@ export class BotManagementService {
         requestId: string;
       }) => void;
     },
+    mode: 'fire_and_forget' | 'wait' = 'wait',
   ) {
     signal.throwIfAborted();
     this.requireAction(caller, 'send_message', delegation?.parentMessageId);
@@ -153,6 +170,26 @@ export class BotManagementService {
       throw new ApiError(409, 'The saved bot request does not match this tool call.');
     if (saved?.state === 'cancelled')
       throw new ApiError(409, 'This bot request was cancelled. Send a new message to start again.');
+    // A completed dispatch is replayed without resending or attaching a new wait.
+    if (mode === 'fire_and_forget' && saved?.state === 'complete') {
+      this.conversations.botChat(caller, target, '', saved.conversationId);
+      const reply = this.conversations.latestBotReply(
+        saved.conversationId,
+        target.id,
+        saved.childRequestId,
+      );
+      if (!reply)
+        throw new ApiError(409, 'The original bot dispatch did not start. Send a new message.');
+      return {
+        botId: target.id,
+        conversationId: saved.conversationId,
+        requestId: saved.childRequestId,
+        messageId: reply.id,
+        status: reply.status,
+        response: reply.content.slice(-12000),
+        error: reply.error,
+      };
+    }
     const requestId = saved?.childRequestId || randomUUID();
     if (
       (this.reserved.has(target.id) && this.reserved.get(target.id) !== requestId) ||
@@ -179,7 +216,9 @@ export class BotManagementService {
         conversationId: conversation.id,
         childRequestId: requestId,
         message,
-        state: 'waiting',
+        // Detached sends finish the caller's dispatch immediately. They are not
+        // waiting delegations, so stopping the caller cannot cancel the child.
+        state: mode === 'wait' ? 'waiting' : 'complete',
       });
     delegation?.onStarted({
       botId: target.id,
@@ -193,49 +232,81 @@ export class BotManagementService {
         this.jobs.delegationState(delegation.parentMessageId, delegation.toolCallId, 'cancelled');
       this.chats.stopConversation(conversation.id);
     };
-    signal.addEventListener('abort', abort, { once: true });
+    if (mode === 'wait') signal.addEventListener('abort', abort, { once: true });
     this.reserved.set(target.id, requestId);
     let response: ChatMessage | undefined;
-    try {
-      await pausePursuitTask(() =>
-        this.chats.respond(
-          target,
-          {
-            requestId,
-            text: message,
-            attachmentIds: [],
-          },
-          {
-            start() {},
-            emit(event) {
-              if (event.type === 'done' || event.type === 'error') response = event.message;
+    let started: ChatMessage | undefined;
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: unknown) => void;
+    const startup =
+      mode === 'fire_and_forget'
+        ? new Promise<void>((resolve, reject) => {
+            resolveStarted = resolve;
+            rejectStarted = reject;
+          })
+        : undefined;
+    const run = async () => {
+      try {
+        await pausePursuitTask(() =>
+          this.chats.respond(
+            target,
+            {
+              requestId,
+              text: message,
+              attachmentIds: [],
             },
-            onDisconnect() {
-              return () => {};
+            {
+              start() {},
+              emit(event) {
+                if (event.type === 'start') {
+                  started = event.assistant;
+                  resolveStarted?.();
+                }
+                if (event.type === 'done' || event.type === 'error') response = event.message;
+              },
+              onDisconnect() {
+                return () => {};
+              },
+              end() {},
             },
-            end() {},
-          },
-          conversation.id,
-          undefined,
-          caller,
-          Boolean(saved),
-        ),
-      );
-      signal.throwIfAborted();
-      if (!response) throw new ApiError(500, 'The bot did not return a saved response.');
-      if (delegation?.parentMessageId)
-        this.jobs.delegationState(delegation.parentMessageId, delegation.toolCallId, 'complete');
+            conversation.id,
+            undefined,
+            caller,
+            Boolean(saved),
+          ),
+        );
+        if (mode === 'wait') signal.throwIfAborted();
+        if (!response) throw new ApiError(500, 'The bot did not return a saved response.');
+        if (mode === 'wait' && delegation?.parentMessageId)
+          this.jobs.delegationState(delegation.parentMessageId, delegation.toolCallId, 'complete');
+        return {
+          botId,
+          conversationId: conversation.id,
+          requestId,
+          messageId: response.id,
+          status: response.status,
+          response: response.content.slice(-12000),
+          error: response.error,
+        };
+      } finally {
+        this.reserved.delete(target.id);
+        signal.removeEventListener('abort', abort);
+      }
+    };
+    if (mode === 'fire_and_forget') {
+      // Handle background errors; saved chat status remains available to polling.
+      void outsidePursuitExecution(run).catch(rejectStarted);
+      await startup;
       return {
         botId,
         conversationId: conversation.id,
-        messageId: response.id,
-        status: response.status,
-        response: response.content.slice(-12000),
-        error: response.error,
+        requestId,
+        messageId: started!.id,
+        status: started!.status,
+        response: started!.content.slice(-12000),
+        error: started!.error,
       };
-    } finally {
-      this.reserved.delete(target.id);
-      signal.removeEventListener('abort', abort);
     }
+    return run();
   }
 }

@@ -53,6 +53,15 @@ export class MessageRepository {
       conversationId,
     )?.id;
   }
+  latestBotReply(conversationId: string, botId: string, requestId?: string) {
+    const row = this.database.get(
+      `SELECT id FROM messages WHERE conversation_id=? AND bot_id=? AND role='assistant'${requestId ? ' AND request_id=?' : ''} ORDER BY sequence DESC LIMIT 1`,
+      conversationId,
+      botId,
+      ...(requestId ? [requestId] : []),
+    );
+    return row ? this.message(String(row.id)) : null;
+  }
   context(conversationId: string, limit: number, throughSequence: number) {
     return this.database
       .all(

@@ -37,6 +37,7 @@ let mode:
   | 'web-search'
   | 'web-revoke';
 let delegatedId: string;
+let sendMode: 'fire_and_forget' | 'wait';
 let nestedId: string;
 let invalidAskFirst: boolean;
 const waitFor = (check: () => void | Promise<void>) => vi.waitFor(check, { timeout: 5000 });
@@ -87,6 +88,7 @@ beforeEach(async () => {
   calls = [];
   mode = 'normal';
   delegatedId = '';
+  sendMode = 'wait';
   nestedId = '';
   invalidAskFirst = false;
   api = await startApiServer(0, {
@@ -163,7 +165,12 @@ beforeEach(async () => {
                   : 'communicate',
               arguments: JSON.stringify(
                 intermediate
-                  ? { action: 'send_message', botId: nestedId, message: 'Check the details.' }
+                  ? {
+                      action: 'send_message',
+                      botId: nestedId,
+                      message: 'Check the details.',
+                      mode: 'wait',
+                    }
                   : mode === 'delegate-tool-approval'
                     ? { action: 'tabs' }
                     : mode.startsWith('delegate-empty-')
@@ -273,6 +280,7 @@ beforeEach(async () => {
                 action: 'send_message',
                 botId: delegatedId,
                 message: 'Review the notes.',
+                mode: sendMode,
               }),
             },
           },
@@ -518,11 +526,11 @@ describe('Bot architecture', () => {
     expect(
       calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['create', 'update', 'list', 'get', 'send_message']);
+    ).toEqual(['create', 'update', 'list', 'get', 'send_message', 'get_last_message']);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'send_message']);
+    ).toEqual(['list', 'get', 'send_message', 'get_last_message']);
     for (const target of [main, child])
       expect(
         (
@@ -744,7 +752,7 @@ describe('Bot architecture', () => {
     expect(
       childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get']);
+    ).toEqual(['list', 'get', 'get_last_message']);
     expect(JSON.stringify(childCall.messages)).toContain(
       'intentionally unavailable to prevent delegation loops',
     );
@@ -766,6 +774,128 @@ describe('Bot architecture', () => {
       status: 'complete',
       content: 'Reviewed the notes successfully.',
     });
+  });
+  it('requires an explicit send mode and validates the latest-reply action', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'send_message',
+        botId: child.id,
+        message: 'Work',
+      }).success,
+    ).toBe(false);
+    expect(
+      await executeBotManagement(
+        { action: 'send_message', botId: child.id, message: 'Work' },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('mode') });
+    expect(
+      await executeBotManagement(
+        { action: 'get_last_message', botId: child.id },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('conversationId') });
+    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(0);
+  });
+  it('dispatches without waiting and lets the caller poll the latest reply', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    await chat(main);
+    const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
+    expect(conversations).toHaveLength(1);
+    const conversationId = conversations[0].id;
+    const latest = api.botManagement.getLastMessage(main, child.id, conversationId);
+    expect(latest).toMatchObject({ botId: child.id, conversationId, status: 'streaming' });
+    expect(latest.requestId).toBeTruthy();
+    expect(conversations[0].isWorking).toBe(true);
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.status).toBe('complete');
+    const saved = api.store.get(
+      'SELECT * FROM bot_delegations WHERE parent_message_id=?',
+      parent.id,
+    )!;
+    expect(saved.state).toBe('complete');
+    await request(`/bots/${main.id}/stop`, 'POST');
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+      'streaming',
+    );
+    const replay = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Review the notes.',
+      new AbortController().signal,
+      conversationId,
+      {
+        parentMessageId: parent.id,
+        toolCallId: 'send-message-call',
+        onStarted() {},
+      },
+      'fire_and_forget',
+    );
+    expect(replay.requestId).toBe(latest.requestId);
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data,
+    ).toHaveLength(2);
+    await request(`/conversations/${conversationId}/stop`, 'POST');
+    await waitFor(() =>
+      expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+        'stopped',
+      ),
+    );
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe('stopped');
+    mode = 'normal';
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const result = await executeBotManagement(
+      {
+        action: 'send_message',
+        botId: child.id,
+        conversationId,
+        message: 'Finish the review.',
+        mode: 'wait',
+      },
+      context,
+      randomUUID(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { status: 'complete', response: 'Reviewed the notes successfully.' },
+    });
+    expect(
+      await executeBotManagement(
+        { action: 'get_last_message', botId: child.id, conversationId },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject(result);
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).requestId).not.toBe(
+      latest.requestId,
+    );
+    const other = await bot('Other');
+    expect(() => api.botManagement.getLastMessage(other, child.id, conversationId)).toThrow(
+      'between you and the target',
+    );
+    expect(() => api.botManagement.getLastMessage(main, child.id, 'bot-' + child.id)).toThrow(
+      'between you and the target',
+    );
   });
   async function restart(snapshot?: string) {
     await api.shutdown();
@@ -1135,9 +1265,13 @@ describe('Bot architecture', () => {
     const reply = (
       await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`)
     ).data.at(-1)!;
-    expect(api.botManagement.actionsFor(child, reply.id)).toEqual(['list', 'get']);
+    expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
+      'list',
+      'get',
+      'get_last_message',
+    ]);
     const result = await executeBotManagement(
-      { action: 'send_message', botId: other.id, message: 'Nested work' },
+      { action: 'send_message', botId: other.id, message: 'Nested work', mode: 'wait' },
       {
         bot: child,
         management: api.botManagement,
@@ -1152,7 +1286,11 @@ describe('Bot architecture', () => {
       error: expect.stringContaining('intentionally unavailable'),
     });
     await restart();
-    expect(api.botManagement.actionsFor(child, reply.id)).toEqual(['list', 'get']);
+    expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
+      'list',
+      'get',
+      'get_last_message',
+    ]);
     expect(api.botManagement.actionsFor(main, reply.id)).toContain('send_message');
   });
   it('does not restart an explicitly stopped delegation', async () => {

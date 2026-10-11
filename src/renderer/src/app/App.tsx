@@ -50,10 +50,45 @@ function WorkspaceLayout({
 
 export function App() {
   const ai = useAIWorkspace();
+  if (!ai.loading && ai.workspaces.length === 0 && !ai.error) return <EmptyWorkspaces ai={ai} />;
   return (
     <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
       <WorkspaceApp ai={ai} />
     </BrowserWorkspace>
+  );
+}
+function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
+  const [creating, setCreating] = useState(false);
+  return (
+    <>
+      <TitleBar
+        workspaceName="Mukai"
+        onSearch={() => {}}
+        onBack={() => {}}
+        onForward={() => {}}
+        canBack={false}
+        canForward={false}
+        onToggleSidebar={() => {}}
+      />
+      <main className="settings-page">
+        <div className="settings-panel-heading">
+          <h3>Create a workspace</h3>
+          <p>Choose a project folder or a Linux computer to get started.</p>
+        </div>
+        <button className="button button--primary" onClick={() => setCreating(true)}>
+          Create workspace
+        </button>
+      </main>
+      {creating && (
+        <WorkspaceEditor
+          onClose={() => setCreating(false)}
+          onSaved={(saved) => {
+            setCreating(false);
+            ai.selectWorkspace(saved.id);
+          }}
+        />
+      )}
+    </>
   );
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
@@ -76,11 +111,12 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth <= 760);
   const [savedOpen, setSavedOpen] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
-  const viewingComputer = computerOpen && ai.workspace?.computer === 'qemu';
+  const viewingComputer =
+    computerOpen && ai.workspace?.computer === 'qemu' && !ai.workspace.deleting;
   const { location, navigate, replace } = workspace;
   const hasBots = ai.bots.length > 0;
   useEffect(() => {
-    if (!ai.loading && !hasBots && location.section !== 'bots')
+    if (!ai.loading && !hasBots && location.section !== 'bots' && location.section !== 'settings')
       replace({ section: 'bots', item: 'empty' });
   }, [ai.loading, hasBots, location.section, replace]);
   useEffect(() => {
@@ -94,7 +130,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   }, []);
   const select = useCallback(
     (next: Location) => {
-      if (!hasBots && next.section !== 'bots') return;
+      if (!hasBots && next.section !== 'bots' && next.section !== 'settings') return;
       navigate(next);
       setTab('Messages');
       setSavedOpen(false);
@@ -192,7 +228,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       <TitleBar
         computerOpen={viewingComputer}
         onComputer={
-          ai.workspace?.computer === 'qemu'
+          ai.workspace?.computer === 'qemu' && !ai.workspace.deleting
             ? () => {
                 if (
                   !computerOpen &&
@@ -282,6 +318,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               }
               onSection={(next) => navigate({ section: 'settings', item: next })}
               workspace={ai.workspace}
+              onDeleteWorkspace={ai.deleteWorkspace}
               onConnectFolder={() => {
                 if (ai.workspace) setEditingWorkspace(ai.workspace);
               }}
@@ -311,7 +348,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             />
           ) : location.section === 'tools' ? (
             <ToolsPage
-              vm={ai.workspace?.computer === 'qemu'}
+              vm={ai.workspace?.computer === 'qemu' && !ai.workspace.deleting}
               bots={ai.bots}
               workspaceId={ai.workspaceId}
               folder={ai.workspace?.folder || null}
@@ -533,7 +570,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             </main>
           )}
         </div>
-        {ai.workspace?.computer === 'qemu' && (
+        {ai.workspace?.computer === 'qemu' && !ai.workspace.deleting && (
           <ComputerPanel
             workspaceId={ai.workspaceId}
             open={viewingComputer}

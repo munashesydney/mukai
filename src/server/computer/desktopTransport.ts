@@ -18,6 +18,12 @@ export class DesktopTransport {
     perMessageDeflate: false,
   });
   private closed = false;
+  private viewers = new Map<WebSocket, QemuComputer>();
+  forget(computer: QemuComputer) {
+    for (const [key, ticket] of this.tickets)
+      if (ticket.computer === computer) this.tickets.delete(key);
+    for (const [viewer, owner] of this.viewers) if (owner === computer) viewer.terminate();
+  }
   async session(computer: QemuComputer): Promise<ComputerViewSession> {
     if (this.closed) throw new Error('Desktop views are shutting down.');
     try {
@@ -78,6 +84,8 @@ export class DesktopTransport {
     }
     if (this.sockets.clients.size >= 4) return reject();
     this.sockets.handleUpgrade(request, socket, head, (viewer) => {
+      this.viewers.set(viewer, ticket.computer);
+      viewer.once('close', () => this.viewers.delete(viewer));
       const upstream = connect(ticket.port, '127.0.0.1');
       upstream.setTimeout(10000, () => upstream.destroy());
       upstream.once('connect', () => upstream.setTimeout(0));

@@ -226,3 +226,23 @@ it('handles unavailable embedded browsing and cancellation without leaking a tab
   expect(available.list(owner.workspaceId)).toEqual([]);
   expect(page.isClosed()).toBe(false);
 });
+
+it('closes workspace-owned tabs while retaining another workspace tabs', async () => {
+  const { service, host, page } = fixture();
+  const closeDeleted = vi.fn(async () => {});
+  const closeOther = vi.fn(async () => {});
+  vi.mocked(host.open)
+    .mockResolvedValueOnce({ ...page, close: closeDeleted })
+    .mockResolvedValueOnce({ ...page, close: closeOther });
+  await service.execute(owner, { action: 'open', url: 'https://example.com' }, signal());
+  const other = { ...owner, workspaceId: 'other' };
+  await service.execute(other, { action: 'open', url: 'https://example.com' }, signal());
+  await service.stopWorkspace(owner.workspaceId);
+  expect(closeDeleted).toHaveBeenCalledTimes(1);
+  expect(closeOther).not.toHaveBeenCalled();
+  expect(service.list(owner.workspaceId)).toEqual([]);
+  expect(service.list(other.workspaceId)).toHaveLength(1);
+  await expect(
+    service.execute(owner, { action: 'open', url: 'https://example.com' }, signal()),
+  ).rejects.toThrow('being deleted');
+});

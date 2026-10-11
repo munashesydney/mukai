@@ -48,6 +48,13 @@ export class ApprovalService {
       }
   }
 
+  forgetWorkspace(id: string, botIds: string[]) {
+    for (const item of this.pending.values()) {
+      if (item.request.target?.workspaceId === id || botIds.includes(item.request.botId))
+        this.discard(item.request.messageId);
+    }
+  }
+
   mode(workspaceId = 'default'): ApprovalMode {
     return this.repository.mode(workspaceId);
   }

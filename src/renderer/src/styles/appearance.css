@@ -742,6 +742,110 @@
   color: var(--text-muted);
   margin-top: 4px;
 }
+.workspace-danger-card,
+.workspace-delete-modal {
+  --workspace-danger: #b13e39;
+  --workspace-danger-line: color-mix(in srgb, var(--workspace-danger) 32%, var(--surface));
+  --workspace-danger-soft: color-mix(in srgb, var(--workspace-danger) 5%, var(--surface));
+}
+:root[data-mode='dark'] .workspace-danger-card,
+:root[data-mode='dark'] .workspace-delete-modal {
+  --workspace-danger: #f19991;
+}
+.workspace-danger-card {
+  border-color: var(--workspace-danger-line);
+  background: var(--workspace-danger-soft);
+}
+.workspace-danger-card .settings-card-heading {
+  background: color-mix(in srgb, var(--workspace-danger) 8%, var(--surface));
+  border-bottom-color: var(--workspace-danger-line);
+}
+.workspace-danger-card .settings-card-icon {
+  flex-shrink: 0;
+  color: var(--workspace-danger);
+  border-color: var(--workspace-danger-line);
+  background: var(--workspace-danger-soft);
+}
+.workspace-danger-card .settings-card-heading h4 {
+  color: var(--workspace-danger);
+}
+.workspace-danger-card .settings-card-heading p {
+  color: var(--text-secondary);
+}
+.workspace-danger-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 17px;
+}
+.workspace-danger-copy {
+  min-width: 0;
+}
+.workspace-danger-copy h5 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.workspace-danger-copy p {
+  margin: 6px 0 0;
+  max-width: 58ch;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.workspace-danger-button {
+  flex-shrink: 0;
+  color: var(--workspace-danger);
+  border-color: var(--workspace-danger-line);
+  background: var(--surface);
+}
+.workspace-danger-button:hover:not(:disabled) {
+  border-color: var(--workspace-danger);
+  background: color-mix(in srgb, var(--workspace-danger) 10%, var(--surface));
+}
+.workspace-delete-body > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.workspace-delete-body > p strong {
+  color: var(--ink);
+}
+.workspace-delete-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--workspace-danger-line);
+  border-radius: 8px;
+  background: var(--workspace-danger-soft);
+  color: var(--workspace-danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.workspace-delete-warning > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.workspace-delete-warning p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.workspace-delete-modal .button--danger:hover:not(:disabled) {
+  background: #943f39;
+  border-color: #943f39;
+}
+@media (max-width: 620px) {
+  .workspace-danger-action {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+}
 .settings-data {
   margin: 0;
   padding: 1px 17px;

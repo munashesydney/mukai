@@ -1,3 +1,4 @@
+import { DeleteWorkspace } from './DeleteWorkspace';
 import { useEffect, useState } from 'react';
 import {
   Cpu,
@@ -24,9 +25,11 @@ import { errorText } from '../../utils/errors';
 export function WorkspacePanel({
   workspace,
   onConnectFolder,
+  onDelete,
 }: {
   workspace?: Workspace;
   onConnectFolder?: () => void;
+  onDelete?: (id: string, name: string) => Promise<void>;
 }) {
   const [health, setHealth] = useState<HealthResponse>();
   const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -63,12 +66,14 @@ export function WorkspacePanel({
         </div>
         <span className="settings-account-badge">{workspace?.name[0]?.toUpperCase() || 'M'}</span>
       </div>
-      {workspace?.computer === 'qemu' && <VmComputer key={workspace.id} workspace={workspace} />}
+      {workspace?.computer === 'qemu' && !workspace.deleting && (
+        <VmComputer key={workspace.id} workspace={workspace} />
+      )}
       {workspace && workspace.computer !== 'qemu' && (
         <section className="settings-card workspace-folder-card">
           <h4>Workspace folder</h4>
           <p>{workspace.folder || 'Connect a folder to let your bots work with local files.'}</p>
-          {!workspace.folder && onConnectFolder && (
+          {!workspace.folder && !workspace.deleting && onConnectFolder && (
             <button className="button" onClick={onConnectFolder}>
               Connect folder
             </button>
@@ -158,6 +163,9 @@ export function WorkspacePanel({
           </div>
         )}
       </section>
+      {workspace && onDelete && (
+        <DeleteWorkspace key={workspace.id} workspace={workspace} onDelete={onDelete} />
+      )}
       <div className="settings-privacy-note">
         <ShieldCheck size={15} />
         <span>Runs locally. Your workspace stays on this device.</span>

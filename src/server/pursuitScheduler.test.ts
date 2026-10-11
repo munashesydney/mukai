@@ -4,6 +4,7 @@ import {
   PursuitScheduler,
   pausePursuitTask,
   pursuitSession,
+  outsidePursuitExecution,
 } from './services/pursuitScheduler';
 
 function deferred() {
@@ -16,6 +17,28 @@ function deferred() {
 const signal = () => new AbortController().signal;
 
 describe('Shared pursuit execution slots', () => {
+  it('lets detached bot work outlive its caller without inheriting the pursuit slot', async () => {
+    const pool = new PursuitScheduler(() => 1);
+    const finish = deferred();
+    let child!: Promise<void>;
+    await new PursuitExecution(pool).run(async () => {
+      const parent = pursuitSession()!;
+      await parent.provider(signal());
+      await parent.tool(async () => {
+        child = outsidePursuitExecution(async () => {
+          expect(pursuitSession()).toBeUndefined();
+          await finish.promise;
+          expect(pursuitSession()).toBeUndefined();
+          await pausePursuitTask(async () => {});
+        });
+        expect(pursuitSession()).toBeDefined();
+      }, signal());
+    });
+    expect(pool.used).toBe(0);
+    finish.resolve();
+    await child;
+    expect(pool.used).toBe(0);
+  });
   it('releases a human wait and queues the exact continuation behind working pursuits', async () => {
     const pool = new PursuitScheduler(() => 1);
     const decision = deferred(),

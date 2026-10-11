@@ -1,8 +1,10 @@
-import type { Workspace, WorkspaceInput } from '../../../shared/ai';
+import type { Workspace, WorkspaceInput, WorkspaceDeletionResult } from '../../../shared/ai';
 import { api } from './http';
 import type { ComputerStatus, QemuSetup, VmResources } from '../../../shared/computer';
 
 export const workspaceService = {
+  remove: (id: string, name: string) =>
+    api<WorkspaceDeletionResult>(`/workspaces/${encodeURIComponent(id)}`, 'DELETE', { name }),
   list: () => api<Workspace[]>('/workspaces'),
   computerSetup: () => api<QemuSetup>('/workspaces/computer-setup'),
   installComputer: () => api<QemuSetup>('/workspaces/computer-setup', 'POST', {}),

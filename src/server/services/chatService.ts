@@ -95,6 +95,7 @@ export interface ChatOutput {
 export class ChatService {
   private active = new Map<string, Generation>();
   private closing = false;
+  private deletingWorkspaces = new Set<string>();
   get isClosing() {
     return this.closing;
   }
@@ -233,6 +234,12 @@ export class ChatService {
       }
     }
   }
+  async stopWorkspace(id: string, botIds: string[]) {
+    this.deletingWorkspaces.add(id);
+    const active = [...this.active.entries()].filter(([, value]) => botIds.includes(value.botId));
+    for (const [conversationId] of active) this.stopConversation(conversationId);
+    await Promise.allSettled(active.map(([, value]) => value.done));
+  }
   async shutdown() {
     this.closing = true;
     this.approvals?.suspend();
@@ -330,6 +337,8 @@ export class ChatService {
     sender?: BotRecord,
     restoreSavedStep = false,
   ) {
+    if (this.deletingWorkspaces.has(bot.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
     const botId = String(bot.id);
     const scheduling = pursuitSession();
     const running = this.active.get(conversationId);

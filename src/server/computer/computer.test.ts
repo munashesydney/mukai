@@ -349,6 +349,18 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('permanently disposes a running VM so retained viewers and recovery cannot restart it', async () => {
+    const { vm, launch } = await fixture();
+    await vm.start();
+    await vm.shutdown();
+    expect(vm.status().state).toBe('stopped');
+    await expect(vm.start()).rejects.toThrow('disposed');
+    await vm.recoverAfterHostResume();
+    expect(launch).toHaveBeenCalledTimes(1);
+    await expect(readFile(join(directory, 'vm', 'runtime.pid'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
   it('keeps saved resource changes pending until the next boot, without interrupting tools', async () => {
     const { vm, launch } = await fixture();
     await vm.start();

@@ -320,6 +320,10 @@ export const migrations = [
      CHECK(vm_memory_mib BETWEEN 1024 AND 65536 AND vm_memory_mib % 256 = 0);
    ALTER TABLE workspaces ADD COLUMN vm_vcpus INTEGER NOT NULL DEFAULT 2
      CHECK(vm_vcpus BETWEEN 1 AND 32);`,
+  `ALTER TABLE workspaces ADD COLUMN deleting INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE workspaces ADD COLUMN deletion_files_json TEXT;
+   CREATE TABLE workspace_capability_versions (
+     version TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

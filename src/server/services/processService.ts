@@ -24,6 +24,7 @@ function sameOwner(a: RuntimeOwner, b: RuntimeOwner) {
 export class ProcessService {
   private sessions = new Map<string, ManagedProcess>();
   private closed = false;
+  private deletingWorkspaces = new Set<string>();
   list(owner: RuntimeOwner) {
     return [...this.sessions.values()]
       .filter((entry) => sameOwner(entry.info, owner))
@@ -74,11 +75,15 @@ export class ProcessService {
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
+    if (this.deletingWorkspaces.has(owner.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
     if (this.closed) throw new ApiError(503, 'Terminal is shutting down.');
     const root = await realpath(folder),
       cwd = await realpath(resolve(root, input.cwd || '.'));
     const path = relative(root, cwd);
     signal.throwIfAborted();
+    if (this.deletingWorkspaces.has(owner.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
     if (this.closed) throw new ApiError(503, 'Terminal is shutting down.');
     if (
       isAbsolute(path) ||
@@ -101,6 +106,8 @@ export class ProcessService {
         ([key]) => !/(TOKEN|SECRET|PASSWORD|API_KEY|MUKAI_DATA_DIR)/i.test(key),
       ),
     );
+    if (this.deletingWorkspaces.has(owner.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
     const child =
       process.platform === 'win32'
         ? spawn(
@@ -221,6 +228,14 @@ export class ProcessService {
       }
       await entry.done;
     })());
+  }
+  async stopWorkspace(id: string) {
+    this.deletingWorkspaces.add(id);
+    for (const [key, entry] of this.sessions) {
+      if (entry.info.workspaceId !== id) continue;
+      await this.stop(entry);
+      this.sessions.delete(key);
+    }
   }
   async shutdown() {
     this.closed = true;

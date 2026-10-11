@@ -56,6 +56,11 @@ export function inPursuitExecution() {
   return Boolean(context.getStore());
 }
 
+/** Detached bot work must not inherit a pursuit slot that closes with its caller. */
+export function outsidePursuitExecution<T>(operation: () => T): T {
+  return context.exit(operation);
+}
+
 export class PursuitExecution {
   private active = 0;
   private controller = new AbortController();

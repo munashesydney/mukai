@@ -93,3 +93,29 @@ it('preserves the startup error when the guest has no usable desktop endpoint', 
   });
   await expect(transport.session(computer)).rejects.toThrow('kernel panic');
 });
+
+it('revokes only the disposed computer tickets and closes its connected viewer', async () => {
+  const ticket = await transport.session(computer);
+  const viewer = new WebSocket(url + ticket.path, { origin: 'file://' });
+  await new Promise<void>((resolve, reject) => {
+    viewer.once('open', resolve);
+    viewer.once('error', reject);
+  });
+  const pending = await transport.session(computer);
+  const other = {
+    start: async () => {},
+    desktopConnection: () => ({ ...connection }),
+  } as unknown as QemuComputer;
+  const otherTicket = await transport.session(other);
+  const closed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
+  transport.forget(computer);
+  await closed;
+  await denied(pending.path);
+  expect(otherTicket.password).toBe('temporary');
+  const otherViewer = new WebSocket(url + otherTicket.path, { origin: 'file://' });
+  await new Promise<void>((resolve, reject) => {
+    otherViewer.once('open', resolve);
+    otherViewer.once('error', reject);
+  });
+  otherViewer.terminate();
+});

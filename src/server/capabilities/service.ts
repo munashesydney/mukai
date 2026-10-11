@@ -87,6 +87,20 @@ export class CapabilityService {
   private timer?: ReturnType<typeof setInterval>;
   private queueRun?: Promise<void>;
   private closing = false;
+  private deletingWorkspaces = new Set<string>();
+  private workspaceTasks = new Map<
+    Promise<unknown>,
+    { workspaceId: string; controller: AbortController }
+  >();
+  private drainingWorkspace?: string;
+  async stopWorkspace(id: string) {
+    this.deletingWorkspaces.add(id);
+    const tasks = [...this.workspaceTasks].filter(([, value]) => value.workspaceId === id);
+    for (const [, value] of tasks) value.controller.abort();
+    await Promise.allSettled(tasks.map(([task]) => task));
+    if (this.drainingWorkspace === id) await this.queueRun;
+  }
+
   private pending = new Set<Promise<unknown>>();
   private wake?: (
     botId: string,
@@ -326,6 +340,26 @@ export class CapabilityService {
     value: z.input<typeof registrationInput>,
     signal?: AbortSignal,
   ) {
+    this.workspaces.require(workspaceId);
+    const controller = new AbortController();
+    const task = this.manageInternal(
+      workspaceId,
+      ownerBotId,
+      kind,
+      value,
+      signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+    );
+    this.workspaceTasks.set(task, { workspaceId, controller });
+    void task.finally(() => this.workspaceTasks.delete(task)).catch(() => {});
+    return task;
+  }
+  private async manageInternal(
+    workspaceId: string,
+    ownerBotId: string | null,
+    kind: 'tool' | 'route',
+    value: z.input<typeof registrationInput>,
+    signal?: AbortSignal,
+  ) {
     signal?.throwIfAborted();
     const input = registrationInput.parse(value);
     if (this.workspaces.require(workspaceId).computer === 'qemu')
@@ -370,6 +404,7 @@ export class CapabilityService {
         await this.validate(previous.version, previous.exportName, kind, signal);
         this.failures.delete(previous.id);
       }
+      this.workspaces.require(workspaceId);
       this.db.run(
         'UPDATE capabilities SET enabled=? WHERE id=?',
         input.operation === 'enable' ? 1 : 0,
@@ -386,8 +421,11 @@ export class CapabilityService {
       throw new ApiError(400, 'Choose a .ts/.js module inside the workspace.');
     const files = new WorkspaceFileService(workspace.folder, this.db.dir);
     const entry = (await files.path(modulePath)).absolute;
+    signal?.throwIfAborted();
+    this.workspaces.require(workspaceId);
     const version = randomUUID();
     const directory = join(this.db.dir, 'capabilities', version);
+    this.db.run('INSERT INTO workspace_capability_versions VALUES(?,?)', version, workspaceId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const source = readFileSync(entry, 'utf8');
     if (Buffer.byteLength(source) > 262144) throw new ApiError(400, 'Module exceeds 256 KB.');
@@ -443,6 +481,7 @@ export class CapabilityService {
       // Check against the latest row after async staging to avoid overwriting another update.
       this.db.transaction(() => {
         signal?.throwIfAborted();
+        this.workspaces.require(workspaceId);
         if (previous && this.require(id).version !== previous.version)
           throw new ApiError(409, 'This registration changed while staging. Retry the update.');
         const conflict = this.db.get(
@@ -577,6 +616,7 @@ export class CapabilityService {
     eventId: string,
     payload: unknown,
   ) {
+    this.workspaces.require(registration.workspaceId);
     z.string().min(1).max(100).parse(provider);
     z.string().min(1).max(200).parse(eventId);
     const text = JSON.stringify(payload ?? null);
@@ -603,6 +643,31 @@ export class CapabilityService {
     return { id: String(saved.id), duplicate: saved.id !== id };
   }
   async invoke(
+    id: string,
+    input: unknown,
+    operation?: 'execute' | 'handle' | 'processJob',
+    signal?: AbortSignal,
+    version?: string,
+    jobId?: string,
+  ) {
+    const registration = this.require(id);
+    this.workspaces.require(registration.workspaceId);
+    if (this.deletingWorkspaces.has(registration.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
+    const controller = new AbortController();
+    const task = this.invokeInternal(
+      id,
+      input,
+      operation,
+      signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+      version,
+      jobId,
+    );
+    this.workspaceTasks.set(task, { workspaceId: registration.workspaceId, controller });
+    void task.finally(() => this.workspaceTasks.delete(task)).catch(() => {});
+    return task;
+  }
+  private async invokeInternal(
     id: string,
     input: unknown,
     operation?: 'execute' | 'handle' | 'processJob',
@@ -735,13 +800,14 @@ export class CapabilityService {
     if (this.closing) return;
     const job = this.db
       .all(
-        `SELECT j.* FROM capability_jobs j JOIN capabilities c ON c.id=j.capability_id WHERE j.status='pending' AND j.next_at<=? AND c.enabled=1 ORDER BY j.rowid LIMIT 100`,
+        `SELECT j.* FROM capability_jobs j JOIN capabilities c ON c.id=j.capability_id JOIN workspaces w ON w.id=c.workspace_id WHERE j.status='pending' AND j.next_at<=? AND c.enabled=1 AND w.deleting=0 ORDER BY j.rowid LIMIT 100`,
         Date.now(),
       )
       .find((row) => this.require(String(row.capability_id)).status === 'ready');
     if (!job) return;
     const registration = this.require(String(job.capability_id));
     if (registration.status !== 'ready') return;
+    this.drainingWorkspace = registration.workspaceId;
     this.db.run(
       "UPDATE capability_jobs SET status='running',attempts=attempts+1 WHERE id=?",
       String(job.id),
@@ -789,6 +855,8 @@ export class CapabilityService {
         this.error(error),
         String(job.id),
       );
+    } finally {
+      this.drainingWorkspace = undefined;
     }
   }
   async dispatch(request: IncomingMessage, response: ServerResponse, token: string) {

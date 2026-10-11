@@ -2925,3 +2925,22 @@ describe('Mukai bots and AI API', () => {
     ).toBe(400);
   });
 });
+
+it('cancels an active response before deleting the workspace conversation records', async () => {
+  await configure();
+  mode = 'slow';
+  const response = await fetch(api.url + '/bots/scout/chat', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId: randomUUID(), text: 'Keep responding', attachmentIds: [] }),
+  });
+  expect(response.status).toBe(200);
+  const completion = response.text();
+  const workspace = api.workspaces.require('default');
+  const deleted = await request('/workspaces/default', 'DELETE', { name: workspace.name });
+  expect(deleted.response.status).toBe(200);
+  expect(await completion).toContain('stopped');
+  expect(api.store.all('SELECT * FROM conversations')).toEqual([]);
+  expect(api.store.all('SELECT * FROM bots')).toEqual([]);
+  expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+});

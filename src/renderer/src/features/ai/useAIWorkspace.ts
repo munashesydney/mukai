@@ -3,6 +3,8 @@ import type { Bot, ProviderSettings, Workspace } from '../../../../shared/ai';
 import { botService } from '../../services/botService';
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
+import { chatStore } from './chatStore';
+import { clearDeletedWorkspaceStorage, deletedChatKeys } from '../workspace/deletionStorage';
 import { workspaceService } from '../../services/workspaceService';
 
 export function useAIWorkspace() {
@@ -29,12 +31,13 @@ export function useAIWorkspace() {
         providerService.list(),
       ]);
       const selected =
-        workspaces.find((workspace) => workspace.id === workspaceId) || workspaces[0];
-      if (!selected) throw new Error('No workspace is available. Restart Mukai.');
-      const bots = await botService.list(selected.id);
+        workspaces.find((workspace) => workspace.id === workspaceId) ||
+        workspaces.find((workspace) => !workspace.deleting) ||
+        workspaces[0];
+      const bots = selected && !selected.deleting ? await botService.list(selected.id) : [];
       if (current !== revision.current) return;
       setData({ bots, providers, workspaces });
-      setWorkspaceId(selected.id);
+      setWorkspaceId(selected?.id || '');
       setError('');
     } catch (error) {
       if (current === revision.current) setError(errorText(error));
@@ -49,7 +52,7 @@ export function useAIWorkspace() {
     let alive = true,
       pending = false;
     const timer = window.setInterval(async () => {
-      if (pending) return;
+      if (pending || !workspaceId) return;
       pending = true;
       const current = revision.current;
       try {
@@ -85,6 +88,34 @@ export function useAIWorkspace() {
     setData((data) => ({ ...data, bots: [] }));
     setWorkspaceId(id);
   }
+  async function deleteWorkspace(id: string, name: string) {
+    let result;
+    try {
+      result = await workspaceService.remove(id, name);
+    } catch (error) {
+      await refresh();
+      throw error;
+    }
+    // Remove stale views immediately, even if the following network refresh fails.
+    revision.current++;
+    const remaining = data.workspaces.filter((workspace) => workspace.id !== id);
+    setData((previous) => ({
+      ...previous,
+      workspaces: remaining,
+      bots: id === workspaceId ? [] : previous.bots,
+    }));
+    if (id === workspaceId)
+      setWorkspaceId(
+        remaining.find((workspace) => !workspace.deleting)?.id || remaining[0]?.id || '',
+      );
+    try {
+      clearDeletedWorkspaceStorage(localStorage, id, result);
+    } catch {
+      /* Server deletion is authoritative. */
+    }
+    chatStore.forget(deletedChatKeys(result));
+    await refresh();
+  }
   return {
     ...data,
     workspaceId,
@@ -101,5 +132,6 @@ export function useAIWorkspace() {
       void refresh();
     },
     selectWorkspace,
+    deleteWorkspace,
   };
 }

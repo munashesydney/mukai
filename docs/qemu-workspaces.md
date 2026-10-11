@@ -112,3 +112,9 @@ Provisioning disables the serial login service and writes installer output to a 
 Architecture-specific QEMU choices live in `src/server/computer/qemuPlatform.ts`. Setup, accelerator probing and workspace startup use the same hardware arguments. Saved automatic setup records include their CPU architecture and firmware path; old records default to x64. Guest installer changes live in `scripts/guest/`; the host never executes these scripts. Browser executable selection is passed explicitly from the guest dispatcher, leaving local Chrome discovery unchanged.
 
 References: [QEMU invocation](https://www.qemu.org/docs/master/system/invocation.html), [firmware configuration](https://www.qemu.org/docs/master/specs/fw_cfg.html), [Windows acceleration](https://www.qemu.org/docs/master/system/whpx.html).
+
+### Deleting a workspace
+
+Settings > Workspace > Delete workspace permanently removes the workspace after you type its name. Mukai blocks new work, cancels running chats and pursuits, stops its VM and owned browser/process sessions, then removes its private disk, logs, uploads, memories, and other workspace records. Connected host project folders (including their `.mukai` files), provider connections, shared VM installation files, and other workspaces are preserved.
+
+Deletion progress is saved before cleanup starts. If stopping or file removal fails, the workspace remains blocked and settings offers Retry deletion. Mukai also retries interrupted cleanup on startup. A recorded VM process that is still alive blocks disk deletion; close that process before retrying. Deleting the active workspace selects another workspace; deleting the last one opens the create-workspace screen.

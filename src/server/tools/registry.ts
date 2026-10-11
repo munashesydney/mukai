@@ -38,7 +38,7 @@ export function botManagementTools(context: Parameters<typeof executeBotManageme
       description:
         `Available actions for this run: ${actions.join(', ')}. ` +
         botManagementDefinition.description,
-      inputSchema: botManagementDefinition.inputSchema.extend({
+      inputSchema: botManagementDefinition.inputSchema.safeExtend({
         action: botManagementDefinition.inputSchema.shape.action.extract(actions),
       }),
       execute: (input, options) => executeBotManagement(input, context, options.toolCallId),

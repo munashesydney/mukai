@@ -596,6 +596,13 @@ export function createRoutes({
           })(),
           201,
         );
+      if (id && !action && method === 'DELETE') {
+        const input = z
+          .object({ name: z.string() })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, await workspaces.remove(id, input.name));
+      }
       if (id && !action && method === 'PUT')
         return send(
           response,

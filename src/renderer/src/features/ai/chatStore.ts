@@ -14,6 +14,7 @@ const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
 const active = new Set<string>();
 const loading = new Set<string>();
+const forgotten = new Set<string>();
 function get(id: string) {
   if (!states.has(id)) {
     let text = '',
@@ -52,6 +53,7 @@ function get(id: string) {
   return states.get(id)!;
 }
 function update(id: string, value: Partial<ChatState>) {
+  if (forgotten.has(id)) return;
   states.set(id, { ...get(id), ...value });
   if (value.text !== undefined || value.requestId !== undefined) {
     try {
@@ -67,7 +69,17 @@ function update(id: string, value: Partial<ChatState>) {
   listeners.forEach((listener) => listener());
 }
 export const chatStore = {
+  forget(ids: string[]) {
+    for (const id of ids) {
+      forgotten.add(id);
+      states.delete(id);
+      active.delete(id);
+      loading.delete(id);
+    }
+    listeners.forEach((listener) => listener());
+  },
   async load(id: string) {
+    if (forgotten.has(id)) return;
     if (active.has(id) || loading.has(id) || get(id).uploading) return;
     loading.add(id);
     const previous = get(id);

@@ -85,6 +85,12 @@ export interface Workspace {
   createdAt: string;
   computer?: 'local' | 'qemu';
   computerResources?: VmResources;
+  deleting?: boolean;
+}
+export interface WorkspaceDeletionResult {
+  deleted: true;
+  botIds: string[];
+  conversationIds: string[];
 }
 export interface WorkspaceInput {
   name: string;

@@ -26,6 +26,7 @@ export class BrowserService {
   private chrome: ChromeHost;
   private mainChrome: ChromeHost;
   private closed = false;
+  private deletingWorkspaces = new Set<string>();
   private activation = 0;
   constructor(
     dataDir: string,
@@ -86,6 +87,8 @@ export class BrowserService {
   }
   async execute(owner: RuntimeOwner, input: BrowserInput, signal: AbortSignal) {
     signal.throwIfAborted();
+    if (this.deletingWorkspaces.has(owner.workspaceId))
+      throw new ApiError(409, 'Workspace is being deleted.');
     if (this.closed) throw new ApiError(503, 'Browser is shutting down.');
     if (
       input.profileId !== undefined &&
@@ -131,7 +134,7 @@ export class BrowserService {
           503,
           'The embedded Mukai browser is available in the desktop app. Use Chrome on the standalone server.',
         );
-      if (signal.aborted || this.closed) {
+      if (signal.aborted || this.closed || this.deletingWorkspaces.has(owner.workspaceId)) {
         await page.close();
         signal.throwIfAborted();
         throw new ApiError(503, 'Browser is shutting down.');
@@ -206,6 +209,16 @@ export class BrowserService {
   async control(id: string, input: BrowserInput) {
     const entry = this.require(id);
     return this.execute(entry.info, { ...input, sessionId: id }, new AbortController().signal);
+  }
+  async stopWorkspace(id: string) {
+    this.deletingWorkspaces.add(id);
+    await this.chrome.stopWorkspace(id);
+    for (const [key, entry] of this.sessions) {
+      if (entry.info.workspaceId !== id) continue;
+      await entry.queue.catch(() => {});
+      await entry.driver.page.close();
+      this.sessions.delete(key);
+    }
   }
   async shutdown() {
     this.closed = true;

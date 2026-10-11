@@ -110,7 +110,13 @@ export function WorkspaceSidebar({
                 <span className="workspace-mini">{item.name[0]?.toUpperCase()}</span>
                 <span>
                   <strong>{item.name}</strong>
-                  <small>{item.folder ? 'Folder workspace' : 'Personal workspace'}</small>
+                  <small>
+                    {item.deleting
+                      ? 'Deletion incomplete'
+                      : item.folder
+                        ? 'Folder workspace'
+                        : 'Personal workspace'}
+                  </small>
                 </span>
                 {item.id === workspace?.id && <Check size={15} />}
               </button>
@@ -129,7 +135,6 @@ export function WorkspaceSidebar({
             </button>
             <button
               role="menuitem"
-              disabled={!bots.length}
               onClick={() => {
                 close();
                 onSettings();

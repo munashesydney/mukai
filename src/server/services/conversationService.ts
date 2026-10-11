@@ -88,6 +88,10 @@ export class ConversationService {
     this.require(id);
     return this.chats.conversationHistory(id);
   }
+  latestBotReply(id: string, botId: string, requestId?: string) {
+    this.require(id);
+    return this.messages.latestBotReply(id, botId, requestId);
+  }
   save(id: string, messageId: string, saved: boolean) {
     this.require(id);
     if (!this.messages.setSaved(id, messageId, saved))

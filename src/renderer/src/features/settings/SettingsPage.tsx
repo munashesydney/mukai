@@ -26,12 +26,14 @@ export function SettingsPage({
   onProvidersChanged = () => {},
   workspace,
   onConnectFolder,
+  onDeleteWorkspace,
 }: {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
   onProvidersChanged?: () => void;
   workspace?: Workspace;
   onConnectFolder?: () => void;
+  onDeleteWorkspace?: (id: string, name: string) => Promise<void>;
 }) {
   return (
     <main className="settings-page" aria-label="Settings">
@@ -81,7 +83,11 @@ export function SettingsPage({
           tabIndex={0}
         >
           {section === 'workspace' ? (
-            <WorkspacePanel workspace={workspace} onConnectFolder={onConnectFolder} />
+            <WorkspacePanel
+              workspace={workspace}
+              onConnectFolder={onConnectFolder}
+              onDelete={onDeleteWorkspace}
+            />
           ) : section === 'appearance' ? (
             <AppearancePanel />
           ) : section === 'limits' ? (

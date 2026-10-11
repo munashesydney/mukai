@@ -40,6 +40,7 @@ export class PursuitService {
   private scheduler = new PursuitScheduler(() => this.limits().pursuitConcurrency);
   private timer: ReturnType<typeof setInterval> | undefined;
   private closing = false;
+  private deletingWorkspaces = new Set<string>();
   constructor(
     private repository: PursuitRepository,
     private bots: BotService,
@@ -67,6 +68,7 @@ export class PursuitService {
     return saved;
   }
   private enqueue(run: PursuitRun) {
+    if (this.deletingWorkspaces.has(run.snapshot.workspaceId)) return;
     const execution = new PursuitExecution(this.scheduler);
     this.executions.set(run.id, execution);
     const job = execution
@@ -258,6 +260,7 @@ export class PursuitService {
   }
   private launch(id: string, trigger: PursuitRun['trigger']) {
     const p = this.require(id);
+    if (this.deletingWorkspaces.has(p.workspaceId)) return null;
     if (!p.ownerBotId) {
       this.repository.setStatus(id, 'blocked', 'The owning bot was deleted.', this.now());
       return null;
@@ -418,6 +421,17 @@ export class PursuitService {
       this.now(),
       status === 'complete' && !error ? report : undefined,
     );
+  }
+  async stopWorkspace(id: string) {
+    this.deletingWorkspaces.add(id);
+    const jobs = [...this.jobs].filter(
+      ([runId]) => this.repository.findRun(runId)?.snapshot.workspaceId === id,
+    );
+    for (const [runId] of jobs) {
+      this.executions.get(runId)?.close();
+      this.chats.stopConversation(this.repository.findRun(runId)!.conversationId);
+    }
+    await Promise.allSettled(jobs.map(([, task]) => task));
   }
   async shutdown() {
     this.stopScheduling();

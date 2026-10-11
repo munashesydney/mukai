@@ -58,9 +58,15 @@ export async function executeBotManagement(
         },
         input.toolIds,
       );
+    } else if (input.action === 'get_last_message') {
+      if (!input.botId || !input.conversationId)
+        throw new Error('get_last_message requires botId and conversationId.');
+      result = context.management.getLastMessage(context.bot, input.botId, input.conversationId);
     } else {
-      if (!input.botId || !input.message)
-        throw new Error('send_message requires botId and message.');
+      if (!input.botId || !input.message || !input.mode)
+        throw new Error(
+          'send_message requires botId, message, and mode (fire_and_forget or wait).',
+        );
       result = await context.management.sendMessage(
         context.bot,
         input.botId,
@@ -73,10 +79,14 @@ export async function executeBotManagement(
           onStarted(value) {
             activity.delegation = value;
             activity.path = value.botName;
-            activity.summary = `Waiting for ${value.botName}’s response…`;
+            activity.summary =
+              input.mode === 'wait'
+                ? `Waiting for ${value.botName}’s response…`
+                : `Starting work for ${value.botName}…`;
             context.onActivity({ ...activity });
           },
         },
+        input.mode,
       );
     }
     context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });

@@ -219,6 +219,22 @@ export function createApiServer(options: ApiOptions = {}) {
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
     const desktops = new DesktopTransport();
+    computers.attachDisposalHandler((computer) => desktops.forget(computer));
+    attachments.attachDeletionGuard((id) => {
+      bots.require(id);
+    });
+    workspaces.attachDeletionHandler(async (id) => {
+      const botIds = botRepository.list(id).map((bot) => bot.id);
+      // Mark both schedulers stopped synchronously before awaiting cancellations.
+      const pursuitStop = pursuits.stopWorkspace(id);
+      const chatStop = chats.stopWorkspace(id, botIds);
+      const capabilityStop = capabilities.stopWorkspace(id);
+      await Promise.all([pursuitStop, chatStop, capabilityStop]);
+      approvals.forgetWorkspace(id, botIds);
+      await memory.stopWorkspace(id);
+      await processes.stopWorkspace(id);
+      await browsers.stopWorkspace(id);
+    });
     const route = createRoutes({
       notifications,
       desktops,
@@ -275,6 +291,7 @@ export function createApiServer(options: ApiOptions = {}) {
         await computers.shutdown();
         await browsers.shutdown();
         await desktop.shutdown();
+        await workspaces.waitForDeletions();
       })());
     server.on('close', () => {
       pursuits.stopScheduling();
@@ -310,6 +327,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
       processes,
       computers,
+      workspaces,
       capabilities,
       memory,
       skills,
@@ -325,6 +343,7 @@ export async function startApiServer(port = 0, options: ApiOptions = {}) {
   try {
     await api.computers.initialize();
     await api.capabilities.initialize();
+    await api.workspaces.resumeDeletions();
     await new Promise<void>((resolve, reject) => {
       api.server.once('error', reject);
       api.server.listen(port, '127.0.0.1', () => {

@@ -83,13 +83,7 @@ export function NavigationRail({
             <Plus size={21} />
           </button>
         )}
-        <button
-          className="rail-settings"
-          onClick={onSettings}
-          aria-label="Open settings"
-          disabled={!hasBots}
-          title={!hasBots ? 'Add your first bot to unlock settings' : undefined}
-        >
+        <button className="rail-settings" onClick={onSettings} aria-label="Open settings">
           <Settings size={21} strokeWidth={1.6} />
         </button>
       </div>

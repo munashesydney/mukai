@@ -556,8 +556,11 @@ export class QemuComputer implements Computer {
         await this.recoverBridge('guest request timeout').catch(() => {});
     }
   }
+  private disposed = false;
   async start() {
+    if (this.disposed) throw new Error('Workspace VM was disposed.');
     if (this.stopping) await this.stopping;
+    if (this.disposed) throw new Error('Workspace VM was disposed.');
     if (this.starting) return this.starting;
     if (this.state.state === 'running') return;
     // Failed transport is not failed startup. Never let startup cleanup kill an existing VM.
@@ -1084,6 +1087,7 @@ export class QemuComputer implements Computer {
     return this.stopping;
   }
   async shutdown() {
+    this.disposed = true;
     await this.stop('app shutdown');
     await this.starting?.catch(() => {});
     await this.stop('app shutdown');

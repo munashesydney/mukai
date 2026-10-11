@@ -1,13 +1,125 @@
+import { workspaceBrowserProfile } from '../browser/profile';
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
-import type { WorkspaceInput } from '../../shared/ai';
+import { lstat, realpath, rm } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, join, dirname, sep } from 'node:path';
+import type { WorkspaceInput, WorkspaceDeletionResult } from '../../shared/ai';
 import { ApiError } from '../config';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import type { ComputerManager } from '../computer/manager';
 import { DEFAULT_VM_RESOURCES, vmResourcesSchema, type VmResources } from '../../shared/computer';
 
 export class WorkspaceService {
+  private deletions = new Map<string, Promise<WorkspaceDeletionResult>>();
+  private stopWorkspace?: (id: string) => Promise<void>;
+  attachDeletionHandler(handler: (id: string) => Promise<void>) {
+    this.stopWorkspace = handler;
+  }
+  async waitForDeletions() {
+    await Promise.allSettled([...this.deletions.values()]);
+  }
+  async resumeDeletions() {
+    for (const workspace of this.list().filter((value) => value.deleting)) {
+      await this.remove(workspace.id).catch(() => {});
+    }
+  }
+  remove(id: string, confirmation?: string) {
+    const workspace = this.workspaces.find(id, true);
+    if (!workspace) throw new ApiError(404, 'Workspace not found.');
+    if (confirmation !== undefined && confirmation !== workspace.name)
+      throw new ApiError(400, 'Type the workspace name to confirm deletion.');
+    const existing = this.deletions.get(id);
+    if (existing) return existing;
+    if (!this.stopWorkspace) throw new ApiError(503, 'Workspace deletion is unavailable.');
+    // Persist ownership before removing files; retries retain the full cleanup list.
+    const files = this.workspaces.deletionFiles(id) || [
+      join('computers', id),
+      join('artifacts', 'screenshots', id),
+      join('browser-profiles', 'chrome', 'workspaces', workspaceBrowserProfile(id)),
+      ...this.workspaces
+        .ownedCapabilityVersions(id)
+        .map((version) => join('capabilities', version)),
+      ...this.workspaces.ownedFiles(id).map((name) => {
+        if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..')
+          throw new Error('Invalid stored upload name.');
+        return join('uploads', name);
+      }),
+    ];
+    const cacheKeys = this.workspaces.deletionCacheKeys(id);
+    this.workspaces.beginDeletion(id, files);
+    const operation = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all([this.stopWorkspace!(id), this.computers?.remove(workspace)]),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ApiError(409, 'Running work did not stop in time. Retry workspace deletion.'),
+                ),
+              60000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      for (const file of files) await this.removePrivateFile(file, id);
+      this.workspaces.remove(id);
+      return { deleted: true as const, ...cacheKeys };
+    })().finally(() => this.deletions.delete(id));
+    this.deletions.set(id, operation);
+    return operation;
+  }
+  private async removePrivateFile(file: string, id: string) {
+    const allowed = [
+      join('computers', id),
+      join('artifacts', 'screenshots', id),
+      join('browser-profiles', 'chrome', 'workspaces', workspaceBrowserProfile(id)),
+    ];
+    const upload = dirname(file) === 'uploads' && !isAbsolute(file);
+    const capability =
+      dirname(file) === 'capabilities' &&
+      /^[a-f0-9-]{36}$/i.test(file.slice('capabilities'.length + 1));
+    if (!allowed.includes(file) && !upload && !capability)
+      throw new Error('Invalid workspace cleanup path.');
+    const root = await realpath(this.dataDir);
+    const target = resolve(root, file);
+    const contained = (path: string) => {
+      const part = relative(root, path);
+      return !!part && !isAbsolute(part) && part !== '..' && !part.startsWith('..' + sep);
+    };
+    if (!contained(target)) throw new Error('Refusing cleanup outside private workspace storage.');
+    // A junction in an ancestor must never redirect cleanup into a project folder.
+    let ancestor = dirname(target);
+    while (ancestor !== root) {
+      try {
+        const actual = await realpath(ancestor);
+        const comparable = (path: string) =>
+          process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+        if (!contained(actual) || comparable(actual) !== comparable(ancestor))
+          throw new Error('Workspace storage is redirected by a junction or symlink.');
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        ancestor = dirname(ancestor);
+      }
+    }
+    try {
+      const info = await lstat(target);
+      // rm unlinks a symlink itself rather than recursively following its target.
+      await rm(target, {
+        recursive: info.isDirectory() && !info.isSymbolicLink(),
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
   constructor(
     private workspaces: WorkspaceRepository,
     private dataDir: string,

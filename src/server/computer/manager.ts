@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Workspace } from '../../shared/ai';
 import { DEFAULT_VM_RESOURCES, type ComputerStatus } from '../../shared/computer';
@@ -9,6 +10,11 @@ import type { DiagnosticService } from '../services/diagnosticService';
 export class ComputerManager {
   private computers = new Map<string, QemuComputer>();
   private closed = false;
+  private deleting = new Set<string>();
+  private onDisposing?: (computer: QemuComputer) => void;
+  attachDisposalHandler(handler: (computer: QemuComputer) => void) {
+    this.onDisposing = handler;
+  }
   readonly installer: ComputerSetupService;
   constructor(
     private dataDir: string,
@@ -24,6 +30,8 @@ export class ComputerManager {
     return this.installer.status();
   }
   guest(workspace: Workspace) {
+    if (this.deleting.has(workspace.id) || workspace.deleting)
+      throw new ApiError(409, 'Workspace is being deleted.');
     if (this.closed) throw new Error('Computers are shutting down.');
     if (workspace.computer !== 'qemu')
       throw new ApiError(400, 'This workspace uses the local machine.');
@@ -73,6 +81,32 @@ export class ComputerManager {
         ? result.value
         : { workspaceId: entries[index][0], outcome: 'failed' as const },
     );
+  }
+  async remove(workspace: Workspace) {
+    this.deleting.add(workspace.id);
+    const computer = this.computers.get(workspace.id);
+    if (computer) {
+      this.onDisposing?.(computer);
+      await computer.shutdown();
+    }
+    // After an app crash, never delete a disk still owned by an orphaned QEMU.
+    const pidFile = join(this.dataDir, 'computers', workspace.id, 'runtime.pid');
+    try {
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error('Invalid VM process record.');
+      try {
+        process.kill(pid, 0);
+        throw new ApiError(
+          409,
+          'A previous VM process is still running. Close it, then retry deletion.',
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    this.computers.delete(workspace.id);
   }
   async shutdown() {
     this.closed = true;

@@ -49,6 +49,7 @@ export class MemoryService {
   readonly embedding: BgeEmbedder;
   readonly reviews: MemoryReviewService;
   private controller = new AbortController();
+  private workspaceControllers = new Map<string, AbortController>();
   private processing?: Promise<void>;
   private modelTask?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
@@ -69,6 +70,19 @@ export class MemoryService {
     this.engine = new MemoryEngine(
       this.store,
       async (request) => {
+        this.workspaces.require(request.episode.workspaceId);
+        let controller = this.workspaceControllers.get(request.episode.workspaceId);
+        if (!controller) {
+          controller = new AbortController();
+          this.workspaceControllers.set(request.episode.workspaceId, controller);
+        }
+        request = {
+          ...request,
+          signal: request.signal
+            ? AbortSignal.any([request.signal, controller.signal])
+            : controller.signal,
+        };
+        request.signal?.throwIfAborted();
         const result = await (
           extractor ||
           (async ({ episode, candidates, signal }) => {
@@ -211,6 +225,8 @@ export class MemoryService {
             throw new Error('Memory extraction attempts exhausted.');
           })
         )(request);
+        request.signal?.throwIfAborted();
+        this.workspaces.require(request.episode.workspaceId);
         this.reviews?.describe(
           request.episode.id,
           'reviewSummary' in result && typeof result.reviewSummary === 'string'
@@ -228,7 +244,9 @@ export class MemoryService {
       this.store,
       this.engine,
       this.bots,
-      (workspaceId) => this.settings(workspaceId).automaticCapture,
+      (workspaceId) =>
+        this.workspaces.list().some((w) => w.id === workspaceId && !w.deleting) &&
+        this.settings(workspaceId).automaticCapture,
       reviewIdleMs,
       (scope, query) => this.searchScope(scope, query, { limit: 12 }),
     );
@@ -300,6 +318,7 @@ export class MemoryService {
   private async drainReviews() {
     const updated = await this.reviews.drain(this.controller.signal);
     for (const workspaceId of updated) {
+      if (!this.workspaces.list().some((w) => w.id === workspaceId && !w.deleting)) continue;
       if (this.embedding.ready && this.settings(workspaceId).semanticSearch) {
         try {
           await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
@@ -324,7 +343,7 @@ export class MemoryService {
     await this.drainReviews();
     const allowed = this.workspaces
       .list()
-      .filter((workspace) => this.settings(workspace.id).automaticCapture)
+      .filter((workspace) => !workspace.deleting && this.settings(workspace.id).automaticCapture)
       .map((workspace) => workspace.id);
     const rows = this.store
       .all(
@@ -337,7 +356,12 @@ export class MemoryService {
     for (const row of rows) {
       if (this.controller.signal.aborted) return;
       const workspaceId = row.workspaceId;
-      if (!this.workspaces.list().some((workspace) => workspace.id === workspaceId)) continue;
+      if (
+        !this.workspaces
+          .list()
+          .some((workspace) => workspace.id === workspaceId && !workspace.deleting)
+      )
+        continue;
       if (row.sourceType === 'user' && !this.settings(workspaceId).automaticCapture) continue;
       try {
         await this.engine.processEpisode(String(row.id), this.controller.signal);
@@ -535,6 +559,13 @@ export class MemoryService {
       workspaceId,
       facts.map((fact) => ({ ...fact, ownerId: null })),
     );
+  }
+  async stopWorkspace(id: string) {
+    this.workspaceControllers.get(id)?.abort();
+    // The persisted deleting flag excludes new reviews/extraction. Let current writes
+    // settle before the transaction removes their rows, including direct review requests.
+    await this.processing?.catch(() => {});
+    await this.reviews.waitForIdle();
   }
   async shutdown() {
     if (this.timer) clearInterval(this.timer);

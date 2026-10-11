@@ -103,3 +103,28 @@ it('enforces a background process lifetime', async () => {
   await service.wait(owner, run.id, 3000, signal());
   expect(service.read(owner, run.id).status).toBe('killed');
 });
+
+it('stops only a deleted workspace process tree and rejects later starts', async () => {
+  const other = { ...owner, workspaceId: 'other' };
+  const input = { command: command('setInterval(()=>{},1000)'), background: true };
+  await service.run(owner, folder, input, signal());
+  const keep = await service.run(other, folder, input, signal());
+  await service.stopWorkspace(owner.workspaceId);
+  expect(service.list(owner)).toEqual([]);
+  expect(service.read(other, keep.id).status).toBe('running');
+  await expect(service.run(owner, folder, input, signal())).rejects.toThrow('being deleted');
+  await service.kill(other, keep.id);
+});
+
+it('prevents a process still resolving its working directory from starting during deletion', async () => {
+  const opening = service.run(
+    owner,
+    folder,
+    { command: command('setInterval(()=>{},1000)'), background: true },
+    signal(),
+  );
+  const failed = expect(opening).rejects.toThrow('being deleted');
+  await service.stopWorkspace(owner.workspaceId);
+  await failed;
+  expect(service.list(owner)).toEqual([]);
+});

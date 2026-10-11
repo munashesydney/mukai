@@ -39,6 +39,7 @@ export class BotService {
   require(id: string) {
     const bot = this.bots.find(id);
     if (!bot) throw new ApiError(404, 'Bot not found.');
+    this.workspaces.find(bot.workspaceId);
     return bot;
   }
   save(

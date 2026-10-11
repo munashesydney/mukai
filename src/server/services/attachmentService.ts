@@ -59,6 +59,10 @@ async function checkDocx(buffer: Buffer) {
   });
 }
 export class AttachmentService {
+  private deletionGuard?: (botId: string) => void;
+  attachDeletionGuard(guard: (botId: string) => void) {
+    this.deletionGuard = guard;
+  }
   constructor(
     private attachments: AttachmentRepository,
     private bots: BotRepository,
@@ -162,6 +166,7 @@ export class AttachmentService {
       warning = `${warning ? warning + ' ' : ''}Only the first ${TEXT_LIMIT.toLocaleString()} characters are sent to the model.`;
       text = text.slice(0, TEXT_LIMIT);
     }
+    this.deletionGuard?.(botId);
     if (!this.bots.find(botId)) throw new ApiError(404, 'Bot not found.');
     if (this.attachments.pendingCount(botId, conversationId) >= ATTACHMENT_LIMIT)
       throw new ApiError(400, 'Remove unused attachments before uploading more.');

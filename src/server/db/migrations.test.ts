@@ -20,10 +20,15 @@ describe('Existing database upgrades', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
     db.exec('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
-    migrations.slice(0, -1).forEach((sql, index) => {
-      db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
-    });
+    migrations
+      .slice(
+        0,
+        migrations.findIndex((sql) => sql.includes('ADD COLUMN vm_memory_mib')),
+      )
+      .forEach((sql, index) => {
+        db.exec(sql);
+        db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
+      });
     db.exec(
       "INSERT INTO workspaces(id,name,folder,created_at,computer) VALUES('vm','My computer',NULL,'2026-10-01','qemu')",
     );

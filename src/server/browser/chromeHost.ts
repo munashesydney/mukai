@@ -295,6 +295,15 @@ export class ChromeHost {
       await marker?.close();
     }
   }
+  async stopWorkspace(id: string) {
+    // Main Chrome is shared with the user. BrowserService closes only owned tabs there.
+    if (this.mainProfile) return;
+    const key = workspaceBrowserProfile(id);
+    await this.operations.get(key)?.catch(() => {});
+    const context = this.contexts.get(key);
+    if (context) await this.closeContext(await context);
+    this.contexts.delete(key);
+  }
   async shutdown() {
     this.closed = true;
     await Promise.allSettled([...this.operations.values()]);
