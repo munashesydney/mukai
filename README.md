@@ -160,6 +160,22 @@ Integration tests use the actual AI SDK against a **test-only local OpenAI proto
 ```sh
 npm run package     # Unpacked desktop app in release/
 npm run dist        # Platform installer
+npm run dist:win    # Windows x64 setup wizard (local build, never publishes)
+npm run test:packaged # Smoke-test the packaged app with disposable data
 ```
+
+The Windows installer is written to `release/Mukai-Setup-<version>-x64.exe`. It
+installs for the current Windows user, with a welcome page, installation folder
+selection, an optional desktop shortcut, progress, and an option to launch Mukai
+on the Finish page. A Start menu shortcut and Windows Installed apps entry are
+created automatically. Uninstalling keeps saved Mukai data so reinstalling can
+reuse it. The installer bundles Electron/Node and works without a separate Node
+installation or a running development server; AI providers and optional downloads
+still need their usual network access and setup.
+
+For a local test, close any development copy of Mukai before launching the
+installed app: both use port 47831. Check first launch, workspace folder selection,
+provider setup/chat, saved settings after restarting, shortcuts, and uninstall.
+The local build is unsigned, so Windows may show an unknown-publisher warning.
 
 Public distribution still needs signing/notarization, updates, and release CI. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling runs while the local backend is running.
