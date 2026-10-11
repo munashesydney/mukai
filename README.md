@@ -178,4 +178,33 @@ installed app: both use port 47831. Check first launch, workspace folder selecti
 provider setup/chat, saved settings after restarting, shortcuts, and uninstall.
 The local build is unsigned, so Windows may show an unknown-publisher warning.
 
-Public distribution still needs signing/notarization, updates, and release CI. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling runs while the local backend is running.
+## Automated desktop releases
+
+`.github/workflows/release.yml` builds Windows x64, macOS Intel/Apple Silicon,
+and Linux x64 on their native GitHub runners. Pull requests build and smoke-test
+all four packages without publishing. Every successful push to `main` publishes
+all installers and `SHA256SUMS.txt` together in a GitHub Release. Failed checks,
+missing packages, failed uploads, and superseded commits do not replace the latest
+published release. A failed upload can leave a draft release for diagnosis.
+
+Builds use `<package version>-build.<workflow run number>.<attempt>` so every
+release has distinct filenames and a traceable version. This version is applied
+only in CI; the source package and lockfile are not committed by the workflow.
+The workflow uses its own repository's `GITHUB_TOKEN`, with write permission only
+in the publish job. No personal access token or cross-repository secret is needed.
+Keep this repository public for unauthenticated website downloads.
+
+The separate `mukai-web` repository reads the latest published release at runtime
+and refreshes its download buttons within approximately one minute, without a
+website commit or rebuild. The website repository can remain private. Deploy
+its release-download integration once to enable this behavior.
+
+Actions can also run the **Desktop release** workflow manually: builds always run,
+and the **publish** checkbox allows publishing only when the selected branch is
+`main`. Signing and Apple notarization are deferred; macOS packages use ad-hoc
+signing for local runtime compatibility. Verified publisher signing can be added
+to the packaging steps later without changing where downloads are hosted.
+
+Public distribution still needs verified signing/notarization and installed-app
+updates. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
+runs while the local backend is running.

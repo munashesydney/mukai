@@ -24,8 +24,14 @@ async function workspaceRequest(page: Page, folder?: string) {
 }
 
 async function main() {
-  const executablePath = resolve(process.argv[2] || 'release/win-unpacked/Mukai.exe');
-  assert.ok(existsSync(executablePath), 'Build the Windows package first with npm run dist:win.');
+  const defaultExecutable =
+    process.platform === 'win32'
+      ? 'release/win-unpacked/Mukai.exe'
+      : process.platform === 'darwin'
+        ? `release/mac${process.arch === 'arm64' ? '-arm64' : ''}/Mukai.app/Contents/MacOS/Mukai`
+        : 'release/linux-unpacked/mukai';
+  const executablePath = resolve(process.argv[2] || defaultExecutable);
+  assert.ok(existsSync(executablePath), 'Build the desktop package first.');
   // Refuse to collide with a development or installed copy of Mukai.
   await new Promise<void>((done, reject) => {
     const probe = createServer();
@@ -81,8 +87,14 @@ async function main() {
       ) as typeof import('node:path');
       const { existsSync } = process.getBuiltinModule('node:fs') as typeof import('node:fs');
       const packagedRequire = createRequire(join(app.getAppPath(), 'package.json'));
+      const helper =
+        process.platform === 'win32'
+          ? 'windows.ps1'
+          : process.platform === 'darwin'
+            ? 'macos'
+            : 'linux.py';
       for (const resource of [
-        'computer_use/windows.ps1',
+        `computer_use/${helper}`,
         'guest/guest.cjs',
         'guest/guest-worker.cjs',
       ])

@@ -38,6 +38,7 @@
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "test:packaged": "tsx scripts/run-packaged-smoke.ts",
+    "test:release": "tsx --test scripts/release.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
@@ -96,6 +97,7 @@
   "build": {
     "appId": "com.mukai.desktop",
     "productName": "Mukai",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "icon": "src/renderer/public/mukai-logo.png",
     "directories": {
       "output": "release"
