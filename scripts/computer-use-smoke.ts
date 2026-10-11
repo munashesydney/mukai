@@ -34,7 +34,11 @@ void app.whenReady().then(async () => {
       <button id="button" style="position:absolute;left:500px;top:24px;width:130px;height:50px" onclick="this.textContent='Clicked'">Click me</button>
       <div id="scroll" style="position:absolute;left:24px;top:180px;width:440px;height:230px;overflow:auto"><div style="height:1500px;background:linear-gradient(#acd,#456)">Scroll target</div></div>
       <div id="drag" style="position:absolute;left:500px;top:180px;width:120px;height:100px;background:#79b">Drag target</div>
-      <script>let start; const drag=document.getElementById('drag'); drag.addEventListener('pointerdown',e=>{start=[e.clientX,e.clientY];drag.setPointerCapture(e.pointerId)});drag.addEventListener('pointerup',e=>{if(start&&Math.hypot(e.clientX-start[0],e.clientY-start[1])>10)drag.dataset.dragged='yes'});</script>
+      <script>
+      window.smokeEvents=[];
+      for(const type of ['pointerdown','pointermove','pointerup','pointercancel','dragstart'])document.addEventListener(type,e=>window.smokeEvents.push({type,target:e.target.id,x:e.clientX,y:e.clientY,buttons:e.buttons}));
+      let start; const drag=document.getElementById('drag'); drag.addEventListener('pointerdown',e=>{start=[e.clientX,e.clientY];drag.setPointerCapture(e.pointerId)});drag.addEventListener('pointerup',e=>{if(start&&Math.hypot(e.clientX-start[0],e.clientY-start[1])>10)drag.dataset.dragged='yes'});
+      </script>
       </body></html>`),
     );
     window.show();
@@ -91,9 +95,14 @@ void app.whenReady().then(async () => {
     assert.ok(Number(await evaluate("document.getElementById('scroll').scrollTop")) > 0);
     const start = point(550, 210),
       end = point(600, 250);
+    await evaluate('window.smokeEvents=[]');
     await run({ action: 'drag', ...start, endX: end.x, endY: end.y, durationMs: 300 });
     await delay(100);
-    assert.equal(await evaluate("document.getElementById('drag').dataset.dragged"), 'yes');
+    assert.equal(
+      await evaluate("document.getElementById('drag').dataset.dragged"),
+      'yes',
+      JSON.stringify(await evaluate('window.smokeEvents')),
+    );
     console.log(
       'Native screenshot, click, Unicode text, shortcut, key hold, scroll and drag passed.',
     );
