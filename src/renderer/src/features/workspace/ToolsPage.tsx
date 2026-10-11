@@ -44,7 +44,7 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
     return 'Runs inside the workspace Linux VM';
   if (vm && tool.id.startsWith('register_custom_')) return 'Unavailable in VM v1';
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
-  if (tool.id === 'memory') return 'Workspace memories · Private memories stay with their bot';
+  if (tool.id === 'memory') return 'Workspace memories · Shared by every bot in this workspace';
   if (tool.id === 'communicate') return 'Questions, approvals and autonomous updates';
   if (tool.id === 'conversations') return 'Workspace conversation and message history';
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';

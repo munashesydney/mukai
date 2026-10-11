@@ -378,7 +378,7 @@ describe('Mukai memory integration', () => {
     api.store.run("UPDATE messages SET status='complete' WHERE role='assistant'");
     await worker.drain(new AbortController().signal);
     const run = worker.list('default')[0];
-    expect(run).toMatchObject({ status: 'complete', ownerId: 'scout', kind: 'private' });
+    expect(run).toMatchObject({ status: 'complete', ownerId: null, kind: 'private' });
     expect(run.messageIds).toHaveLength(2);
     expect(run.activity.map((activity) => activity.action)).toEqual(['review', 'search', 'add']);
     const episode = api.memory.snapshot('default').episodes[0];
@@ -455,17 +455,18 @@ describe('Mukai memory integration', () => {
     expect(add).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
     expect(forget).not.toHaveBeenCalled();
-    for (const scope of ['private', 'workspace'] as const) {
-      expect(
-        await invoke({ action: 'add', content: 'User prefers espresso.', scope }),
-      ).toMatchObject({ ok: true });
-      expect(add.mock.calls.at(-1)?.[4]).toBe(scope === 'workspace');
+    for (let index = 0; index < 2; index++) {
+      expect(await invoke({ action: 'add', content: 'User prefers espresso.' })).toMatchObject({
+        ok: true,
+      });
+      expect(add.mock.calls.at(-1)?.[4]).toMatch(/^tool:memory-action-check:/);
     }
+    expect(memoryDefinition.inputSchema.shape).not.toHaveProperty('scope');
     const asOf = '2026-02-15T12:00:00Z';
     expect(
       await invoke({ action: 'search', query: 'espresso', limit: 7, asOf, includeHistory: true }),
     ).toMatchObject({ ok: true });
-    expect(search).toHaveBeenCalledWith(bot, 'bot-scout', 'espresso', {
+    expect(search).toHaveBeenCalledWith(bot, 'espresso', {
       limit: 7,
       asOf,
       includeHistory: true,
@@ -475,7 +476,7 @@ describe('Mukai memory integration', () => {
       ok: true,
       result: { forgotten: true },
     });
-    expect(forget).toHaveBeenCalledWith(api.memory.scope(bot, 'bot-scout'), memoryId);
+    expect(forget).toHaveBeenCalledWith(api.memory.scope(bot), memoryId);
     expect(
       activities
         .filter((activity) => activity.status === 'complete')
@@ -520,17 +521,17 @@ describe('Mukai memory integration', () => {
     }
     expect(
       await tools.memory.execute!(
-        { action: 'add', content: 'MEMTEST-03 private investigation result.', scope: 'private' },
+        { action: 'add', content: 'MEMTEST-03 investigation result.' },
         { toolCallId: 'write-after-searches', messages: [], context: {} },
       ),
     ).toMatchObject({ ok: true });
     expect(search).toHaveBeenCalledTimes(13);
     expect(add).toHaveBeenCalledOnce();
   });
-  it('captures private facts, automatically recalls them, and records actual supplied facts', async () => {
+  it('captures facts from private chats in workspace memory and automatically recalls them', async () => {
     await chat('I prefer espresso every morning.');
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
-    expect(api.memory.snapshot('default').facts[0].ownerId).toBe('scout');
+    expect(api.memory.snapshot('default').facts[0].ownerId).toBeNull();
     await chat('What coffee do I like?');
     const latest = calls.filter((call) => call.stream).at(-1)!;
     expect(JSON.stringify(latest.messages)).toContain('User prefers espresso every morning.');
@@ -541,7 +542,7 @@ describe('Mukai memory integration', () => {
         .map((tool) => tool.function.name),
     ).toEqual(['memory']);
     // Memory guidance lives in the assigned tool description, avoiding duplicate system context.
-    expect(JSON.stringify(latest.tools)).toContain('add requires content and scope');
+    expect(JSON.stringify(latest.tools)).toContain('add requires content:');
     expect(JSON.stringify(latest.tools)).toContain('search requires query');
     expect(JSON.stringify(latest.tools)).toContain('forget requires memoryId');
     const snapshot = (await request<MemorySnapshot>('/memory')).data;
@@ -571,17 +572,50 @@ describe('Mukai memory integration', () => {
       forget: 2,
     });
   });
-  it('does not inject private memories into shared spaces or another workspace', async () => {
+  it('shares memories across bots and chats while keeping workspaces isolated', async () => {
     await chat('I prefer espresso every morning.');
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const bot = (await request<Bot[]>('/bots')).data[0];
-    expect(await api.memory.search(bot, 'shared-space', 'espresso', {})).toHaveLength(0);
+    expect(await api.memory.search(bot, 'espresso', {})).toHaveLength(1);
+    const otherBot = { ...bot, id: 'other-bot' };
+    expect(await api.memory.search(otherBot, 'espresso', {})).toHaveLength(1);
+    // Older memories retain their provenance but are also shared across bots.
+    api.memory.store.run("UPDATE memory_facts SET owner_id='scout'");
+    expect(await api.memory.search(otherBot, 'espresso', {})).toHaveLength(1);
+    const user = api.store.get("SELECT id FROM messages WHERE role='user' LIMIT 1")!;
+    expect(
+      await api.memory.recall(otherBot, 'bot-scout', String(user.id), 'other-bot-recall', 4096),
+    ).toContain('User prefers espresso every morning.');
     api.store.run(
       "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other','Other',NULL,'now')",
     );
     const snapshot = (await request<MemorySnapshot>('/memory?workspaceId=other')).data;
     expect(snapshot.facts).toHaveLength(0);
     expect(snapshot.recalls).toHaveLength(0);
+    expect(
+      await api.memory.search({ ...otherBot, workspaceId: 'other' }, 'espresso', {}),
+    ).toHaveLength(0);
+  });
+  it('saves explicit tool memories to the workspace without a scope choice', async () => {
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    const tools = memoryTools({
+      bot,
+      conversationId: 'bot-scout',
+      messageId: 'shared-memory-write',
+      memory: api.memory,
+      signal: new AbortController().signal,
+      onActivity: () => {},
+    });
+    expect(
+      await tools.memory.execute!(
+        { action: 'add', content: 'User prefers espresso.' },
+        { toolCallId: 'shared-write', messages: [], context: {} },
+      ),
+    ).toMatchObject({ ok: true });
+    const snapshot = api.memory.snapshot('default');
+    expect(snapshot.facts[0].ownerId).toBeNull();
+    expect(snapshot.episodes[0].ownerId).toBeNull();
+    expect(await api.memory.search({ ...bot, id: 'other-bot' }, 'espresso', {})).toHaveLength(1);
   });
   it('honors controls and survives restart without replay', async () => {
     const first = await chat('I prefer espresso every morning.');
