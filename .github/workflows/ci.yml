@@ -47,3 +47,6 @@ jobs:
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - if: runner.os == 'Linux'
         run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a sh -c 'openbox >/tmp/mukai-openbox.log 2>&1 & npm run test:computer-use -- --interactive'
+      - name: Show window manager diagnostics
+        if: failure() && runner.os == 'Linux'
+        run: cat /tmp/mukai-openbox.log

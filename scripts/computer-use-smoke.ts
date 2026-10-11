@@ -36,7 +36,7 @@ void app.whenReady().then(async () => {
       <div id="drag" style="position:absolute;left:500px;top:180px;width:120px;height:100px;background:#79b">Drag target</div>
       <script>
       window.smokeEvents=[];
-      for(const type of ['pointerdown','pointermove','pointerup','pointercancel','dragstart'])document.addEventListener(type,e=>window.smokeEvents.push({type,target:e.target.id,x:e.clientX,y:e.clientY,buttons:e.buttons}));
+      for(const type of ['pointerdown','pointermove','pointerup','pointercancel','dragstart','wheel'])document.addEventListener(type,e=>window.smokeEvents.push({type,target:e.target.id,x:e.clientX,y:e.clientY,buttons:e.buttons,alt:e.altKey,ctrl:e.ctrlKey,shift:e.shiftKey,meta:e.metaKey}),true);
       let start; const drag=document.getElementById('drag'); drag.addEventListener('pointerdown',e=>{start=[e.clientX,e.clientY];drag.setPointerCapture(e.pointerId)});drag.addEventListener('pointerup',e=>{if(start&&Math.hypot(e.clientX-start[0],e.clientY-start[1])>10)drag.dataset.dragged='yes'});
       </script>
       </body></html>`),
@@ -64,6 +64,13 @@ void app.whenReady().then(async () => {
     });
     const evaluate = (code: string) =>
       window.webContents.executeJavaScript(code) as Promise<unknown>;
+    const diagnostics = async () =>
+      JSON.stringify({
+        events: await evaluate('window.smokeEvents'),
+        originalBounds: bounds,
+        currentBounds: window.getContentBounds(),
+        cursor: await run({ action: 'cursor' }),
+      });
     await mkdir(resolve('artifacts/computer_use'), { recursive: true });
     await writeFile(
       resolve('artifacts/computer_use/interactive-screen.png'),
@@ -90,9 +97,13 @@ void app.whenReady().then(async () => {
     assert.equal(await evaluate("document.getElementById('text').value"), 'replaced');
     await run({ action: 'key_down', key: 'SHIFT' });
     await run({ action: 'key_up', key: 'SHIFT' });
+    await evaluate('window.smokeEvents=[]');
     await run({ action: 'scroll', ...point(200, 280), direction: 'down', pixels: 650 });
     await delay(200);
-    assert.ok(Number(await evaluate("document.getElementById('scroll').scrollTop")) > 0);
+    assert.ok(
+      Number(await evaluate("document.getElementById('scroll').scrollTop")) > 0,
+      await diagnostics(),
+    );
     const start = point(550, 210),
       end = point(600, 250);
     await evaluate('window.smokeEvents=[]');
@@ -101,7 +112,7 @@ void app.whenReady().then(async () => {
     assert.equal(
       await evaluate("document.getElementById('drag').dataset.dragged"),
       'yes',
-      JSON.stringify(await evaluate('window.smokeEvents')),
+      await diagnostics(),
     );
     console.log(
       'Native screenshot, click, Unicode text, shortcut, key hold, scroll and drag passed.',
