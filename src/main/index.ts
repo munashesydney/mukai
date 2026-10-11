@@ -13,6 +13,8 @@ let quitting = false;
 const embeddedBrowser = new MukaiBrowserHost();
 const appWindows = new Set<number>();
 
+if (process.platform === 'win32') app.setAppUserModelId('com.mukai.desktop');
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1480,

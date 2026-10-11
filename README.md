@@ -160,6 +160,59 @@ Integration tests use the actual AI SDK against a **test-only local OpenAI proto
 ```sh
 npm run package     # Unpacked desktop app in release/
 npm run dist        # Platform installer
+npm run dist:win    # Windows x64 setup wizard (local build, never publishes)
+npm run test:packaged # Smoke-test the packaged app with disposable data
 ```
 
-Public distribution still needs signing/notarization, updates, and release CI. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling runs while the local backend is running.
+The Windows installer is written to `release/Mukai-Setup-<version>-x64.exe`. It
+installs for the current Windows user, with a welcome page, installation folder
+selection, an optional desktop shortcut, progress, and an option to launch Mukai
+on the Finish page. A Start menu shortcut and Windows Installed apps entry are
+created automatically. Uninstalling keeps saved Mukai data so reinstalling can
+reuse it. The installer bundles Electron/Node and works without a separate Node
+installation or a running development server; AI providers and optional downloads
+still need their usual network access and setup.
+
+For a local test, close any development copy of Mukai before launching the
+installed app: both use port 47831. Check first launch, workspace folder selection,
+provider setup/chat, saved settings after restarting, shortcuts, and uninstall.
+The local build is unsigned, so Windows may show an unknown-publisher warning.
+
+## Automated desktop releases
+
+`.github/workflows/release.yml` builds Windows x64, macOS Intel/Apple Silicon,
+and Linux x64 on their native GitHub runners. Pull requests build and smoke-test
+all four packages without publishing, then validates the real installer filenames,
+sizes, and checksums together. Every successful push to `main` publishes
+all installers and `SHA256SUMS.txt` together in a GitHub Release. Failed checks,
+missing packages, failed uploads, and superseded commits do not replace the latest
+published release. A failed upload can leave a draft release for diagnosis.
+
+Builds use `<package version>-build.<workflow run number>.<attempt>` so every
+release has distinct filenames and a traceable version. This version is applied
+only in CI; the source package and lockfile are not committed by the workflow.
+The workflow uses its own repository's `GITHUB_TOKEN`, with write permission only
+in the publish job. No personal access token or cross-repository secret is needed.
+Keep this repository public for unauthenticated website downloads.
+
+The separate `mukai-web` repository reads the latest published release at runtime
+and refreshes its download buttons within approximately two minutes, without a
+website commit or rebuild. The website repository can remain private. Deploy
+its release-download integration once to enable this behavior.
+
+`onnxruntime-node` is overridden to `1.23.2`, which includes Intel macOS native
+binaries. The `1.30.0` dependency supplied by Transformers lacks `darwin/x64`
+binaries. Keep this compatibility pin until upstream restores that platform;
+packaged smoke checks run actual CPU inference and load Transformers on all
+four targets. The application's quantized BGE embedding and cached offline
+inference have also been verified with this version.
+
+Actions can also run the **Desktop release** workflow manually: builds always run,
+and the **publish** checkbox allows publishing only when the selected branch is
+`main`. Signing and Apple notarization are deferred; macOS packages use ad-hoc
+signing for local runtime compatibility. Verified publisher signing can be added
+to the packaging steps later without changing where downloads are hosted.
+
+Public distribution still needs verified signing/notarization and installed-app
+updates. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
+runs while the local backend is running.

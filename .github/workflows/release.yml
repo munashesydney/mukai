@@ -1,0 +1,181 @@
+name: Desktop release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after successful builds (main branch only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - id: version
+        name: Choose a unique build version
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, appendFileSync } from "node:fs";
+            const base = JSON.parse(readFileSync("package.json", "utf8")).version.split(/[+-]/)[0];
+            const version = `${base}-build.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`;
+            appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          '
+
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run test:release
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+          - os: macos-15
+            platform: mac
+            arch: arm64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Apply build version in this checkout only
+        shell: bash
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            for (const file of ["package.json", "package-lock.json"]) {
+              const data = JSON.parse(readFileSync(file, "utf8"));
+              data.version = process.env.RELEASE_VERSION;
+              if (data.packages?.[""]) data.packages[""].version = data.version;
+              writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+            }
+          '
+      - name: Install Linux packaging and display dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfuse2t64 xvfb dbus-x11 python3 libx11-6 libxtst6 libxrandr2
+      - run: npm run build
+      - name: Package Windows or Linux
+        if: runner.os != 'macOS'
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Package macOS with local ad-hoc signing
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.identity=- -c.mac.notarize=false
+      - name: Smoke-test packaged Windows or macOS app
+        if: runner.os != 'Linux'
+        run: npm run test:packaged
+      - name: Smoke-test packaged Linux app
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          xvfb-run -a dbus-run-session -- npm run test:packaged
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/Mukai-Setup-*.exe
+            release/Mukai-*.dmg
+            release/Mukai-*.AppImage
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: smoke-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            artifacts/packaged-smoke-*/failure.png
+            artifacts/packaged-smoke-*/result.json
+          if-no-files-found: ignore
+
+  verify-artifacts:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Verify real installer filenames, sizes, and checksums
+        run: |
+          node --experimental-strip-types --input-type=module -e '
+            import { verifyInstallers } from "./scripts/release.ts";
+            await verifyInstallers("release-artifacts", process.env.RELEASE_VERSION);
+          '
+
+  publish:
+    needs: [prepare, checks, build, verify-artifacts]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Publish all installers atomically
+        run: npx tsx scripts/release.ts release-artifacts

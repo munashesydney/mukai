@@ -36,6 +36,9 @@
     "start:server": "node dist/server/src/server/index.js",
     "package": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "test:packaged": "tsx scripts/run-packaged-smoke.ts",
+    "test:release": "tsx --test scripts/release.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
@@ -91,9 +94,13 @@
     "vite": "^7.1.0",
     "vitest": "^5.0.3"
   },
+  "overrides": {
+    "onnxruntime-node": "1.23.2"
+  },
   "build": {
     "appId": "com.mukai.desktop",
     "productName": "Mukai",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "icon": "src/renderer/public/mukai-logo.png",
     "directories": {
       "output": "release"
@@ -130,6 +137,17 @@
     ],
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "include": "build/installer.nsh",
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "mac": {
       "target": "dmg",
