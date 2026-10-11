@@ -107,7 +107,38 @@ async function main() {
         .png()
         .toBuffer();
       if (image.length === 0) throw new Error('Bundled sharp failed.');
-      packagedRequire('onnxruntime-node');
+      // Resolve from Transformers too: npm may nest the compatibility override.
+      const transformerPath = packagedRequire.resolve('@huggingface/transformers');
+      const transformerRequire = createRequire(transformerPath);
+      const ort = transformerRequire('onnxruntime-node') as {
+        Tensor: new (type: string, data: Float32Array, dims: number[]) => unknown;
+        InferenceSession: {
+          create: (
+            model: Buffer,
+            options: { executionProviders: string[] },
+          ) => Promise<{
+            run: (inputs: Record<string, unknown>) => Promise<{ y: { data: Float32Array } }>;
+            release: () => Promise<void>;
+          }>;
+        };
+      };
+      // Hand-authored ONNX Identity graph: float32[2] x -> y, opset 13, IR 7.
+      const model = Buffer.from(
+        'CAc6OwoQCgF4EgF5IghJZGVudGl0eRIFc21va2VaDwoBeBIKCggIARIECgIIAmIPCgF5EgoKCAgBEgQKAggCQgIQDQ==',
+        'base64',
+      );
+      const session = await ort.InferenceSession.create(model, { executionProviders: ['cpu'] });
+      try {
+        const result = await session.run({
+          x: new ort.Tensor('float32', new Float32Array([1, 2]), [2]),
+        });
+        if (result.y.data[0] !== 1 || result.y.data[1] !== 2)
+          throw new Error('Bundled ONNX inference failed.');
+      } finally {
+        await session.release();
+      }
+      if (typeof packagedRequire('@huggingface/transformers').pipeline !== 'function')
+        throw new Error('Bundled Transformers failed to load.');
       const platformPackage = packagedRequire.resolve(
         `@esbuild/${process.platform}-${process.arch}/package.json`,
       );

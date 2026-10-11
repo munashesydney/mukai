@@ -199,6 +199,13 @@ and refreshes its download buttons within approximately two minutes, without a
 website commit or rebuild. The website repository can remain private. Deploy
 its release-download integration once to enable this behavior.
 
+`onnxruntime-node` is overridden to `1.23.2`, which includes Intel macOS native
+binaries. The `1.30.0` dependency supplied by Transformers lacks `darwin/x64`
+binaries. Keep this compatibility pin until upstream restores that platform;
+packaged smoke checks run actual CPU inference and load Transformers on all
+four targets. The application's quantized BGE embedding and cached offline
+inference have also been verified with this version.
+
 Actions can also run the **Desktop release** workflow manually: builds always run,
 and the **publish** checkbox allows publishing only when the selected branch is
 `main`. Signing and Apple notarization are deferred; macOS packages use ad-hoc
