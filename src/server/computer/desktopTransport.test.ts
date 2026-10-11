@@ -11,8 +11,12 @@ let upstream: ReturnType<typeof createTcpServer>;
 let url: string;
 let connection: { port: number; password: string };
 let computer: QemuComputer;
+let upstreamErrors: NodeJS.ErrnoException[];
 beforeEach(async () => {
+  upstreamErrors = [];
   upstream = createTcpServer((socket) => {
+    // Revoking a viewer can reset the fixture's TCP connection during its greeting.
+    socket.on('error', (error: NodeJS.ErrnoException) => upstreamErrors.push(error));
     socket.write('RFB fixture');
     socket.on('data', (bytes) => socket.write(bytes));
   });
@@ -35,6 +39,7 @@ afterEach(async () => {
     new Promise<void>((resolve) => server.close(() => resolve())),
     new Promise<void>((resolve) => upstream.close(() => resolve())),
   ]);
+  for (const error of upstreamErrors) expect(error.code).toBe('ECONNRESET');
 });
 async function denied(path: string, origin?: string) {
   const socket = new WebSocket(url + path, { origin });
