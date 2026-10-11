@@ -23,7 +23,12 @@ async function main() {
       delete env.ELECTRON_RUN_AS_NODE;
       const require = createRequire(resolve('package.json'));
       await new Promise<void>((done, reject) => {
-        const child = spawn(require('electron') as string, [bundle], {
+        // GTK and the display backend initialize before the smoke script runs.
+        const switches =
+          process.platform === 'linux' && env.XDG_SESSION_TYPE === 'x11'
+            ? ['--ozone-platform=x11', '--gtk-version=3']
+            : [];
+        const child = spawn(require('electron') as string, [...switches, bundle], {
           env,
           stdio: 'inherit',
           windowsHide: false,
