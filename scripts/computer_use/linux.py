@@ -180,6 +180,20 @@ class X11Desktop:
         if not down:
             self.held.discard(name)
 
+    def map_text_keys(self, assigned, per):
+        # Each mapping request makes window managers rebuild their key bindings.
+        # Batch adjacent unused codes without touching mapped codes in the gaps.
+        codes = sorted(assigned)
+        offset = 0
+        while offset < len(codes):
+            end = offset + 1
+            while end < len(codes) and codes[end] == codes[end - 1] + 1:
+                end += 1
+            symbols = (C.c_ulong * ((end - offset) * per))(
+                *(assigned[code] for code in codes[offset:end] for _ in range(per)))
+            self.x.XChangeKeyboardMapping(self.display, codes[offset], per, symbols, end - offset)
+            offset = end
+
     def type(self, text):
         minimum, maximum, per = C.c_int(), C.c_int(), C.c_int()
         self.x.XDisplayKeycodes(self.display, C.byref(minimum), C.byref(maximum))
@@ -208,9 +222,7 @@ class X11Desktop:
             try:
                 # Keep every glyph's mapping stable throughout the batch. Rebinding
                 # one code per character races the application's keyboard-map cache.
-                for symbol, code in assigned.items():
-                    symbols = (C.c_ulong * per.value)(*[symbol] * per.value)
-                    self.x.XChangeKeyboardMapping(self.display, code, per.value, symbols, 1)
+                self.map_text_keys({code: symbol for symbol, code in assigned.items()}, per.value)
                 self.x.XSync(self.display, 0)
                 time.sleep(0.01)
                 for character in text[offset:end]:
@@ -222,10 +234,9 @@ class X11Desktop:
                 self.x.XSync(self.display, 0)
                 time.sleep(0.1)
             finally:
-                original = (C.c_ulong * per.value)(*[0] * per.value)
                 for code in assigned.values():
                     self.test.XTestFakeKeyEvent(self.display, code, 0, 0)
-                    self.x.XChangeKeyboardMapping(self.display, code, per.value, original, 1)
+                self.map_text_keys({code: 0 for code in assigned.values()}, per.value)
                 self.x.XSync(self.display, 0)
             offset = end
 
