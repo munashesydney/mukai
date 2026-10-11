@@ -71,6 +71,13 @@ void app.whenReady().then(async () => {
         currentBounds: window.getContentBounds(),
         cursor: await run({ action: 'cursor' }),
       });
+    const waitFor = async (condition: string, message: string) => {
+      const deadline = Date.now() + 5000;
+      while (!(await evaluate(condition))) {
+        if (Date.now() >= deadline) assert.fail(`${message} ${await diagnostics()}`);
+        await delay(50);
+      }
+    };
     await mkdir(resolve('artifacts/computer_use'), { recursive: true });
     await writeFile(
       resolve('artifacts/computer_use/interactive-screen.png'),
@@ -99,20 +106,17 @@ void app.whenReady().then(async () => {
     await run({ action: 'key_up', key: 'SHIFT' });
     await evaluate('window.smokeEvents=[]');
     await run({ action: 'scroll', ...point(200, 280), direction: 'down', pixels: 650 });
-    await delay(200);
-    assert.ok(
-      Number(await evaluate("document.getElementById('scroll').scrollTop")) > 0,
-      await diagnostics(),
+    await waitFor(
+      "document.getElementById('scroll').scrollTop > 0",
+      'The scroll gesture was not delivered.',
     );
     const start = point(550, 210),
       end = point(600, 250);
     await evaluate('window.smokeEvents=[]');
     await run({ action: 'drag', ...start, endX: end.x, endY: end.y, durationMs: 300 });
-    await delay(100);
-    assert.equal(
-      await evaluate("document.getElementById('drag').dataset.dragged"),
-      'yes',
-      await diagnostics(),
+    await waitFor(
+      "document.getElementById('drag').dataset.dragged === 'yes'",
+      'The drag gesture was not delivered.',
     );
     console.log(
       'Native screenshot, click, Unicode text, shortcut, key hold, scroll and drag passed.',
