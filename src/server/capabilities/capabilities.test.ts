@@ -559,11 +559,17 @@ describe('Custom capabilities', () => {
     await expect(api.capabilities.invoke(ownerless.id, { value: 'x' })).rejects.toThrow('no owner');
     expect(api.store.all('SELECT * FROM capability_jobs')).toHaveLength(0);
   });
-  it('rechecks target permissions before processing a saved wake', async () => {
-    new BotRepository(api.store).create({
-      ...scoutBot('default', 'child'),
+  it('rechecks the target hierarchy before processing a saved wake', async () => {
+    const bots = new BotRepository(api.store);
+    bots.create({
+      ...scoutBot('default', 'owner'),
       isMain: false,
       createdBy: 'scout',
+    });
+    bots.create({
+      ...scoutBot('default', 'child'),
+      isMain: false,
+      createdBy: 'owner',
     });
     const wakes: string[] = [];
     api.capabilities.setWake(async (botId) => {
@@ -573,17 +579,18 @@ describe('Custom capabilities', () => {
       'tool',
       toolSource('revoked_wake', `return context.wakeBot('Event',{botId:'child'});`),
       'revoked.ts',
-      'scout',
+      'owner',
     );
     await api.capabilities.invoke(item.id, { value: 'x' });
-    api.access.set('default', 'scout', 'manage_bot', false);
+    // The queued target becomes higher-level than its owner before delivery.
+    api.store.run('UPDATE bots SET created_by=NULL WHERE id=?', 'child');
     await waitFor(
       () => Number(api.store.get('SELECT attempts FROM capability_jobs')?.attempts) > 0,
     );
     expect(wakes).toHaveLength(0);
     expect(api.store.get('SELECT status,error FROM capability_jobs')).toMatchObject({
       status: 'pending',
-      error: expect.stringContaining('not assigned'),
+      error: expect.stringContaining('higher-level bots'),
     });
   });
   it('registers with a suggested ID and calls the new tool in the same model conversation turn', async () => {

@@ -14,6 +14,7 @@ import type {
   ChatEvent,
   ChatMessage,
   ProviderSettings,
+  SavedProviderModel,
   Attachment,
   Workspace,
   FileArtifact,
@@ -23,6 +24,7 @@ import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 import type { ApprovalState } from '../shared/approvals';
+import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
 
 function inputBot() {
   return {
@@ -96,13 +98,22 @@ async function request<T>(path: string, method = 'GET', value?: unknown) {
   });
   return { response, data: (await response.json()) as T };
 }
-async function configure(vision = false) {
+async function configure(vision = false, model: Partial<SavedProviderModel> = {}) {
+  const savedModel: SavedProviderModel = {
+    id: 'test-chat',
+    name: 'Test chat',
+    contextWindowTokens: null,
+    maxOutputTokens: 8192,
+    supportsImages: vision,
+    ...model,
+  };
   const result = await request<ProviderSettings>('/providers', 'POST', {
     name: 'Local test',
     kind: 'compatible',
     baseUrl: endpoint,
-    defaultModel: 'test-chat',
-    supportsImages: vision,
+    defaultModel: savedModel.id,
+    models: [savedModel],
+    supportsImages: savedModel.supportsImages,
     isDefault: true,
     apiKey: 'private-test-key',
   });
@@ -1525,10 +1536,8 @@ describe('Mukai bots and AI API', () => {
     expect(calls).toHaveLength(12);
   }, 20000);
   it('records reported token usage, applies model limits, and distinguishes estimates', async () => {
-    const provider = await configure();
-    await request('/providers/' + provider.id, 'PUT', {
-      ...provider,
-      contextWindowTokens: 16384,
+    const provider = await configure(false, {
+      contextWindowTokens: 32768,
       maxOutputTokens: 1024,
     });
     mode = 'usage';
@@ -1539,7 +1548,7 @@ describe('Mukai bots and AI API', () => {
       outputTokens: 100,
       usedTokens: 2100,
       runTokens: 2100,
-      contextWindow: 16384,
+      contextWindow: 32768,
       estimated: false,
     });
     expect(sent.events.some((event) => event.type === 'context' && !event.usage.estimated)).toBe(
@@ -1550,11 +1559,22 @@ describe('Mukai bots and AI API', () => {
     await chat('Next question');
     expect(
       (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)?.contextUsage,
-    ).toMatchObject({ estimated: true, inputTokens: null, contextWindow: 16384 });
-    await request('/providers/' + provider.id, 'PUT', {
+    ).toMatchObject({ estimated: true, inputTokens: null, contextWindow: 32768 });
+    const switched = await request('/providers/' + provider.id, 'PUT', {
       ...provider,
       defaultModel: 'different-model',
+      models: [
+        ...provider.models!,
+        {
+          id: 'different-model',
+          name: 'Different model',
+          contextWindowTokens: null,
+          maxOutputTokens: 8192,
+          supportsImages: false,
+        },
+      ],
     });
+    expect(switched.response.status).toBe(200);
     expect(
       (await request<ProviderSettings[]>('/providers')).data[0].contextWindowTokens,
     ).toBeNull();
@@ -1621,10 +1641,8 @@ describe('Mukai bots and AI API', () => {
     expect(reply.parts?.at(-1)).toMatchObject({ type: 'text', continuationOf: expect.any(String) });
   });
   it('keeps loaded skill instructions in provider context after compaction', async () => {
-    const provider = await configure();
-    await request('/providers/' + provider.id, 'PUT', {
-      ...provider,
-      contextWindowTokens: 16384,
+    await configure(false, {
+      contextWindowTokens: 32768,
       maxOutputTokens: 1024,
     });
     const skill = api.skills.save('default', {
@@ -1664,10 +1682,8 @@ describe('Mukai bots and AI API', () => {
     ).not.toContain('REVIEW_SKILL_MARKER');
   });
   it('compacts old history without altering saved messages and reuses its notebook next turn', async () => {
-    const provider = await configure();
-    await request('/providers/' + provider.id, 'PUT', {
-      ...provider,
-      contextWindowTokens: 16384,
+    await configure(false, {
+      contextWindowTokens: 32768,
       maxOutputTokens: 1024,
     });
     await chat('Earlier findings');
@@ -1696,10 +1712,9 @@ describe('Mukai bots and AI API', () => {
   it.each(['compaction-length', 'compaction-empty'] as const)(
     'recovers %s and records an ordered compaction boundary',
     async (failure) => {
-      const provider = await configure();
-      await request('/providers/' + provider.id, 'PUT', {
-        ...provider,
-        defaultModel: 'deepseek-flash',
+      await configure(false, {
+        id: 'deepseek-flash',
+        name: 'DeepSeek Flash',
         contextWindowTokens: 32000,
         maxOutputTokens: 8192,
       });
@@ -1732,10 +1747,8 @@ describe('Mukai bots and AI API', () => {
     },
   );
   it('leaves usable context and original history intact when compaction fails, then permits retry', async () => {
-    const provider = await configure();
-    await request('/providers/' + provider.id, 'PUT', {
-      ...provider,
-      contextWindowTokens: 16384,
+    await configure(false, {
+      contextWindowTokens: 32768,
       maxOutputTokens: 1024,
     });
     await chat('Earlier finding');
@@ -1775,10 +1788,8 @@ describe('Mukai bots and AI API', () => {
   it.each(['compaction-filter', 'compaction-slow'] as const)(
     'preserves history when %s interrupts compaction',
     async (failure) => {
-      const provider = await configure();
-      await request('/providers/' + provider.id, 'PUT', {
-        ...provider,
-        contextWindowTokens: 16384,
+      await configure(false, {
+        contextWindowTokens: 32768,
         maxOutputTokens: 1024,
       });
       await chat('Earlier finding');
@@ -1906,19 +1917,20 @@ describe('Mukai bots and AI API', () => {
     expect(history[1].status).toBe('complete');
   });
   it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
-    const provider = await configure();
-    await request('/providers/' + provider.id, 'PUT', {
-      ...provider,
-      contextWindowTokens: 8192,
+    await configure(false, {
+      contextWindowTokens: 24000,
       maxOutputTokens: 1024,
     });
+    await chat('Short request fits');
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('complete');
+    expect(calls).toHaveLength(1);
     const text = 'Exact input '.repeat(1300);
     await chat(text);
     const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
-    expect(history[0].content).toBe(text.trim());
-    expect(history[1].status).toBe('failed');
-    expect(history[1].error).toContain('current request');
-    expect(calls).toHaveLength(0);
+    expect(history[2].content).toBe(text.trim());
+    expect(history[3].status).toBe('failed');
+    expect(history[3].error).toContain('current request');
+    expect(calls).toHaveLength(1);
   });
   it.each(['uncertain operation', 'changed workspace folder'])(
     'does not reuse a checkpoint after %s and carries a verification notice',
@@ -2213,14 +2225,12 @@ describe('Mukai bots and AI API', () => {
       text: 'All browser checks finished.',
     });
   });
-  // Keep the smaller case close to the catalog's minimum context while leaving
-  // room for the image family. The fixture results still greatly exceed it.
-  it.each([11000, 28000])(
+  // Leave room for current instructions and tool schemas. The fixture results
+  // still greatly exceed both context windows and must be bounded.
+  it.each([24000, 28000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
-      const provider = await configure(true);
-      await request('/providers/' + provider.id, 'PUT', {
-        ...provider,
+      await configure(true, {
         contextWindowTokens,
         maxOutputTokens: 8192,
       });
@@ -2558,7 +2568,7 @@ describe('Mukai bots and AI API', () => {
       content: expect.stringMatching(/^No current pursuits\n/),
     });
     const writerSystem = String(calls[1].messages[0].content);
-    expect(writerSystem).toContain('You are an intelligent assistant operating inside Mukai');
+    expect(writerSystem).toContain(mukaiEnvironmentInstructions);
     expect(writerSystem).toContain(
       JSON.stringify({
         id: bot.id,
@@ -2568,10 +2578,9 @@ describe('Mukai bots and AI API', () => {
         createdBy: 'scout',
       }),
     );
-    expect(writerSystem).toContain('Write in short sentences.\nCurrent UTC time: ');
-    expect(writerSystem).toContain(
-      "If you don't have a tool to do something you can literally make/suggest to make it.",
-    );
+    expect(writerSystem).toContain('Write in short sentences.');
+    expect(writerSystem).toContain('Current UTC time: ');
+    expect(writerSystem).toContain('You are a workspace sub-bot.');
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
     await close(api.server);
@@ -2783,7 +2792,11 @@ describe('Mukai bots and AI API', () => {
     expect(rejected.response.status).toBe(400);
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(2);
     const provider = (await request<ProviderSettings[]>('/providers')).data[0];
-    await request(`/providers/${provider.id}`, 'PUT', { ...provider, supportsImages: true });
+    const enabled = await request(`/providers/${provider.id}`, 'PUT', {
+      ...provider,
+      models: provider.models!.map((model) => ({ ...model, supportsImages: true })),
+    });
+    expect(enabled.response.status).toBe(200);
     await chat('Look', randomUUID(), 'scout', [image.data.id]);
     expect(JSON.stringify(calls.at(-1))).toContain('data:image/png;base64');
     expect((await upload('program.exe', Buffer.from('MZbinary'))).response.status).toBe(400);
