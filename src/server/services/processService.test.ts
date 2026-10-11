@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProcessService } from './processService';
@@ -28,7 +28,7 @@ it('runs commands, captures output and exit codes, and isolates ownership', asyn
     },
     signal(),
   );
-  expect(run).toMatchObject({ status: 'exited', exitCode: 7, cwd: folder });
+  expect(run).toMatchObject({ status: 'exited', exitCode: 7, cwd: realpathSync(folder) });
   expect(run.output).toContain('hello');
   expect(run.output).toContain('stderr');
   expect(() => service.read({ ...owner, conversationId: 'other' }, run.id)).toThrow('not found');
