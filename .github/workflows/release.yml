@@ -134,8 +134,30 @@ jobs:
             artifacts/packaged-smoke-*/result.json
           if-no-files-found: ignore
 
+  verify-artifacts:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installer-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Verify real installer filenames, sizes, and checksums
+        run: |
+          node --experimental-strip-types --input-type=module -e '
+            import { verifyInstallers } from "./scripts/release.ts";
+            await verifyInstallers("release-artifacts", process.env.RELEASE_VERSION);
+          '
+
   publish:
-    needs: [prepare, checks, build]
+    needs: [prepare, checks, build, verify-artifacts]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
     permissions:

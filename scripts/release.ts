@@ -9,7 +9,7 @@ export const installerNames = (version: string) => [
   `Mukai-Setup-${version}-x64.exe`,
   `Mukai-${version}-mac-x64.dmg`,
   `Mukai-${version}-mac-arm64.dmg`,
-  `Mukai-${version}-linux-x64.AppImage`,
+  `Mukai-${version}-linux-x86_64.AppImage`,
 ];
 
 export async function verifyInstallers(

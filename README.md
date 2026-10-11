@@ -182,7 +182,8 @@ The local build is unsigned, so Windows may show an unknown-publisher warning.
 
 `.github/workflows/release.yml` builds Windows x64, macOS Intel/Apple Silicon,
 and Linux x64 on their native GitHub runners. Pull requests build and smoke-test
-all four packages without publishing. Every successful push to `main` publishes
+all four packages without publishing, then validates the real installer filenames,
+sizes, and checksums together. Every successful push to `main` publishes
 all installers and `SHA256SUMS.txt` together in a GitHub Release. Failed checks,
 missing packages, failed uploads, and superseded commits do not replace the latest
 published release. A failed upload can leave a draft release for diagnosis.
