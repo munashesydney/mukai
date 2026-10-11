@@ -24,6 +24,7 @@ jobs:
 
   desktop-helpers:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -38,5 +39,11 @@ jobs:
       - run: npx vitest run src/server/services/computerUseService.test.ts src/server/tools/computer_use/computer_use.test.ts src/server/computer/computer_use/nativeBackend.test.ts
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb openbox python3 libx11-6 libxtst6 libxrandr2
+      - name: Install and configure Electron sandbox
+        if: runner.os == 'Linux'
+        run: |
+          node -e "require('electron')"
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - if: runner.os == 'Linux'
         run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a sh -c 'openbox >/tmp/mukai-openbox.log 2>&1 & npm run test:computer-use -- --interactive'
