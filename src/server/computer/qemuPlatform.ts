@@ -26,9 +26,13 @@ export function qemuPlatform(hostArch = arch(), hostPlatform = platform()) {
 
 export function qemuMachineArguments(config: QemuBootConfig, boot = true) {
   const architecture = config.architecture || qemuPlatform().architecture;
-  if (architecture === 'x64')
-    // SSE4.2 baseline for current Node/Chrome/native image dependencies.
-    return ['-machine', 'q35', '-accel', config.accelerator, '-cpu', 'Nehalem'];
+  if (architecture === 'x64') {
+    // WHPX can expose host CET even with Nehalem's pre-XSAVE feature set. Use
+    // host features so Linux can save CET state; hide unsupported nested VMX.
+    // Other accelerators retain the SSE4.2 baseline for Node/Chrome dependencies.
+    const cpu = config.accelerator === 'whpx' ? 'host,vmx=off' : 'Nehalem';
+    return ['-machine', 'q35', '-accel', config.accelerator, '-cpu', cpu];
+  }
   if (boot && !config.firmware) throw new Error('ARM64 VM boot requires QEMU UEFI firmware.');
   return [
     '-machine',
