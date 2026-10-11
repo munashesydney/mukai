@@ -212,13 +212,13 @@ class X11Desktop:
                     symbols = (C.c_ulong * per.value)(*[symbol] * per.value)
                     self.x.XChangeKeyboardMapping(self.display, code, per.value, symbols, 1)
                 self.x.XSync(self.display, 0)
-                time.sleep(0.1)
+                time.sleep(0.01)
                 for character in text[offset:end]:
                     code = assigned[text_keysym(character)]
                     self.test.XTestFakeKeyEvent(self.display, code, 1, 0)
                     self.test.XTestFakeKeyEvent(self.display, code, 0, 0)
                     self.x.XFlush(self.display)
-                    time.sleep(0.005)
+                    time.sleep(0.001)
                 self.x.XSync(self.display, 0)
                 time.sleep(0.1)
             finally:
@@ -235,7 +235,6 @@ class X11Desktop:
         if not self.test.XTestFakeButtonEvent(self.display, {"left": 1, "middle": 2, "right": 3}[name], int(down), 0):
             raise RuntimeError("X11 mouse injection failed.")
         self.x.XSync(self.display, 0)
-        time.sleep(0.02)
         if not down:
             self.buttons.discard(name)
 
@@ -267,11 +266,7 @@ class X11Desktop:
                 for _ in range(max(1, round(abs(amount) / 100)) if amount else 0):
                     code = positive if amount > 0 else negative
                     self.test.XTestFakeButtonEvent(self.display, code, 1, 0)
-                    self.x.XSync(self.display, 0)
-                    time.sleep(0.02)
                     self.test.XTestFakeButtonEvent(self.display, code, 0, 0)
-                    self.x.XSync(self.display, 0)
-                    time.sleep(0.02)
         elif action == "release":
             self.release()
         else:
