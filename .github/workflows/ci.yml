@@ -38,7 +38,7 @@ jobs:
       - run: npm run build:computer-use
       - run: npx vitest run src/server/services/computerUseService.test.ts src/server/tools/computer_use/computer_use.test.ts src/server/computer/computer_use/nativeBackend.test.ts
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb fluxbox xinput python3 libx11-6 libxtst6 libxrandr2
+        run: sudo apt-get update && sudo apt-get install -y xvfb openbox python3 libx11-6 libxtst6 libxrandr2
       - name: Install and configure Electron sandbox
         if: runner.os == 'Linux'
         run: |
@@ -49,7 +49,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           for attempt in 1 2 3 4 5; do
-            env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_CORE_DEVICE_EVENTS=1 xvfb-run -a dbus-run-session -- sh -c 'fluxbox >/tmp/mukai-fluxbox.log 2>&1 & xinput test-xi2 --root >/tmp/mukai-xinput.log 2>&1 & npm run test:computer-use -- --interactive || { cat /tmp/mukai-xinput.log; cat /tmp/mukai-fluxbox.log; exit 1; }'
+            env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a dbus-run-session -- sh -c 'openbox >/tmp/mukai-openbox.log 2>&1 & npm run test:computer-use -- --interactive'
           done
       - uses: actions/upload-artifact@v4
         if: failure() && runner.os == 'Linux'

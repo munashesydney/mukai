@@ -23,10 +23,10 @@ async function main() {
       delete env.ELECTRON_RUN_AS_NODE;
       const require = createRequire(resolve('package.json'));
       await new Promise<void>((done, reject) => {
-        // GTK and the display backend initialize before the smoke script runs.
+        // Select the display backend before Electron initializes.
         const switches =
           process.platform === 'linux' && env.XDG_SESSION_TYPE === 'x11'
-            ? ['--ozone-platform=x11', '--gtk-version=3']
+            ? ['--ozone-platform=x11']
             : [];
         const child = spawn(require('electron') as string, [...switches, bundle], {
           env,

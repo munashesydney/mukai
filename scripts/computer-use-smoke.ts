@@ -7,6 +7,10 @@ import type { DesktopDisplay } from '../src/server/computer/computer_use/protoco
 import type { ComputerUseInput } from '../src/server/tools/computer_use/definition';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { once } from 'node:events';
+
+// Xvfb has no hardware compositor; use software rendering for native input tests.
+if (process.platform === 'linux') app.disableHardwareAcceleration();
 
 void app.whenReady().then(async () => {
   const service = new ComputerUseService(new NativeDesktopBackend());
@@ -23,10 +27,12 @@ void app.whenReady().then(async () => {
     width: 700,
     height: 600,
     frame: false,
+    show: false,
     alwaysOnTop: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   try {
+    const ready = once(window, 'ready-to-show');
     await window.loadURL(
       'data:text/html;charset=utf-8,' +
         encodeURIComponent(`<!doctype html><html><body style="margin:0;background:#eef2f6;font:16px sans-serif">
@@ -41,6 +47,7 @@ void app.whenReady().then(async () => {
       </script>
       </body></html>`),
     );
+    await ready;
     window.show();
     window.focus();
     await delay(500);
