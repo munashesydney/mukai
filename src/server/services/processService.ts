@@ -219,9 +219,42 @@ export class ProcessService {
       if (pid) {
         if (process.platform === 'win32') {
           await new Promise<void>((resolve) => {
-            const killer = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
-              windowsHide: true,
-            });
+            // taskkill /T snapshots children before killing the shell, which can
+            // spawn another child in that gap. Stop each parent first, then find
+            // its descendants, including children whose parent has already exited.
+            const script = `
+              $ErrorActionPreference = 'Stop'
+              $rootId = ${pid}
+              $started = [DateTime]::Parse('${entry.info.createdAt}').ToUniversalTime().AddSeconds(-1)
+              $stopped = @{}
+              function Stop-Parent([int]$processId) {
+                $parent = Get-Process -Id $processId -ErrorAction SilentlyContinue
+                if ($parent) {
+                  Stop-Process -InputObject $parent -Force -ErrorAction SilentlyContinue
+                  $parent.WaitForExit()
+                  $parent.Dispose()
+                }
+                $stopped[$processId] = [DateTime]::UtcNow
+              }
+              Stop-Parent $rootId
+              do {
+                $children = @(Get-CimInstance Win32_Process | Where-Object {
+                  $parentId = [int]$_.ParentProcessId
+                  $stopped.ContainsKey($parentId) -and
+                  -not $stopped.ContainsKey([int]$_.ProcessId) -and
+                  $_.CreationDate.ToUniversalTime() -ge $started -and
+                  $_.CreationDate.ToUniversalTime() -le $stopped[$parentId]
+                })
+                foreach ($child in $children) {
+                  Stop-Parent ([int]$child.ProcessId)
+                }
+              } while ($children.Count -gt 0)
+            `;
+            const killer = spawn(
+              'powershell.exe',
+              ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+              { windowsHide: true },
+            );
             killer.on('close', (code) => {
               if (code !== 0) entry.child.kill();
               resolve();

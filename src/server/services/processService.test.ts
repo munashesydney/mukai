@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProcessService } from './processService';
@@ -102,6 +102,37 @@ it('enforces a background process lifetime', async () => {
   );
   await service.wait(owner, run.id, 3000, signal());
   expect(service.read(owner, run.id).status).toBe('killed');
+});
+
+it('terminates nested descendants when stopping a process', async () => {
+  const marker = join(folder, 'child.pid');
+  const run = await service.run(
+    owner,
+    folder,
+    {
+      command: command(
+        `const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'inherit', windowsHide: true }); require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(child.pid)); setInterval(()=>{},1000)`,
+      ),
+      background: true,
+    },
+    signal(),
+  );
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      return false;
+    }
+  };
+  await expect.poll(() => existsSync(marker)).toBe(true);
+  const childPid = Number(readFileSync(marker, 'utf8'));
+  expect(alive(run.pid!)).toBe(true);
+  expect(alive(childPid)).toBe(true);
+  expect(service.read(owner, run.id).status).toBe('running');
+  await service.kill(owner, run.id);
+  await expect.poll(() => alive(childPid)).toBe(false);
 });
 
 it('stops only a deleted workspace process tree and rejects later starts', async () => {

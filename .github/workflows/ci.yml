@@ -36,7 +36,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:computer-use
-      - run: npx vitest run src/server/services/computerUseService.test.ts src/server/tools/computer_use/computer_use.test.ts src/server/computer/computer_use/nativeBackend.test.ts
+      - run: npx vitest run src/server/services/computerUseService.test.ts src/server/tools/computer_use/computer_use.test.ts src/server/computer/computer_use/nativeBackend.test.ts src/server/services/processService.test.ts
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb python3 libx11-6 libxtst6 libxrandr2
       - name: Install and configure Electron sandbox
