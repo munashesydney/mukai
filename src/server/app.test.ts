@@ -237,6 +237,7 @@ beforeEach(async () => {
   mode = 'normal';
   project = '';
   let overflowed = false;
+  let screenshotStep = 0;
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -381,9 +382,8 @@ beforeEach(async () => {
       return;
     }
     if (mode === 'screenshot-artifact') {
-      const step = body.messages.filter(
-        (message: { role: string }) => message.role === 'tool',
-      ).length;
+      // Compaction can remove completed tool messages; fixture progress must survive it.
+      const step = screenshotStep++;
       const sessionId = api.browsers.list('default')[0]?.id;
       const steps = [
         { name: 'browser', input: { action: 'open', url: 'https://example.com' } },
@@ -912,6 +912,7 @@ describe('Mukai bots and AI API', () => {
       const screenshots = reply.activity!.filter((item) => item.action === 'screenshot');
       expect(screenshots).toHaveLength(2);
       for (const item of screenshots) {
+        expect(item.status, item.summary).toBe('complete');
         expect(JSON.parse(item.summary)).toMatchObject({
           artifactId: expect.any(String),
           path: expect.any(String),
@@ -922,7 +923,15 @@ describe('Mukai bots and AI API', () => {
         });
         expect(item.summary).not.toContain('"image":');
       }
-      expect(JSON.stringify(calls.at(-1)!.messages).includes('data:image/png;base64')).toBe(vision);
+      expect(reply.activity!.at(-1)?.status, reply.activity!.at(-1)?.summary).toBe(
+        vision ? 'complete' : 'failed',
+      );
+      // A later compaction can replace pixels with a summary before the final reply.
+      expect(
+        calls.some(
+          (call) => call.stream && JSON.stringify(call.messages).includes('data:image/png;base64'),
+        ),
+      ).toBe(vision);
       expect(reply.activity!.at(-1)).toMatchObject({
         tool: 'image',
         status: vision ? 'complete' : 'failed',

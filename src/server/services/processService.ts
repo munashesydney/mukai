@@ -11,6 +11,7 @@ interface ManagedProcess {
   output: string;
   offset: number;
   done: Promise<void>;
+  exited: Promise<void>;
   timer: NodeJS.Timeout;
   stopping?: Promise<void>;
 }
@@ -117,6 +118,7 @@ export class ProcessService {
           )
         : spawn('/bin/sh', ['-c', input.command], { cwd, env, detached: true });
     let finish!: () => void;
+    let exited!: () => void;
     const entry: ManagedProcess = {
       info: {
         ...owner,
@@ -133,6 +135,9 @@ export class ProcessService {
       offset: 0,
       done: new Promise<void>((resolve) => {
         finish = resolve;
+      }),
+      exited: new Promise<void>((resolve) => {
+        exited = resolve;
       }),
       timer: setTimeout(
         () => {
@@ -159,7 +164,12 @@ export class ProcessService {
       entry.info.status = 'failed';
       append(error.message);
       clearTimeout(entry.timer);
+      exited();
       finish();
+    });
+    child.on('exit', (code) => {
+      entry.info.exitCode = code;
+      exited();
     });
     child.on('close', (code) => {
       if (entry.info.status === 'running') entry.info.status = 'exited';
@@ -212,7 +222,10 @@ export class ProcessService {
             const killer = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
               windowsHide: true,
             });
-            killer.on('close', () => resolve());
+            killer.on('close', (code) => {
+              if (code !== 0) entry.child.kill();
+              resolve();
+            });
             killer.on('error', () => {
               entry.child.kill();
               resolve();
@@ -226,6 +239,12 @@ export class ProcessService {
           }
         }
       }
+      await entry.exited;
+      // Descendants can inherit shell pipes. After tree termination, release our
+      // pipe handles instead of waiting indefinitely for every inherited writer.
+      entry.child.stdin.destroy();
+      entry.child.stdout.destroy();
+      entry.child.stderr.destroy();
       await entry.done;
     })());
   }
