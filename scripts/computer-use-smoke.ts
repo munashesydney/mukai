@@ -69,6 +69,7 @@ void app.whenReady().then(async () => {
         events: await evaluate('window.smokeEvents'),
         originalBounds: bounds,
         currentBounds: window.getContentBounds(),
+        focused: window.isFocused(),
         cursor: await run({ action: 'cursor' }),
       });
     const waitFor = async (condition: string, message: string) => {
