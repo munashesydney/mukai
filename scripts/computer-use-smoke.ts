@@ -8,6 +8,11 @@ import type { ComputerUseInput } from '../src/server/tools/computer_use/definiti
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('ozone-platform', 'x11');
+  app.commandLine.appendSwitch('gtk-version', '3');
+}
+
 void app.whenReady().then(async () => {
   const service = new ComputerUseService(new NativeDesktopBackend());
   const owner = {

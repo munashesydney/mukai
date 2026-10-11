@@ -45,8 +45,9 @@ jobs:
           node -e "require('electron')"
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-      # The disposable test window focuses itself; Openbox's passive pointer
-      # grabs interfere with injected gestures in this virtual desktop.
       - name: Test native X11 desktop input
         if: runner.os == 'Linux'
-        run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a npm run test:computer-use -- --interactive
+        run: |
+          for attempt in 1 2 3 4 5; do
+            env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a dbus-run-session -- npm run test:computer-use -- --interactive
+          done

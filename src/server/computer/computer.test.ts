@@ -471,7 +471,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     const restarted = new Promise<void>((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error('VM was not restarted')), 60000);
       const poll = setInterval(() => {
-        if (launch.mock.calls.length < 2) return;
+        if (launch.mock.calls.length < 2 || vm.status().state !== 'running') return;
         clearInterval(poll);
         clearTimeout(deadline);
         resolve();
