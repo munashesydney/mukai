@@ -195,7 +195,7 @@ in the publish job. No personal access token or cross-repository secret is neede
 Keep this repository public for unauthenticated website downloads.
 
 The separate `mukai-web` repository reads the latest published release at runtime
-and refreshes its download buttons within approximately one minute, without a
+and refreshes its download buttons within approximately two minutes, without a
 website commit or rebuild. The website repository can remain private. Deploy
 its release-download integration once to enable this behavior.
 
