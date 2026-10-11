@@ -71,6 +71,7 @@ export function AppearancePanel() {
               '--preview-rail': palette.rail,
               '--preview-nav': palette.nav,
               '--preview-glow': palette.glow,
+              '--preview-ink': palette.text,
             } as CSSProperties;
             return (
               <label
