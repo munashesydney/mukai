@@ -20,3 +20,14 @@ it('serializes concurrent diagnostic writes and bounds retention to three files'
   expect(await readFile(log.path + '.2', 'utf8')).toBe('33334444');
   expect((await readdir(directory)).length).toBe(3);
 });
+it('retains bursts of small console chunks instead of dropping after 64 writes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mukai-log-'));
+  directories.push(directory);
+  const log = new ComputerLog(join(directory, 'console.log'));
+  for (let index = 0; index < 10000; index++) log.append(`${index},`);
+  await log.flush();
+  expect(await readFile(log.path, 'utf8')).toBe(
+    Array.from({ length: 10000 }, (_, index) => `${index},`).join(''),
+  );
+  expect(log.droppedBytes).toBe(0);
+});
