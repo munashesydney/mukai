@@ -1,4 +1,5 @@
 import type { Row } from '../db/database';
+import { resolveBotAvatar } from '../../shared/mascots';
 import type {
   AttachmentRecord,
   BotRecord,
@@ -16,7 +17,7 @@ export function botRecord(row: Row): BotRecord {
     providerId: row.provider_id as string | null,
     model: row.model as string | null,
     supportsImages: row.supports_images === null ? null : Boolean(row.supports_images),
-    avatar: row.avatar as BotRecord['avatar'],
+    avatar: resolveBotAvatar(row.avatar),
     createdAt: String(row.created_at),
     isMain: Boolean(row.is_main),
     createdBy: row.created_by as string | null,

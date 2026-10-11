@@ -1,11 +1,20 @@
 import { scoutInstructions } from '../../shared/botSystemPrompt';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { mainBotRole, type Bot, type BotInput, type BotModelInput } from '../../shared/ai';
+import { botAvatarIds, resolveBotAvatar } from '../../shared/mascots';
 import { ApiError } from '../config';
 import { BotRepository } from '../repositories/botRepository';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { AttachmentService } from './attachmentService';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
+
+function randomUnusedMascot(bots: Bot[]) {
+  const mascots = botAvatarIds.filter((avatar) => avatar !== 'mukai-logo');
+  const used = new Set(bots.map((bot) => resolveBotAvatar(bot.avatar)));
+  const unused = mascots.filter((avatar) => !used.has(avatar));
+  const choices = unused.length ? unused : mascots;
+  return choices[randomInt(choices.length)];
+}
 
 export function scoutBot(workspaceId = 'default', id = 'scout'): Bot {
   return {
@@ -17,7 +26,7 @@ export function scoutBot(workspaceId = 'default', id = 'scout'): Bot {
     providerId: null,
     model: null,
     supportsImages: null,
-    avatar: 'scout',
+    avatar: 'mukai-logo',
     createdAt: new Date().toISOString(),
     isMain: true,
     createdBy: null,
@@ -43,7 +52,7 @@ export class BotService {
     return bot;
   }
   save(
-    input: BotInput,
+    input: Omit<BotInput, 'avatar'> & { avatar?: BotInput['avatar'] },
     id?: string,
     workspaceId = 'default',
     createdBy?: string,
@@ -60,6 +69,7 @@ export class BotService {
       throw new ApiError(403, 'Creator belongs to another workspace.');
     const bot = {
       ...input,
+      avatar: resolveBotAvatar(input.avatar ?? existing?.avatar),
       role: existing?.isMain ? mainBotRole : input.role,
       contextWindowTokens:
         input.contextWindowTokens !== undefined
@@ -82,6 +92,7 @@ export class BotService {
       return this.bots.insertNew(
         (others) => ({
           ...bot,
+          avatar: input.avatar === undefined ? randomUnusedMascot(others) : bot.avatar,
           isMain: others.length === 0,
           role: others.length === 0 ? mainBotRole : input.role,
           createdBy: creator?.id || others.find((other) => other.isMain)?.id || null,

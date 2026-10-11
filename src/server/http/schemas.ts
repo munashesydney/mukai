@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { botAvatarIds, legacyAvatarIds, resolveBotAvatar } from '../../shared/mascots';
 
 export const botSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -7,7 +8,7 @@ export const botSchema = z.object({
   providerId: z.string().uuid().nullable(),
   model: z.string().trim().min(1).max(150).nullable(),
   supportsImages: z.boolean().nullable(),
-  avatar: z.enum(['scout', 'nova', 'atlas']),
+  avatar: z.enum([...botAvatarIds, ...legacyAvatarIds]).transform(resolveBotAvatar),
   contextWindowTokens: z.number().int().min(4096).max(10000000).nullable().optional(),
   maxOutputTokens: z.number().int().min(256).max(262144).nullable().optional(),
 });

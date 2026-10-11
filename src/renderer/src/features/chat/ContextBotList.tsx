@@ -1,9 +1,10 @@
 import { Avatar } from '../../components/ui/Avatar';
+import type { BotAvatar } from '../../../../shared/mascots';
 
 interface ContextBot {
   id: string;
   name: string;
-  avatar: 'atlas' | 'nova' | 'scout';
+  avatar: BotAvatar;
   subtitle: string;
 }
 

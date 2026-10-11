@@ -1,5 +1,6 @@
 import type { FileChangeSummary } from './fileChanges';
 import type { VmResources } from './computer';
+import type { BotAvatar } from './mascots';
 
 export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
 export interface ChatGPTAccount {
@@ -65,7 +66,7 @@ export interface Bot {
   providerId: string | null;
   model: string | null;
   supportsImages: boolean | null;
-  avatar: 'scout' | 'nova' | 'atlas';
+  avatar: BotAvatar;
   createdAt: string;
   isMain: boolean;
   createdBy: string | null;

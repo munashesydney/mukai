@@ -53,7 +53,7 @@ export class BotManagementService {
     botId: string,
     patch: Pick<
       z.infer<typeof botManagementDefinition.inputSchema>,
-      'name' | 'role' | 'instructions' | 'avatar' | 'toolIds'
+      'name' | 'role' | 'instructions' | 'toolIds'
     >,
   ) {
     this.requireAction(caller, 'update');
@@ -80,14 +80,20 @@ export class BotManagementService {
       hierarchyLevel: this.level(bot),
     }));
   }
-  async create(caller: Bot, input: BotInput, toolIds?: string[]) {
+  async create(caller: Bot, input: Omit<BotInput, 'avatar'>, toolIds?: string[]) {
     this.requireAction(caller, 'create');
     this.access.validateSelection(caller, toolIds);
     await this.providers.validateModel(input.providerId, input.model);
-    return this.bots.save(input, undefined, caller.workspaceId, caller.id, (child) => {
-      this.access.require(caller, 'manage_bot');
-      this.access.initializeChild(caller, child, toolIds);
-    });
+    return this.bots.save(
+      { ...input, avatar: undefined },
+      undefined,
+      caller.workspaceId,
+      caller.id,
+      (child) => {
+        this.access.require(caller, 'manage_bot');
+        this.access.initializeChild(caller, child, toolIds);
+      },
+    );
   }
   private level(bot: Bot) {
     const visited = new Set<string>();

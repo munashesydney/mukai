@@ -7,6 +7,12 @@ import { Avatar } from '../../components/ui/Avatar';
 import { botService } from '../../services/botService';
 import { errorText } from '../../utils/errors';
 import { botNameSuggestions } from '../../../../shared/toolAssignments';
+import {
+  botAvatarIds,
+  botAvatarLabels,
+  defaultBotAvatar,
+  resolveBotAvatar,
+} from '../../../../shared/mascots';
 
 export function BotEditor({
   bot,
@@ -26,15 +32,17 @@ export function BotEditor({
   isFirst?: boolean;
 }) {
   const [value, setValue] = useState<BotInput>(
-    bot || {
-      name: isFirst ? 'Mukai' : '',
-      role: isFirst ? mainBotRole : '',
-      instructions: defaultBotInstructions,
-      providerId: null,
-      model: null,
-      supportsImages: null,
-      avatar: 'nova',
-    },
+    bot
+      ? { ...bot, avatar: resolveBotAvatar(bot.avatar) }
+      : {
+          name: isFirst ? 'Mukai' : '',
+          role: isFirst ? mainBotRole : '',
+          instructions: defaultBotInstructions,
+          providerId: null,
+          model: null,
+          supportsImages: null,
+          avatar: isFirst ? 'mukai-logo' : defaultBotAvatar,
+        },
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -116,11 +124,12 @@ export function BotEditor({
                 </div>
               )}
               <div className="bot-avatar-options" role="group" aria-label="Bot identity">
-                {(['scout', 'nova', 'atlas'] as const).map((avatar) => (
+                {botAvatarIds.map((avatar) => (
                   <button
                     type="button"
                     key={avatar}
-                    aria-label={`Use ${avatar} icon`}
+                    aria-label={`Use ${botAvatarLabels[avatar]} mascot`}
+                    title={botAvatarLabels[avatar]}
                     aria-pressed={value.avatar === avatar}
                     className={value.avatar === avatar ? 'is-selected' : ''}
                     disabled={busy}

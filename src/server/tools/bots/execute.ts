@@ -36,7 +36,6 @@ export async function executeBotManagement(
         name: input.name,
         role: input.role,
         instructions: input.instructions,
-        avatar: input.avatar,
         toolIds: input.toolIds,
       });
     } else if (input.action === 'create') {
@@ -49,7 +48,6 @@ export async function executeBotManagement(
           name: input.name,
           role: input.role.trim(),
           instructions: input.instructions,
-          avatar: input.avatar || 'nova',
           providerId: caller.providerId,
           model: caller.model,
           supportsImages: caller.supportsImages,
@@ -91,6 +89,8 @@ export async function executeBotManagement(
       );
     }
     context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });
+    if (input.action === 'create' || input.action === 'update' || input.action === 'get')
+      result = Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'avatar'));
     return { ok: true, result };
   } catch (error) {
     context.signal.throwIfAborted();

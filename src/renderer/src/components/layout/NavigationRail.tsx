@@ -1,6 +1,6 @@
 import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
-import { TriangleMark } from '../ui/TriangleMark';
+import { botAvatarSrc } from '../../../../shared/mascots';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
@@ -53,7 +53,11 @@ export function NavigationRail({
               aria-current={section === id ? 'page' : undefined}
             >
               <span className="rail-icon">
-                {Icon ? <Icon size={22} strokeWidth={1.8} /> : <TriangleMark />}
+                {Icon ? (
+                  <Icon size={22} strokeWidth={1.8} />
+                ) : (
+                  <img className="rail-mascot" src={botAvatarSrc('mukai-logo')} alt="" />
+                )}
                 {id === 'bots' && hasPendingApprovals && (
                   <i className="rail-notification" aria-label="Pending approvals" />
                 )}

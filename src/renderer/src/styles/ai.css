@@ -1624,7 +1624,8 @@
   padding: 25px 30px;
 }
 .bot-avatar-options {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
   gap: 9px;
 }
 .bot-avatar-options button {
@@ -1633,6 +1634,17 @@
   padding: 7px;
   background: transparent;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bot-avatar-options .avatar {
+  width: 48px;
+  height: 48px;
+}
+.bot-avatar-options button:hover:not(:disabled),
+.bot-avatar-options button:focus-visible {
+  border-color: var(--teal);
 }
 .bot-avatar-options .is-selected {
   border-color: var(--teal);

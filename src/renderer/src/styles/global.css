@@ -292,9 +292,10 @@ p {
   place-items: center;
   position: relative;
 }
-.rail-icon .triangle-mark {
-  border-bottom-color: currentColor;
-  filter: none;
+.rail-mascot {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
 }
 .rail-link.is-active .rail-icon {
   background: #2b665e;
@@ -723,6 +724,12 @@ p {
   width: 64px;
   height: 64px;
   border-radius: 18px;
+}
+.avatar-mascot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .avatar--atlas {
   background: var(--atlas-surface);

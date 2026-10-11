@@ -11,6 +11,7 @@ import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
 import type { Conversation } from '../shared/conversations';
 import { botManagementDefinition } from './tools/bots/definition';
+import { botAvatarIds } from '../shared/mascots';
 import type { ApprovalState } from '../shared/approvals';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
@@ -308,6 +309,87 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it('assigns unused random mascots to AI-created bots without exposing mascots to the AI', async () => {
+    const mascots = botAvatarIds.filter((avatar) => avatar !== 'mukai-logo');
+    const main = (await request<Bot>('/bots', 'POST', { ...input(), avatar: mascots[0] })).data;
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const create = async (name: string) => {
+      const result = await executeBotManagement(
+        botManagementDefinition.inputSchema.parse({
+          action: 'create',
+          name,
+          role: 'Researcher',
+          instructions: 'Help with research.',
+          avatar: 'mukai-logo',
+        }),
+        context,
+        randomUUID(),
+      );
+      expect(result.ok).toBe(true);
+      expect(result.result).not.toHaveProperty('avatar');
+      return result.result as Omit<Bot, 'avatar'>;
+    };
+    expect(botManagementDefinition.description).not.toMatch(/avatar|mascot/);
+    expect(
+      botManagementDefinition.inputSchema.parse({ action: 'create', avatar: 'mukai-logo' }),
+    ).not.toHaveProperty('avatar');
+    const children = await Promise.all(
+      mascots.slice(1).map((_, index) => create(`Helper ${index}`)),
+    );
+    const assigned = (await request<Bot[]>('/bots')).data.map((bot) => bot.avatar);
+    expect(new Set(assigned).size).toBe(mascots.length);
+    expect(assigned.sort()).toEqual([...mascots].sort());
+    const overflow = await create('Extra helper');
+    const saved = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === overflow.id)!;
+    expect(mascots).toContain(saved.avatar);
+    const inspected = await executeBotManagement(
+      { action: 'get', botId: saved.id },
+      context,
+      randomUUID(),
+    );
+    expect(inspected.result).not.toHaveProperty('avatar');
+    const changed = await executeBotManagement(
+      { action: 'update', botId: saved.id, name: 'Renamed helper' },
+      context,
+      randomUUID(),
+    );
+    expect(changed.result).not.toHaveProperty('avatar');
+    expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === saved.id)?.avatar).toBe(
+      saved.avatar,
+    );
+    const freed = (await request<Bot[]>('/bots')).data.find(
+      (bot) => children.some((child) => child.id === bot.id) && bot.avatar !== saved.avatar,
+    )!;
+    expect((await request(`/bots/${freed.id}`, 'DELETE')).status).toBe(200);
+    const replacement = await create('Replacement helper');
+    expect(
+      (await request<Bot[]>('/bots')).data.find((bot) => bot.id === replacement.id)?.avatar,
+    ).toBe(freed.avatar);
+  });
+
+  it('persists new mascots on creation and edits and resolves saved legacy mascots to Mukai', async () => {
+    const created = await request<Bot>('/bots', 'POST', {
+      ...input(),
+      avatar: 'muka-mascot-5-blue',
+    });
+    expect(created.status).toBe(201);
+    expect(created.data.avatar).toBe('muka-mascot-5-blue');
+    const updated = await request<Bot>(`/bots/${created.data.id}`, 'PUT', {
+      ...input(),
+      avatar: 'muka-mascot-2-orange',
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.data.avatar).toBe('muka-mascot-2-orange');
+    expect((await request<Bot[]>('/bots')).data[0].avatar).toBe('muka-mascot-2-orange');
+    api.store.run('UPDATE bots SET avatar=? WHERE id=?', 'atlas', created.data.id);
+    expect((await request<Bot[]>('/bots')).data[0].avatar).toBe('mukai-logo');
+  });
+
   it('offers web search without a folder, runs it in the SDK loop, records usage, and enforces revocation', async () => {
     const main = await bot();
     const child = await bot('Ada');

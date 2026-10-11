@@ -92,7 +92,8 @@ async function main() {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-onboarding button"))');
     assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 3);
-    assert.equal(await evaluate('document.querySelector(".rail-settings").disabled'), true);
+    if (!process.argv.includes('--mascots-only'))
+      assert.equal(await evaluate('document.querySelector(".rail-settings").disabled'), true);
     assert.equal(
       await evaluate('document.querySelector(".sidebar-empty strong").textContent'),
       'No bots yet',
@@ -104,6 +105,54 @@ async function main() {
     await capture('bot-empty-workspace.png');
     await click('Add your first bot');
     await wait('Boolean(document.querySelector(".bot-name-suggestions"))');
+    if (process.argv.includes('--mascots-only')) {
+      await wait(
+        'Array.from(document.querySelectorAll(".bot-avatar-options img")).every(img=>img.complete && img.naturalWidth>0)',
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".bot-avatar-options button").length'),
+        16,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".bot-avatar-options .is-selected img").getAttribute("src")',
+        ),
+        './mascots/mukai-logo.webp',
+      );
+      await evaluate(
+        `document.querySelector('button[aria-label="Use Blue star wizard mascot"]').click()`,
+      );
+      window.setSize(420, 900);
+      await capture('bot-mascots-narrow.png');
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".bot-avatar-options").scrollWidth <= document.querySelector(".bot-avatar-options").clientWidth',
+        ),
+        true,
+      );
+      window.setSize(1480, 980);
+      await capture('bot-mascots-picker.png');
+      await evaluate('document.querySelector(".bot-editor form").requestSubmit()');
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      const saved = (await request<Bot[]>('/bots'))[0];
+      assert.equal(saved.avatar, 'muka-mascot-5-blue');
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await wait(
+        'Boolean(document.querySelector(".bot-conversation-parent img[src*=muka-mascot-5-blue]"))',
+      );
+      api.store.run('UPDATE bots SET avatar=? WHERE id=?', 'nova', saved.id);
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await wait(
+        'Boolean(document.querySelector(".bot-conversation-parent img[src*=mukai-logo]"))',
+      );
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS mascots: all assets load, narrow picker fits, selection persists after reload, legacy uses Mukai.',
+      );
+      return;
+    }
     assert.deepEqual(
       await evaluate(
         'Array.from(document.querySelectorAll(".bot-name-suggestions button")).map(b=>b.textContent)',
@@ -1605,7 +1654,6 @@ async function main() {
     const specialistInput = {
       name: 'Ada',
       role: 'Code architect',
-      avatar: 'atlas' as const,
       instructions: 'Design and delegate implementation work.',
       providerId: null,
       model: null,
@@ -1617,7 +1665,6 @@ async function main() {
       ...specialistInput,
       name: 'Nova',
       role: 'Software engineer',
-      avatar: 'nova',
     });
     api.store.run('UPDATE bots SET created_by=? WHERE id=?', architect.id, engineer.id);
     engineer.createdBy = architect.id;
