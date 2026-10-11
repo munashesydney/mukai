@@ -202,7 +202,7 @@ export class MemoryReviewService {
         size += length;
       }
       const last = selected.at(-1)!;
-      const owner = conversation.kind === 'private' ? bot.id : null;
+      const owner = null;
       const episode = this.engine.enqueue({
         workspaceId: w,
         ownerId: owner,
@@ -255,7 +255,7 @@ export class MemoryReviewService {
       );
       try {
         const searchStarted = new Date().toISOString();
-        const searchScope = { workspaceId: w, privateOwner: owner || undefined };
+        const searchScope = { workspaceId: w, includePrivate: true };
         const searchQuery =
           selected
             .filter((row) => row.role === 'user')
@@ -269,7 +269,7 @@ export class MemoryReviewService {
           id: randomUUID(),
           tool: 'memory',
           action: 'search',
-          path: owner ? 'Private' : 'Workspace',
+          path: 'Workspace',
           status: 'complete',
           summary: JSON.stringify({
             startedAt: searchStarted,
@@ -283,7 +283,7 @@ export class MemoryReviewService {
         );
         await this.engine.processEpisode(episode.id, signal);
         const facts = this.engine.episodeFacts(
-          { workspaceId: w, privateOwner: owner || undefined },
+          { workspaceId: w, includePrivate: true },
           episode.id,
         );
         activity[0].status = 'complete';
@@ -293,7 +293,7 @@ export class MemoryReviewService {
             id: randomUUID(),
             tool: 'memory',
             action: 'add',
-            path: owner ? 'Private' : 'Workspace',
+            path: 'Workspace',
             status: 'complete',
             summary: JSON.stringify({
               facts: facts.map((fact) => ({

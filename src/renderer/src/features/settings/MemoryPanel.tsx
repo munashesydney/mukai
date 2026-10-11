@@ -210,7 +210,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                             onClick={() => choose(fact)}
                           >
                             <span className="memory-fact-meta">
-                              {fact.ownerId ? 'Private' : 'Workspace'} ·{' '}
+                              Workspace ·{' '}
                               {fact.state === 'uncertain'
                                 ? 'Unresolved'
                                 : fact.validTo
@@ -256,11 +256,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                           {selectedCurrent.object}
                         </dd>
                         <dt>Scope</dt>
-                        <dd>
-                          {selectedCurrent.ownerId
-                            ? 'Private to bot ' + selectedCurrent.ownerId
-                            : 'Shared workspace'}
-                        </dd>
+                        <dd>Shared workspace</dd>
                         <dt>Valid from</dt>
                         <dd>{time(selectedCurrent.validFrom)}</dd>
                         {selectedCurrent.validTo && (
@@ -521,7 +517,8 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                       <strong>Review conversations automatically</strong>
                       <small>
                         Review chats, spaces, and pursuit runs after one minute of inactivity using
-                        your configured AI. Private chats stay private to their bot.
+                        your configured AI. Memories from all chats are shared with every bot in
+                        this workspace.
                       </small>
                     </span>
                   </label>
@@ -639,8 +636,8 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                 {confirmation === 'clear' && (
                   <div className="memory-confirm">
                     <p>
-                      Clear all shared and private memory in this workspace, including source
-                      evidence and recall records? Original chats remain.
+                      Clear all memory in this workspace, including source evidence and recall
+                      records? Original chats remain.
                     </p>
                     <button
                       className="button button--secondary"

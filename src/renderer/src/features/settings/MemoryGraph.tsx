@@ -133,7 +133,7 @@ export function MemoryGraph({
             {visible.nodes.map((node) => (
               <g
                 key={node.id}
-                className={`memory-graph-node ${node.ownerId ? 'is-private' : ''}`}
+                className="memory-graph-node"
                 transform={`translate(${node.x} ${node.y})`}
                 role="button"
                 tabIndex={0}

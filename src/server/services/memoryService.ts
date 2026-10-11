@@ -245,11 +245,12 @@ export class MemoryService {
     if (settings.semanticSearch && !this.embedding.ready) void this.initializeModel(false);
     return settings;
   }
-  scope(bot: Bot, conversationId: string): MemoryScope {
+  scope(bot: Bot): MemoryScope {
     this.workspaces.require(bot.workspaceId);
     return {
       workspaceId: bot.workspaceId,
-      privateOwner: this.messages.privateConversation(conversationId) ? bot.id : undefined,
+      // Historical bot-owned memories are shared too, without rewriting their provenance.
+      includePrivate: true,
     };
   }
   private admin(workspaceId: string): MemoryScope {
@@ -358,16 +359,13 @@ export class MemoryService {
     conversationId: string,
     messageId: string,
     content: string,
-    shared: boolean,
     sourceKey: string,
     signal: AbortSignal,
   ) {
-    const scope = this.scope(bot, conversationId);
-    if (!scope.privateOwner && !shared)
-      throw new ApiError(400, 'Choose workspace scope in a shared conversation.');
+    this.scope(bot);
     const input: EpisodeInput = {
       workspaceId: bot.workspaceId,
-      ownerId: shared ? null : scope.privateOwner || null,
+      ownerId: null,
       actorId: bot.id,
       sourceKey,
       sourceType: 'tool',
@@ -378,8 +376,8 @@ export class MemoryService {
     };
     return this.engine.addMemory(input, signal);
   }
-  async search(bot: Bot, conversationId: string, query: string, options: SearchOptions) {
-    return this.searchScope(this.scope(bot, conversationId), query, options);
+  async search(bot: Bot, query: string, options: SearchOptions) {
+    return this.searchScope(this.scope(bot), query, options);
   }
   private async searchScope(scope: MemoryScope, query: string, options: SearchOptions) {
     // Workspace opt-out applies even if another workspace initialized the shared model worker.
@@ -408,7 +406,7 @@ export class MemoryService {
     const query = redactCredentials(
       [latest.content.slice(0, 2000), ...recent.slice(-2)].join('\n'),
     );
-    const scope = this.scope(bot, conversationId);
+    const scope = this.scope(bot);
     const engine = settings.semanticSearch
       ? this.engine
       : new MemoryEngine(this.store, async () => ({ facts: [] }));
@@ -531,9 +529,12 @@ export class MemoryService {
     )
       throw new ApiError(
         400,
-        'A private memory owner does not exist in this workspace. Import into the original workspace or explicitly remove ownerId to share it.',
+        'The original memory owner does not exist in this workspace. Import into the original workspace or remove ownerId from the import.',
       );
-    return this.engine.importFacts(workspaceId, facts);
+    return this.engine.importFacts(
+      workspaceId,
+      facts.map((fact) => ({ ...fact, ownerId: null })),
+    );
   }
   async shutdown() {
     if (this.timer) clearInterval(this.timer);

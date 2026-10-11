@@ -33,27 +33,25 @@ export function memoryTools(context: {
           'memory',
           input.action,
           input.action === 'add'
-            ? input.scope || ''
+            ? 'workspace'
             : input.action === 'search'
               ? input.query || ''
               : input.memoryId || '',
           async () => {
             switch (input.action) {
               case 'add':
-                if (!input.content || !input.scope)
-                  throw new Error('Memory add requires content and scope.');
+                if (!input.content) throw new Error('Memory add requires content.');
                 return context.memory.add(
                   context.bot,
                   context.conversationId,
                   context.messageId,
                   input.content,
-                  input.scope === 'workspace',
                   `tool:${context.messageId}:${options.toolCallId}`,
                   context.signal,
                 );
               case 'search':
                 if (!input.query) throw new Error('Memory search requires query.');
-                return context.memory.search(context.bot, context.conversationId, input.query, {
+                return context.memory.search(context.bot, input.query, {
                   limit: input.limit,
                   asOf: input.asOf,
                   includeHistory: input.includeHistory,
@@ -62,7 +60,7 @@ export function memoryTools(context: {
                 if (!input.memoryId)
                   throw new Error('Memory forget requires memoryId from search.');
                 context.memory.engine.forgetMemory(
-                  context.memory.scope(context.bot, context.conversationId),
+                  context.memory.scope(context.bot),
                   input.memoryId,
                 );
                 return { forgotten: true };
