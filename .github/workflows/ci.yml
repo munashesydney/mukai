@@ -51,3 +51,8 @@ jobs:
           for attempt in 1 2 3 4 5; do
             env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_CORE_DEVICE_EVENTS=1 xvfb-run -a dbus-run-session -- sh -c 'fluxbox >/tmp/mukai-fluxbox.log 2>&1 & xinput test-xi2 --root >/tmp/mukai-xinput.log 2>&1 & npm run test:computer-use -- --interactive || { cat /tmp/mukai-xinput.log; cat /tmp/mukai-fluxbox.log; exit 1; }'
           done
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'Linux'
+        with:
+          name: linux-desktop-smoke
+          path: artifacts/computer_use/*.png

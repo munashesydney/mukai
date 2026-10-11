@@ -132,6 +132,19 @@ void app.whenReady().then(async () => {
     );
   } catch (error) {
     console.error(error);
+    try {
+      const failure = (await service.execute(
+        owner,
+        { action: 'screenshot' },
+        AbortSignal.timeout(10000),
+      )) as { image: string };
+      await writeFile(
+        resolve('artifacts/computer_use/interactive-failure.png'),
+        Buffer.from(failure.image, 'base64'),
+      );
+    } catch (captureError) {
+      console.error('Could not capture the failed desktop:', captureError);
+    }
     process.exitCode = 1;
   } finally {
     await service.shutdown();
