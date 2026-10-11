@@ -82,3 +82,14 @@ it('expires unused viewer tickets', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31000);
   await denied(session.path, 'file://');
 });
+it('keeps the existing desktop available when only the guest bridge disconnects', async () => {
+  vi.spyOn(computer, 'start').mockRejectedValue(new Error('Guest bridge disconnected'));
+  await expect(transport.session(computer)).resolves.toMatchObject({ password: 'temporary' });
+});
+it('preserves the startup error when the guest has no usable desktop endpoint', async () => {
+  vi.spyOn(computer, 'start').mockRejectedValue(new Error('Linux guest crashed (kernel panic)'));
+  vi.spyOn(computer, 'desktopConnection').mockImplementation(() => {
+    throw new Error('Desktop unavailable');
+  });
+  await expect(transport.session(computer)).rejects.toThrow('kernel panic');
+});

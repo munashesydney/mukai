@@ -40,9 +40,27 @@ describe('host-native QEMU configuration', () => {
       });
     },
   );
-  it('retains the Windows x64 CPU and BIOS boot path', () => {
-    const args = qemuMachineArguments({ architecture: 'x64', accelerator: 'whpx' });
-    expect(args).toEqual(['-machine', 'q35', '-accel', 'whpx', '-cpu', 'Nehalem']);
+  it('uses host features without nested VMX for WHPX probing and guest boot', () => {
+    const config = { architecture: 'x64' as const, accelerator: 'whpx' };
+    const args = qemuMachineArguments(config);
+    expect(args).toEqual(['-machine', 'q35', '-accel', 'whpx', '-cpu', 'host,vmx=off']);
+    expect(qemuMachineArguments(config, false)).toEqual(args);
+    const runtime = qemuArguments(directory, 1234, {
+      ...config,
+      binary: '/qemu',
+      image: '/base',
+    });
+    expect(runtime.slice(2, 2 + args.length)).toEqual(args);
+  });
+  it.each(['kvm', 'hvf', 'tcg'])('retains the x64 CPU baseline for %s', (accelerator) => {
+    expect(qemuMachineArguments({ architecture: 'x64', accelerator })).toEqual([
+      '-machine',
+      'q35',
+      '-accel',
+      accelerator,
+      '-cpu',
+      'Nehalem',
+    ]);
   });
   it('uses the same ARM hardware for probe and boot, with an emulation CPU for TCG', () => {
     const config = {

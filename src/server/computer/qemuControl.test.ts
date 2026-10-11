@@ -24,6 +24,19 @@ it('negotiates QMP and sends ACPI powerdown over its private connection', async 
         'id' in frame
       )
         socket.write(encodeFrame({ return: { status: 'running' }, id: frame.id }));
+      else if (
+        frame &&
+        typeof frame === 'object' &&
+        'execute' in frame &&
+        frame.execute === 'unsupported' &&
+        'id' in frame
+      )
+        socket.write(
+          encodeFrame({
+            error: { class: 'CommandNotFound', desc: 'Unsupported command' },
+            id: frame.id,
+          }),
+        );
     }
   });
   try {
@@ -37,6 +50,12 @@ it('negotiates QMP and sends ACPI powerdown over its private connection', async 
       .toContainEqual({ execute: 'qmp_capabilities', id: 'capabilities' });
     // Readiness comes from the reply, independently of delivery of the greeting.
     await expect.poll(() => control.powerdown()).toBe(true);
+    await expect(control.status()).resolves.toBe('running');
+    await expect(control.command('unsupported')).rejects.toThrow('CommandNotFound');
+    const cancelled = new AbortController();
+    const pending = control.command('unanswered', undefined, cancelled.signal);
+    cancelled.abort();
+    await expect(pending).rejects.toThrow('cancelled');
     await expect(control.status()).resolves.toBe('running');
     await expect
       .poll(() => received)
@@ -59,6 +78,9 @@ it('negotiates QMP and sends ACPI powerdown over its private connection', async 
         reject(new Error('Control listener remained open.'));
       });
     });
+    const disconnected = control.command('unanswered');
+    socket.destroy();
+    await expect(disconnected).rejects.toThrow('disconnected');
   } finally {
     socket.destroy();
     control.close();

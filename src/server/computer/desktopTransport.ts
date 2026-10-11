@@ -20,7 +20,17 @@ export class DesktopTransport {
   private closed = false;
   async session(computer: QemuComputer): Promise<ComputerViewSession> {
     if (this.closed) throw new Error('Desktop views are shutting down.');
-    await computer.start();
+    try {
+      await computer.start();
+    } catch (error) {
+      // The VNC desktop can survive a bridge disconnect. Reuse only a live VM's
+      // existing endpoint; stopped, booting and panicked guests reject it.
+      try {
+        computer.desktopConnection();
+      } catch {
+        throw error;
+      }
+    }
     if (this.closed) throw new Error('Desktop views are shutting down.');
     for (const [key, value] of this.tickets)
       if (value.expires <= Date.now()) this.tickets.delete(key);

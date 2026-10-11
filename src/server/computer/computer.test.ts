@@ -269,6 +269,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     diagnostics?: DiagnosticService,
     health = false,
     loseFirstReconnectProbe = false,
+    shutdownDelay = 0,
   ) {
     const image = join(directory, 'base.qcow2');
     const script = join(directory, 'guest.cjs');
@@ -303,6 +304,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
           const request = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
           if(request.ready) continue;
           if(request.input && request.input.command === 'wedge') { socket.write(JSON.stringify({id:request.id,result:{wedged:true}}) + String.fromCharCode(10)); wedged = true; continue; }
+          if(request.input && request.input.command === 'panic') { wedged = true; process.stdout.write('Kernel panic - not syn'); setTimeout(() => process.stdout.write('cing: Attempted to kill init!'), 10); continue; }
           if(wedged) continue;
           if(request.health) { if(loseProbe) { loseProbe=false; continue; } verified=true; diagnostics.sampledAt=new Date().toISOString(); diagnostics.uptimeSeconds=process.uptime(); socket.write(JSON.stringify({health:request.health,diagnostics})+'\\n'); continue; }
           if(!verified && request.method) fs.writeFileSync(tokenPath+'.premature-tool', 'sent before probe acknowledgement');
@@ -325,7 +327,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       socket.on('close', () => { if(!disconnected && !wedged) { if(health) setTimeout(connect,30); else process.exit(0); } });
       };
       connect();
-      process.stdin.on('data', chunk => { if(chunk.toString().includes('system_powerdown')) process.exit(0); });
+      process.stdin.on('data', chunk => { if(chunk.toString().includes('system_powerdown')) setTimeout(() => process.exit(0), ${shutdownDelay}); });
     `,
     );
     const launch = vi.fn(
@@ -493,6 +495,98 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       input: { command: 'ls' },
     });
   }, 60000);
+  it.each(['wedge', 'disconnect'])(
+    'recovers a silent guest (%s) without a host sleep event',
+    async (command) => {
+      const { vm, launch } = await fixture(false, 0, undefined, true);
+      await vm.start();
+      await vm.inspectHealth(signal());
+      await writeFile(join(directory, 'vm', 'disk.qcow2'), 'preserved-workspace');
+      await vm.request('terminal', { command }, owner, signal()).catch(() => {});
+      await vi.waitFor(
+        () => {
+          expect(launch).toHaveBeenCalledTimes(2);
+          expect(vm.status().state).toBe('running');
+        },
+        { timeout: 75000, interval: 250 },
+      );
+      expect(await readFile(join(directory, 'vm', 'disk.qcow2'), 'utf8')).toBe(
+        'preserved-workspace',
+      );
+      expect(await vm.request('terminal', { command: 'ls' }, owner, signal())).toMatchObject({
+        input: { command: 'ls' },
+      });
+    },
+    80000,
+  );
+  it('recognizes a kernel panic split across console chunks and recovers the crashed guest', async () => {
+    const diagnostics = new DiagnosticService(directory);
+    const { vm, launch } = await fixture(false, 0, diagnostics, true);
+    await vm.start();
+    await vm.inspectHealth(signal());
+    await vm.recoverBridge('recent reconnect');
+    await expect(vm.request('terminal', { command: 'panic' }, owner, signal())).rejects.toThrow(
+      'kernel panic',
+    );
+    expect(vm.status()).toMatchObject({
+      state: 'failed',
+      error: expect.stringContaining('kernel panic'),
+    });
+    await vi.waitFor(
+      () => {
+        expect(launch).toHaveBeenCalledTimes(2);
+        expect(vm.status().state).toBe('running');
+      },
+      { timeout: 25000, interval: 250 },
+    );
+    const records = await readFile(diagnostics.path, 'utf8');
+    expect(records).toContain('computer.guest_panicked');
+    expect(records).toContain('reason=guest kernel panic');
+  }, 30000);
+  it('bounds repeated crash recovery and lets a manual stop/start reset the limit', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true);
+    await vm.start();
+    for (let index = 0; index < 4; index++) {
+      await expect(vm.request('terminal', { command: 'panic' }, owner, signal())).rejects.toThrow(
+        'kernel panic',
+      );
+      expect(() => vm.desktopConnection()).toThrow('unavailable');
+      await expect(vm.recoverAfterHostResume()).resolves.toBe(index < 3 ? 'restarted' : 'failed');
+    }
+    expect(launch).toHaveBeenCalledTimes(4);
+    expect(vm.status()).toMatchObject({
+      state: 'failed',
+      error: expect.stringContaining('three restarts'),
+    });
+    await expect(vm.start()).rejects.toThrow('three restarts');
+    // Expiring the rolling window must not resume a crash loop without a manual retry.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 600001);
+    try {
+      await expect(vm.recoverAfterHostResume()).resolves.toBe('failed');
+      expect(launch).toHaveBeenCalledTimes(4);
+    } finally {
+      clock.mockRestore();
+    }
+    await vm.stop();
+    await vm.start();
+    expect(vm.status().state).toBe('running');
+  }, 15000);
+  it('honors a manual Stop while automatic crash recovery is shutting down', async () => {
+    const { vm, launch } = await fixture(false, 0, undefined, true, false, 300);
+    await vm.start();
+    await expect(vm.request('terminal', { command: 'panic' }, owner, signal())).rejects.toThrow(
+      'kernel panic',
+    );
+    const recovery = vm.recoverAfterHostResume();
+    await vi.waitFor(() => expect(vm.status().state).toBe('stopped'), {
+      timeout: 2000,
+      interval: 10,
+    });
+    await vm.stop();
+    await expect(recovery).resolves.toBe('skipped');
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(vm.status().state).toBe('stopped');
+  }, 5000);
   it('boots and restarts the ARM bridge with UEFI while retaining disk contents', async () => {
     host.architecture = 'arm64';
     host.platform = 'darwin';
