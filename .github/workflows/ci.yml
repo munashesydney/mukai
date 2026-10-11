@@ -50,3 +50,6 @@ jobs:
       - name: Show window manager diagnostics
         if: failure() && runner.os == 'Linux'
         run: cat /tmp/mukai-openbox.log
+      - name: Compare bare X11 gesture delivery
+        if: always() && runner.os == 'Linux'
+        run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a npm run test:computer-use -- --interactive

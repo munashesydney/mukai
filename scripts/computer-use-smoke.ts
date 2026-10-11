@@ -90,6 +90,27 @@ void app.whenReady().then(async () => {
     await run({ action: 'click', ...point(550, 50) });
     await delay(100);
     assert.equal(await evaluate("document.getElementById('button').textContent"), 'Clicked');
+    const gestures = async (phase: string) => {
+      await evaluate('window.smokeEvents=[]');
+      await run({ action: 'scroll', ...point(200, 280), direction: 'down', pixels: 650 });
+      await waitFor(
+        "document.getElementById('scroll').scrollTop > 0",
+        `The scroll gesture was not delivered ${phase}.`,
+      );
+      const start = point(550, 210),
+        end = point(600, 250);
+      await evaluate('window.smokeEvents=[]');
+      await run({ action: 'drag', ...start, endX: end.x, endY: end.y, durationMs: 300 });
+      await waitFor(
+        "document.getElementById('drag').dataset.dragged === 'yes'",
+        `The drag gesture was not delivered ${phase}.`,
+      );
+      console.log(`Scroll and drag delivered ${phase}.`);
+      await evaluate(
+        "document.getElementById('scroll').scrollTop=0; delete document.getElementById('drag').dataset.dragged",
+      );
+    };
+    await gestures('before typing');
     await run({ action: 'click', ...point(80, 70) });
     const text =
       'Mukai café 世界 🌱 — [] {} ! @ # $ % ^ & * ( ) + = : ; , . ? / 0123456789 Ωαβ你好再见'.repeat(
@@ -104,20 +125,7 @@ void app.whenReady().then(async () => {
     assert.equal(await evaluate("document.getElementById('text').value"), 'replaced');
     await run({ action: 'key_down', key: 'SHIFT' });
     await run({ action: 'key_up', key: 'SHIFT' });
-    await evaluate('window.smokeEvents=[]');
-    await run({ action: 'scroll', ...point(200, 280), direction: 'down', pixels: 650 });
-    await waitFor(
-      "document.getElementById('scroll').scrollTop > 0",
-      'The scroll gesture was not delivered.',
-    );
-    const start = point(550, 210),
-      end = point(600, 250);
-    await evaluate('window.smokeEvents=[]');
-    await run({ action: 'drag', ...start, endX: end.x, endY: end.y, durationMs: 300 });
-    await waitFor(
-      "document.getElementById('drag').dataset.dragged === 'yes'",
-      'The drag gesture was not delivered.',
-    );
+    await gestures('after typing');
     console.log(
       'Native screenshot, click, Unicode text, shortcut, key hold, scroll and drag passed.',
     );
