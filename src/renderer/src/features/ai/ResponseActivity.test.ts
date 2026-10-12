@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../../shared/ai';
 import { ResponseActivity } from './ResponseActivity';
 
@@ -119,7 +119,7 @@ describe('Response activity disclosures', () => {
       }),
     );
     expect(finished).toContain('<details class="response-reasoning">');
-    expect(finished).not.toContain('open=""');
+    expect(finished).not.toContain('<details class="response-reasoning" open="">');
   });
   it('starts completed work collapsed with the final answer outside the disclosure', () => {
     const html = renderToStaticMarkup(createElement(ResponseActivity, { message }));
@@ -129,14 +129,47 @@ describe('Response activity disclosures', () => {
     expect(html.indexOf('Progress')).toBeLessThan(html.indexOf('Provider reasoning'));
     expect(html.indexOf('Provider reasoning')).toBeLessThan(html.indexOf('notes.txt'));
   });
-  it('shows streaming activity inline without a completed work disclosure', () => {
-    const html = renderToStaticMarkup(
-      createElement(ResponseActivity, { message: { ...message, status: 'streaming' } }),
-    );
-    expect(html).not.toContain('response-work');
-    expect(html).toContain('response-reasoning');
-    expect(html).toContain('response-tool');
-    expect(html).not.toContain('reasoning-card');
+  it('shows live work in the same expandable disclosure with elapsed time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-02T00:02:31Z'));
+    try {
+      const html = renderToStaticMarkup(
+        createElement(ResponseActivity, {
+          message: { ...message, status: 'streaming' },
+          workExpanded: true,
+        }),
+      );
+      expect(html).toContain('<details class="response-work" open="">');
+      expect(html).toContain('Working for 2m 31s');
+      expect(html).not.toContain('Worked for');
+      expect(html).toContain('response-reasoning');
+      expect(html).toContain('response-tool');
+      expect(html).not.toContain('reasoning-card');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('shows the live disclosure before any activity arrives', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(message.createdAt));
+    try {
+      const html = renderToStaticMarkup(
+        createElement(ResponseActivity, {
+          message: {
+            ...message,
+            status: 'streaming',
+            startedAt: undefined,
+            parts: [],
+            activity: [],
+            content: '',
+          },
+        }),
+      );
+      expect(html).toContain('<details class="response-work" open="">');
+      expect(html).toContain('Working for 0s');
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('keeps failed tool output and stopped response status visible on expansion', () => {
     const html = renderToStaticMarkup(

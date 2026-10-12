@@ -25,16 +25,19 @@ async function main() {
     const input = JSON.parse(Buffer.concat(chunks).toString());
     inputs.push(JSON.stringify(input.messages));
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    const send = (content: string, finish: string | null = null) =>
+    const send = (content: string, finish: string | null = null, reasoning?: string) =>
       response.write(
         `data: ${JSON.stringify({
           id: 'ui-fixture',
           object: 'chat.completion.chunk',
           created: 1,
           model: input.model,
-          choices: [{ index: 0, delta: { content }, finish_reason: finish }],
+          choices: [
+            { index: 0, delta: { content, reasoning_content: reasoning }, finish_reason: finish },
+          ],
         })}\n\n`,
       );
+    send('', null, 'Checking the layout before making changes.');
     send('I am reviewing the existing layout. ');
     if (continueWork) {
       send('I continued using your correction.', 'stop');
@@ -113,6 +116,19 @@ async function main() {
     await composer.fill('Review the layout and explain your approach.');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await page.getByRole('button', { name: 'Stop generation', exact: true }).waitFor();
+    const liveWork = page.locator('.response-work > summary');
+    await liveWork.filter({ hasText: 'Working for' }).waitFor();
+    const initialDuration = await liveWork.innerText();
+    await page.waitForFunction(
+      (initial) => document.querySelector('.response-work > summary')?.textContent !== initial,
+      initialDuration.trim(),
+    );
+    await page.locator('.response-reasoning').waitFor();
+    assert.equal(await page.locator('.response-work').getAttribute('open'), '');
+    await liveWork.click();
+    await page.waitForFunction(
+      () => !document.querySelector('.response-work')?.hasAttribute('open'),
+    );
     assert.equal(await composer.isEnabled(), true);
     await composer.fill('Focus on the mobile layout.');
     await page.getByRole('button', { name: 'Queue follow-up', exact: true }).click();
@@ -172,6 +188,12 @@ async function main() {
     assert(contrast >= 4.5, `Steer needs readable contrast in dark mode (measured ${contrast}).`);
     await page.reload();
     await page.waitForFunction(() => document.querySelectorAll('.followup-row').length === 2);
+    await page.locator('.response-work > summary').filter({ hasText: 'Working for' }).waitFor();
+    assert.equal(await page.locator('.response-work').getAttribute('open'), '');
+    await page.locator('.response-work > summary').click();
+    await page.waitForFunction(
+      () => !document.querySelector('.response-work')?.hasAttribute('open'),
+    );
     await page.getByRole('button', { name: 'Delete queued message', exact: true }).last().click();
     await page.waitForFunction(() => document.querySelectorAll('.followup-row').length === 1);
     continueWork = true;
@@ -197,6 +219,7 @@ async function main() {
       animations: 'disabled',
     });
     const worked = page.locator('.response-work > summary');
+    assert.match(await worked.innerText(), /^Worked for /);
     await worked.click();
     await page.locator('.response-steering').waitFor();
     await page.waitForFunction(() => !document.querySelector('.ai-message--steering'));
@@ -209,7 +232,7 @@ async function main() {
     assert.equal(await userSteer.locator('time').getAttribute('datetime'), timestamp);
     assert.deepEqual(errors, []);
     console.log(
-      'Steering UI smoke passed: queue, edit, refresh, delete, steer, collapsed user messages and expanded history.',
+      'Steering UI smoke passed: live timer and expandable steps, queue, edit, refresh, delete, steer, collapsed user messages and expanded history.',
     );
   } finally {
     await browser.close();

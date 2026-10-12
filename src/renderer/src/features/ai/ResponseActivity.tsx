@@ -1,4 +1,4 @@
-import { memo, useContext, useState } from 'react';
+import { memo, useContext, useEffect, useState } from 'react';
 import { ConversationNavigation } from './ConversationNavigation';
 import {
   Brain,
@@ -304,7 +304,7 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
   );
 }
 
-function CompletedProcess({
+function WorkProcess({
   parts,
   message,
   expanded,
@@ -315,11 +315,22 @@ function CompletedProcess({
   expanded?: boolean;
   onExpandedChange?: (open: boolean) => void;
 }) {
-  const [internalOpen, setOpen] = useState(false);
+  const [internalOpen, setOpen] = useState(message.status === 'streaming');
+  const [now, setNow] = useState(() => Date.now());
+  const streaming = message.status === 'streaming';
+  useEffect(() => {
+    if (!streaming) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [streaming]);
   const open = expanded ?? internalOpen;
-  const duration = formatWorkDuration(message.startedAt, message.finishedAt);
-  const label =
-    message.status === 'complete'
+  const duration = formatWorkDuration(
+    message.startedAt || (streaming ? message.createdAt : undefined),
+    streaming ? new Date(now).toISOString() : message.finishedAt,
+  );
+  const label = streaming
+    ? 'Working'
+    : message.status === 'complete'
       ? 'Worked'
       : message.status === 'stopped'
         ? 'Stopped'
@@ -356,18 +367,15 @@ export const ResponseActivity = memo(function ResponseActivity({
   const { process, answer } = responsePresentation(message);
   return (
     <>
-      {!!process.length &&
-        (message.status === 'streaming' ? (
-          <ProcessTranscript parts={process} message={message} />
-        ) : (
-          <CompletedProcess
-            key={`${message.id}:${message.startedAt || ''}`}
-            parts={process}
-            message={message}
-            expanded={workExpanded}
-            onExpandedChange={onWorkExpandedChange}
-          />
-        ))}
+      {(!!process.length || message.status === 'streaming') && (
+        <WorkProcess
+          key={`${message.id}:${message.startedAt || ''}`}
+          parts={process}
+          message={message}
+          expanded={workExpanded}
+          onExpandedChange={onWorkExpandedChange}
+        />
+      )}
       {!!answer && <MessageMarkdown text={answer} />}
     </>
   );

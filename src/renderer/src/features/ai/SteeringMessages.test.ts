@@ -55,7 +55,7 @@ it('keeps the expanded transcript unchanged and hides the separate user messages
   expect(html).toMatch(/<\/details><div class="ai-markdown"><p>Completed both tasks/);
 });
 
-it('keeps active steering in the live transcript and uses the message time for legacy parts', () => {
+it('shows active steering when work is collapsed and uses the message time for legacy parts', () => {
   expect(
     renderToStaticMarkup(
       createElement(SteeringMessages, {
@@ -63,7 +63,7 @@ it('keeps active steering in the live transcript and uses the message time for l
         collapsed: true,
       }),
     ),
-  ).toBe('');
+  ).toContain('Also multiply two numbers.');
   const html = renderToStaticMarkup(
     createElement(SteeringMessages, {
       message: {

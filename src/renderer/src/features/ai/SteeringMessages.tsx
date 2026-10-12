@@ -10,7 +10,7 @@ export function SteeringMessages({
   message: ChatMessage;
   collapsed: boolean;
 }) {
-  if (!collapsed || message.role !== 'assistant' || message.status === 'streaming') return null;
+  if (!collapsed || message.role !== 'assistant') return null;
   return (
     <>
       {(message.parts || [])
