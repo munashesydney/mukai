@@ -1,10 +1,18 @@
-export type ColorMode = 'light' | 'dark' | 'system';
-export type ResolvedMode = Exclude<ColorMode, 'system'>;
-export type ThemeId = 'mukai' | 'ocean' | 'iris' | 'ember' | 'rose' | 'graphite';
-export interface ThemePreferences {
-  mode: ColorMode;
-  theme: ThemeId;
-}
+import {
+  appearanceSchema,
+  defaultPreferences,
+  type ColorMode,
+  type ResolvedMode,
+  type ThemeId,
+  type ThemePreferences,
+} from '../../../../shared/appearance';
+export { defaultPreferences } from '../../../../shared/appearance';
+export type {
+  ColorMode,
+  ResolvedMode,
+  ThemeId,
+  ThemePreferences,
+} from '../../../../shared/appearance';
 interface AccentPalette {
   accent: string;
   hover: string;
@@ -177,29 +185,26 @@ export const themes: ThemeDefinition[] = [
 ];
 
 export const themeStorageKey = 'mukai.appearance.v1';
-export const defaultPreferences: ThemePreferences = { mode: 'light', theme: 'mukai' };
 
 export function parsePreferences(raw: string | null): ThemePreferences {
   try {
-    const value: unknown = JSON.parse(raw ?? 'null');
-    if (!value || typeof value !== 'object') return defaultPreferences;
-    const candidate = value as Partial<ThemePreferences>;
-    if (
-      !['light', 'dark', 'system'].includes(candidate.mode ?? '') ||
-      !themes.some((theme) => theme.id === candidate.theme)
-    )
-      return defaultPreferences;
-    return { mode: candidate.mode!, theme: candidate.theme! };
+    return appearanceSchema.safeParse(JSON.parse(raw ?? 'null')).data ?? defaultPreferences;
   } catch {
     return defaultPreferences;
   }
 }
 
 export function readPreferences(): ThemePreferences {
+  return readStoredPreferences() ?? defaultPreferences;
+}
+export function readStoredPreferences(): ThemePreferences | null {
   try {
-    return parsePreferences(localStorage.getItem(themeStorageKey));
+    return (
+      appearanceSchema.safeParse(JSON.parse(localStorage.getItem(themeStorageKey) ?? 'null'))
+        .data ?? null
+    );
   } catch {
-    return defaultPreferences;
+    return null;
   }
 }
 

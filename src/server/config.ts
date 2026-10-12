@@ -1,9 +1,30 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
-export const defaultDataDir = () => process.env.MUKAI_DATA_DIR || join(homedir(), '.mukai');
+/** Match Electron's default app.getPath('userData')/data without requiring Electron in the CLI. */
+export function desktopDataDir(
+  platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  userHome = homedir(),
+) {
+  if (platform === 'win32')
+    return win32.join(
+      environment.APPDATA || win32.join(userHome, 'AppData', 'Roaming'),
+      'mukai',
+      'data',
+    );
+  if (platform === 'darwin')
+    return posix.join(userHome, 'Library', 'Application Support', 'mukai', 'data');
+  const configHome = environment.XDG_CONFIG_HOME;
+  return posix.join(
+    configHome && posix.isAbsolute(configHome) ? configHome : posix.join(userHome, '.config'),
+    'mukai',
+    'data',
+  );
+}
+export const defaultDataDir = () => process.env.MUKAI_DATA_DIR || desktopDataDir();
 export function privateSecret(dir: string, name: string, bytes: number) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, name);

@@ -114,9 +114,7 @@ async function main() {
   };
   try {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
-    await evaluate(
-      `localStorage.setItem('mukai.appearance.v1', JSON.stringify({mode:'dark',theme:'rose'}))`,
-    );
+    await request('/settings/appearance', 'PUT', { mode: 'dark', theme: 'rose' });
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".rail-links"))', 'renderer');
     await click('[aria-label="Open settings"]');

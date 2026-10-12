@@ -12,7 +12,8 @@ Usage:
 
 serve runs locally in the foreground. Ctrl+C stops it.
 --port 0 selects an available port. PORT sets the default port.
-Data defaults to MUKAI_DATA_DIR or ~/.mukai. One backend per data directory.
+Data defaults to the desktop app's data directory, or MUKAI_DATA_DIR.
+One backend per data directory. --data-dir selects a separate installation.
 Re-run the installer to upgrade; it preserves application data.`;
 
 export async function main(args = process.argv.slice(2)) {

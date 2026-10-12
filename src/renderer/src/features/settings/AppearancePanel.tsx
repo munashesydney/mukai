@@ -10,15 +10,25 @@ const modes = [
 ] as const;
 
 export function AppearancePanel() {
-  const { preferences, resolvedMode, setMode, setTheme } = useTheme();
+  const { preferences, resolvedMode, setMode, setTheme, ready, saving, error, retry } = useTheme();
   return (
     <>
       <div className="settings-panel-heading">
         <span className="settings-eyebrow">A SPACE THAT FEELS LIKE YOU</span>
         <h3>Appearance</h3>
-        <p>Find your light. Set your own tone.</p>
+        <p>Find your light. Set your own tone. Shared across desktop and browser.</p>
       </div>
-      <fieldset className="appearance-group">
+      {error && (
+        <div className="ai-alert" role="alert">
+          {error}
+          {!ready && (
+            <button className="text-button" onClick={retry}>
+              Try again
+            </button>
+          )}
+        </div>
+      )}
+      <fieldset className="appearance-group" disabled={!ready}>
         <legend>Color mode</legend>
         <p>Choose your light, or let your device lead.</p>
         <div className="mode-options">
@@ -58,7 +68,7 @@ export function AppearancePanel() {
           ))}
         </div>
       </fieldset>
-      <fieldset className="appearance-group theme-group">
+      <fieldset className="appearance-group theme-group" disabled={!ready}>
         <legend>Workspace theme</legend>
         <p>A little color goes a long way.</p>
         <div className="theme-options">
@@ -136,7 +146,15 @@ export function AppearancePanel() {
       <div className="appearance-note">
         <Palette size={14} />
         <span>Yours to change. Make yourself at home.</span>
-        <span className="appearance-live">Live preview</span>
+        <span className="appearance-live" role="status">
+          {!ready
+            ? 'Loading settings…'
+            : saving
+              ? 'Saving…'
+              : error
+                ? 'Could not save'
+                : 'Saved across Mukai'}
+        </span>
       </div>
     </>
   );

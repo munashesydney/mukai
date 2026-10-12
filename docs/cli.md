@@ -42,7 +42,9 @@ The connection link carries a per-server bootstrap credential in its fragment (n
 
 ## Data and desktop compatibility
 
-Standalone data defaults to `~/.mukai`, or `MUKAI_DATA_DIR`. `--data-dir` takes precedence. Desktop retains its existing per-user Electron data directory. To use that data in browser mode, stop Desktop and pass its data directory explicitly. There is no automatic copying or migration between locations, and both modes enforce one backend per data directory. Database schema checks prevent opening newer data with an older runtime.
+CLI data defaults to the desktop application's existing data directory: `%APPDATA%/mukai/data` on Windows, `~/Library/Application Support/mukai/data` on macOS, and `${XDG_CONFIG_HOME:-~/.config}/mukai/data` on Linux. The lowercase application name is intentional. `MUKAI_DATA_DIR` selects another location, and `--data-dir` takes precedence. Stop Desktop before starting the CLI against the same database. Older CLI data in `~/.mukai` remains untouched; pass that location explicitly to keep using it. There is no automatic database merge or replacement. Database schema checks prevent opening newer data with an older runtime.
+
+Appearance now lives in the existing `app_settings` SQLite table. Open the updated desktop once to import its previous theme and color mode, then stop it before opening the CLI. Initialization never overwrites an already-saved shared appearance. Browser storage is only a startup cache; the shared setting wins across ports, browsers, and desktop launches. Changes save automatically and open clients refresh periodically or when focused. Public base URL and pursuit limits already persist in the database, so selecting the shared data directory also shares those settings.
 
 Core screens, chat, settings, files, and workflows reuse the desktop renderer. Browser mode uses entered server-side folder paths instead of the native folder picker. Native window controls are hidden. The Electron embedded browser remains desktop-only; Chrome tools and VM desktop viewing use their existing backend mechanisms. Native computer-use permission prompts identify the CLI runtime rather than the desktop application on macOS.
 
@@ -53,6 +55,7 @@ npm run build:cli
 npm run cli -- serve --port 8080 --open
 npm run package:cli
 npm run test:cli:packaged
+npm run test:settings-ui
 ```
 
 CLI code lives in `src/cli`; it delegates to `src/server/app.ts`. Production browser transport lives in `src/server/web`. Build and release scripts live in `scripts/cli`. The staged production dependency installation does not modify the source checkout. Each package is built on its target OS/architecture from the lockfile. `dist/cli` is a build output, not a second source package.

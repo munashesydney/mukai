@@ -9,7 +9,6 @@ import react from '@vitejs/plugin-react';
 import { startApiServer } from '../src/server/app';
 import { seedTestBot } from '../src/server/testFixtures';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
-import { themeStorageKey } from '../src/renderer/src/features/appearance/themes';
 
 async function close(server: Server) {
   server.closeAllConnections();
@@ -96,6 +95,12 @@ async function main() {
       }),
     });
     assert.equal(provider.status, 201);
+    const appearance = await fetch(api.url + '/settings/appearance', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'system', theme: 'mukai' }),
+    });
+    assert(appearance.ok, await appearance.clone().text());
     await vite.listen();
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors: string[] = [];
@@ -103,12 +108,10 @@ async function main() {
     // tsx preserves function names with this helper inside serialized evaluations.
     await page.addInitScript('globalThis.__name = (value) => value;');
     await page.addInitScript(
-      ({ id, key }) => {
+      ({ id }) => {
         localStorage.setItem('mukai.active-conversation.scout', id);
-        if (!localStorage.getItem(key))
-          localStorage.setItem(key, JSON.stringify({ mode: 'system', theme: 'mukai' }));
       },
-      { id: conversation.id, key: themeStorageKey },
+      { id: conversation.id },
     );
     await page.goto(vite.resolvedUrls!.local[0]);
     const composer = page.locator('.ai-composer-area .composer > textarea');

@@ -36,6 +36,8 @@ import { ConversationHistoryRepository } from './repositories/conversationHistor
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import { LimitsRepository } from './repositories/limitsRepository';
+import { SettingsRepository } from './repositories/settingsRepository';
+import { SettingsService } from './services/settingsService';
 import { ToolAccessService } from './services/toolAccessService';
 import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
 import { BotManagementService } from './services/botManagementService';
@@ -89,6 +91,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
+    const settings = new SettingsService(new SettingsRepository(store));
     const computers = new ComputerManager(dir, options.guestBundleDir, diagnostics);
     const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
@@ -254,6 +257,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      settings,
       browserMode: Boolean(options.webDir),
       version: options.version,
       chatOutputs,

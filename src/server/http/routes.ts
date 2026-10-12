@@ -42,6 +42,7 @@ import { memorySettingsSchema, type MemoryService } from '../services/memoryServ
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 import { trustedLocalRequest } from '../web/origin';
+import type { SettingsService } from '../services/settingsService';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -65,6 +66,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  settings,
   browserMode = false,
   version = '0.1.0',
   chatOutputs,
@@ -88,6 +90,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  settings: SettingsService;
   browserMode?: boolean;
   version?: string;
   chatOutputs: ChatOutputService;
@@ -151,7 +154,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -163,6 +166,18 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    // Public route configuration is application-wide, independent of workspace IDs.
+    if (resource === 'capabilities' && id === 'settings' && !action) {
+      if (method === 'GET') return send(response, capabilities.routeSettings());
+      if (method === 'PUT')
+        return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
+    }
+    if (resource === 'settings' && id === 'appearance' && !action) {
+      if (method === 'GET') return send(response, settings.appearance());
+      if (method === 'PUT') return send(response, settings.saveAppearance(await jsonBody(request)));
+      if (method === 'POST')
+        return send(response, settings.saveAppearance(await jsonBody(request), true));
+    }
     if (resource === 'limits' && !id) {
       if (method === 'GET') return send(response, pursuits.limits());
       if (method === 'PUT') {
@@ -379,11 +394,6 @@ export function createRoutes({
           return send(response, { removed: true });
         }
       } else {
-        if (id === 'settings' && !action) {
-          if (method === 'GET') return send(response, capabilities.routeSettings());
-          if (method === 'PUT')
-            return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
-        }
         if (!id && method === 'GET') return send(response, capabilities.list(workspaceId));
         if (id && !action && method === 'GET')
           return send(response, capabilities.detail(id, workspaceId));
