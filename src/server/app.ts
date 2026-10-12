@@ -8,6 +8,7 @@ import { ProviderRepository } from './repositories/providerRepository';
 import { AttachmentRepository } from './repositories/attachmentRepository';
 import { MessageRepository } from './repositories/messageRepository';
 import { ChatJobRepository } from './repositories/chatJobRepository';
+import { ChatFollowupRepository } from './repositories/chatFollowupRepository';
 import { BotService } from './services/botService';
 import { ProviderService } from './services/providerService';
 import { AttachmentService } from './services/attachmentService';
@@ -150,6 +151,7 @@ export function createApiServer(options: ApiOptions = {}) {
       diagnostics,
       memory,
       approvals,
+      new ChatFollowupRepository(store),
     );
     const bots = new BotService(
       botRepository,
@@ -159,6 +161,7 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaceRepository,
     );
     chats.initialize();
+    chats.attachFollowups((id) => bots.require(id));
     capabilities.setWake(async (botId, workspaceId, message, requestId) => {
       const bot = bots.require(botId);
       if (bot.workspaceId !== workspaceId)
@@ -320,6 +323,7 @@ export function createApiServer(options: ApiOptions = {}) {
       });
     server.once('listening', () => {
       chats.restorePending((id) => bots.require(id));
+      chats.restoreFollowups();
       pursuits.start();
       capabilities.start();
       memory.start();

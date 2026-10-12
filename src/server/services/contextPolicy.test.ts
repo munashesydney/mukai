@@ -36,6 +36,40 @@ const history = (): ModelMessage[] => [
   ...pair('third'),
 ];
 describe('working context', () => {
+  it('keeps the original task and all applied steering exact through compaction', async () => {
+    const original = history();
+    const first: ModelMessage = { role: 'user', content: 'Focus on mobile; preserve the API.' };
+    const second: ModelMessage = {
+      role: 'user',
+      content: 'Keep the original accessibility requirements too.',
+    };
+    const manager = new ContextManager(
+      16384,
+      2048,
+      100,
+      async () => 'Earlier operations completed.',
+    );
+    manager.pinRequests([original[3], first, second]);
+    const compacted = await manager.prepare([
+      ...original,
+      first,
+      ...pair('large', 'findings '.repeat(6000)),
+      second,
+    ]);
+    expect(compacted).toContainEqual(original[3]);
+    expect(compacted).toContainEqual(first);
+    expect(compacted).toContainEqual(second);
+    expect(manager.compactions).toBe(1);
+    for (const unit of contextUnits(compacted)) {
+      const call = unit.find(
+        (message) =>
+          message.role === 'assistant' &&
+          Array.isArray(message.content) &&
+          message.content.some((part) => part.type === 'tool-call'),
+      );
+      if (call) expect(unit.some((message) => message.role === 'tool')).toBe(true);
+    }
+  });
   it('preserves omitted-image notices when additional tools force results into compaction', async () => {
     const summarize = vi.fn(async () => 'Continue the current task; earlier operations completed.');
     const manager = new ContextManager(10000, 8192, 5000, summarize);

@@ -2381,3 +2381,122 @@
   vertical-align: middle;
   margin-left: 8px;
 }
+.followup-queue {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.followup-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+.followup-icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  opacity: 0.55;
+}
+.followup-copy {
+  flex: 1;
+  min-width: 0;
+}
+.followup-copy p {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.followup-copy span {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.followup-actions,
+.followup-send-actions,
+.followup-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.followup-actions {
+  flex-shrink: 0;
+}
+.followup-send-actions {
+  margin-left: auto;
+}
+.followup-steer,
+.followup-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.followup-steer:hover,
+.followup-icon-button:hover {
+  opacity: 1;
+  background: var(--surface-raised);
+}
+.followup-steer:disabled,
+.followup-icon-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+.followup-edit {
+  flex: 1;
+  min-width: 0;
+}
+.followup-edit textarea {
+  width: 100%;
+  min-height: 48px;
+  resize: vertical;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  font: inherit;
+}
+.response-steering {
+  padding: 10px 14px;
+  border-left: 2px solid var(--line);
+  margin: 12px 0;
+  color: var(--ink);
+}
+.response-steering span {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.response-steering p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.steering-message-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+@media (max-width: 540px) {
+  .followup-row {
+    flex-wrap: wrap;
+  }
+  .followup-actions {
+    margin-left: auto;
+  }
+}

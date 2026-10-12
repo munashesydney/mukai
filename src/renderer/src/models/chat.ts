@@ -1,4 +1,4 @@
-import type { Attachment, ChatMessage } from '../../../shared/ai';
+import type { Attachment, ChatMessage, ChatFollowup } from '../../../shared/ai';
 
 // Renderer state adds UI concerns to the shared API contracts.
 export interface ChatState {
@@ -10,6 +10,8 @@ export interface ChatState {
   files: Attachment[];
   uploading: boolean;
   requestId: string;
+  followups: ChatFollowup[];
+  submittingFollowup: boolean;
 }
 export interface ChatDraft {
   text: string;

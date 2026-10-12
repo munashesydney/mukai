@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import type { ChatEvent } from '../../../../shared/ai';
+import type { ChatEvent, FollowupAction } from '../../../../shared/ai';
 import { UPLOAD_LIMIT, ATTACHMENT_LIMIT } from '../../../../shared/ai';
 import { appendResponseText, upsertResponsePart } from '../../../../shared/responseParts';
 import { chatService } from '../../services/chatService';
@@ -15,6 +15,8 @@ const listeners = new Set<() => void>();
 const active = new Set<string>();
 const loading = new Set<string>();
 const forgotten = new Set<string>();
+const followupWatching = new Set<string>();
+const followupVersions = new Map<string, number>();
 function get(id: string) {
   if (!states.has(id)) {
     let text = '',
@@ -48,6 +50,8 @@ function get(id: string) {
       files: [],
       uploading: false,
       requestId,
+      followups: [],
+      submittingFollowup: false,
     });
   }
   return states.get(id)!;
@@ -75,6 +79,8 @@ export const chatStore = {
       states.delete(id);
       active.delete(id);
       loading.delete(id);
+      followupWatching.delete(id);
+      followupVersions.delete(id);
     }
     listeners.forEach((listener) => listener());
   },
@@ -84,23 +90,37 @@ export const chatStore = {
     loading.add(id);
     const previous = get(id);
     try {
-      const [messages, files] = await Promise.all([
+      const [messages, files, followups] = await Promise.all([
         chatService.history(id),
         id.startsWith('space:') ? Promise.resolve([]) : attachmentService.pending(id),
+        chatService.followups(id),
       ]);
       if (active.has(id) || get(id).messages !== previous.messages) return;
       const accepted = messages.find(
         (message) => message.role === 'user' && message.requestId === previous.requestId,
       );
+      const acceptedFollowup = followups.find((item) => item.id === previous.requestId);
+      const appliedFollowup = messages
+        .flatMap((message) => message.parts || [])
+        .find((part) => part.type === 'steering' && part.id === previous.requestId);
+      if (!messages.some((message) => message.status === 'streaming') && !followups.length)
+        followupWatching.delete(id);
       update(id, {
         messages,
+        followups,
         files: get(id).files === previous.files ? files : get(id).files,
         loading: false,
         busy: messages.some((message) => message.status === 'streaming'),
         error: '',
-        ...(accepted
+        ...(accepted || acceptedFollowup || appliedFollowup
           ? {
-              text: get(id).text.trim() === accepted.content ? '' : get(id).text,
+              text:
+                get(id).text.trim() ===
+                (accepted?.content ||
+                  acceptedFollowup?.text ||
+                  (appliedFollowup?.type === 'steering' ? appliedFollowup.text : ''))
+                  ? ''
+                  : get(id).text,
               requestId: crypto.randomUUID(),
             }
           : {}),
@@ -113,6 +133,55 @@ export const chatStore = {
   },
   draft(id: string, text: string) {
     update(id, { text });
+  },
+  async queue(id: string, botId?: string | null) {
+    const state = get(id);
+    if (state.submittingFollowup || state.uploading || !state.text.trim()) return;
+    if (state.files.length) {
+      update(id, {
+        error: 'Send attachments after this response finishes. Follow-ups currently support text.',
+      });
+      return;
+    }
+    update(id, { submittingFollowup: true, error: '' });
+    followupWatching.add(id);
+    const version = followupVersions.get(id) || 0;
+    try {
+      const followups = await chatService.queue(id, {
+        id: state.requestId,
+        text: state.text.trim(),
+        ...(botId ? { botId } : {}),
+      });
+      update(id, {
+        ...((followupVersions.get(id) || 0) === version ? { followups } : {}),
+        ...(get(id).requestId === state.requestId
+          ? {
+              text: get(id).text === state.text ? '' : get(id).text,
+              requestId: crypto.randomUUID(),
+            }
+          : {}),
+      });
+    } catch (caught) {
+      update(id, { error: errorText(caught) });
+    } finally {
+      update(id, { submittingFollowup: false });
+    }
+  },
+  async followup(id: string, input: FollowupAction) {
+    if (get(id).submittingFollowup) return false;
+    update(id, { submittingFollowup: true, error: '' });
+    followupWatching.add(id);
+    const version = followupVersions.get(id) || 0;
+    try {
+      const followups = await chatService.updateFollowup(id, input);
+      if ((followupVersions.get(id) || 0) === version) update(id, { followups });
+      return true;
+    } catch (caught) {
+      update(id, { error: errorText(caught) });
+      return false;
+    } finally {
+      update(id, { submittingFollowup: false });
+    }
   },
   async upload(id: string, files: File[]) {
     if (get(id).uploading || get(id).busy) return;
@@ -145,6 +214,7 @@ export const chatStore = {
     }
   },
   async send(id: string, retryId?: string, botId?: string | null) {
+    if (get(id).busy && !retryId) return chatStore.queue(id, botId);
     if (get(id).error && !retryId) {
       await chatStore.load(id);
       if (get(id).error) return;
@@ -162,7 +232,11 @@ export const chatStore = {
     };
     try {
       const handle = (event: ChatEvent) => {
-        if (event.type === 'approval') {
+        if (event.type === 'followups') {
+          followupVersions.set(id, (followupVersions.get(id) || 0) + 1);
+          if (event.followups.length) followupWatching.add(id);
+          update(id, { followups: event.followups });
+        } else if (event.type === 'approval') {
           void approvalStore.refresh();
         } else if (event.type === 'start') {
           accept();
@@ -272,6 +346,7 @@ export const chatStore = {
     } finally {
       active.delete(id);
       update(id, { busy: get(id).messages.some((message) => message.status === 'streaming') });
+      if (followupWatching.has(id)) await chatStore.load(id);
     }
   },
   async stop(id: string) {
@@ -321,11 +396,19 @@ export function useChatBusy(id: string) {
 }
 
 export function useChat(id: string, readOnly = false) {
-  const state = useSyncExternalStore(subscribe, () => get(id));
+  const state = useSyncExternalStore(
+    subscribe,
+    () => get(id),
+    () => get(id),
+  );
   useEffect(() => {
     void chatStore.load(id);
     const timer = window.setInterval(() => {
-      if (!active.has(id) && (get(id).busy || readOnly)) void chatStore.load(id);
+      if (
+        !active.has(id) &&
+        (get(id).busy || readOnly || get(id).followups.length || followupWatching.has(id))
+      )
+        void chatStore.load(id);
     }, 1000);
     const refresh = () => {
       if (!active.has(id)) void chatStore.load(id);

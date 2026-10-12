@@ -274,6 +274,13 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
     <div className="response-transcript" aria-label="Response activity">
       {groups.map((group) => {
         const part = group[0];
+        if (part.type === 'steering')
+          return (
+            <div key={part.id} className="response-steering">
+              <span>You steered this task</span>
+              <p>{part.text}</p>
+            </div>
+          );
         if (part.type === 'text') return <MessageMarkdown key={part.id} text={part.text} />;
         if (part.type === 'compaction')
           return (
@@ -297,8 +304,19 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
   );
 }
 
-function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
-  const [open, setOpen] = useState(false);
+function CompletedProcess({
+  parts,
+  message,
+  expanded,
+  onExpandedChange,
+}: {
+  parts: ResponsePart[];
+  message: ChatMessage;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
+}) {
+  const [internalOpen, setOpen] = useState(false);
+  const open = expanded ?? internalOpen;
   const duration = formatWorkDuration(message.startedAt, message.finishedAt);
   const label =
     message.status === 'complete'
@@ -312,7 +330,7 @@ function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: 
     <details
       className="response-work"
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => (onExpandedChange || setOpen)(event.currentTarget.open)}
     >
       <summary>
         <span>
@@ -328,8 +346,12 @@ function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: 
 
 export const ResponseActivity = memo(function ResponseActivity({
   message,
+  workExpanded,
+  onWorkExpandedChange,
 }: {
   message: ChatMessage;
+  workExpanded?: boolean;
+  onWorkExpandedChange?: (open: boolean) => void;
 }) {
   const { process, answer } = responsePresentation(message);
   return (
@@ -342,6 +364,8 @@ export const ResponseActivity = memo(function ResponseActivity({
             key={`${message.id}:${message.startedAt || ''}`}
             parts={process}
             message={message}
+            expanded={workExpanded}
+            onExpandedChange={onWorkExpandedChange}
           />
         ))}
       {!!answer && <MessageMarkdown text={answer} />}

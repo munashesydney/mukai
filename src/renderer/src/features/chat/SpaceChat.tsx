@@ -17,6 +17,9 @@ import { ContextMeter } from '../ai/ContextMeter';
 import { modelContextWindow } from '../../../../shared/modelLimits';
 import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
 import { AskComposer } from '../ai/AskComposer';
+import { FollowupQueue } from '../ai/FollowupQueue';
+import { SteeringMessages } from '../ai/SteeringMessages';
+import { useWorkDisclosure } from '../ai/useWorkDisclosure';
 
 export function SpaceChat({
   space,
@@ -89,7 +92,9 @@ export function SpaceChat({
   }, [state.messages, tab, savedOpen]);
   function send() {
     try {
-      const botId = mentionedBot(state.text, members, selectedBot);
+      const botId =
+        mentionedBot(state.text, members, selectedBot) ||
+        (state.busy ? latestAssistant?.botId : undefined);
       setMentionError('');
       follow.current = true;
       void chatStore.send(id, undefined, botId);
@@ -177,6 +182,7 @@ export function SpaceChat({
           </div>
           {!savedOpen && (
             <div className="composer-area ai-composer-area">
+              <FollowupQueue chatId={id} state={state} />
               <ToolApprovalCards conversationId={space.id} />
               {(state.error || mentionError) && (
                 <div className="ai-alert" role="alert">
@@ -288,13 +294,24 @@ export function SpaceChat({
                       )}
                     </div>
                     {state.busy ? (
-                      <button
-                        className="send-button ai-stop"
-                        aria-label="Stop generation"
-                        onClick={() => void chatStore.stop(id)}
-                      >
-                        <Square size={13} fill="currentColor" />
-                      </button>
+                      <div className="followup-send-actions">
+                        <button
+                          className="send-button"
+                          aria-label="Queue follow-up"
+                          title="Queue follow-up"
+                          disabled={state.submittingFollowup || !state.text.trim()}
+                          onClick={send}
+                        >
+                          <ArrowUp size={18} />
+                        </button>
+                        <button
+                          className="send-button ai-stop"
+                          aria-label="Stop generation"
+                          onClick={() => void chatStore.stop(id)}
+                        >
+                          <Square size={13} fill="currentColor" />
+                        </button>
+                      </div>
                     ) : (
                       <button
                         className="send-button"
@@ -347,55 +364,59 @@ const MessageRow = memo(function MessageRow({
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string, botId?: string) => void;
 }) {
+  const disclosure = useWorkDisclosure(message);
   return (
-    <article className={`ai-message ai-message--${message.role}`}>
-      <Avatar person={message.role === 'user' ? 'munashe' : bot?.avatar || 'scout'} size="sm" />
-      <div className="ai-message-body">
-        <div className="ai-message-meta">
-          <strong>
-            {message.role === 'user' ? 'You' : bot?.name || message.authorName || 'Bot'}
-          </strong>
-          {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
-          <time dateTime={message.createdAt}>
-            {new Date(message.createdAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </time>
-        </div>
-        {message.role === 'assistant' ? (
-          <>
-            <ResponseActivity message={message} />
-            <FileChanges message={message} onReview={onReview} />
-          </>
-        ) : (
-          <MessageMarkdown text={message.content} mentionBots={members} onMention={onMention} />
-        )}
-        {message.status === 'streaming' && (
-          <p className="ai-response-status" role="status">
-            {bot?.name || 'Bot'} is responding…
-          </p>
-        )}
-        {['failed', 'stopped', 'interrupted'].includes(message.status) && (
-          <div className="ai-response-status">
-            <span>{message.error || 'Response stopped.'}</span>
-            {canRetry && (
-              <button
-                className="text-button"
-                disabled={busy}
-                onClick={() => onRetry(message.requestId, message.botId)}
-              >
-                Retry response
-              </button>
-            )}
+    <>
+      <SteeringMessages message={message} collapsed={!disclosure.workExpanded} />
+      <article className={`ai-message ai-message--${message.role}`}>
+        <Avatar person={message.role === 'user' ? 'munashe' : bot?.avatar || 'scout'} size="sm" />
+        <div className="ai-message-body">
+          <div className="ai-message-meta">
+            <strong>
+              {message.role === 'user' ? 'You' : bot?.name || message.authorName || 'Bot'}
+            </strong>
+            {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
+            <time dateTime={message.createdAt}>
+              {new Date(message.createdAt).toLocaleTimeString([], {
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </time>
           </div>
-        )}
-        <MessageActions
-          text={message.content}
-          saved={Boolean(message.saved)}
-          onSave={() => onSave(message.id, !message.saved)}
-        />
-      </div>
-    </article>
+          {message.role === 'assistant' ? (
+            <>
+              <ResponseActivity message={message} {...disclosure} />
+              <FileChanges message={message} onReview={onReview} />
+            </>
+          ) : (
+            <MessageMarkdown text={message.content} mentionBots={members} onMention={onMention} />
+          )}
+          {message.status === 'streaming' && (
+            <p className="ai-response-status" role="status">
+              {bot?.name || 'Bot'} is responding…
+            </p>
+          )}
+          {['failed', 'stopped', 'interrupted'].includes(message.status) && (
+            <div className="ai-response-status">
+              <span>{message.error || 'Response stopped.'}</span>
+              {canRetry && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => onRetry(message.requestId, message.botId)}
+                >
+                  Retry response
+                </button>
+              )}
+            </div>
+          )}
+          <MessageActions
+            text={message.content}
+            saved={Boolean(message.saved)}
+            onSave={() => onSave(message.id, !message.saved)}
+          />
+        </div>
+      </article>
+    </>
   );
 });

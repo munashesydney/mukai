@@ -36,6 +36,9 @@ import { useApprovals } from './approvalStore';
 import { approvalBlocksConversation } from '../../../../shared/approvals';
 import { useChatActivity } from './useChatActivity';
 import { ChatActivityDrawer } from './ChatActivityDrawer';
+import { FollowupQueue } from './FollowupQueue';
+import { SteeringMessages } from './SteeringMessages';
+import { useWorkDisclosure } from './useWorkDisclosure';
 
 export function BotChat({
   bot,
@@ -292,6 +295,7 @@ export function BotChat({
             )}
             {!readOnly && (
               <div className="composer-area ai-composer-area">
+                <FollowupQueue chatId={chatId} state={state} />
                 <ToolApprovalCards conversationId={conversation.id} />
                 {newChatError && (
                   <p className="ai-alert" role="alert">
@@ -340,10 +344,12 @@ export function BotChat({
                     <textarea
                       rows={2}
                       aria-label={`Message ${bot.name}`}
-                      placeholder={`Message ${bot.name}…`}
+                      placeholder={
+                        state.busy ? 'Add a follow-up while working…' : `Message ${bot.name}…`
+                      }
                       value={state.text}
                       maxLength={16000}
-                      disabled={state.loading || state.busy}
+                      disabled={state.loading}
                       onChange={(event) => chatStore.draft(chatId, event.target.value)}
                       onPaste={(event) => {
                         const files = Array.from(event.clipboardData.files);
@@ -393,13 +399,24 @@ export function BotChat({
                         />
                       </div>
                       {state.busy ? (
-                        <button
-                          className="send-button ai-stop"
-                          aria-label="Stop generation"
-                          onClick={() => void chatStore.stop(chatId)}
-                        >
-                          <Square size={13} fill="currentColor" />
-                        </button>
+                        <div className="followup-send-actions">
+                          <button
+                            className="send-button"
+                            aria-label="Queue follow-up"
+                            title="Queue follow-up"
+                            disabled={state.submittingFollowup || !state.text.trim()}
+                            onClick={send}
+                          >
+                            <ArrowUp size={18} />
+                          </button>
+                          <button
+                            className="send-button ai-stop"
+                            aria-label="Stop generation"
+                            onClick={() => void chatStore.stop(chatId)}
+                          >
+                            <Square size={13} fill="currentColor" />
+                          </button>
+                        </div>
                       ) : (
                         <button
                           className="send-button"
@@ -536,80 +553,88 @@ const MessageRow = memo(function MessageRow({
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string) => void;
 }) {
+  const disclosure = useWorkDisclosure(message);
   const delegation = message.activity?.find(
     (activity) => activity.status === 'running' && activity.delegation,
   )?.delegation;
   return (
-    <article className={`ai-message ai-message--${message.role}`}>
-      <Avatar
-        person={
-          readOnly ? author?.avatar || bot.avatar : message.role === 'user' ? 'munashe' : bot.avatar
-        }
-        size="sm"
-      />
-      <div className="ai-message-body">
-        <div className="ai-message-meta">
-          <strong>
-            {readOnly
-              ? author?.name || message.authorName || 'Bot'
+    <>
+      <SteeringMessages message={message} collapsed={!disclosure.workExpanded} />
+      <article className={`ai-message ai-message--${message.role}`}>
+        <Avatar
+          person={
+            readOnly
+              ? author?.avatar || bot.avatar
               : message.role === 'user'
-                ? 'You'
-                : bot.name}
-          </strong>
-          {(readOnly || message.role === 'assistant') && (
-            <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
-          )}
-          <time dateTime={message.createdAt}>
-            {new Date(message.createdAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </time>
-        </div>
-        {message.role === 'assistant' && <ResponseActivity message={message} />}
-        {message.role === 'assistant' && <FileChanges message={message} onReview={onReview} />}
-        {message.role === 'user' && message.content && <MessageMarkdown text={message.content} />}
-        {!!message.attachments.length && (
-          <div className="ai-attachments">
-            {message.attachments.map((file) => (
-              <AttachmentCard attachment={file} key={file.id} />
-            ))}
-          </div>
-        )}
-        {message.status === 'streaming' && (
-          <div className="ai-response-status" role="status">
-            <span className="typing-dots">
-              <i />
-              <i />
-              <i />
-            </span>
-            {delegation
-              ? `Waiting for ${delegation.botName}’s response…`
-              : message.activity?.some((activity) => activity.status === 'running')
-                ? 'Working with files…'
-                : message.content
-                  ? 'Responding…'
-                  : message.reasoning
-                    ? `${bot.name} is thinking…`
-                    : 'Waiting for the model…'}
-          </div>
-        )}
-        {['failed', 'stopped', 'interrupted'].includes(message.status) && (
-          <div className="ai-response-status">
-            <span>{message.error || 'Response stopped.'}</span>
-            {canRetry && (
-              <button
-                className="text-button"
-                disabled={busy}
-                onClick={() => onRetry(message.requestId)}
-              >
-                <RotateCcw size={13} />
-                Retry response
-              </button>
+                ? 'munashe'
+                : bot.avatar
+          }
+          size="sm"
+        />
+        <div className="ai-message-body">
+          <div className="ai-message-meta">
+            <strong>
+              {readOnly
+                ? author?.name || message.authorName || 'Bot'
+                : message.role === 'user'
+                  ? 'You'
+                  : bot.name}
+            </strong>
+            {(readOnly || message.role === 'assistant') && (
+              <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
             )}
+            <time dateTime={message.createdAt}>
+              {new Date(message.createdAt).toLocaleTimeString([], {
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </time>
           </div>
-        )}
-      </div>
-    </article>
+          {message.role === 'assistant' && <ResponseActivity message={message} {...disclosure} />}
+          {message.role === 'assistant' && <FileChanges message={message} onReview={onReview} />}
+          {message.role === 'user' && message.content && <MessageMarkdown text={message.content} />}
+          {!!message.attachments.length && (
+            <div className="ai-attachments">
+              {message.attachments.map((file) => (
+                <AttachmentCard attachment={file} key={file.id} />
+              ))}
+            </div>
+          )}
+          {message.status === 'streaming' && (
+            <div className="ai-response-status" role="status">
+              <span className="typing-dots">
+                <i />
+                <i />
+                <i />
+              </span>
+              {delegation
+                ? `Waiting for ${delegation.botName}’s response…`
+                : message.activity?.some((activity) => activity.status === 'running')
+                  ? 'Working with files…'
+                  : message.content
+                    ? 'Responding…'
+                    : message.reasoning
+                      ? `${bot.name} is thinking…`
+                      : 'Waiting for the model…'}
+            </div>
+          )}
+          {['failed', 'stopped', 'interrupted'].includes(message.status) && (
+            <div className="ai-response-status">
+              <span>{message.error || 'Response stopped.'}</span>
+              {canRetry && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => onRetry(message.requestId)}
+                >
+                  <RotateCcw size={13} />
+                  Retry response
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </article>
+    </>
   );
 });

@@ -30,6 +30,7 @@
     "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
     "test:chat-activity-ui": "tsx scripts/run-chat-activity-smoke.ts",
+    "test:steering-ui": "tsx scripts/steering-smoke.ts",
     "build": "npm run typecheck && npm run build:computer-use && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",

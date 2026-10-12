@@ -22,6 +22,7 @@ import type {
   ResponsePart,
   ContextUsage,
   ChatMessage,
+  FollowupAction,
 } from '../../shared/ai';
 import {
   appendResponseText,
@@ -30,6 +31,7 @@ import {
 } from '../../shared/responseParts';
 import type { BotRecord } from '../models/entities';
 import { MessageRepository } from '../repositories/messageRepository';
+import { ChatFollowupRepository } from '../repositories/chatFollowupRepository';
 import { ProviderService, safeProviderError, isContextOverflow } from './providerService';
 import { AttachmentService } from './attachmentService';
 import { ApiError } from '../config';
@@ -85,6 +87,8 @@ interface Generation {
   done: Promise<void>;
   outputs: Set<ChatOutput>;
   requestId: string;
+  interruptProvider?: () => void;
+  finalizing?: boolean;
 }
 export interface ChatOutput {
   start(): void;
@@ -96,6 +100,8 @@ export class ChatService {
   private active = new Map<string, Generation>();
   private closing = false;
   private deletingWorkspaces = new Set<string>();
+  private requireFollowupBot?: (id: string) => BotRecord;
+  private draining = new Set<string>();
   get isClosing() {
     return this.closing;
   }
@@ -108,11 +114,132 @@ export class ChatService {
     private diagnostics: DiagnosticService,
     private memory?: MemoryService,
     private approvals?: ApprovalService,
+    private followups?: ChatFollowupRepository,
   ) {}
   initialize() {
     this.messages.interruptStreaming(
       'The server restarted before this response finished. You can retry.',
     );
+    this.followups?.recover();
+  }
+  attachFollowups(requireBot: (id: string) => BotRecord) {
+    this.requireFollowupBot = requireBot;
+  }
+  listFollowups(conversationId: string) {
+    return this.followups?.list(conversationId) || [];
+  }
+  private publishFollowups(conversationId: string) {
+    const event: ChatEvent = { type: 'followups', followups: this.listFollowups(conversationId) };
+    for (const output of this.active.get(conversationId)?.outputs || []) output.emit(event);
+  }
+  enqueueFollowup(conversationId: string, bot: BotRecord, id: string, text: string) {
+    if (!this.followups || this.closing || this.deletingWorkspaces.has(bot.workspaceId))
+      throw new ApiError(409, 'This chat cannot accept follow-ups right now.');
+    this.followups.enqueue(conversationId, String(bot.id), id, text);
+    this.publishFollowups(conversationId);
+    // A response may finish between the UI's send and this request.
+    if (!this.active.has(conversationId) && !this.suspended(conversationId))
+      void this.drainFollowups(conversationId);
+    return this.listFollowups(conversationId);
+  }
+  updateFollowup(conversationId: string, value: FollowupAction) {
+    if (!this.followups || this.closing) throw new ApiError(409, 'Follow-ups are unavailable.');
+    const item = this.followups.require(conversationId, value.id);
+    if (value.action === 'steer' && ['applied', 'sending', 'sent'].includes(item.state))
+      return this.listFollowups(conversationId);
+    if (value.action === 'delete' && item.state === 'cancelled')
+      return this.listFollowups(conversationId);
+    if (!['queued', 'steering'].includes(item.state))
+      throw new ApiError(409, 'This follow-up has already been delivered.');
+    if (value.action === 'edit') this.followups.edit(conversationId, value.id, value.text);
+    else if (value.action === 'delete') this.followups.state(conversationId, value.id, 'cancelled');
+    else if (value.action === 'steer') {
+      const generation = this.active.get(conversationId);
+      if (
+        generation &&
+        (generation.requestId !== value.expectedRequestId || generation.botId !== item.botId)
+      )
+        throw new ApiError(409, 'The active response changed. This message is still queued.');
+      if (generation && !generation.finalizing && !generation.controller.signal.aborted) {
+        this.followups.state(conversationId, value.id, 'steering', generation.assistantId);
+        generation.interruptProvider?.();
+      } else {
+        // The targeted task finished before the click arrived. Deliver once as a follow-up.
+        this.followups.state(conversationId, value.id, 'queued');
+        if (generation)
+          void generation.done.then(() => this.drainFollowups(conversationId, true, item.id));
+        else void this.drainFollowups(conversationId, true, item.id);
+      }
+    } else {
+      if (this.active.has(conversationId) || this.suspended(conversationId))
+        throw new ApiError(409, 'This chat is still working. Use Steer to redirect it.');
+      this.followups.state(conversationId, value.id, 'queued');
+      this.followups.resume(conversationId);
+      void this.drainFollowups(conversationId, true, item.id);
+    }
+    this.publishFollowups(conversationId);
+    return this.listFollowups(conversationId);
+  }
+  private async drainFollowups(conversationId: string, explicit = false, selectedId?: string) {
+    if (
+      !this.followups ||
+      !this.requireFollowupBot ||
+      this.closing ||
+      this.draining.has(conversationId) ||
+      this.active.has(conversationId) ||
+      this.suspended(conversationId)
+    )
+      return;
+    if (!explicit && !this.followups.runnableConversations().includes(conversationId)) return;
+    if (explicit) this.followups.resume(conversationId);
+    this.draining.add(conversationId);
+    try {
+      while (
+        !this.closing &&
+        !this.active.has(conversationId) &&
+        !this.suspended(conversationId) &&
+        !this.followups.paused(conversationId)
+      ) {
+        const item = this.followups
+          .list(conversationId)
+          .find((value) => value.state === 'queued' && (!selectedId || value.id === selectedId));
+        if (!item || (!explicit && item.error)) break;
+        explicit = false;
+        selectedId = undefined;
+        try {
+          const bot = this.requireFollowupBot(item.botId);
+          if (this.deletingWorkspaces.has(bot.workspaceId)) break;
+          this.followups.state(conversationId, item.id, 'sending');
+          await this.respond(
+            bot,
+            { requestId: item.id, text: item.text, attachmentIds: [] },
+            {
+              start() {},
+              end() {},
+              onDisconnect: () => () => {},
+              emit: (event) => {
+                if (event.type === 'start') this.followups!.state(conversationId, item.id, 'sent');
+              },
+            },
+            conversationId,
+          );
+          const reply = this.messages.forRequest(conversationId, item.id, 'assistant');
+          if (reply?.status !== 'complete') break;
+        } catch (caught) {
+          const accepted = this.messages.forRequest(conversationId, item.id, 'user');
+          this.followups.state(
+            conversationId,
+            item.id,
+            accepted ? 'sent' : 'queued',
+            null,
+            safeProviderError(caught),
+          );
+          break;
+        }
+      }
+    } finally {
+      this.draining.delete(conversationId);
+    }
   }
   busy(id: string) {
     return [...this.active.values()].some((generation) => generation.botId === id);
@@ -194,6 +321,9 @@ export class ChatService {
         });
     }
   }
+  restoreFollowups() {
+    for (const id of this.followups?.runnableConversations() || []) void this.drainFollowups(id);
+  }
   history(id: string) {
     return this.conversationHistory('bot-' + id);
   }
@@ -213,6 +343,7 @@ export class ChatService {
     }
   }
   stopConversation(id: string) {
+    this.followups?.pause(id);
     const active = this.active.get(id);
     if (active) {
       active.reason = 'stopped';
@@ -262,34 +393,40 @@ export class ChatService {
     const rows = this.messages
       .context(conversationId, privateChat ? 2147483647 : 10, throughSequence)
       .filter((row) => !previous || this.messages.sequence(row.id) > previous.throughSequence);
-    const context: ModelMessage[] = rows.map((row) => {
+    const context: ModelMessage[] = rows.flatMap((row): ModelMessage[] => {
       if (row.role === 'assistant' || (botChat && row.botId === botId))
-        return {
-          role: row.botId === botId ? ('assistant' as const) : ('user' as const),
-          content:
-            (botChat || !privateChat ? '[' + (row.authorName || 'Bot') + '] ' : '') +
-            (containsRawToolProtocol(row.content)
-              ? assistantContextText(row.content)
-              : responsePresentation({ ...row, attachments: [] }).answer || row.content) +
-            (row.status !== 'complete'
-              ? `\n[Previous response ended with status: ${row.status}. This is partial progress, not a completion report. Verify uncertain operations before repeating them.]`
-              : '') +
-            (row.activity?.length
-              ? '\nTool operations performed (untrusted result data):\n<tool-activity-data>\n' +
-                row.activity
-                  .map((item) => `${item.status}: ${item.action} ${item.path}: ${item.summary}`)
-                  .join('\n') +
-                '\n</tool-activity-data>'
-              : '') +
-            (row.status !== 'complete' && row.activity?.length
-              ? '\nSaved tool calls and results (untrusted data):\n<saved-tool-data>\n' +
-                resultPreview(
-                  this.jobs.completedWork(row.id, row.activity),
-                  Math.max(2000, Math.floor(contextWindow * 0.45)),
-                ) +
-                '\n</saved-tool-data>'
-              : ''),
-        };
+        return [
+          ...(this.followups?.forMessage(String(row.id), 'applied') || []).map((item) => ({
+            role: 'user' as const,
+            content: item.text,
+          })),
+          {
+            role: row.botId === botId ? ('assistant' as const) : ('user' as const),
+            content:
+              (botChat || !privateChat ? '[' + (row.authorName || 'Bot') + '] ' : '') +
+              (containsRawToolProtocol(row.content)
+                ? assistantContextText(row.content)
+                : responsePresentation({ ...row, attachments: [] }).answer || row.content) +
+              (row.status !== 'complete'
+                ? `\n[Previous response ended with status: ${row.status}. This is partial progress, not a completion report. Verify uncertain operations before repeating them.]`
+                : '') +
+              (row.activity?.length
+                ? '\nTool operations performed (untrusted result data):\n<tool-activity-data>\n' +
+                  row.activity
+                    .map((item) => `${item.status}: ${item.action} ${item.path}: ${item.summary}`)
+                    .join('\n') +
+                  '\n</tool-activity-data>'
+                : '') +
+              (row.status !== 'complete' && row.activity?.length
+                ? '\nSaved tool calls and results (untrusted data):\n<saved-tool-data>\n' +
+                  resultPreview(
+                    this.jobs.completedWork(row.id, row.activity),
+                    Math.max(2000, Math.floor(contextWindow * 0.45)),
+                  ) +
+                  '\n</saved-tool-data>'
+                : ''),
+          },
+        ];
       const content: UserContent = [
         {
           type: 'text',
@@ -314,7 +451,7 @@ export class ChatService {
                 : `[An image named ${String(file.name)} was attached previously; this text-only model cannot view it.]`,
           });
       }
-      return { role: 'user' as const, content };
+      return [{ role: 'user' as const, content }];
     });
     if (previous)
       context.unshift({
@@ -473,6 +610,7 @@ export class ChatService {
         activity: generation.activity,
       },
     });
+    this.publishFollowups(conversationId);
     let persistAccounting: (() => void) | undefined;
     let diagnosticPhase: DiagnosticPhase = 'setup',
       diagnosticStep = 0;
@@ -717,6 +855,9 @@ export class ChatService {
         this.messages.sequence(userId),
         contextLimits(config.contextWindow, config.maxOutputTokens).capacity,
       );
+      const originalRequestContent = JSON.stringify(
+        [...messages].reverse().find((message) => message.role === 'user')?.content,
+      );
       if (existingUser && generation.activity.length)
         messages.unshift({
           role: 'user',
@@ -798,6 +939,18 @@ export class ChatService {
           assistant: this.messages.message(assistantId),
         });
       }
+      if (!checkpoint) {
+        for (const item of this.followups?.forMessage(assistantId, 'applied') || []) {
+          messages.push({ role: 'user', content: item.text });
+          generation.parts = upsertResponsePart(generation.parts, {
+            id: item.id,
+            type: 'steering',
+            text: item.text,
+            createdAt: item.createdAt,
+          });
+        }
+        save();
+      }
       // Fresh recall replaces prior retrieval, including when resuming a checkpoint.
       // Keep it outside compaction so stale copies do not enter the working notebook.
       const memoryData = await this.memory
@@ -838,6 +991,25 @@ export class ChatService {
         }),
       );
       manager.compactions = usage.compactions;
+      const appliedTexts = new Set(
+        (this.followups?.forMessage(assistantId, 'applied') || []).map((item) => item.text),
+      );
+      const pinnedRequests = messages.filter(
+        (message) =>
+          message.role === 'user' &&
+          typeof message.content === 'string' &&
+          appliedTexts.has(message.content),
+      );
+      // Preserve the original task as well as subsequent corrections through compaction.
+      const originalRequest = [...messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'user' && JSON.stringify(message.content) === originalRequestContent,
+        );
+      if (originalRequest && !pinnedRequests.includes(originalRequest))
+        pinnedRequests.unshift(originalRequest);
+      manager.pinRequests(pinnedRequests);
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let finalReplyOnly = emptyReplyRecoveries > 0;
       const finalReplyNotice = FINAL_REPLY_NOTICE;
@@ -984,6 +1156,8 @@ export class ChatService {
             return limited;
           },
           execute: async (input, options) => {
+            generation.interruptProvider = undefined;
+            stepSignal.throwIfAborted();
             this.jobs.approvalCall(assistantId, {
               toolCallId: options.toolCallId,
               toolName: name,
@@ -1227,6 +1401,41 @@ export class ChatService {
             : '',
         pausedReason = '';
       let continuationOf = '';
+      const applySteering = () => {
+        const items = this.followups?.forMessage(assistantId, 'steering') || [];
+        if (!items.length) return false;
+        for (const item of items) {
+          const message: ModelMessage = { role: 'user', content: item.text };
+          messages.push(message);
+          pinnedRequests.push(message);
+          generation.parts = upsertResponsePart(generation.parts, {
+            id: item.id,
+            type: 'steering',
+            text: item.text,
+            createdAt: item.createdAt,
+          });
+        }
+        manager.pinRequests(pinnedRequests);
+        finalReplyOnly = false;
+        generation.parts = generation.parts.map((part) =>
+          part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
+        );
+        notice =
+          'The user supplied new guidance during this task. Continue from saved progress with the latest guidance; retain the original objective unless the user changed it. Do not repeat completed operations.';
+        continuationOf = '';
+        this.followups!.commitApplied(items, () => {
+          save();
+          saveCheckpoint();
+        });
+        for (const item of items)
+          emit({
+            type: 'part',
+            id: assistantId,
+            part: { id: item.id, type: 'steering', text: item.text, createdAt: item.createdAt },
+          });
+        this.publishFollowups(conversationId);
+        return true;
+      };
       // A job owns one provider generation at a time. Complete operation pairs
       // are checkpointed and compacted together before the next generation.
       for (;;) {
@@ -1234,6 +1443,7 @@ export class ChatService {
           status = generation.reason;
           break;
         }
+        applySteering();
         // Registration can change within this turn. Refresh only custom tools, keeping
         // built-in tool contexts, call budgets, and checkpoint guards intact.
         for (const name of customNames) delete tools[name];
@@ -1274,9 +1484,14 @@ export class ChatService {
         diagnosticPhase = 'provider-request';
         let providerError: unknown;
         const stepController = new AbortController();
+        let steeredGeneration = false;
         approvalBatchId = randomUUID();
         stepSignal = AbortSignal.any([signal, stepController.signal]);
         await scheduling?.provider(stepSignal);
+        generation.interruptProvider = () => {
+          steeredGeneration = true;
+          stepController.abort();
+        };
         const result = streamText({
           model: config.model,
           system: attemptSystem,
@@ -1296,6 +1511,8 @@ export class ChatService {
             providerError = event.error;
           },
         });
+        if (this.followups?.forMessage(assistantId, 'steering').length)
+          generation.interruptProvider?.();
         const timeout = new GenerationTimeout(
           () =>
             pendingTools.size > 0 ||
@@ -1311,6 +1528,8 @@ export class ChatService {
         try {
           for await (const chunk of result.fullStream) {
             timeout.chunk();
+            if (chunk.type === 'tool-input-start' || chunk.type === 'tool-call')
+              generation.interruptProvider = undefined;
             if (chunk.type === 'start-step') finalTextParts.clear();
             if (chunk.type === 'text-start' && generation.content && !continuationOf) {
               generation.content += '\n\n';
@@ -1421,6 +1640,7 @@ export class ChatService {
               });
             } else if (chunk.type === 'error') throw chunk.error;
             else if (chunk.type === 'abort') {
+              if (steeredGeneration && !signal.aborted) break;
               status = generation.controller.signal.aborted ? generation.reason : 'failed';
               if (status === 'failed') {
                 // Route watchdog failures through the bounded recovery path below.
@@ -1441,6 +1661,16 @@ export class ChatService {
             estimateTokens(generation.reasoning.slice(reasoningBeforeStep));
           usage.runEstimated = true;
           publishUsage();
+          if (steeredGeneration && !signal.aborted) {
+            if (generation.content.length > textBeforeStep)
+              messages.push({
+                role: 'assistant',
+                content: generation.content.slice(textBeforeStep),
+              });
+            status = 'complete';
+            error = null;
+            continue;
+          }
           if (
             !signal.aborted &&
             canRetryProvider(caught) &&
@@ -1476,10 +1706,23 @@ export class ChatService {
           }
           throw caught;
         } finally {
+          generation.interruptProvider = undefined;
           scheduling?.endProvider();
           timeout.dispose();
           // A failed provider stream must also cancel any pending human decisions.
           stepController.abort();
+        }
+        if (steeredGeneration && !signal.aborted) {
+          usage.runTokens +=
+            estimateTokens(generation.content.slice(textBeforeStep)) +
+            estimateTokens(generation.reasoning.slice(reasoningBeforeStep));
+          usage.runEstimated = true;
+          publishUsage();
+          if (generation.content.length > textBeforeStep)
+            messages.push({ role: 'assistant', content: generation.content.slice(textBeforeStep) });
+          status = 'complete';
+          error = null;
+          continue;
         }
         if (generation.controller.signal.aborted || status !== 'complete') {
           if (generation.controller.signal.aborted) status = generation.reason;
@@ -1532,6 +1775,10 @@ export class ChatService {
         }
         save();
         saveCheckpoint();
+        // Recovery is bounded per provider step, not shared across the entire task.
+        // Successful, checkpointed tool results are never replayed by these retries.
+        providerRecoveries = 0;
+        if (!pausedReason && finishReason !== 'content-filter' && applySteering()) continue;
         if (pausedReason) {
           const reportedPause =
             lastStep?.text.trim() &&
@@ -1650,8 +1897,13 @@ export class ChatService {
             : safeProviderError(caught);
       }
     } finally {
+      generation.finalizing = true;
+      generation.interruptProvider = undefined;
       await Promise.allSettled([...pendingTools]);
+      if (generation.controller.signal.aborted) status = generation.reason;
       try {
+        if (status === 'complete' && !generation.controller.signal.aborted)
+          this.followups?.resume(conversationId);
         persistAccounting?.();
       } catch (failure) {
         this.diagnostics.record('chat.accounting_save_failed', failure, {
@@ -1664,6 +1916,7 @@ export class ChatService {
         Boolean(this.approvals?.suspending(assistantId)) ||
         (this.closing && this.jobs.resumableDelegation(assistantId));
       if (!suspended) {
+        this.followups?.releaseSteering(assistantId);
         this.tools.cancelCustomConfirmations(assistantId);
         this.approvals?.discard(assistantId);
         this.cancelDelegations(assistantId);
@@ -1736,6 +1989,7 @@ export class ChatService {
           ...diagnosticContext(),
           phase: 'response-save',
         });
+        status = 'failed';
         // Preserve the already-saved user turn even if the disk fills during generation.
         const message = this.messages.message(assistantId);
         emit({
@@ -1756,6 +2010,7 @@ export class ChatService {
         removeDisconnect();
         output.end();
         resolveDone();
+        if (status === 'complete' && !suspended) void this.drainFollowups(conversationId);
       }
     }
   }

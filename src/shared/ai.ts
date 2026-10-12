@@ -141,6 +141,7 @@ export interface Attachment {
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
 export type ResponsePart =
+  | { id: string; type: 'steering'; text: string; createdAt?: string }
   | { id: string; type: 'text'; text: string; continuationOf?: string; final?: boolean }
   | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
   | {
@@ -186,6 +187,7 @@ export interface ContextUsage {
   phase: 'ready' | 'compacting' | 'failed';
 }
 export type ChatEvent =
+  | { type: 'followups'; followups: ChatFollowup[] }
   | { type: 'approval'; id: string }
   | { type: 'start'; user: ChatMessage; assistant: ChatMessage }
   | { type: 'delta'; id: string; text: string; partId?: string }
@@ -199,6 +201,20 @@ export interface ChatInput {
   text: string;
   attachmentIds: string[];
 }
+export interface ChatFollowup {
+  id: string;
+  conversationId: string;
+  botId: string;
+  text: string;
+  state: 'queued' | 'steering' | 'applied' | 'sending' | 'sent' | 'cancelled';
+  targetMessageId: string | null;
+  createdAt: string;
+  error: string | null;
+}
+export type FollowupAction =
+  | { action: 'edit'; id: string; text: string }
+  | { action: 'delete' | 'send'; id: string }
+  | { action: 'steer'; id: string; expectedRequestId: string };
 export interface ProviderTestResult {
   ok: boolean;
   message: string;

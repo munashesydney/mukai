@@ -149,6 +149,10 @@ export class ContextManager {
   boundTools(messages: ModelMessage[]) {
     return limitToolGroups(messages, this.toolAllowance(messages), estimateTokens);
   }
+  private pinnedRequests: ModelMessage[] = [];
+  pinRequests(messages: ModelMessage[]) {
+    this.pinnedRequests = messages;
+  }
   async prepare(messages: ModelMessage[], force = false): Promise<ModelMessage[]> {
     const limits = contextLimits(this.window, this.maxOutput);
     const budget = limits.input;
@@ -163,6 +167,9 @@ export class ContextManager {
     let trimmedRecent = false;
     const reserve = Math.ceil((limits.summary * 1.5 + 128) * this.factor);
     const pinned = new Set<number>(anchor >= 0 ? [anchor] : []);
+    units.forEach((unit, index) => {
+      if (unit.some((message) => this.pinnedRequests.includes(message))) pinned.add(index);
+    });
     const mandatory = units.filter((_unit, index) => pinned.has(index)).flat();
     if (this.estimate(mandatory) > limits.hardInput)
       throw new ContextError(

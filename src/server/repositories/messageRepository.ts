@@ -9,6 +9,13 @@ import { FileChangeRepository } from './fileChangeRepository';
 import { resumableDelegationMessages } from './chatJobRepository';
 
 export class MessageRepository {
+  private timedParts(parts: ResponsePart[] | undefined) {
+    return parts?.map((part) => {
+      if (part.type !== 'steering' || part.createdAt) return part;
+      const row = this.database.get('SELECT created_at FROM chat_followups WHERE id=?', part.id);
+      return row ? { ...part, createdAt: String(row.created_at) } : part;
+    });
+  }
   constructor(
     private database: Database,
     private attachments: AttachmentRepository,
@@ -26,6 +33,7 @@ export class MessageRepository {
             message,
             files.filter((file) => file.messageId === message.id),
           ),
+          parts: this.timedParts(message.parts),
           changes: changes.filter((change) => change.messageId === message.id),
         };
       });
@@ -33,8 +41,10 @@ export class MessageRepository {
   message(id: string) {
     const row = this.database.get('SELECT * FROM messages WHERE id = ?', id);
     if (!row) throw new Error('Message not found');
+    const message = messageRecord(row);
     return {
-      ...publicMessage(messageRecord(row), this.attachments.forMessage(id)),
+      ...publicMessage(message, this.attachments.forMessage(id)),
+      parts: this.timedParts(message.parts),
       changes: this.changes.forMessage(id),
     };
   }

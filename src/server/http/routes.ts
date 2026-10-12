@@ -42,6 +42,19 @@ import { memorySettingsSchema, type MemoryService } from '../services/memoryServ
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 
+const followupText = z.string().trim().min(1).max(16000);
+const followupActionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('edit'), id: z.string().uuid(), text: followupText }).strict(),
+  z.object({ action: z.enum(['delete', 'send']), id: z.string().uuid() }).strict(),
+  z
+    .object({
+      action: z.literal('steer'),
+      id: z.string().uuid(),
+      expectedRequestId: z.string().uuid(),
+    })
+    .strict(),
+]);
+
 function uploadName(request: IncomingMessage) {
   try {
     return decodeURIComponent(String(request.headers['x-filename'] || ''));
@@ -491,6 +504,33 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
+        if (action === 'followups') {
+          if (method === 'GET') return send(response, chats.listFollowups(id));
+          if (conversation.kind === 'bot')
+            throw new ApiError(403, 'Bot conversations are read-only for users.');
+          if (method === 'PUT')
+            return send(
+              response,
+              chats.updateFollowup(id, followupActionSchema.parse(await jsonBody(request))),
+            );
+          if (method === 'POST') {
+            const input = z
+              .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
+              .strict()
+              .parse(await jsonBody(request));
+            const bot =
+              conversation.kind === 'private'
+                ? conversations.privateBot(id)
+                : bots.require(input.botId || '');
+            if (
+              !conversation.botIds.includes(String(bot.id)) ||
+              bot.workspaceId !== conversation.workspaceId
+            )
+              throw new ApiError(400, 'Choose a bot from this conversation.');
+            return send(response, chats.enqueueFollowup(id, bot, input.id, input.text), 201);
+          }
+          throw new ApiError(405, 'Method not allowed.');
+        }
         if (action === 'outputs' && method === 'GET')
           return send(response, await chatOutputs.list(id));
         if (action === 'open-output' && method === 'POST') {
@@ -687,6 +727,30 @@ export function createRoutes({
         return send(response, bots.save(value, undefined, value.workspaceId), 201);
       }
       const bot = bots.require(id || '');
+      if (action === 'followups') {
+        const conversationId = 'bot-' + bot.id;
+        if (method === 'GET') return send(response, chats.listFollowups(conversationId));
+        if (method === 'POST') {
+          const input = z
+            .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
+            .strict()
+            .parse(await jsonBody(request));
+          return send(
+            response,
+            chats.enqueueFollowup(conversationId, bot, input.id, input.text),
+            201,
+          );
+        }
+        if (method === 'PUT')
+          return send(
+            response,
+            chats.updateFollowup(
+              conversationId,
+              followupActionSchema.parse(await jsonBody(request)),
+            ),
+          );
+        throw new ApiError(405, 'Method not allowed.');
+      }
       if (action === 'model' && method === 'PUT') {
         const input = botModelSchema.parse(await jsonBody(request));
         await providers.validateModel(input.providerId, input.model);
