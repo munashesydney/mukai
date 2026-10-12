@@ -117,21 +117,29 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           node --input-type=module -e '
+            import { execFileSync } from "node:child_process";
+            const env = { ...process.env };
+            for (const name of ["APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+              env[name] = env[name]?.trim();
+              if (env[name]) console.log(`::add-mask::${env[name].replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`);
+            }
             const names = ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"];
-            const missing = names.filter(name => !process.env[name]?.trim());
+            const missing = names.filter(name => !env[name]?.trim());
             if (missing.length) throw new Error(`Missing Apple signing secrets: ${missing.join(", ")}`);
+            if (!/^[A-Z0-9]{10}$/.test(env.APPLE_TEAM_ID)) throw new Error("APPLE_TEAM_ID must be the 10-character Developer Team ID.");
+            execFileSync("npx", ["electron-builder", "--mac", "--${{ matrix.arch }}", "--publish", "never", "-c.mac.forceCodeSigning=true", "-c.mac.hardenedRuntime=true", "-c.mac.notarize=true"], { stdio: "inherit", env });
           '
-          npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.forceCodeSigning=true -c.mac.hardenedRuntime=true -c.mac.notarize=true
       - name: Verify Developer ID signature and Apple notarization ticket
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           app_path="release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Mukai.app"
+          expected_team="$(printf '%s' "$APPLE_TEAM_ID" | tr -d '[:space:]')"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           signature="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
           printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
-          printf '%s\n' "$signature" | grep -Fxq "TeamIdentifier=$APPLE_TEAM_ID"
+          printf '%s\n' "$signature" | grep -Fxq "TeamIdentifier=$expected_team" || { echo 'Signing certificate does not match APPLE_TEAM_ID.'; exit 1; }
           printf '%s\n' "$signature" | grep -q 'flags=.*runtime'
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=2 "$app_path"
