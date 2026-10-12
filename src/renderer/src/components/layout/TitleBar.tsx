@@ -13,7 +13,8 @@ export function TitleBar({
   onToggleSidebar,
   onComputer,
   computerOpen = false,
-  workspaceName = 'Munashe’s workspace',
+  workspaceName = 'Your workspace',
+  disabled = false,
 }: {
   onSearch: () => void;
   onBack: () => void;
@@ -24,6 +25,7 @@ export function TitleBar({
   onComputer?: () => void;
   computerOpen?: boolean;
   workspaceName?: string;
+  disabled?: boolean;
 }) {
   const [connection, setConnection] = useState('Connecting…');
   useEffect(() => {
@@ -55,11 +57,15 @@ export function TitleBar({
         <IconButton label="Go forward" onClick={onForward} disabled={!canForward}>
           <ArrowRight size={17} />
         </IconButton>
-        <IconButton label="Toggle sidebar" onClick={onToggleSidebar} disabled={computerOpen}>
+        <IconButton
+          label="Toggle sidebar"
+          onClick={onToggleSidebar}
+          disabled={computerOpen || disabled}
+        >
           <PanelLeft size={16} />
         </IconButton>
       </div>
-      <button className="workspace-search" onClick={onSearch}>
+      <button className="workspace-search" onClick={onSearch} disabled={disabled}>
         <Search size={16} />
         <span>Search {workspaceName}</span>
         <kbd>Ctrl K</kbd>

@@ -10,9 +10,9 @@ import { workspaceService } from '../../services/workspaceService';
 export function useAIWorkspace() {
   const [workspaceId, setWorkspaceId] = useState(() => {
     try {
-      return localStorage.getItem('mukai.active-workspace') || 'default';
+      return localStorage.getItem('mukai.active-workspace') || '';
     } catch {
-      return 'default';
+      return '';
     }
   });
   const [data, setData] = useState<{

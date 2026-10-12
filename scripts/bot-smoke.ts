@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { startApiServer } from '../src/server/app';
 import { IPC } from '../src/shared/contracts';
-import type { Bot } from '../src/shared/ai';
+import type { Bot, Workspace } from '../src/shared/ai';
+import { seedTestWorkspace } from '../src/server/testFixtures';
+import { themeStorageKey } from '../src/renderer/src/features/appearance/themes';
 import type { ApprovalState } from '../src/shared/approvals';
 import { randomUUID } from 'node:crypto';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
@@ -90,10 +92,66 @@ async function main() {
   };
   try {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await wait('Boolean(document.querySelector(".workspace-first-run button"))');
+    assert.deepEqual(await request('/workspaces'), []);
+    assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 5);
+    assert.equal(
+      await evaluate(
+        'Array.from(document.querySelectorAll(".navigation-rail button")).every(button=>button.disabled)',
+      ),
+      true,
+    );
+    assert.equal(await evaluate('document.querySelector(".workspace-search").disabled'), true);
+    assert.equal(await evaluate('document.querySelector(".rail-link.is-active")'), null);
+    await capture('first-workspace-light.png');
+    await click('Create workspace');
+    await wait('Boolean(document.querySelector(".workspace-editor"))');
+    await click('Cancel');
+    assert.deepEqual(await request('/workspaces'), []);
+    await click('Create workspace');
+    await wait('Boolean(document.querySelector(".workspace-editor"))');
+    await fill('.workspace-editor input[maxlength="60"]', 'My first workspace');
+    const folder = join(dir, 'project');
+    mkdirSync(folder);
+    await fill('.workspace-editor input[maxlength="2000"]', folder);
+    await evaluate('document.querySelector(".workspace-editor button[type=submit]").click()');
+    await wait('Boolean(document.querySelector(".sidebar-empty strong"))');
+    const created = (await request<Workspace[]>('/workspaces'))[0];
+    assert.equal(created.name, 'My first workspace');
+    assert.notEqual(created.id, 'default');
+    assert.equal(await evaluate('localStorage.getItem("mukai.active-workspace")'), created.id);
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await wait('Boolean(document.querySelector(".sidebar-empty strong"))');
+    assert.equal(await evaluate('document.querySelector(".rail-link").disabled'), false);
+    await request('/workspaces/' + created.id, 'DELETE', { name: created.name });
+    // A stale selection after deletion must return to the same empty state.
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await wait('Boolean(document.querySelector(".workspace-first-run button"))');
+    await evaluate(
+      `localStorage.setItem(${JSON.stringify(themeStorageKey)},JSON.stringify({mode:"dark",theme:"mukai"}))`,
+    );
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await wait('Boolean(document.querySelector(".workspace-first-run button"))');
+    await capture('first-workspace-dark.png');
+    window.setSize(680, 760);
+    await capture('first-workspace-narrow.png');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    assert.deepEqual(errors, []);
+    if (process.argv.includes('--workspace-only')) {
+      console.log(
+        'PASS first workspace UI: disabled navigation, cancellation, creation, selection, reload, stale selection, dark and narrow layouts.',
+      );
+      return;
+    }
+    // The remaining bot-specific scenarios explicitly provide their workspace.
+    seedTestWorkspace(api.store);
+    window.setSize(1480, 980);
+    await evaluate(`localStorage.removeItem(${JSON.stringify(themeStorageKey)})`);
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-onboarding button"))');
     assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 3);
     if (!process.argv.includes('--mascots-only'))
-      assert.equal(await evaluate('document.querySelector(".rail-settings").disabled'), true);
+      assert.equal(await evaluate('document.querySelector(".rail-settings").disabled'), false);
     assert.equal(
       await evaluate('document.querySelector(".sidebar-empty strong").textContent'),
       'No bots yet',
@@ -2014,7 +2072,10 @@ async function main() {
       'PASS bot UI: onboarding, assignments, models, approvals, exact chat and pursuit links, reload recovery, nested hierarchy, read-only bot pair threads, live follow-ups, parent delegation navigation, child approval identity, and narrow layout.',
     );
   } catch (error) {
-    console.error('Smoke approvals:', JSON.stringify(await request('/approvals')));
+    console.error('Bot UI failed before cleanup:', error);
+    await capture('workspace-smoke-failure.png');
+    if (api.workspaces.list().some((workspace) => workspace.id === 'default'))
+      console.error('Smoke approvals:', JSON.stringify(await request('/approvals')));
     console.error(
       'Smoke final message:',
       JSON.stringify(
@@ -2023,7 +2084,6 @@ async function main() {
         ),
       ),
     );
-    console.error('Bot UI failed before cleanup:', error);
     throw error;
   } finally {
     window.destroy();

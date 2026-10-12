@@ -7,6 +7,7 @@ import { migrations } from './migrations';
 import { startApiServer } from '../app';
 import type { Attachment, Bot, ChatMessage } from '../../shared/ai';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
+import { Database } from './database';
 
 let dir = '';
 afterEach(() => {
@@ -16,6 +17,47 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('starts a fresh database without workspaces and stays empty after reopening', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    expect(new WorkspaceRepository(database).list()).toEqual([]);
+    expect(database.all('SELECT * FROM bots')).toEqual([]);
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(new WorkspaceRepository(database).list()).toEqual([]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+
+  it('preserves the workspace from an already installed database, including its name', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
+    db.exec('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)');
+    migrations.slice(0, 2).forEach((sql, index) => {
+      db.exec(sql);
+      db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
+    });
+    db.prepare('INSERT INTO workspaces VALUES(?,?,NULL,?)').run(
+      'default',
+      'My existing workspace',
+      '2026-10-01',
+    );
+    db.close();
+    const database = new Database(dir);
+    try {
+      expect(new WorkspaceRepository(database).find('default')).toMatchObject({
+        name: 'My existing workspace',
+        createdAt: '2026-10-01',
+      });
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+
   it('gives existing VM workspaces resource defaults without changing their computer or identity', async () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     const db = new DatabaseSync(join(dir, 'mukai.sqlite'));
@@ -43,7 +85,7 @@ describe('Existing database upgrades', () => {
         computer: 'qemu',
         computerResources: { memoryMiB: 4096, vcpus: 2 },
       });
-      expect(new WorkspaceRepository(api.store).find('default')?.computer).toBe('local');
+      expect(new WorkspaceRepository(api.store).find('default')).toBeUndefined();
       expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
     } finally {
       await api.shutdown();
@@ -58,6 +100,9 @@ describe('Existing database upgrades', () => {
       db.exec(sql);
       db.prepare('INSERT INTO schema_migrations VALUES(?,?)').run(index + 1, 'old');
     });
+    db.exec(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('default','Existing workspace',NULL,'2026-10-01')",
+    );
     db.exec(
       "INSERT INTO bots(id,name,description,instructions,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens,run_time_limit_minutes,run_token_limit) VALUES('scout','Scout','Original description','Original instructions','scout','2026-10-01','default',65536,4096,1,10000); INSERT INTO metadata VALUES('scout_seeded','1')",
     );
@@ -99,6 +144,9 @@ describe('Existing database upgrades', () => {
     for (const sql of migrations.slice(0, 4)) db.exec(sql);
     db.exec(
       "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'old'),(2,'old'),(3,'old'),(4,'old');",
+    );
+    db.exec(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('default','Existing workspace',NULL,'2026-10-01')",
     );
     db.exec(
       "INSERT INTO bots VALUES('scout','Scout','Original description','Original instructions',NULL,NULL,NULL,'scout','2026-10-01','default'); INSERT INTO metadata VALUES('scout_seeded','1');",

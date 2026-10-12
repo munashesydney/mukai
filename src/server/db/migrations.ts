@@ -1,4 +1,5 @@
-// Migrations are append-only. A transaction applies each version exactly once.
+// Schema migrations are append-only. A transaction applies each version exactly once.
+// The workspace bootstrap below only creates a home for pre-workspace legacy bots.
 export const migrations = [
   `CREATE TABLE providers (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
@@ -25,7 +26,8 @@ export const migrations = [
    CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
   `CREATE TABLE workspaces (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, folder TEXT UNIQUE, created_at TEXT NOT NULL);
-   INSERT INTO workspaces VALUES ('default','Munashe’s workspace',NULL,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+   INSERT INTO workspaces SELECT 'default','Your workspace',NULL,strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE EXISTS (SELECT 1 FROM bots);
    ALTER TABLE bots ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
    UPDATE bots SET workspace_id = 'default';
    CREATE TRIGGER require_bot_workspace_insert BEFORE INSERT ON bots WHEN NEW.workspace_id IS NULL

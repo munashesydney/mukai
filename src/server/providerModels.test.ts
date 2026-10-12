@@ -10,6 +10,7 @@ import { DiagnosticService } from './services/diagnosticService';
 import { scoutBot } from './services/botService';
 import { providerSchema } from './http/schemas';
 import { migrations } from './db/migrations';
+import { seedTestWorkspace } from './testFixtures';
 
 describe('Saved provider models', () => {
   let dir: string, database: Database, service: ProviderService;
@@ -114,6 +115,7 @@ describe('Saved provider models', () => {
     );
   });
   it('migrates the default and existing bot-specific models without losing their limits', () => {
+    seedTestWorkspace(database);
     const provider = service.save({
       ...connection,
       defaultModel: models[0].id,

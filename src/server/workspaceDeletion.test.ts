@@ -147,8 +147,6 @@ it('preserves connected project files and allows deleting the final workspace wi
   await api.workspaces.remove(workspace.id, workspace.name);
   expect(await readFile(join(project, 'source.ts'), 'utf8')).toBe('source');
   expect(await readFile(join(project, '.mukai', 'artifacts', 'saved.txt'), 'utf8')).toBe('project');
-  const initial = api.workspaces.require('default');
-  await api.workspaces.remove(initial.id, initial.name);
   expect(api.workspaces.list()).toEqual([]);
   await api.shutdown();
   await new Promise<void>((resolve) => api.server.close(() => resolve()));

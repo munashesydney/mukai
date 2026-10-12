@@ -61,7 +61,7 @@ export function WorkspacePanel({
       <div className="settings-account-card">
         <Avatar person="munashe" size="md" />
         <div>
-          <strong>{workspace?.name || 'Munashe’s workspace'}</strong>
+          <strong>{workspace?.name || 'Your workspace'}</strong>
           <span>Personal · Local to this device</span>
         </div>
         <span className="settings-account-badge">{workspace?.name[0]?.toUpperCase() || 'M'}</span>

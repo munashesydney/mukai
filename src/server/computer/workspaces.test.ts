@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startApiServer } from '../app';
+import { seedTestWorkspace } from '../testFixtures';
 import type { Workspace, ToolInfo } from '../../shared/ai';
 import { buildBotSystemPrompt } from '../../shared/botSystemPrompt';
 vi.mock('node:os', async (original) => ({
@@ -19,6 +20,7 @@ beforeEach(async () => {
   vi.stubEnv('MUKAI_QEMU_ACCEL', 'tcg');
   await writeFile(join(directory, 'base.qcow2'), 'fixture-only');
   api = await startApiServer(0, { dataDir: join(directory, 'data') });
+  seedTestWorkspace(api.store);
 });
 afterEach(async () => {
   await api.shutdown();

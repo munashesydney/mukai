@@ -6,6 +6,7 @@ import { startApiServer } from '../app';
 import type { Workspace } from '../../shared/ai';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import { WorkspaceService } from '../services/workspaceService';
+import { seedTestWorkspace } from '../testFixtures';
 
 let api: Awaited<ReturnType<typeof startApiServer>>;
 let directory: string;
@@ -18,6 +19,7 @@ beforeEach(async () => {
     memoryExtractor: async () => ({ facts: [] }),
   });
   workspaces = new WorkspaceService(new WorkspaceRepository(api.store), directory, api.computers);
+  seedTestWorkspace(api.store);
   workspace = workspaces.create({ name: 'VM', computer: 'qemu', folder: '' });
 });
 afterEach(async () => {

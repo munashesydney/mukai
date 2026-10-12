@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
+import { seedTestWorkspace } from './testFixtures';
 import type { Bot, BotInput, ChatMessage } from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
 import { WebSearchService } from './services/webSearchService';
@@ -96,6 +97,7 @@ beforeEach(async () => {
     dataDir: join(root, 'data'),
     memoryExtractor: async () => ({ facts: [] }),
   });
+  seedTestWorkspace(api.store);
   fixture = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
