@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { installerNames, publishInstallers, verifyInstallers } from './release';
+import { installerNames, publishInstallers, releaseNotes, verifyInstallers } from './release';
 
 const version = '0.1.0-build.12.1';
 const options = {
@@ -13,6 +13,16 @@ const options = {
   files: ['installer.exe'],
   notes: 'notes.md',
 };
+
+test('release notes distinguish notarized Macs from unsigned Windows and PR builds', () => {
+  const signed = releaseNotes('abc', true);
+  assert.match(signed, /mukai-release:macos-notarized/);
+  assert.match(signed, /Windows does not have a verified publisher signature/);
+  assert.doesNotMatch(signed, /may require approval in Privacy/);
+  const unsigned = releaseNotes('abc', false);
+  assert.doesNotMatch(unsigned, /mukai-release:macos-notarized/);
+  assert.match(unsigned, /without Apple notarization/);
+});
 
 test('missing, extra, or empty installers cannot be published', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mukai-release-'));

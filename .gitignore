@@ -15,5 +15,8 @@ artifacts/
 *.sqlite-shm
 *.sqlite-wal
 credentials.key
+*.p12
+*.pfx
+*.p8
 api.token
 server.lock

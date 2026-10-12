@@ -103,9 +103,38 @@ jobs:
       - name: Package Windows or Linux
         if: runner.os != 'macOS'
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
-      - name: Package macOS with local ad-hoc signing
-        if: runner.os == 'macOS'
+      - name: Package macOS pull request with ad-hoc signing
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
         run: npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.identity=- -c.mac.notarize=false
+      - name: Sign and notarize macOS release
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node --input-type=module -e '
+            const names = ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"];
+            const missing = names.filter(name => !process.env[name]?.trim());
+            if (missing.length) throw new Error(`Missing Apple signing secrets: ${missing.join(", ")}`);
+          '
+          npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.forceCodeSigning=true -c.mac.hardenedRuntime=true -c.mac.notarize=true
+      - name: Verify Developer ID signature and Apple notarization ticket
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app_path="release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}/Mukai.app"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          signature="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+          printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
+          printf '%s\n' "$signature" | grep -Fxq "TeamIdentifier=$APPLE_TEAM_ID"
+          printf '%s\n' "$signature" | grep -q 'flags=.*runtime'
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=2 "$app_path"
       - name: Smoke-test packaged Windows or macOS app
         if: runner.os != 'Linux'
         run: npm run test:packaged
@@ -164,6 +193,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
+      MACOS_NOTARIZED: 'true'
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
