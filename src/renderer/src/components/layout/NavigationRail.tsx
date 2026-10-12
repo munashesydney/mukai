@@ -14,43 +14,56 @@ export function NavigationRail({
   onNavigate,
   onSettings,
   onCreate,
-  workspaceName = 'Munashe’s workspace',
+  workspaceName = 'Your workspace',
+  disabled = false,
   hasBots = true,
   hasPendingApprovals = false,
   notificationCount = 0,
   unreadNotifications = 0,
 }: {
-  section: Section;
+  section?: Section;
   onNavigate: (section: Section) => void;
   onSettings: () => void;
   onCreate: () => void;
   workspaceName?: string;
+  disabled?: boolean;
   hasBots?: boolean;
   hasPendingApprovals?: boolean;
   notificationCount?: number;
   unreadNotifications?: number;
 }) {
   return (
-    <nav className="navigation-rail" aria-label="Main navigation">
+    <nav
+      className={`navigation-rail ${disabled ? 'is-disabled' : ''}`}
+      aria-label="Main navigation"
+    >
       <button
         className="workspace-emblem"
+        disabled={disabled}
+        title={disabled ? 'Create your first workspace to get started' : undefined}
         onClick={() => onNavigate(hasBots ? 'spaces' : 'bots')}
         aria-label={workspaceName}
       >
         {workspaceName[0]?.toUpperCase() || 'M'}
-        <span />
+        {!disabled && <span />}
       </button>
       <div className="rail-links">
         {items
-          .filter((item) => item.id !== 'notifications' || notificationCount > 0)
+          .filter((item) => disabled || item.id !== 'notifications' || notificationCount > 0)
           .map(({ id, label, icon: Icon }) => (
             <button
-              className={`rail-link ${section === id ? 'is-active' : ''}`}
+              className={`rail-link ${!disabled && section === id ? 'is-active' : ''}`}
               key={id}
-              disabled={!hasBots && id !== 'bots'}
-              title={!hasBots && id !== 'bots' ? 'Add your first bot to unlock this' : undefined}
+              disabled={disabled || (!hasBots && id !== 'bots')}
+              title={
+                disabled
+                  ? 'Create your first workspace to unlock this'
+                  : !hasBots && id !== 'bots'
+                    ? 'Add your first bot to unlock this'
+                    : undefined
+              }
               onClick={() => onNavigate(id)}
-              aria-current={section === id ? 'page' : undefined}
+              aria-current={!disabled && section === id ? 'page' : undefined}
             >
               <span className="rail-icon">
                 {Icon ? (
@@ -75,9 +88,10 @@ export function NavigationRail({
         {section !== 'pursuits' && section !== 'notifications' && (
           <button
             className="rail-add"
+            disabled={disabled}
             onClick={onCreate}
             aria-label={
-              section === 'tools'
+              disabled || section === 'tools'
                 ? 'Create workspace'
                 : section === 'bots'
                   ? 'Create a new bot'
@@ -87,7 +101,12 @@ export function NavigationRail({
             <Plus size={21} />
           </button>
         )}
-        <button className="rail-settings" onClick={onSettings} aria-label="Open settings">
+        <button
+          className="rail-settings"
+          disabled={disabled}
+          onClick={onSettings}
+          aria-label="Open settings"
+        >
           <Settings size={21} strokeWidth={1.6} />
         </button>
       </div>

@@ -47,7 +47,7 @@ function WorkspaceLayout({
 
 export function App() {
   const ai = useAIWorkspace();
-  if (!ai.loading && ai.workspaces.length === 0 && !ai.error) return <EmptyWorkspaces ai={ai} />;
+  if (!ai.workspace) return <EmptyWorkspaces ai={ai} />;
   return (
     <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
       <WorkspaceApp ai={ai} />
@@ -57,9 +57,10 @@ export function App() {
 function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const [creating, setCreating] = useState(false);
   return (
-    <>
+    <div className="app-shell">
       <TitleBar
         workspaceName="Mukai"
+        disabled
         onSearch={() => {}}
         onBack={() => {}}
         onForward={() => {}}
@@ -67,15 +68,45 @@ function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         canForward={false}
         onToggleSidebar={() => {}}
       />
-      <main className="settings-page">
-        <div className="settings-panel-heading">
-          <h3>Create a workspace</h3>
-          <p>Choose a project folder or a Linux computer to get started.</p>
+      <div className="app-body">
+        <div className="workspace-navigation is-compact">
+          <NavigationRail
+            disabled
+            workspaceName="Mukai"
+            onNavigate={() => {}}
+            onSettings={() => {}}
+            onCreate={() => {}}
+          />
         </div>
-        <button className="button button--primary" onClick={() => setCreating(true)}>
-          Create workspace
-        </button>
-      </main>
+        <div className="workspace-content">
+          <main className="conversation ai-main-state workspace-onboarding workspace-first-run">
+            {ai.loading ? (
+              <p role="status">Loading your workspaces…</p>
+            ) : ai.error ? (
+              <>
+                <h2>Couldn’t connect to Mukai</h2>
+                <p role="alert">{ai.error}</p>
+                <button className="button" onClick={() => void ai.refresh()}>
+                  Try again
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="context-section-label">WELCOME TO MUKAI</span>
+                <h2>Create your first workspace.</h2>
+                <p>
+                  A home for your bots, ideas, and the work ahead. Each workspace keeps its own
+                  conversations and files together.
+                </p>
+                <button className="button button--primary" onClick={() => setCreating(true)}>
+                  <Plus size={17} /> Create workspace
+                </button>
+                <small>Choose a project folder or a Linux computer to get started.</small>
+              </>
+            )}
+          </main>
+        </div>
+      </div>
       {creating && (
         <WorkspaceEditor
           onClose={() => setCreating(false)}
@@ -85,7 +116,7 @@ function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {

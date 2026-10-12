@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { startApiServer } from '../src/server/app';
+import { seedTestWorkspace } from '../src/server/testFixtures';
 import { scoutBot } from '../src/server/services/botService';
 import { BotRepository } from '../src/server/repositories/botRepository';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
@@ -26,6 +27,7 @@ async function main() {
     memoryExtractor: async () => ({ facts: [] }),
     memoryReviewIdleMs: 0,
   });
+  seedTestWorkspace(api.store);
   const bots = new BotRepository(api.store);
   bots.create(scoutBot());
   for (const [id, name, avatar] of [

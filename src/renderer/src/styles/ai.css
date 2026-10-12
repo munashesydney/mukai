@@ -2241,6 +2241,25 @@
   font-size: 12px;
   line-height: 1.9;
 }
+.workspace-first-run {
+  overflow-y: auto;
+}
+.navigation-rail.is-disabled button:disabled {
+  color: var(--text-muted);
+  opacity: 0.45;
+  pointer-events: none;
+}
+.navigation-rail.is-disabled .workspace-emblem {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+.navigation-rail.is-disabled .rail-mascot {
+  filter: grayscale(1);
+}
+.workspace-search:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
 .first-bot-intro {
   border: 1px solid var(--line);
   background: var(--theme-soft);

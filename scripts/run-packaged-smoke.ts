@@ -77,7 +77,11 @@ async function main() {
   };
   try {
     const page = await launch();
-    await page.getByRole('heading', { name: 'Meet your first bot.', exact: true }).waitFor();
+    await page
+      .getByRole('heading', { name: 'Create your first workspace.', exact: true })
+      .waitFor();
+    assert.deepEqual(await workspaceRequest(page), []);
+    assert.equal(await page.locator('.rail-link:disabled').count(), 5);
     const runtime = await desktop!.evaluate(async ({ app }) => {
       const { createRequire } = process.getBuiltinModule(
         'node:module',

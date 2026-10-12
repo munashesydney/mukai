@@ -42,7 +42,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
-    "test:bots-ui": "tsx scripts/run-bot-smoke.ts"
+    "test:bots-ui": "tsx scripts/run-bot-smoke.ts",
+    "test:workspace-ui": "tsx scripts/run-bot-smoke.ts --workspace-only"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.71",
