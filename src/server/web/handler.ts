@@ -4,9 +4,10 @@ import { realpath, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { ApiError } from '../config';
-import { trustedLocalRequest } from './origin';
+import { trustedLocalRequest, localBrowserRequest } from './origin';
 import { BrowserSession, matches } from './session';
 import { send } from '../http/transport';
+import type { OwnerAuth } from './ownerAuth';
 
 const contentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -28,6 +29,7 @@ export function createWebHandler(
   token: string,
   session: BrowserSession,
   route: Route,
+  owner?: OwnerAuth,
 ) {
   const root = realpath(resolve(directory));
   // Startup validates the directory; retain any later I/O failure for the request boundary.
@@ -38,12 +40,25 @@ export function createWebHandler(
     if (!trustedLocalRequest(request, true)) throw new ApiError(403, 'Untrusted request origin.');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
-    if (url.pathname === '/api/session') return session.handle(request, response);
+    if (url.pathname.startsWith('/api/auth/')) {
+      if (!owner) throw new ApiError(404, 'Not found');
+      return owner.handle(url.pathname.slice('/api/auth/'.length), request, response);
+    }
+    if (url.pathname === '/api/session') {
+      // The old local connection link is never a substitute for an owner's login.
+      if (!localBrowserRequest(request) || owner?.configured())
+        throw new ApiError(401, 'Sign in to Mukai.');
+      return session.handle(request, response);
+    }
     if (url.pathname === '/api/instance') {
       if (request.method !== 'GET') throw new ApiError(405, 'Method not allowed');
       if (
-        !session.authenticated(request) &&
-        !matches(request.headers.authorization || '', `Bearer ${token}`)
+        !owner?.authenticated(request) &&
+        !(
+          localBrowserRequest(request) &&
+          (session.authenticated(request) ||
+            matches(request.headers.authorization || '', `Bearer ${token}`))
+        )
       )
         throw new ApiError(401, 'API authentication required.');
       response.setHeader('Cache-Control', 'no-store');
@@ -52,7 +67,17 @@ export function createWebHandler(
       return;
     }
     if (url.pathname.startsWith('/api/')) {
-      if (session.authenticated(request)) request.headers.authorization = `Bearer ${token}`;
+      const authenticated =
+        owner?.authenticated(request) ||
+        (!owner?.configured() && localBrowserRequest(request) && session.authenticated(request));
+      if (authenticated) request.headers.authorization = `Bearer ${token}`;
+      else if (!localBrowserRequest(request)) delete request.headers.authorization;
+      if (owner?.authenticated(request)) {
+        const timer = setInterval(() => {
+          if (!owner.authenticated(request)) response.destroy();
+        }, 5000).unref();
+        response.once('close', () => clearInterval(timer));
+      }
       request.url = url.pathname.slice(4) + url.search;
       return route(request, response);
     }

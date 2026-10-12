@@ -110,6 +110,26 @@ it('keeps the existing desktop available when only the guest bridge disconnects'
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Guest bridge disconnected'));
   await expect(transport.session(computer)).resolves.toMatchObject({ password: 'temporary' });
 });
+it('requires browser authentication and revokes live desktop access when a session ends', async () => {
+  transport.shutdown();
+  server.removeAllListeners('upgrade');
+  let authenticated = false;
+  transport = new DesktopTransport(true, () => authenticated);
+  transport.attach(server);
+  const session = await transport.session(computer);
+  await denied('/api' + session.path, url.replace('ws:', 'http:'));
+  authenticated = true;
+  const viewer = new WebSocket(url + '/api' + session.path, {
+    origin: url.replace('ws:', 'http:'),
+  });
+  await new Promise<void>((done, reject) => {
+    viewer.once('open', done);
+    viewer.once('error', reject);
+  });
+  const closed = new Promise<void>((done) => viewer.once('close', () => done()));
+  authenticated = false;
+  await closed;
+}, 10000);
 it('preserves the startup error when the guest has no usable desktop endpoint', async () => {
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Linux guest crashed (kernel panic)'));
   vi.spyOn(computer, 'desktopConnection').mockImplementation(() => {

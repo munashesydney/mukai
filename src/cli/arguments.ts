@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { defaultDataDir } from '../server/config';
 
 export interface CliArguments {
-  command: 'help' | 'version' | 'serve' | 'status' | 'doctor';
+  command: 'help' | 'version' | 'serve' | 'status' | 'doctor' | 'auth-reset';
   port: number;
   open: boolean;
   dataDir: string;
@@ -22,7 +22,7 @@ export function parseArguments(args: string[], envPort = process.env.PORT): CliA
     },
   });
   const command = values.help ? 'help' : values.version ? 'version' : positionals[0] || 'help';
-  if (!['help', 'version', 'serve', 'status', 'doctor'].includes(command))
+  if (!['help', 'version', 'serve', 'status', 'doctor', 'auth-reset'].includes(command))
     throw new Error(`Unknown command: ${command}. Run mukai --help.`);
   if (positionals.length > 1) throw new Error('Unexpected arguments. Run mukai --help.');
   if (!['serve', 'help', 'version'].includes(command) && (values.port !== undefined || values.open))

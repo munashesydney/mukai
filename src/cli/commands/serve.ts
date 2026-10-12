@@ -71,7 +71,9 @@ export async function serve(options: CliArguments) {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   if (process.send) process.on('message', onMessage);
-  const connectionUrl = `${api.url}/#mukai-connect=${session.connectToken}`;
+  const connectionUrl = api.ownerAuth!.configured()
+    ? `${api.url}/`
+    : `${api.url}/#mukai-setup=${api.ownerAuth!.setupCode}`;
   try {
     await writeServerState(options.dataDir, {
       pid: process.pid,
@@ -87,6 +89,10 @@ export async function serve(options: CliArguments) {
   console.log(
     `Mukai ${version()}\nLocal address: ${api.url}\nConnect: ${connectionUrl}\nData: ${options.dataDir}\nPress Ctrl+C to stop.`,
   );
+  if (!api.ownerAuth!.configured())
+    console.log(
+      `Setup code: ${api.ownerAuth!.setupCode.match(/.{1,8}/g)!.join('-')}\nThis code expires in 30 minutes. Keep it private.`,
+    );
   if (options.open)
     await openBrowser(connectionUrl).catch(() =>
       console.error('Could not open your browser. Open the connection link above.'),

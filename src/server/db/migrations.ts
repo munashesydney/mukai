@@ -346,6 +346,12 @@ export const migrations = [
    CREATE TABLE chat_followup_queues (
      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
      paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0,1)));`,
+  `CREATE TABLE web_owner (
+    id INTEGER PRIMARY KEY CHECK(id=1), username TEXT NOT NULL,
+    password_hash TEXT NOT NULL, salt TEXT NOT NULL, created_at INTEGER NOT NULL);
+   CREATE TABLE web_sessions (
+    token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+   CREATE INDEX web_session_expiry ON web_sessions(expires_at);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

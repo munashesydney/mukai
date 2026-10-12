@@ -37,7 +37,8 @@ export async function readServerState(directory: string): Promise<ServerState | 
     connectionUrl.origin !== url.origin ||
     connectionUrl.pathname !== '/' ||
     connectionUrl.search ||
-    !/^#mukai-connect=[a-f0-9]{64}$/.test(connectionUrl.hash)
+    (connectionUrl.hash !== '' &&
+      !/^#mukai-(connect=[a-f0-9]{64}|setup=[a-f0-9]{32})$/.test(connectionUrl.hash))
   )
     throw new Error('Invalid CLI server address. Run mukai doctor.');
   return state;

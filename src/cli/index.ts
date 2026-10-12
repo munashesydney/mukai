@@ -7,6 +7,7 @@ Usage:
   mukai serve [--port 47831] [--open] [--data-dir PATH]
   mukai status [--data-dir PATH]
   mukai doctor [--data-dir PATH]
+  mukai auth-reset [--data-dir PATH]
   mukai --version
   mukai --help
 
@@ -32,6 +33,8 @@ export async function main(args = process.argv.slice(2)) {
       return (await import('./commands/status')).status(options.dataDir);
     case 'doctor':
       return (await import('./commands/doctor')).doctor(options.dataDir);
+    case 'auth-reset':
+      return (await import('./commands/authReset')).authReset(options.dataDir);
   }
 }
 void main()

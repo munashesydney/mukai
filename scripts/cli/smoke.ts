@@ -71,12 +71,22 @@ async function main() {
       }
       assert.ok(state, `CLI startup failed: ${output}`);
       assert.equal((await fetch(state.url)).status, 200);
-      const session = await fetch(state.url + '/api/session', {
+      const proof = await fetch(state.url + '/api/auth/verify', {
         method: 'POST',
         headers: { Origin: state.url, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: new URL(state.connectionUrl).hash.slice('#mukai-connect='.length),
+          code: new URLSearchParams(new URL(state.connectionUrl).hash.slice(1)).get('mukai-setup'),
         }),
+      });
+      assert.equal(proof.status, 200);
+      const session = await fetch(state.url + '/api/auth/setup', {
+        method: 'POST',
+        headers: {
+          Origin: state.url,
+          'Content-Type': 'application/json',
+          Cookie: proof.headers.get('set-cookie')!.split(';')[0],
+        },
+        body: JSON.stringify({ username: 'smoke-owner', password: 'disposable smoke password' }),
       });
       assert.equal(session.status, 200);
       const cookie = session.headers.get('set-cookie')!.split(';')[0];

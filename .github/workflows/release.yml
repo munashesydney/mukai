@@ -111,6 +111,9 @@ jobs:
       - name: Verify shared desktop and browser preferences
         if: runner.os == 'Windows'
         run: npm run test:settings-ui
+      - name: Verify owner setup and browser login
+        if: runner.os == 'Windows'
+        run: npm run test:cli:browser
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-${{ matrix.platform }}-${{ matrix.arch }}

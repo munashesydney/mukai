@@ -53,6 +53,8 @@ import { ApiError } from './config';
 import { ZodError } from 'zod';
 import { createWebHandler } from './web/handler';
 import { BrowserSession } from './web/session';
+import { OwnerAuth } from './web/ownerAuth';
+import { localBrowserRequest } from './web/origin';
 import { CapabilityService } from './capabilities/service';
 import { MemoryService } from './services/memoryService';
 import type { Extractor } from '../../mukai_memory/src';
@@ -231,7 +233,18 @@ export function createApiServer(options: ApiOptions = {}) {
       if (ownerBotId && ownerBotId !== botId)
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
-    const desktops = new DesktopTransport(Boolean(options.webDir));
+    const ownerAuth = options.webDir ? new OwnerAuth(store) : undefined;
+    const browserSession = options.webDir ? new BrowserSession(randomUUID()) : undefined;
+    const desktops = new DesktopTransport(
+      Boolean(options.webDir),
+      ownerAuth
+        ? (request) =>
+            ownerAuth.authenticated(request) ||
+            (!ownerAuth.configured() &&
+              localBrowserRequest(request) &&
+              Boolean(browserSession?.authenticated(request)))
+        : undefined,
+    );
     computers.attachDisposalHandler((computer) => desktops.forget(computer));
     attachments.attachDeletionGuard((id) => {
       bots.require(id);
@@ -281,11 +294,11 @@ export function createApiServer(options: ApiOptions = {}) {
       memory,
       skills,
     });
-    const browserSession = options.webDir ? new BrowserSession(randomUUID()) : undefined;
     if (browserSession) diagnostics.registerSecret(browserSession.connectToken);
+    if (ownerAuth) diagnostics.registerSecret(ownerAuth.setupCode);
     const handler =
       options.webDir && browserSession
-        ? createWebHandler(options.webDir, token, browserSession, route)
+        ? createWebHandler(options.webDir, token, browserSession, route, ownerAuth)
         : route;
     const server = createServer((request, response) => {
       void handler(request, response).catch((error) => {
@@ -347,6 +360,7 @@ export function createApiServer(options: ApiOptions = {}) {
     });
     return {
       browserSession,
+      ownerAuth,
       notifications,
       conversationHistory,
       access,

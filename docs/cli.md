@@ -30,13 +30,20 @@ mukai serve --port 0
 mukai serve --data-dir /path/to/data
 mukai status
 mukai doctor
+mukai auth-reset
 mukai --version
 mukai --help
 ```
 
 `serve` runs in the foreground. Ctrl+C stops requests, tools, browser/VM connections, and scheduling, then releases the database lock. The default port is 47831; `PORT` changes it, and `--port` takes precedence. Port 0 selects an available port. `--open` launches your default browser; otherwise open the printed connection link.
 
-The connection link carries a per-server bootstrap credential in its fragment (not an HTTP query). The UI removes it from the address bar, exchanges it for an HttpOnly SameSite=Strict cookie, and mounts the existing application. The persistent API token stays on the server. Sessions last up to 24 hours and are invalidated by a server restart. Reopen the connection link from `mukai status` to renew an expired session without stopping ongoing work. The server binds to 127.0.0.1 and supports local browser access; this is not a multi-user/network hosting mode.
+On first launch, the terminal prints a private setup code and a setup link. The link puts the code in its fragment, which is removed from the address bar before any requests. Verify the code, then choose your owner username and password. Codes expire after 30 minutes; restart the server to obtain another. Verification gives you five minutes to finish account creation. Once claimed, the installation presents a login page instead of account creation.
+
+Owner credentials and browser sessions persist in SQLite. Passwords use salted scrypt hashes; sessions use random credentials with only their hashes stored. Browser sessions last seven days, survive server restarts, and can be ended with **Sign out** in the title bar. The persistent backend API token stays on the server. Existing private localhost connection links continue working only before owner setup; they cannot bypass an owner login.
+
+The server still exposes a port on `127.0.0.1`. You manage any tunneling or proxying yourself. Served browser requests must be same-origin, and remote login requires HTTPS. A proxy must preserve the browser-facing Host header; Mukai does not trust forwarded headers or manage domains. One owner login controls the entire installation, including its tools; separate users and workspace permissions are not implemented.
+
+For a forgotten username or password, stop the backend and run `mukai auth-reset` with the same data directory. This removes the owner login and revokes browser sessions while preserving workspace data. Restart `mukai serve` to obtain a new setup code. Recovery requires local access to the machine and cannot run while Desktop or the CLI is using the database.
 
 `status` checks a private descriptor, data lock, and authenticated server identity before reporting its connection link. It does not inspect or manage a desktop backend. `doctor` checks the runtime and bundled UI/helpers; it reports the server state. The connection link is private: do not share it or terminal output containing it.
 
