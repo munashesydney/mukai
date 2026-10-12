@@ -209,10 +209,19 @@ inference have also been verified with this version.
 
 Actions can also run the **Desktop release** workflow manually: builds always run,
 and the **publish** checkbox allows publishing only when the selected branch is
-`main`. Signing and Apple notarization are deferred; macOS packages use ad-hoc
-signing for local runtime compatibility. Verified publisher signing can be added
-to the packaging steps later without changing where downloads are hosted.
+`main`. Main and manually dispatched Mac builds use Developer ID signing,
+hardened runtime, Apple notarization, and stapled tickets. CI verifies the
+signature, Team ID, ticket, and Gatekeeper assessment before uploading an installer.
+PR builds use ad-hoc signing and receive no Apple credentials.
 
-Public distribution still needs verified signing/notarization and installed-app
-updates. Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
+Set repository Actions secrets `MAC_CSC_LINK` (base64-encoded Developer ID
+Application `.p12`), `MAC_CSC_KEY_PASSWORD` (its export password), `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Credentials are injected only
+into the Mac signing step; missing credentials fail the release rather than
+silently creating an unsigned Mac app. Manual runs on trusted feature branches
+can validate signing without publishing. Keep `.p12` files and private keys out
+of Git.
+
+Windows publisher signing and installed-app updates are still deferred.
+Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
 runs while the local backend is running.

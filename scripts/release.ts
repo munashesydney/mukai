@@ -36,6 +36,9 @@ export async function verifyInstallers(
 }
 
 type Github = (args: string[]) => string;
+export function releaseNotes(sha: string, macosNotarized: boolean) {
+  return `<!-- mukai-release:unsigned -->\n${macosNotarized ? '<!-- mukai-release:macos-notarized -->\n' : ''}Desktop installers built from commit ${sha}.\n\n- Windows x64: setup wizard\n- macOS: separate Intel and Apple Silicon disk images\n- Linux x64: AppImage\n\nWindows does not have a verified publisher signature yet and may show a publisher warning. ${macosNotarized ? 'macOS applications are signed with Developer ID, notarized by Apple, and include a stapled notarization ticket.' : 'macOS builds use local ad-hoc signing without Apple notarization and may require approval in Privacy & Security.'}\n\nSHA256SUMS.txt contains checksums for each installer.\n`;
+}
 export function publishInstallers(
   github: Github,
   {
@@ -77,10 +80,7 @@ async function main() {
   const directory = resolve(process.argv[2] || 'release-artifacts');
   const files = await verifyInstallers(directory, version);
   const notes = join(directory, 'release-notes.md');
-  await writeFile(
-    notes,
-    `<!-- mukai-release:unsigned -->\nDesktop installers built from commit ${sha}.\n\n- Windows x64: setup wizard\n- macOS: separate Intel and Apple Silicon disk images\n- Linux x64: AppImage\n\nThese builds do not have a verified publisher signature or Apple notarization yet. Windows may show a publisher warning. macOS builds use local ad-hoc signing for runtime compatibility and may require approval in Privacy & Security.\n\nSHA256SUMS.txt contains checksums for each installer.\n`,
-  );
+  await writeFile(notes, releaseNotes(sha, process.env.MACOS_NOTARIZED === 'true'));
   const github: Github = (args) =>
     execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   console.log(
