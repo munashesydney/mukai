@@ -190,7 +190,7 @@ export function WorkspaceEditor({
               <small>
                 {window.mukai
                   ? 'Select an existing folder or create one in the folder picker.'
-                  : 'The browser preview uses a local path. The desktop app includes a native folder picker.'}
+                  : 'Enter a folder path on the machine running Mukai. The desktop app includes a native folder picker.'}
               </small>
             </label>
           )}

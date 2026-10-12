@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { cliReleaseFiles } from './cli/release.ts';
 
 export const installerNames = (version: string) => [
   `Mukai-Setup-${version}-x64.exe`,
@@ -16,17 +17,19 @@ export async function verifyInstallers(
   directory: string,
   version: string,
   minimumBytes = 1024 * 1024,
+  additionalFiles: string[] = [],
 ) {
   if (!/^\d+\.\d+\.\d+-build\.\d+\.\d+$/.test(version)) throw new Error('Invalid build version.');
-  const names = installerNames(version);
+  const names = [...installerNames(version), ...additionalFiles];
   const actual = (await readdir(directory)).sort();
   if (JSON.stringify(actual) !== JSON.stringify([...names].sort()))
-    throw new Error('Release must contain exactly the four expected installers.');
+    throw new Error('Release must contain exactly the expected release assets.');
   const sums: string[] = [];
   for (const name of names) {
     const path = join(directory, name);
     const info = await stat(path);
-    if (!info.isFile() || info.size < minimumBytes) throw new Error(`Invalid installer: ${name}`);
+    const minimum = /\.(sh|ps1|json|sha256)$/.test(name) ? 1 : minimumBytes;
+    if (!info.isFile() || info.size < minimum) throw new Error(`Invalid installer: ${name}`);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     sums.push(`${hash.digest('hex')}  ${name}`);
@@ -78,7 +81,12 @@ async function main() {
   const sha = process.env.GITHUB_SHA;
   if (!repository || !version || !sha) throw new Error('GitHub release environment is required.');
   const directory = resolve(process.argv[2] || 'release-artifacts');
-  const files = await verifyInstallers(directory, version);
+  const files = await verifyInstallers(
+    directory,
+    version,
+    undefined,
+    await cliReleaseFiles(directory, version),
+  );
   const notes = join(directory, 'release-notes.md');
   await writeFile(notes, releaseNotes(sha, process.env.MACOS_NOTARIZED === 'true'));
   const github: Github = (args) =>

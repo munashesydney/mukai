@@ -41,6 +41,7 @@ import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
+import { trustedLocalRequest } from '../web/origin';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -64,6 +65,8 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  browserMode = false,
+  version = '0.1.0',
   chatOutputs,
   notifications,
   desktops,
@@ -85,6 +88,8 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  browserMode?: boolean;
+  version?: string;
   chatOutputs: ChatOutputService;
   notifications: NotificationService;
   desktops: DesktopTransport;
@@ -115,9 +120,7 @@ export function createRoutes({
       return capabilities.dispatch(request, response, token);
     }
     const origin = request.headers.origin;
-    const permittedOrigin =
-      !origin || origin === 'null' || /^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin);
-    if (!permittedOrigin || !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(request.headers.host || ''))
+    if (!trustedLocalRequest(request, browserMode))
       throw new ApiError(403, 'Untrusted request origin.');
     if (origin) {
       response.setHeader('Access-Control-Allow-Origin', origin);
@@ -140,7 +143,7 @@ export function createRoutes({
       const payload: HealthResponse = {
         status: 'ok',
         service: 'mukai-api',
-        version: '0.1.0',
+        version,
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         timestamp: new Date().toISOString(),
       };

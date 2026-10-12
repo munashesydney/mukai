@@ -5,11 +5,20 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "types": ["node"],
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src/main", "src/preload", "src/server", "src/shared", "scripts", "*.config.ts"]
+  "include": [
+    "src/main",
+    "src/preload",
+    "src/server",
+    "src/shared",
+    "src/cli",
+    "scripts",
+    "*.config.ts"
+  ]
 }

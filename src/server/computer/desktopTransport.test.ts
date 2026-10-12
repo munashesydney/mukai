@@ -87,6 +87,25 @@ it('expires unused viewer tickets', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31000);
   await denied(session.path, 'file://');
 });
+it('browser mode streams the API websocket on its selected origin and rejects the dev origin', async () => {
+  transport.shutdown();
+  server.removeAllListeners('upgrade');
+  transport = new DesktopTransport(true);
+  transport.attach(server);
+  const session = await transport.session(computer);
+  await denied('/api' + session.path, 'http://127.0.0.1:5173');
+  const viewer = new WebSocket(url + '/api' + session.path, {
+    origin: url.replace('ws:', 'http:'),
+  });
+  try {
+    await new Promise<void>((done, reject) => {
+      viewer.once('open', done);
+      viewer.once('error', reject);
+    });
+  } finally {
+    viewer.terminate();
+  }
+});
 it('keeps the existing desktop available when only the guest bridge disconnects', async () => {
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Guest bridge disconnected'));
   await expect(transport.session(computer)).resolves.toMatchObject({ password: 'temporary' });

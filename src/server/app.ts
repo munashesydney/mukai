@@ -1,5 +1,6 @@
 import { SkillService } from './skills/service';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Database } from './db/database';
 import { defaultDataDir, privateSecret, acquireDataLock } from './config';
@@ -48,11 +49,15 @@ import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
 import { ApiError } from './config';
 import { ZodError } from 'zod';
+import { createWebHandler } from './web/handler';
+import { BrowserSession } from './web/session';
 import { CapabilityService } from './capabilities/service';
 import { MemoryService } from './services/memoryService';
 import type { Extractor } from '../../mukai_memory/src';
 
 export interface ApiOptions {
+  webDir?: string;
+  version?: string;
   dataDir?: string;
   token?: string;
   embeddedBrowser?: EmbeddedBrowserHost;
@@ -223,7 +228,7 @@ export function createApiServer(options: ApiOptions = {}) {
       if (ownerBotId && ownerBotId !== botId)
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
-    const desktops = new DesktopTransport();
+    const desktops = new DesktopTransport(Boolean(options.webDir));
     computers.attachDisposalHandler((computer) => desktops.forget(computer));
     attachments.attachDeletionGuard((id) => {
       bots.require(id);
@@ -249,6 +254,8 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      browserMode: Boolean(options.webDir),
+      version: options.version,
       chatOutputs,
       notifications,
       desktops,
@@ -270,8 +277,14 @@ export function createApiServer(options: ApiOptions = {}) {
       memory,
       skills,
     });
+    const browserSession = options.webDir ? new BrowserSession(randomUUID()) : undefined;
+    if (browserSession) diagnostics.registerSecret(browserSession.connectToken);
+    const handler =
+      options.webDir && browserSession
+        ? createWebHandler(options.webDir, token, browserSession, route)
+        : route;
     const server = createServer((request, response) => {
-      void route(request, response).catch((error) => {
+      void handler(request, response).catch((error) => {
         if (!(error instanceof ApiError) && !(error instanceof ZodError))
           diagnostics.record('http.failed', error, { phase: 'http-request' });
         sendError(response, error);
@@ -329,6 +342,7 @@ export function createApiServer(options: ApiOptions = {}) {
       memory.start();
     });
     return {
+      browserSession,
       notifications,
       conversationHistory,
       access,

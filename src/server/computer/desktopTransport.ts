@@ -5,9 +5,11 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { QemuComputer } from './qemuComputer';
 import type { ComputerViewSession } from '../../shared/computer';
+import { trustedLocalRequest } from '../web/origin';
 
 /** Authenticated HTTP issues short-lived, single-use viewer tickets. No API token in websocket URLs. */
 export class DesktopTransport {
+  constructor(private readonly browserMode = false) {}
   private tickets = new Map<
     string,
     { computer: QemuComputer; port: number; password: string; expires: number }
@@ -55,16 +57,7 @@ export class DesktopTransport {
     const reject = () => {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     };
-    const origin = request.headers.origin;
-    if (
-      this.closed ||
-      !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(request.headers.host || '') ||
-      (origin &&
-        origin !== 'null' &&
-        origin !== 'file://' &&
-        !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
-    )
-      return reject();
+    if (this.closed || !trustedLocalRequest(request, this.browserMode, true)) return reject();
     let url: URL;
     try {
       url = new URL(request.url || '/', 'http://localhost');
@@ -73,7 +66,12 @@ export class DesktopTransport {
     }
     const key = url.searchParams.get('ticket') || '';
     const ticket = this.tickets.get(key);
-    if (url.pathname !== '/computer-view' || !ticket || ticket.expires <= Date.now())
+    if (
+      (url.pathname !== '/computer-view' &&
+        (!this.browserMode || url.pathname !== '/api/computer-view')) ||
+      !ticket ||
+      ticket.expires <= Date.now()
+    )
       return reject();
     this.tickets.delete(key);
     try {

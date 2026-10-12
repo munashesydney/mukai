@@ -6,6 +6,8 @@ Bots, chats, spaces, pursuits, workspaces, artifacts, and tools use a local Node
 
 ## Run
 
+For the standalone terminal command and production browser mode, see [Mukai CLI](docs/cli.md). The CLI and desktop share this application's renderer and backend.
+
 Requires **Node.js 24 LTS** and npm. The desktop bundles its own Electron runtime.
 
 ```sh
@@ -180,13 +182,13 @@ installed app: both use port 47831. Check first launch, workspace folder selecti
 provider setup/chat, saved settings after restarting, shortcuts, and uninstall.
 The local build is unsigned, so Windows may show an unknown-publisher warning.
 
-## Automated desktop releases
+## Automated desktop and CLI releases
 
 `.github/workflows/release.yml` builds Windows x64, macOS Intel/Apple Silicon,
 and Linux x64 on their native GitHub runners. Pull requests build and smoke-test
-all four packages without publishing, then validates the real installer filenames,
+all desktop and CLI packages without publishing, then validates the real filenames,
 sizes, and checksums together. Every successful push to `main` publishes
-all installers and `SHA256SUMS.txt` together in a GitHub Release. Failed checks,
+desktop installers, CLI archives, installation scripts, `cli-manifest.json`, and `SHA256SUMS.txt` together in a GitHub Release. Failed checks,
 missing packages, failed uploads, and superseded commits do not replace the latest
 published release. A failed upload can leave a draft release for diagnosis.
 
