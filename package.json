@@ -27,6 +27,7 @@
     "test:browser-profiles": "tsx scripts/run-browser-smoke.ts --profiles-only",
     "test:vm-health": "tsx scripts/test-vm-health.ts",
     "test:capabilities": "tsx scripts/run-capability-smoke.ts",
+    "test:capabilities:vm": "tsx scripts/run-capability-vm-smoke.ts",
     "test:memory-embeddings": "tsx scripts/memory-embedding-check.ts",
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
     "test:chat-activity-ui": "tsx scripts/run-chat-activity-smoke.ts",

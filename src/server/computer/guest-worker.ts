@@ -1,5 +1,6 @@
 import { GuestDispatcher } from './guestDispatcher';
 import { encodeFrame, guestRequest } from './protocol';
+import { GuestHelpers } from './helpers';
 
 // Only the unprivileged worker executes bot tools. It never receives the boot token or serial FD.
 if (!process.send || process.getuid?.() === 0)
@@ -11,7 +12,9 @@ const send = (value: unknown) => {
   encodeFrame(value); // Apply the same byte bound to IPC and the external bridge.
   if (process.connected) process.send!(value);
 };
+const helpers = new GuestHelpers(send);
 process.on('message', (raw) => {
+  if (helpers.reply(raw)) return;
   if (raw && typeof raw === 'object' && 'cancel' in raw && typeof raw.cancel === 'string') {
     pending.get(raw.cancel)?.abort();
     return;
@@ -26,7 +29,15 @@ process.on('message', (raw) => {
   const controller = new AbortController();
   pending.set(request.id, controller);
   void dispatcher
-    .request(request.method, request.input, request.owner, controller.signal)
+    .request(
+      request.method,
+      request.input,
+      request.owner,
+      controller.signal,
+      request.method === 'capability'
+        ? helpers.forRequest(request.id, controller.signal)
+        : undefined,
+    )
     .then((result) => send({ id: request.id, result }))
     .catch((error) =>
       send({
@@ -34,7 +45,10 @@ process.on('message', (raw) => {
         error: error instanceof Error ? error.message : 'Guest tool failed.',
       }),
     )
-    .finally(() => pending.delete(request.id));
+    .finally(() => {
+      pending.delete(request.id);
+      controller.abort();
+    });
 });
 const stop = () => {
   for (const controller of pending.values()) controller.abort();

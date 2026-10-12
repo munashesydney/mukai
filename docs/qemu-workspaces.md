@@ -12,7 +12,9 @@ Workspace creation offers **Local machine** or **Linux VM (preview)**. Existing 
 - Automatic startup on first computer tool call; manual start/stop/status in Settings → Workspace; shutdown when Mukai closes.
 - Host-side chats, model connections, permissions, bots, memory, skills, web search and pursuits.
 
-Custom tools/routes are unavailable in VM v1, including through management APIs. They never fall back to host Node. There are no host folder mounts, application preview port forwarding, snapshots, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
+Custom tools and routes are supported. Write a Node module under `/home/mukai/workspace`, then call `register_custom_tool` or `register_custom_route` with its workspace-relative path. Compilation happens inside the guest; import validation and handlers run in bounded Node workers there. They never fall back to host Node. Registrations, immutable compiled versions, approvals, secrets and durable jobs are managed by the controller. Custom routes retain Mukai's existing HTTP endpoints and forward requests to the guest without exposing a guest listener. A stopped VM starts on invocation; a failed VM returns an error. Module changes require an explicit registration update. Existing VM disks receive the compiler dependency and updated bridge on their next start.
+
+There are no host folder mounts, application preview port forwarding, snapshots, or automatic orphan recovery yet. Uploads are model attachments; there is no guest upload/import UI yet. Local mode retains its existing behavior.
 
 ## Automatic setup
 

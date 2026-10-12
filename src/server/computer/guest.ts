@@ -5,6 +5,7 @@ import { GuestWorker } from './guestWorker';
 import { guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from './protocol';
 import { collectGuestHealth, GuestHealthLog, GUEST_HEALTH_INTERVAL_MS } from './guestHealth';
 import { GuestTransport, openGuestChannel } from './guestTransport';
+import { GuestHelpers } from './helpers';
 
 // This entry point runs ONLY inside a prepared Linux guest, never in Electron.
 if (process.getuid?.() !== 0)
@@ -29,6 +30,9 @@ let sample: ReturnType<typeof collectGuestHealth> | undefined;
 let stopping = false;
 let logFailed = false;
 let telemetryRunning = false;
+const helpers = new GuestHelpers((frame) => {
+  if (!transport.send(frame)) throw new Error('Guest helper transport is unavailable.');
+});
 const health = () => {
   if (!sample)
     sample = collectGuestHealth({ workerPid: dispatcher.pid }).finally(() => {
@@ -61,6 +65,7 @@ const transport = new GuestTransport({
   },
   onError: () => console.error('Guest transport unavailable; reconnecting.'),
   onFrame: (raw) => {
+    if (helpers.reply(raw)) return;
     const control = z.object({ cancel: z.string().uuid() }).safeParse(raw);
     if (control.success) {
       pending.get(control.data.cancel)?.abort();
@@ -84,7 +89,15 @@ const transport = new GuestTransport({
     const controller = new AbortController();
     pending.set(request.id, controller);
     void dispatcher
-      .request(request.method, request.input, request.owner, controller.signal)
+      .request(
+        request.method,
+        request.input,
+        request.owner,
+        controller.signal,
+        request.method === 'capability'
+          ? helpers.forRequest(request.id, controller.signal)
+          : undefined,
+      )
       .then((result) => transport.send({ id: request.id, result }))
       .catch((error) =>
         transport.send({
@@ -92,7 +105,10 @@ const transport = new GuestTransport({
           error: error instanceof Error ? error.message : 'Guest operation failed.',
         }),
       )
-      .finally(() => pending.delete(request.id));
+      .finally(() => {
+        pending.delete(request.id);
+        controller.abort();
+      });
   },
 });
 transport.start();

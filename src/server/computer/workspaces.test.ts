@@ -77,7 +77,7 @@ describe('workspace computer choice', () => {
       ),
     ).toMatchObject({ computer: 'qemu', folder: null });
   });
-  it('exposes guest tools while rejecting host custom registration at the API boundary', async () => {
+  it('exposes guest tools and custom registration without using a host folder', async () => {
     const { data: workspace } = await request<Workspace>('/workspaces', 'POST', {
       name: 'VM',
       computer: 'qemu',
@@ -86,14 +86,10 @@ describe('workspace computer choice', () => {
     for (const id of ['terminal', 'file_operations', 'image', 'browser'])
       expect(tools.find((tool) => tool.id === id)?.available).toBe(true);
     for (const id of ['register_custom_tool', 'register_custom_route'])
-      expect(tools.find((tool) => tool.id === id)?.available).toBe(false);
-    await expect(
-      api.capabilities.manage(workspace.id, null, 'tool', {
-        operation: 'register',
-        modulePath: 'test.js',
-        permissionMode: 'auto_approve',
-      }),
-    ).rejects.toThrow('unavailable in VM v1');
+      expect(tools.find((tool) => tool.id === id)?.available).toBe(true);
+    expect(
+      await api.capabilities.manage(workspace.id, null, 'tool', { operation: 'list' }),
+    ).toEqual([]);
   });
   it('reports unavailable VM setup and preserves local folder validation', async () => {
     vi.stubEnv('MUKAI_QEMU_BINARY', join(directory, 'missing-qemu.exe'));

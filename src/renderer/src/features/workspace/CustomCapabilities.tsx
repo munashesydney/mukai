@@ -16,11 +16,13 @@ export function CustomCapabilities({
   query,
   onSelect,
   section,
+  vm = false,
 }: {
   workspaceId: string;
   query: string;
   onSelect: (id: string) => void;
   section?: 'tool' | 'route';
+  vm?: boolean;
 }) {
   const [items, setItems] = useState<CapabilityRegistration[]>([]);
   const sections = section ? [section] : (['tool', 'route'] as const);
@@ -215,8 +217,9 @@ export function CustomCapabilities({
         </Sheet>
       )}
       <p className="ai-caption">
-        Custom modules are trusted Node code with your OS account’s access. Declared environment
-        values are scoped configuration; the runtime is not a security sandbox.
+        {vm
+          ? 'Custom modules run inside the Linux VM. Declared environment values are provided to their guest handlers.'
+          : 'Custom modules are trusted Node code with your OS account’s access. Declared environment values are scoped configuration; the runtime is not a security sandbox.'}
       </p>
     </div>
   );

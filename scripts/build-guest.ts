@@ -20,7 +20,7 @@ async function main() {
     packages: Record<string, { version: string }>;
   };
   const dependencies = Object.fromEntries(
-    ['ai', 'zod', 'sharp', 'playwright-core'].map((name) => [
+    ['ai', 'zod', 'sharp', 'playwright-core', 'esbuild'].map((name) => [
       name,
       lock.packages['node_modules/' + name].version,
     ]),

@@ -24,7 +24,10 @@ import {
   GUEST_REVISION,
   type Computer,
   type ComputerMethod,
+  type ComputerHelper,
+  helperRequest,
 } from './protocol';
+import { answerHelper } from './helpers';
 import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
 import { guestHealthSchema, type GuestHealth } from './guestHealth';
@@ -146,6 +149,7 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: Error): void;
   cleanup(): void;
+  helper?: ComputerHelper;
 }
 type Launcher = (
   binary: string,
@@ -775,6 +779,20 @@ export class QemuComputer implements Computer {
               }
               continue;
             }
+            const helper = helperRequest.safeParse(raw);
+            if (helper.success) {
+              const pending = this.pending.get(helper.data.requestId);
+              answerHelper(
+                raw,
+                pending,
+                () =>
+                  this.pending.get(helper.data.requestId) === pending &&
+                  Boolean(pending) &&
+                  this.socket === socket,
+                (frame) => socket.write(encodeFrame(frame)),
+              );
+              continue;
+            }
             const message = z
               .object({
                 id: z.string().uuid(),
@@ -955,7 +973,13 @@ export class QemuComputer implements Computer {
       signal.removeEventListener('abort', abortBoot);
     }
   }
-  async request(method: ComputerMethod, input: unknown, owner: RuntimeOwner, signal: AbortSignal) {
+  async request(
+    method: ComputerMethod,
+    input: unknown,
+    owner: RuntimeOwner,
+    signal: AbortSignal,
+    helper?: ComputerHelper,
+  ) {
     signal.throwIfAborted();
     // Boot is shared across callers; cancelling a caller must not tear down peers.
     let abortStart!: () => void;
@@ -972,13 +996,14 @@ export class QemuComputer implements Computer {
       signal.removeEventListener('abort', abortStart);
     }
     signal.throwIfAborted();
-    return this.exchange(method, input, owner, signal);
+    return this.exchange(method, input, owner, signal, helper);
   }
   private async exchange(
     method: ComputerMethod,
     input: unknown,
     owner: RuntimeOwner,
     signal: AbortSignal,
+    helper?: ComputerHelper,
   ) {
     signal.throwIfAborted();
     if (!this.socket || this.state.state !== 'running') throw new Error('VM is unavailable.');
@@ -1015,7 +1040,12 @@ export class QemuComputer implements Computer {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
       };
-      this.pending.set(id, { resolve, reject, cleanup });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        cleanup,
+        helper: method === 'capability' ? helper : undefined,
+      });
       signal.addEventListener('abort', abort, { once: true });
       this.socket!.write(frame);
     });

@@ -32,7 +32,7 @@ async function main() {
   );
   writeFileSync(
     join(folder, 'route.js'),
-    `export default {name:'smoke_route',method:'POST',path:'/custom/smoke',auth:'public',handle:r=>({status:200,body:{received:r.body}})};`,
+    `export default {name:'smoke_route',method:'POST',path:'/custom/smoke',auth:'mukai',handle:r=>({status:200,body:{received:r.body}})};`,
   );
   for (const [channel, callback] of [
     [IPC.apiConnection, () => ({ url: api.url, token: api.token })],
@@ -55,20 +55,39 @@ async function main() {
   window.webContents.on('console-message', (_event, level, message) => {
     if (level === 3) errors.push(message);
   });
-  const evaluate = <T>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
+  const evaluate = async <T>(code: string) => {
+    try {
+      return (await window.webContents.executeJavaScript(code)) as T;
+    } catch (error) {
+      console.error(
+        'Smoke renderer state:',
+        await window.webContents.executeJavaScript('document.body.innerText'),
+      );
+      console.error('Smoke renderer errors:', errors.join('\n'));
+      throw error;
+    }
+  };
   const wait = async (code: string, name: string) => {
     for (let i = 0; i < 100; i++) {
-      if (await evaluate<boolean>(code)) return;
+      if (
+        await evaluate<boolean>(`(() => { try { return (${code}); } catch { return false; } })()`)
+      )
+        return;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     throw new Error(
       name + ' did not settle: ' + (await evaluate<string>('document.body.innerText')),
     );
   };
-  const click = async (selector: string, text?: string) =>
-    evaluate(
+  const click = async (selector: string, text?: string) => {
+    await wait(
+      `Boolean([...document.querySelectorAll(${JSON.stringify(selector)})].find(e=>!e.disabled && (${text ? 'e.textContent.trim()===' + JSON.stringify(text) : 'true'})))`,
+      'control ' + (text || selector),
+    );
+    return evaluate(
       `(() => {const element=[...document.querySelectorAll(${JSON.stringify(selector)})].find(e=>${text ? 'e.textContent.trim()===' + JSON.stringify(text) : 'true'});if(!element)throw new Error('Control not found');element.click();})()`,
     );
+  };
   const fill = async (selector: string, value: string) =>
     evaluate(
       `(() => {const element=document.querySelector(${JSON.stringify(selector)});if(!element)throw new Error('Field not found');const prototype=element.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:element.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event(element.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`,
@@ -112,12 +131,13 @@ async function main() {
       ),
     );
     await click('.rail-link', 'Tools');
-    await wait('Boolean(document.querySelector(".custom-capabilities"))', 'custom sections');
-    await wait('document.querySelectorAll(".tool-family-card").length === 6', 'built-in catalog');
-    assert.equal(
-      await evaluate<number>('document.querySelectorAll(".tool-family-card").length'),
-      6,
+    const catalog = await request('/tools?workspaceId=default');
+    await wait(
+      `document.querySelectorAll('.tool-family-card').length === ${catalog.length}`,
+      'built-in catalog',
     );
+    await click('.sidebar-row', 'Custom tools');
+    await wait('Boolean(document.querySelector(".custom-capabilities"))', 'custom sections');
     await click('.custom-capabilities > button', 'Register a saved module');
     await fill('.custom-capabilities .capability-form input', 'echo.ts');
     await checkSheet('register');
@@ -147,6 +167,7 @@ async function main() {
     await click('.capability-import button', 'Save 1 variables');
     await wait('document.body.innerText.includes("SECOND_KEY")', 'env import');
     await click('.rail-link', 'Tools');
+    await click('.sidebar-row', 'Custom tools');
     await wait(
       'document.querySelector(".custom-capabilities").textContent.includes("echo_custom")',
       'tools refresh',
@@ -192,6 +213,7 @@ async function main() {
       'enable',
     );
     await click('.tool-detail-back', 'All tools');
+    await click('.sidebar-row', 'Routes');
     await click('.custom-capabilities > button', 'Register a saved module');
     await click('.custom-capabilities [role=combobox]');
     await click('.custom-capabilities [role=option]', 'Route');
@@ -208,13 +230,18 @@ async function main() {
     );
     const routed = await fetch(api.url + '/custom/smoke', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + api.token },
       body: '{"ok":true}',
     });
     assert.deepEqual(await routed.json(), { received: { ok: true } });
     await click('.tool-detail-back', 'All tools');
+    await click('.sidebar-row', 'Custom tools');
     const screenshot = join(process.cwd(), 'artifacts', 'capabilities-tools.png');
-    await wait('document.querySelectorAll(".capability-open").length === 2', 'registered cards');
+    await wait(
+      'document.querySelectorAll(".capability-open").length === 1',
+      'registered tool card',
+    );
+    assert.equal(api.capabilities.list('default').length, 2);
     await evaluate(
       'document.querySelector(".custom-capabilities").scrollIntoView({block:"start"})',
     );
@@ -237,8 +264,47 @@ async function main() {
     assert(
       !readFileSync(join(root, 'data', 'mukai.sqlite')).includes(Buffer.from('ui-private-value')),
     );
+    const routeId = api.capabilities.list('default').find((item) => item.kind === 'route')!.id;
+    writeFileSync(
+      join(folder, 'call-route.js'),
+      `export default {name:'test_route_call',description:'Test the authenticated route',inputSchema:{type:'object'},execute(args,context){return context.callRoute(${JSON.stringify(routeId)},{body:{ok:true}});}};`,
+    );
+    const caller = await request('/capabilities', 'POST', {
+      kind: 'tool',
+      operation: 'register',
+      modulePath: 'call-route.js',
+      permissionMode: 'auto_approve',
+    });
+    assert.deepEqual(await request('/capabilities/' + caller.id + '/test', 'POST', {}), {
+      status: 200,
+      body: { received: { ok: true } },
+    });
+    // Verify VM workspaces expose the same management pages, without booting a guest.
+    api.store.run("UPDATE workspaces SET computer='qemu',folder=NULL WHERE id='default'");
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+    await wait(
+      'Boolean(document.querySelector(".rail-settings:not([disabled])"))',
+      'VM workspace loaded',
+    );
+    await click('.rail-link', 'Tools');
+    await click('.sidebar-row', 'Custom tools');
+    await wait(
+      'document.querySelector(".custom-capabilities").textContent.includes("echo_custom")',
+      'VM custom tools',
+    );
+    assert(
+      await evaluate<boolean>(
+        'document.querySelector(".custom-capabilities").textContent.includes("inside the Linux VM")',
+      ),
+    );
+    await click('.sidebar-row', 'Routes');
+    await wait(
+      'document.querySelector(".custom-capabilities").textContent.includes("smoke_route")',
+      'VM custom routes',
+    );
+    assert(!(await evaluate<boolean>('document.body.innerText.includes("unavailable in VM v1")')));
     console.log(
-      'PASS Electron capability UI/runtime: built-in sections, TS/JS registration, encrypted variables, env import, testing, disable/enable, route URL and HTTP dispatch.',
+      'PASS Electron capability UI/runtime: built-in sections, TS/JS registration, encrypted variables, env import, testing, disable/enable, route URL, HTTP dispatch and VM management pages.',
     );
   } finally {
     window.destroy();

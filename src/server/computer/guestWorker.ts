@@ -2,14 +2,26 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { RuntimeOwner } from '../../shared/runtime';
-import { encodeFrame, type Computer, type ComputerMethod } from './protocol';
+import {
+  encodeFrame,
+  helperRequest,
+  type Computer,
+  type ComputerMethod,
+  type ComputerHelper,
+} from './protocol';
+import { answerHelper } from './helpers';
 
 export class GuestWorker implements Computer {
   private child?: ChildProcess;
   private closed = false;
   private pending = new Map<
     string,
-    { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void }
+    {
+      resolve(value: unknown): void;
+      reject(error: Error): void;
+      cleanup(): void;
+      helper?: ComputerHelper;
+    }
   >();
   constructor(
     private script: string,
@@ -40,6 +52,19 @@ export class GuestWorker implements Computer {
     child.on('message', (raw) => {
       try {
         encodeFrame(raw);
+        const helper = helperRequest.safeParse(raw);
+        if (helper.success) {
+          const pending = this.pending.get(helper.data.requestId);
+          answerHelper(
+            raw,
+            pending,
+            () => this.pending.get(helper.data.requestId) === pending && Boolean(pending),
+            (frame) => {
+              if (child.connected) child.send(frame);
+            },
+          );
+          return;
+        }
         const frame = z
           .object({
             id: z.string().uuid(),
@@ -74,7 +99,13 @@ export class GuestWorker implements Computer {
     child.on('exit', failed);
     return child;
   }
-  async request(method: ComputerMethod, input: unknown, owner: RuntimeOwner, signal: AbortSignal) {
+  async request(
+    method: ComputerMethod,
+    input: unknown,
+    owner: RuntimeOwner,
+    signal: AbortSignal,
+    helper?: ComputerHelper,
+  ) {
     signal.throwIfAborted();
     if (this.pending.size >= 32) throw new Error('Guest worker is busy.');
     const child = this.start();
@@ -93,7 +124,12 @@ export class GuestWorker implements Computer {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
       };
-      this.pending.set(id, { resolve, reject, cleanup });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        cleanup,
+        helper: method === 'capability' ? helper : undefined,
+      });
       signal.addEventListener('abort', abort, { once: true });
       child.send(frame, (error) => {
         if (error) {

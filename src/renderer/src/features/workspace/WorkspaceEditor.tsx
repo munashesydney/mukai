@@ -141,7 +141,7 @@ export function WorkspaceEditor({
               <small>
                 {computer === 'local'
                   ? 'Commands and browser tools run on this computer.'
-                  : 'Bots share a persistent Linux VM with 2 CPUs and 2 GiB RAM. Files stay on its disk. Headless browser; custom tools and routes are unavailable in v1.'}
+                  : 'Bots share a persistent Linux VM. Files, browser sessions, and custom tool and route modules run inside it.'}
               </small>
             </label>
           )}
