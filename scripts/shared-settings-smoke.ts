@@ -49,6 +49,11 @@ async function main() {
   try {
     await desktopWindow.loadFile(resolve('out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run"))');
+    assert.equal(
+      await desktopWindow.webContents.executeJavaScript('document.documentElement.dataset.theme'),
+      'ocean',
+      'A fresh desktop installation must use Ocean.',
+    );
     await desktopWindow.webContents.executeJavaScript(
       `localStorage.setItem('mukai.appearance.v1', JSON.stringify({mode:'dark',theme:'ocean'}))`,
     );

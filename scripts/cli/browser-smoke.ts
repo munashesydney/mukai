@@ -42,6 +42,11 @@ async function main() {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(state.connectionUrl);
     await page.getByRole('heading', { name: 'Connect your Mukai.' }).waitFor();
+    assert.equal(
+      await page.evaluate(() => document.documentElement.dataset.theme),
+      'ocean',
+      'Fresh setup must use Ocean.',
+    );
     const code = new URLSearchParams(new URL(state.connectionUrl).hash.slice(1)).get(
       'mukai-setup',
     )!;
@@ -72,6 +77,11 @@ async function main() {
     await page.getByLabel('Confirm password', { exact: true }).fill('disposable smoke password');
     await page.getByRole('button', { name: 'Create login & open Mukai' }).click();
     await page.getByRole('heading', { name: 'Create your first workspace.' }).waitFor();
+    assert.equal(
+      await page.evaluate(() => document.documentElement.dataset.theme),
+      'ocean',
+      'Fresh workspace must retain Ocean.',
+    );
     assert.equal(
       new URL(page.url()).hash,
       '',

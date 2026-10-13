@@ -10,7 +10,7 @@ export type ThemePreferences = z.infer<typeof appearanceSchema>;
 export type ColorMode = ThemePreferences['mode'];
 export type ThemeId = ThemePreferences['theme'];
 export type ResolvedMode = Exclude<ColorMode, 'system'>;
-export const defaultPreferences: ThemePreferences = { mode: 'light', theme: 'mukai' };
+export const defaultPreferences: ThemePreferences = { mode: 'light', theme: 'ocean' };
 export interface AppearanceSettings {
   appearance: ThemePreferences | null;
 }
