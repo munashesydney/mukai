@@ -167,14 +167,10 @@ jobs:
           printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
           printf '%s\n' "$signature" | grep -Fxq "TeamIdentifier=$expected_team" || { echo 'Signing certificate does not match APPLE_TEAM_ID.'; exit 1; }
           printf '%s\n' "$signature" | grep -q 'flags=.*runtime'
-          # Apple's ticket lookup can drop connections after successful notarization.
-          # Retry validation, but still require a valid ticket before publishing.
-          for attempt in 1 2 3; do
-            if xcrun stapler validate "$app_path"; then break; fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            echo "Apple ticket validation failed; retrying in 10 seconds (attempt $attempt/3)."
-            sleep 10
-          done
+          # Apple's current app-distribution check requires the stapled ticket and valid code.
+          # Avoid stapler validate's redundant CloudKit lookup after successful attachment.
+          # https://developer.apple.com/forums/thread/706442
+          syspolicy_check distribution "$app_path"
           spctl --assess --type execute --verbose=2 "$app_path"
       - name: Smoke-test packaged Windows or macOS app
         if: runner.os != 'Linux'
