@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Embeddings use the bundled CPU backend; avoid optional CUDA downloads from NuGet.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   verify:
     runs-on: ubuntu-latest

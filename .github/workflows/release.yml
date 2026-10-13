@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Embeddings use the bundled CPU backend; avoid optional CUDA downloads from NuGet.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 concurrency:
   group: desktop-release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
