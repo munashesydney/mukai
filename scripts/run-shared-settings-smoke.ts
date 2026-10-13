@@ -29,8 +29,14 @@ async function main() {
         windowsHide: true,
         stdio: 'inherit',
       });
-      const timeout = setTimeout(() => child.kill(), 60000);
-      child.once('error', reject);
+      const timeout = setTimeout(() => {
+        console.error('Shared settings smoke timed out after 60 seconds.');
+        child.kill();
+      }, 60000);
+      child.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
       child.once('close', (exitCode) => {
         clearTimeout(timeout);
         done(exitCode ?? 1);

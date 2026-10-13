@@ -19,22 +19,27 @@ afterEach(async () => {
   await service.shutdown();
   rmSync(folder, { recursive: true, force: true });
 });
-it('runs commands, captures output and exit codes, and isolates ownership', async () => {
-  const run = await service.run(
-    owner,
-    folder,
-    {
-      command: command('console.log("hello"); console.error("stderr"); process.exitCode=7'),
-      yieldMs: 30000,
-    },
-    signal(),
-  );
-  expect(run).toMatchObject({ status: 'exited', exitCode: 7, cwd: await realpath(folder) });
-  expect(run.output).toContain('hello');
-  expect(run.output).toContain('stderr');
-  expect(() => service.read({ ...owner, conversationId: 'other' }, run.id)).toThrow('not found');
-  expect(service.list({ ...owner, botId: 'other' })).toEqual([]);
-});
+it(
+  'runs commands, captures output and exit codes, and isolates ownership',
+  async () => {
+    const run = await service.run(
+      owner,
+      folder,
+      {
+        command: command('console.log("hello"); console.error("stderr"); process.exitCode=7'),
+        yieldMs: 30000,
+      },
+      signal(),
+    );
+    expect(run).toMatchObject({ status: 'exited', exitCode: 7, cwd: await realpath(folder) });
+    expect(run.output).toContain('hello');
+    expect(run.output).toContain('stderr');
+    expect(() => service.read({ ...owner, conversationId: 'other' }, run.id)).toThrow('not found');
+    expect(service.list({ ...owner, botId: 'other' })).toEqual([]);
+    // GitHub's Windows runner can take several seconds to cold-start PowerShell.
+  },
+  process.platform === 'win32' ? 15000 : 5000,
+);
 it('manages background input, log offsets and process termination', async () => {
   const run = await service.run(
     owner,

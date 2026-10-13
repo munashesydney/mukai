@@ -3,6 +3,8 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { chromium } from 'playwright-core';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { connect } from 'node:net';
+import { once } from 'node:events';
 import { startApiServer } from '../src/server/app';
 import { defaultDataDir } from '../src/server/config';
 import { IPC } from '../src/shared/contracts';
@@ -23,6 +25,23 @@ async function main() {
   await app.whenReady();
   const dataDir = join(root, 'data');
   let api = await startApiServer(0, { dataDir });
+  const closingApis = new WeakMap<typeof api, Promise<void>>();
+  const closeApi = () => {
+    const current = api;
+    const pending = closingApis.get(current);
+    if (pending) return pending;
+    const closing = (async () => {
+      // Stop accepting requests first; hidden renderers can retain unfinished HTTP connections.
+      const closed = new Promise<void>((done, reject) =>
+        current.server.close((error) => (error ? reject(error) : done())),
+      );
+      await current.shutdown();
+      current.server.closeAllConnections();
+      await closed;
+    })();
+    closingApis.set(current, closing);
+    return closing;
+  };
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, async () => (await fetch(api.url + '/health')).json());
   ipcMain.handle(IPC.browserBounds, () => {});
@@ -72,8 +91,18 @@ async function main() {
       { mode: 'dark', theme: 'ocean' },
     );
     desktopWindow.destroy();
-    await api.shutdown();
-    await new Promise<void>((done) => api.server.close(() => done()));
+    // Keep an incomplete request open to verify teardown cannot wait on renderer sockets.
+    const unfinished = connect(Number(new URL(api.url).port), '127.0.0.1');
+    unfinished.on('error', () => {});
+    await once(unfinished, 'connect');
+    unfinished.write('GET /health HTTP/1.1\r\n');
+    const disconnected = new Promise<void>((done) => unfinished.once('close', () => done()));
+    try {
+      await closeApi();
+      await disconnected;
+    } finally {
+      unfinished.destroy();
+    }
     api = await startApiServer(0, { dataDir, webDir: resolve('dist/web') });
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     const context = await browser.newContext({ viewport: { width: 1480, height: 940 } });
@@ -149,23 +178,22 @@ async function main() {
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'graphite');
     await browser.close();
     browser = undefined;
-    await api.shutdown();
-    await new Promise<void>((done) => api.server.close(() => done()));
+    await closeApi();
     api = await startApiServer(0, { dataDir });
     desktopWindow = createDesktopWindow();
     await desktopWindow.loadFile(resolve('out/renderer/index.html'));
     await wait(
       `document.documentElement.dataset.theme === 'graphite' && document.documentElement.dataset.mode === 'dark'`,
     );
-    console.log(
-      'Shared settings smoke passed: native path, desktop migration, browser cache override, UI saving and rollback, focus sync, reload, and desktop round trip.',
-    );
   } finally {
+    console.log('Shared settings smoke: closing desktop, browser and backend.');
     if (!desktopWindow.isDestroyed()) desktopWindow.destroy();
     await browser?.close();
-    await api.shutdown();
-    await new Promise<void>((done) => api.server.close(() => done()));
+    await closeApi();
   }
+  console.log(
+    'Shared settings smoke passed: native path, desktop migration, browser cache override, UI saving and rollback, focus sync, reload, desktop round trip, and connection cleanup.',
+  );
 }
 void main()
   .then(() => app.exit(0))
