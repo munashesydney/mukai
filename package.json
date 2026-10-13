@@ -47,7 +47,7 @@
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "test:packaged": "tsx scripts/run-packaged-smoke.ts",
-    "test:release": "tsx --test scripts/release.test.ts scripts/cli/release.test.ts",
+    "test:release": "tsx --test scripts/release.test.ts scripts/cli/release.test.ts scripts/notarize-macos.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
@@ -82,6 +82,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@electron/notarize": "2.5.0",
     "@eslint/js": "^9.39.0",
     "@types/node": "^24.0.0",
     "@types/novnc__novnc": "^1.6.0",

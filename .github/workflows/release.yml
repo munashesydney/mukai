@@ -140,6 +140,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          npx esbuild scripts/notarize-macos.ts --bundle --platform=node --packages=external --format=cjs --outfile=artifacts/notarize-macos.cjs
           node --input-type=module -e '
             import { execFileSync } from "node:child_process";
             const env = { ...process.env };
@@ -151,7 +152,8 @@ jobs:
             const missing = names.filter(name => !env[name]?.trim());
             if (missing.length) throw new Error(`Missing Apple signing secrets: ${missing.join(", ")}`);
             if (!/^[A-Z0-9]{10}$/.test(env.APPLE_TEAM_ID)) throw new Error("APPLE_TEAM_ID must be the 10-character Developer Team ID.");
-            execFileSync("npx", ["electron-builder", "--mac", "--${{ matrix.arch }}", "--publish", "never", "-c.mac.forceCodeSigning=true", "-c.mac.hardenedRuntime=true", "-c.mac.notarize=true"], { stdio: "inherit", env });
+            // The afterSign hook handles notarization and ticket retries before DMG creation.
+            execFileSync("npx", ["electron-builder", "--mac", "--${{ matrix.arch }}", "--publish", "never", "-c.mac.forceCodeSigning=true", "-c.mac.hardenedRuntime=true", "-c.mac.notarize=false", "-c.afterSign=./artifacts/notarize-macos.cjs"], { stdio: "inherit", env });
           '
       - name: Verify Developer ID signature and Apple notarization ticket
         if: runner.os == 'macOS' && github.event_name != 'pull_request'
