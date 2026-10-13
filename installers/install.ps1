@@ -2,7 +2,19 @@
 $ErrorActionPreference = 'Stop'
 $repo = 'https://github.com/munashesydney/mukai/releases'
 $version = $env:MUKAI_VERSION
-$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+# Detect the OS architecture from environment variables rather than .NET. On some
+# Windows PowerShell 5.1 hosts the RuntimeInformation architecture getter is
+# unavailable, so calling .ToString() on it threw "You cannot call a method on a
+# null-valued expression." Environment variables are always present.
+$archRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+if (!$archRaw) { throw 'Could not determine the operating system architecture.' }
+$arch = switch ($archRaw) {
+  'AMD64' { 'X64' }
+  'X86'   { 'X86' }
+  'ARM64' { 'Arm64' }
+  'ARM'   { 'Arm' }
+  default { $archRaw }
+}
 if ($arch -ne 'X64') { throw 'Windows CLI currently supports x64 only.' }
 $installRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'MukaiCLI'))
 $bin = Join-Path $installRoot 'bin'

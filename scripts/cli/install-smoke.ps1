@@ -35,7 +35,26 @@ try {
   if (!$rejected) { throw 'Corrupt archive was not rejected.' }
   if ((Get-Content -LiteralPath $launcher -Raw) -ne $second) { throw 'Failed installation changed the active launcher.' }
   if ([Environment]::GetEnvironmentVariable('Path', 'User') -ne $taskOriginalPath) { throw 'Isolated installer test modified user PATH.' }
-  Write-Output 'Installer smoke passed: verified download, working command, safe reinstall, failed-upgrade preservation, no user PATH changes.'
+  # Arch detection must read environment variables instead of .NET: RuntimeInformation's
+  # architecture getter is unavailable on some Windows PowerShell 5.1 hosts, which made the
+  # installer throw "You cannot call a method on a null-valued expression." before it
+  # downloaded anything. Guard against reintroducing that dependency.
+  if ((Get-Content -LiteralPath $taskInstaller -Raw) -match 'RuntimeInformation\s*\]::\s*OSArchitecture') {
+    throw 'Installer arch detection regressed to RuntimeInformation::OSArchitecture.'
+  }
+  $taskArch = $env:PROCESSOR_ARCHITECTURE
+  $taskWowArch = $env:PROCESSOR_ARCHITEW6432
+  try {
+    Remove-Item Env:\PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue
+    $env:PROCESSOR_ARCHITECTURE = 'X86'
+    $archRejected = $false
+    try { & $taskInstaller } catch { if ($_.Exception.Message -match 'x64 only') { $archRejected = $true } else { throw } }
+    if (!$archRejected) { throw 'Non-x64 architecture was not rejected.' }
+  } finally {
+    $env:PROCESSOR_ARCHITECTURE = $taskArch
+    if ($null -eq $taskWowArch) { Remove-Item Env:\PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue } else { $env:PROCESSOR_ARCHITEW6432 = $taskWowArch }
+  }
+  Write-Output 'Installer smoke passed: verified download, working command, safe reinstall, failed-upgrade preservation, non-x64 rejection, no user PATH changes.'
 } finally {
   $resolved = [IO.Path]::GetFullPath($taskTestDirectory)
   if (!$resolved.StartsWith($taskTemporaryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -notmatch '^mukai-cli-install-[a-f0-9]{6}$') { throw 'Unsafe test cleanup path.' }
