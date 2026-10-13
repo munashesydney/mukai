@@ -21,9 +21,12 @@ import { downloadImage, imageChecksum } from './setupDownload';
 import { setupSeed } from './setupSeed';
 import { probeAccelerator } from './setupProbe';
 import { findQemuFirmware, qemuMachineArguments, qemuPlatform } from './qemuPlatform';
+import { prepareLinuxKvm } from './linuxKvm';
 
 const UBUNTU = 'https://cloud-images.ubuntu.com/noble/current/';
 const activePhases = ['checking', 'installing', 'downloading', 'preparing', 'verifying'];
+const softwareWarning =
+  'This VM uses software emulation. Setup and apps may run considerably slower.';
 const manifestSchema = z.object({
   binary: z.string(),
   image: z.string(),
@@ -31,6 +34,7 @@ const manifestSchema = z.object({
   // Manifests written before ARM support always contained x64 images.
   architecture: z.enum(['x64', 'arm64']).default('x64'),
   firmware: z.string().optional(),
+  warning: z.string().optional(),
 });
 
 export class ComputerSetupService {
@@ -41,11 +45,12 @@ export class ComputerSetupService {
   };
   private operation?: Promise<void>;
   private controller?: AbortController;
-  private managed?: QemuConfig;
+  private managed?: QemuConfig & { warning?: string };
   private binary = '';
   private closed = false;
   private root: string;
   private logBytes = 0;
+  private acceleratorFailure?: string;
   private logWrite = Promise.resolve();
   constructor(
     private dataDir: string,
@@ -63,6 +68,40 @@ export class ComputerSetupService {
       /* No completed automatic setup yet. */
     }
     this.binary = await this.findBinary();
+    // A fresh login may activate KVM membership granted during a previous setup.
+    // Recheck existing Linux VMs without installing software or requesting approval.
+    if (
+      platform() === 'linux' &&
+      this.managed &&
+      !process.env.MUKAI_QEMU_ACCEL &&
+      !process.env.MUKAI_QEMU_IMAGE
+    ) {
+      const controller = new AbortController();
+      const probe = await probeAccelerator(this.binary, 'kvm', controller.signal, undefined, {
+        accelerator: 'kvm',
+        architecture: this.managed.architecture,
+      }).catch(() => ({ code: -1, output: '' }));
+      if (probe.code === 0 && this.managed.accelerator === 'tcg') {
+        this.managed = { ...this.managed, accelerator: 'kvm', warning: undefined };
+        await writeFile(join(this.root, 'ready.json'), JSON.stringify(this.managed), {
+          mode: 0o600,
+        });
+      } else if (probe.code !== 0 && this.managed.accelerator === 'kvm') {
+        const software = await probeAccelerator(this.binary, 'tcg', controller.signal, undefined, {
+          accelerator: 'tcg',
+          architecture: this.managed.architecture,
+        }).catch(() => ({ code: -1, output: '' }));
+        if (software.code === 0) {
+          this.managed = { ...this.managed, accelerator: 'tcg', warning: softwareWarning };
+          await writeFile(join(this.root, 'ready.json'), JSON.stringify(this.managed), {
+            mode: 0o600,
+          });
+        } else {
+          this.acceleratorFailure =
+            'QEMU cannot use KVM or software emulation on this host. Retry VM setup to inspect the current failure.';
+        }
+      }
+    }
     let interrupted = false;
     try {
       const saved = z
@@ -100,8 +139,18 @@ export class ComputerSetupService {
   }
   async status(): Promise<QemuSetup> {
     if (this.operation) return { ...this.state };
+    if (this.acceleratorFailure)
+      return { available: false, phase: 'failed', message: this.acceleratorFailure };
     const ready = await qemuSetup(this.configuration());
-    if (ready.available) return { available: true, phase: 'ready', message: 'Linux VM is ready.' };
+    if (ready.available)
+      return {
+        available: true,
+        phase: 'ready',
+        message: 'Linux VM is ready.',
+        ...(this.configuration().accelerator === 'tcg'
+          ? { warning: this.managed?.warning || softwareWarning }
+          : {}),
+      };
     if (this.state.phase === 'failed' || this.state.phase === 'reboot-required')
       return { ...this.state };
     return {
@@ -121,6 +170,7 @@ export class ComputerSetupService {
     if (this.operation) return { ...this.state };
     if (ready.available) return ready;
     this.controller = new AbortController();
+    this.acceleratorFailure = undefined;
     this.state = { available: false, phase: 'checking', message: 'Checking this computer…' };
     this.operation = this.install(this.controller.signal)
       .catch(async (error: unknown) => {
@@ -141,11 +191,13 @@ export class ComputerSetupService {
     return { ...this.state };
   }
   private async phase(phase: NonNullable<QemuSetup['phase']>, message: string) {
+    if (phase === 'ready') this.acceleratorFailure = undefined;
     this.state = {
       available: phase === 'ready',
       phase,
       message,
       detail: this.state.detail,
+      warning: this.state.warning,
       ...(phase === 'failed' || phase === 'reboot-required' ? { reason: message } : {}),
     };
     const path = join(this.root, 'progress.json');
@@ -247,6 +299,15 @@ export class ComputerSetupService {
         );
       }
       const root = process.getuid?.() === 0;
+      if (!root) {
+        try {
+          await access('/usr/bin/pkexec', constants.X_OK);
+        } catch {
+          throw new Error(
+            'Automatic QEMU installation requires pkexec. On a headless Linux host, run sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-utils in your terminal, then retry VM setup. Run Mukai as your normal user.',
+          );
+        }
+      }
       await this.command(
         root ? '/usr/bin/apt-get' : '/usr/bin/pkexec',
         root
@@ -264,12 +325,41 @@ export class ComputerSetupService {
   private async accelerator(signal: AbortSignal) {
     const accelerator = this.configuration().accelerator;
     await this.phase('checking', 'Checking hardware virtualization…');
-    const probe = () =>
-      probeAccelerator(this.binary, accelerator, signal, this.output, {
-        accelerator,
+    const probe = (selected = accelerator) =>
+      probeAccelerator(this.binary, selected, signal, this.output, {
+        accelerator: selected,
         architecture: qemuPlatform().architecture,
       });
-    if ((await probe()).code === 0) return accelerator;
+    const first = await probe();
+    if (first.code === 0) {
+      if (accelerator === 'tcg') this.state.warning = softwareWarning;
+      return accelerator;
+    }
+    if (platform() === 'linux' && accelerator === 'kvm') {
+      const diagnosis = await prepareLinuxKvm(signal, this.output);
+      signal.throwIfAborted();
+      const repaired = await probe();
+      if (repaired.code === 0) return accelerator;
+      const detail = (repaired.output || first.output).slice(-800);
+      this.output(`KVM is unavailable. ${diagnosis || ''}\n${detail}\n`);
+      // An explicit accelerator override remains authoritative.
+      if (process.env.MUKAI_QEMU_ACCEL)
+        throw new Error(
+          `QEMU cannot use the requested kvm accelerator. ${diagnosis || ''} ${detail}`.trim(),
+        );
+      this.state.warning = [softwareWarning, diagnosis].filter(Boolean).join(' ');
+      await this.phase(
+        'checking',
+        'Hardware acceleration is unavailable. Checking software emulation…',
+      );
+      signal.throwIfAborted();
+      const software = await probe('tcg');
+      if (software.code !== 0)
+        throw new Error(
+          `QEMU cannot use KVM or software emulation. ${diagnosis || ''} KVM: ${detail} Software emulation: ${software.output.slice(-800)}`,
+        );
+      return 'tcg';
+    }
     if (platform() !== 'win32' || accelerator !== 'whpx')
       throw new Error(
         `QEMU cannot use ${accelerator}. Check virtualization support and permissions, then retry setup.`,
@@ -440,6 +530,7 @@ export class ComputerSetupService {
             failureDetail = this.state.detail;
           }
         },
+        config.accelerator === 'tcg' ? 2 * 60 * 60 * 1000 : 30 * 60 * 1000,
       );
       if (result.code !== 0 || !completed || failed) {
         if (failureDetail) this.state = { ...this.state, detail: failureDetail };
@@ -480,7 +571,7 @@ export class ComputerSetupService {
     signal.throwIfAborted();
     const image = join(this.root, 'mukai-linux.qcow2');
     await rename(candidate, image);
-    this.managed = { ...config, image };
+    this.managed = { ...config, image, warning: this.state.warning };
     await writeFile(join(this.root, 'ready.json'), JSON.stringify(this.managed), { mode: 0o600 });
     await this.phase('ready', 'Linux VM is ready.');
   }

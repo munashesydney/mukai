@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, rm, statfs } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, writeFile, readFile, rm, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir, platform } from 'node:os';
 import { ComputerSetupService } from './setupService';
@@ -7,6 +7,7 @@ import { setupProcess } from './setupProcess';
 import { downloadImage } from './setupDownload';
 import { probeAccelerator } from './setupProbe';
 import { guestFiles } from './bundleFiles';
+import { prepareLinuxKvm } from './linuxKvm';
 
 const guestProbe = vi.hoisted(() => ({ request: vi.fn(), create: vi.fn() }));
 const host = vi.hoisted(() => ({ architecture: 'x64', platform: process.platform }));
@@ -17,11 +18,13 @@ vi.mock('node:os', async (original) => ({
 }));
 vi.mock('node:fs/promises', async (original) => ({
   ...(await original<typeof import('node:fs/promises')>()),
+  access: vi.fn((await original<typeof import('node:fs/promises')>()).access),
   statfs: vi.fn(),
 }));
 
 vi.mock('./setupProcess', () => ({ setupProcess: vi.fn() }));
 vi.mock('./setupProbe', () => ({ probeAccelerator: vi.fn() }));
+vi.mock('./linuxKvm', () => ({ prepareLinuxKvm: vi.fn() }));
 vi.mock('./setupDownload', async (original) => ({
   ...(await original<typeof import('./setupDownload')>()),
   downloadImage: vi.fn(),
@@ -46,6 +49,7 @@ beforeEach(async () => {
     ReturnType<typeof statfs>
   >);
   vi.mocked(probeAccelerator).mockResolvedValue({ code: 0, output: '' });
+  vi.mocked(prepareLinuxKvm).mockResolvedValue(undefined);
   guestProbe.request.mockResolvedValue({ exitCode: 0, output: 'Linux\nx86_64\nv24\nChrome' });
   directory = await mkdtemp(join(tmpdir(), 'mukai-auto-setup-'));
   bundle = join(directory, 'bundle');
@@ -87,6 +91,162 @@ async function service() {
   return value;
 }
 describe('automatic computer setup', () => {
+  it('uses working KVM without requesting permission repair', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(setup.configuration().accelerator).toBe('kvm');
+    expect(prepareLinuxKvm).not.toHaveBeenCalled();
+    expect((await setup.status()).warning).toBeUndefined();
+  });
+  it('retests repaired KVM before provisioning and avoids software emulation when repair succeeds', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    vi.mocked(probeAccelerator).mockResolvedValueOnce({ code: 1, output: 'Permission denied' });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(prepareLinuxKvm).toHaveBeenCalledOnce();
+    expect(setup.configuration().accelerator).toBe('kvm');
+    expect(probeAccelerator).toHaveBeenCalledTimes(2);
+  });
+  it('provisions, verifies and persists software emulation with a visible performance and login warning', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    vi.mocked(probeAccelerator).mockImplementation(async (_binary, accelerator) => ({
+      code: accelerator === 'tcg' ? 0 : 1,
+      output: accelerator === 'tcg' ? '' : 'KVM permission denied',
+    }));
+    vi.mocked(prepareLinuxKvm).mockResolvedValue('Log out and back in to activate KVM access.');
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(setup.configuration().accelerator).toBe('tcg');
+    expect((await setup.status()).warning).toContain('considerably slower');
+    expect((await setup.status()).warning).toContain('Log out and back in');
+    const provision = vi
+      .mocked(setupProcess)
+      .mock.calls.find(([, args]) => args.includes('-smbios'))!;
+    expect(provision[1]).toEqual(expect.arrayContaining(['-accel', 'tcg']));
+    expect(provision[5]).toBe(2 * 60 * 60 * 1000);
+    expect(guestProbe.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ accelerator: 'tcg' }),
+    );
+    const next = await service();
+    expect(next.configuration().accelerator).toBe('tcg');
+    expect((await next.status()).warning).toContain('Log out and back in');
+    expect(downloadImage).toHaveBeenCalledOnce();
+    vi.mocked(probeAccelerator).mockResolvedValue({ code: 0, output: '' });
+    const freshLogin = await service();
+    expect(freshLogin.configuration().accelerator).toBe('kvm');
+    expect((await freshLogin.status()).warning).toBeUndefined();
+    expect(downloadImage).toHaveBeenCalledOnce();
+  });
+  it('fails before downloading when both KVM and software emulation fail, preserving diagnostics', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    vi.mocked(probeAccelerator).mockImplementation(async (_binary, accelerator) => ({
+      code: 1,
+      output: accelerator === 'tcg' ? 'TCG startup failed' : 'KVM unavailable',
+    }));
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('KVM or software emulation');
+    expect((await setup.status()).message).toContain('TCG startup failed');
+    expect(downloadImage).not.toHaveBeenCalled();
+  });
+  it('respects an explicit KVM override instead of silently changing it', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', 'kvm');
+    vi.mocked(probeAccelerator).mockResolvedValue({ code: 1, output: 'KVM unavailable' });
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('requested kvm');
+    expect(probeAccelerator).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'tcg',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(downloadImage).not.toHaveBeenCalled();
+  });
+  it('uses software emulation on a prepared VM when KVM is lost on the next startup', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    const root = join(directory, 'computer-setup');
+    await mkdir(root);
+    const image = join(root, 'prepared.qcow2');
+    await writeFile(image, 'prepared image');
+    await writeFile(
+      join(root, 'ready.json'),
+      JSON.stringify({ binary: process.execPath, image, accelerator: 'kvm' }),
+    );
+    vi.mocked(probeAccelerator).mockImplementation(async (_binary, accelerator) => ({
+      code: accelerator === 'tcg' ? 0 : 1,
+      output: '',
+    }));
+    const setup = await service();
+    expect((await setup.status()).available).toBe(true);
+    expect(setup.configuration().accelerator).toBe('tcg');
+    expect((await setup.status()).warning).toContain('considerably slower');
+    expect(prepareLinuxKvm).not.toHaveBeenCalled();
+    expect(downloadImage).not.toHaveBeenCalled();
+  });
+  it('keeps a prepared VM unavailable if neither accelerator works, then allows a successful retry', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_ACCEL', '');
+    const root = join(directory, 'computer-setup');
+    await mkdir(root);
+    const image = join(root, 'prepared.qcow2');
+    await writeFile(image, 'prepared image');
+    await writeFile(
+      join(root, 'ready.json'),
+      JSON.stringify({ binary: process.execPath, image, accelerator: 'kvm' }),
+    );
+    vi.mocked(probeAccelerator).mockResolvedValue({ code: 1, output: 'unavailable' });
+    const setup = await service();
+    expect((await setup.status()).available).toBe(false);
+    expect((await setup.status()).message).toContain('KVM or software emulation');
+    expect(downloadImage).not.toHaveBeenCalled();
+    vi.mocked(probeAccelerator).mockResolvedValue({ code: 0, output: '' });
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(setup.configuration().accelerator).toBe('kvm');
+  });
+
+  it('gives terminal installation instructions when Linux has no pkexec', async () => {
+    host.platform = 'linux';
+    vi.stubEnv('MUKAI_QEMU_BINARY', '');
+    if (process.getuid) vi.spyOn(process, 'getuid').mockReturnValue(1000);
+    const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    vi.mocked(access).mockImplementation(async (path, mode) => {
+      if (path === '/usr/bin/apt-get') return;
+      if (String(path).includes('qemu-system-') || path === '/usr/bin/pkexec')
+        throw new Error('ENOENT');
+      return original.access(path, mode);
+    });
+    try {
+      const setup = await service();
+      await setup.start();
+      await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+      expect((await setup.status()).message).toContain(
+        'sudo apt-get install -y qemu-system-x86 qemu-utils',
+      );
+      expect((await setup.status()).message).not.toContain('ENOENT');
+      expect(setupProcess).not.toHaveBeenCalled();
+      expect(downloadImage).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(access).mockImplementation(original.access);
+      vi.restoreAllMocks();
+    }
+  });
+
   it('provisions an Apple Silicon image with UEFI, ARM console and matching verification boot', async () => {
     host.architecture = 'arm64';
     host.platform = 'darwin';

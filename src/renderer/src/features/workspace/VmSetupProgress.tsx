@@ -36,6 +36,7 @@ export function VmSetupProgress({
             : setup?.message || setup?.reason || 'Checking VM setup…'}
         </p>
       </div>
+      {setup?.warning && <p role="status">{setup.warning}</p>}
       {active && (
         <progress
           aria-label={titles[phase]}

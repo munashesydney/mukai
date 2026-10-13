@@ -634,6 +634,7 @@ export class QemuComputer implements Computer {
       ...this.config,
       resources: { ...(this.config.resources || DEFAULT_VM_RESOURCES) },
     };
+    const bootTimeoutMs = bootConfig.accelerator === 'tcg' ? 10 * 60 * 1000 : 120000;
     if ((bootConfig.architecture || qemuPlatform().architecture) === 'arm64')
       bootConfig.firmware = await findQemuFirmware(bootConfig.binary, bootConfig.firmware);
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -727,7 +728,7 @@ export class QemuComputer implements Computer {
       sockets.add(socket);
       const frames = new Frames();
       let authenticated = false;
-      const timer = setTimeout(() => socket.destroy(), 125000);
+      const timer = setTimeout(() => socket.destroy(), bootTimeoutMs + 5000);
       socket.on('data', (chunk) => {
         if (this.guestPanicked) return;
         if (authenticated && this.socket !== socket) return;
@@ -957,11 +958,11 @@ export class QemuComputer implements Computer {
             () =>
               reject(
                 new Error(
-                  'Guest did not become ready within 120 seconds. Check the prepared image and guest service. ' +
+                  `Guest did not become ready within ${bootTimeoutMs / 1000} seconds. Check the prepared image and guest service. ` +
                     this.log,
                 ),
               ),
-            120000,
+            bootTimeoutMs,
           );
         }),
       ]);

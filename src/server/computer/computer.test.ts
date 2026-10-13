@@ -353,6 +353,24 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('allows a delayed software-emulated guest beyond the hardware boot and connection deadlines', async () => {
+    const schedule = globalThis.setTimeout;
+    // Compress the old hardware deadlines while keeping the guest's real handshake delayed.
+    // This catches either startup deadline accidentally remaining at the hardware limit.
+    const timer = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((callback, ms, ...args) =>
+        schedule(callback, ms === 120000 || ms === 125000 ? 1 : ms, ...args),
+      );
+    try {
+      const { vm } = await fixture(false, 150);
+      await vm.start();
+      expect(vm.status().state).toBe('running');
+    } finally {
+      timer.mockRestore();
+    }
+  });
+
   it('round-trips controller helpers only for the active capability request', async () => {
     const { vm } = await fixture();
     const helper = vi.fn(async () => ({ id: 'persisted-job', duplicate: false }));

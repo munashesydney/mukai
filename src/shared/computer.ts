@@ -26,6 +26,7 @@ export interface ComputerViewSession {
 }
 export interface QemuSetup {
   available: boolean;
+  warning?: string;
   reason?: string;
   phase?:
     | 'idle'
