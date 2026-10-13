@@ -22,6 +22,8 @@ try {
   $archive = Join-Path $stage $asset
   Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile $archive
   $sums = (Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.txt").Content
+  # GitHub serves release assets as application/octet-stream, so Windows PowerShell 5.1 hands back a byte[] instead of text.
+  if ($sums -is [byte[]]) { $sums = [Text.Encoding]::UTF8.GetString($sums) }
   $lines = @($sums -split "`n" | Where-Object { $_ -match ('^[a-f0-9]{64}  ' + [regex]::Escape($asset) + '\s*$') })
   if ($lines.Count -ne 1) { throw 'Release checksum is missing or ambiguous.' }
   $expected = $lines[0].Substring(0, 64)

@@ -18,7 +18,8 @@ function Invoke-WebRequest {
   param([switch]$UseBasicParsing, [string]$Uri, [string]$OutFile)
   if ($OutFile) { Copy-Item -LiteralPath $taskArchive -Destination $OutFile; return }
   $checksum = if ($global:MukaiInstallerTestBadChecksum) { '0' * 64 } else { $taskChecksum }
-  return [pscustomobject]@{ Content = "$checksum  mukai-cli-$version-win32-x64.zip`n" }
+  # GitHub serves release assets as application/octet-stream, so Windows PowerShell 5.1 returns byte[] rather than text.
+  return [pscustomobject]@{ Content = [Text.Encoding]::UTF8.GetBytes("$checksum  mukai-cli-$version-win32-x64.zip`n") }
 }
 try {
   & $taskInstaller
