@@ -643,7 +643,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     const args = launch.mock.calls[0][1];
     expect(args).toEqual(
       expect.arrayContaining([
-        'virt,highmem=off',
+        'virt,highmem=on',
         'cortex-a72',
         '-bios',
         join(directory, 'firmware.fd'),

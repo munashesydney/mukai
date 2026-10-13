@@ -94,7 +94,7 @@ describe('host-native QEMU configuration', () => {
     );
     expect(args).toEqual(
       expect.arrayContaining([
-        'virt,highmem=off',
+        'virt,highmem=on',
         'host',
         '-bios',
         '/firmware with spaces.fd',
@@ -105,6 +105,22 @@ describe('host-native QEMU configuration', () => {
     expect(args.join(' ')).toContain('opt/com.mukai/token');
     expect(args.join(' ')).toContain('hostfwd=tcp:127.0.0.1:1236-:5901');
     expect(args.join(' ')).not.toMatch(/q35|Nehalem|virtfs|fsdev/);
+  });
+  it.each(['hvf', 'tcg'])('allows ARM RAM above the 32-bit boundary with %s', (accelerator) => {
+    const config = {
+      binary: '/qemu',
+      image: '/base',
+      architecture: 'arm64' as const,
+      accelerator,
+      firmware: '/firmware.fd',
+    };
+    const probe = qemuMachineArguments(config, false);
+    expect(probe[probe.indexOf('-machine') + 1]).toBe('virt,highmem=on');
+    for (const resources of [undefined, { memoryMiB: 8192, vcpus: 2 }]) {
+      const args = qemuArguments(directory, 1234, { ...config, resources });
+      expect(args[args.indexOf('-machine') + 1]).toBe('virt,highmem=on');
+      expect(args[args.indexOf('-m') + 1]).toBe(resources ? '8192' : '4096');
+    }
   });
   it('refuses architecture mismatches and keeps unsupported hosts usable in local mode', async () => {
     host.architecture = 'arm64';

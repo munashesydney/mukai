@@ -8,6 +8,7 @@ import { downloadImage } from './setupDownload';
 import { probeAccelerator } from './setupProbe';
 import { guestFiles } from './bundleFiles';
 import { prepareLinuxKvm } from './linuxKvm';
+import { qemuArguments, type QemuConfig } from './qemuComputer';
 
 const guestProbe = vi.hoisted(() => ({ request: vi.fn(), create: vi.fn() }));
 const host = vi.hoisted(() => ({ architecture: 'x64', platform: process.platform }));
@@ -271,7 +272,8 @@ describe('automatic computer setup', () => {
     const args = vi
       .mocked(setupProcess)
       .mock.calls.find(([, args]) => args.includes('-smbios'))![1];
-    expect(args).toEqual(expect.arrayContaining(['virt,highmem=off', 'host', '-bios', firmware]));
+    expect(args).toEqual(expect.arrayContaining(['virt,highmem=on', 'host', '-bios', firmware]));
+    expect(args[args.indexOf('-m') + 1]).toBe('2048');
     expect(args).not.toContain('Nehalem');
     expect(probeAccelerator).toHaveBeenCalledWith(
       process.execPath,
@@ -284,6 +286,13 @@ describe('automatic computer setup', () => {
       expect.any(String),
       expect.objectContaining({ architecture: 'arm64', firmware, accelerator: 'hvf' }),
     );
+    const [verificationDirectory, verificationConfig] = guestProbe.create.mock.calls[0] as [
+      string,
+      QemuConfig,
+    ];
+    const verificationArgs = qemuArguments(verificationDirectory, 1234, verificationConfig);
+    expect(verificationArgs[verificationArgs.indexOf('-m') + 1]).toBe('4096');
+    expect(verificationArgs[verificationArgs.indexOf('-machine') + 1]).toBe('virt,highmem=on');
     expect(setup.configuration()).toMatchObject({ architecture: 'arm64', firmware });
     const next = await service();
     expect((await next.status()).available).toBe(true);
