@@ -1,4 +1,4 @@
-import { memo, useContext, useState } from 'react';
+import { memo, useContext, useEffect, useState } from 'react';
 import { ConversationNavigation } from './ConversationNavigation';
 import {
   Brain,
@@ -274,6 +274,13 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
     <div className="response-transcript" aria-label="Response activity">
       {groups.map((group) => {
         const part = group[0];
+        if (part.type === 'steering')
+          return (
+            <div key={part.id} className="response-steering">
+              <span>You steered this task</span>
+              <p>{part.text}</p>
+            </div>
+          );
         if (part.type === 'text') return <MessageMarkdown key={part.id} text={part.text} />;
         if (part.type === 'compaction')
           return (
@@ -297,11 +304,33 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
   );
 }
 
-function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
-  const [open, setOpen] = useState(false);
-  const duration = formatWorkDuration(message.startedAt, message.finishedAt);
-  const label =
-    message.status === 'complete'
+function WorkProcess({
+  parts,
+  message,
+  expanded,
+  onExpandedChange,
+}: {
+  parts: ResponsePart[];
+  message: ChatMessage;
+  expanded?: boolean;
+  onExpandedChange?: (open: boolean) => void;
+}) {
+  const [internalOpen, setOpen] = useState(message.status === 'streaming');
+  const [now, setNow] = useState(() => Date.now());
+  const streaming = message.status === 'streaming';
+  useEffect(() => {
+    if (!streaming) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [streaming]);
+  const open = expanded ?? internalOpen;
+  const duration = formatWorkDuration(
+    message.startedAt || (streaming ? message.createdAt : undefined),
+    streaming ? new Date(now).toISOString() : message.finishedAt,
+  );
+  const label = streaming
+    ? 'Working'
+    : message.status === 'complete'
       ? 'Worked'
       : message.status === 'stopped'
         ? 'Stopped'
@@ -312,7 +341,7 @@ function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: 
     <details
       className="response-work"
       open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => (onExpandedChange || setOpen)(event.currentTarget.open)}
     >
       <summary>
         <span>
@@ -328,22 +357,25 @@ function CompletedProcess({ parts, message }: { parts: ResponsePart[]; message: 
 
 export const ResponseActivity = memo(function ResponseActivity({
   message,
+  workExpanded,
+  onWorkExpandedChange,
 }: {
   message: ChatMessage;
+  workExpanded?: boolean;
+  onWorkExpandedChange?: (open: boolean) => void;
 }) {
   const { process, answer } = responsePresentation(message);
   return (
     <>
-      {!!process.length &&
-        (message.status === 'streaming' ? (
-          <ProcessTranscript parts={process} message={message} />
-        ) : (
-          <CompletedProcess
-            key={`${message.id}:${message.startedAt || ''}`}
-            parts={process}
-            message={message}
-          />
-        ))}
+      {(!!process.length || message.status === 'streaming') && (
+        <WorkProcess
+          key={`${message.id}:${message.startedAt || ''}`}
+          parts={process}
+          message={message}
+          expanded={workExpanded}
+          onExpandedChange={onWorkExpandedChange}
+        />
+      )}
       {!!answer && <MessageMarkdown text={answer} />}
     </>
   );

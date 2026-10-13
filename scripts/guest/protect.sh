@@ -22,6 +22,11 @@ polkit.addRule(function(action, subject) {
 });
 RULES
 install -d -o root -g root -m 0755 /opt/mukai-guest/bridge /usr/lib/mukai-guest
+if ! cmp -s "$bundle/package.json" /opt/mukai-guest/package.json ||
+   ! /usr/local/bin/node -e 'const fs=require("node:fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(require("/opt/mukai-guest/node_modules/esbuild").version!==p.dependencies.esbuild)process.exit(1)' "$bundle/package.json"; then
+  install -o root -g root -m 0644 "$bundle/package.json" /opt/mukai-guest/package.json
+  (cd /opt/mukai-guest; /usr/local/bin/npm install --omit=dev)
+fi
 install -o root -g root -m 0644 "$bundle/guest.cjs" "$bundle/guest-worker.cjs" /opt/mukai-guest/bridge/
 install -o root -g root -m 0644 "$bundle/linux.py" "$bundle/linux_wayland.py" /opt/mukai-guest/bridge/
 install -o root -g root -m 0755 "$bundle/desktop-prepare.sh" "$bundle/desktop-start.sh" /opt/mukai-guest/bridge/

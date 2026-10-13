@@ -11,7 +11,8 @@ import { fileOperationsDefinition } from '../tools/file-operations/definition';
 import { browserDefinition } from '../tools/browser/definition';
 import { imageDefinition } from '../tools/image/definition';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
-import type { Computer } from './protocol';
+import type { Computer, ComputerHelper } from './protocol';
+import { GuestCapabilities } from './guestCapabilities';
 import { guestBrowserExecutable } from './guestBrowser';
 import { ComputerUseService } from '../services/computerUseService';
 import { NativeDesktopBackend } from './computer_use/nativeBackend';
@@ -21,11 +22,13 @@ import { computerUseDefinition } from '../tools/computer_use/definition';
 export class GuestDispatcher implements Computer {
   private processes = new ProcessService();
   private browsers: BrowserService;
+  private capabilities: GuestCapabilities;
   private desktop = new ComputerUseService(new NativeDesktopBackend('/opt/mukai-guest/bridge'));
   constructor(
     private folder: string,
     private dataDir: string,
   ) {
+    this.capabilities = new GuestCapabilities(folder, dataDir);
     this.browsers = new BrowserService(
       dataDir,
       undefined,
@@ -38,9 +41,12 @@ export class GuestDispatcher implements Computer {
     input: unknown,
     owner: Parameters<Computer['request']>[2],
     signal: AbortSignal,
+    helper?: ComputerHelper,
   ): Promise<unknown> {
     signal.throwIfAborted();
     switch (method) {
+      case 'capability':
+        return this.capabilities.request(input, signal, helper);
       case 'computer_use': {
         const value = computerUseDefinition.inputSchema.parse(input);
         const result = await this.desktop.execute(owner, value, signal);
@@ -150,6 +156,7 @@ export class GuestDispatcher implements Computer {
       this.processes.shutdown(),
       this.browsers.shutdown(),
       this.desktop.shutdown(),
+      this.capabilities.shutdown(),
     ]);
   }
 }

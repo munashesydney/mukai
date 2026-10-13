@@ -1,5 +1,6 @@
 import { SkillService } from './skills/service';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Database } from './db/database';
 import { defaultDataDir, privateSecret, acquireDataLock } from './config';
@@ -8,6 +9,7 @@ import { ProviderRepository } from './repositories/providerRepository';
 import { AttachmentRepository } from './repositories/attachmentRepository';
 import { MessageRepository } from './repositories/messageRepository';
 import { ChatJobRepository } from './repositories/chatJobRepository';
+import { ChatFollowupRepository } from './repositories/chatFollowupRepository';
 import { BotService } from './services/botService';
 import { ProviderService } from './services/providerService';
 import { AttachmentService } from './services/attachmentService';
@@ -34,6 +36,8 @@ import { ConversationHistoryRepository } from './repositories/conversationHistor
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import { LimitsRepository } from './repositories/limitsRepository';
+import { SettingsRepository } from './repositories/settingsRepository';
+import { SettingsService } from './services/settingsService';
 import { ToolAccessService } from './services/toolAccessService';
 import { ToolAssignmentRepository } from './repositories/toolAssignmentRepository';
 import { BotManagementService } from './services/botManagementService';
@@ -47,11 +51,17 @@ import type { EmbeddedBrowserHost } from './browser/types';
 import { DiagnosticService } from './services/diagnosticService';
 import { ApiError } from './config';
 import { ZodError } from 'zod';
+import { createWebHandler } from './web/handler';
+import { BrowserSession } from './web/session';
+import { OwnerAuth } from './web/ownerAuth';
+import { localBrowserRequest } from './web/origin';
 import { CapabilityService } from './capabilities/service';
 import { MemoryService } from './services/memoryService';
 import type { Extractor } from '../../mukai_memory/src';
 
 export interface ApiOptions {
+  webDir?: string;
+  version?: string;
   dataDir?: string;
   token?: string;
   embeddedBrowser?: EmbeddedBrowserHost;
@@ -83,6 +93,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const changes = new FileChangeService(changeRepository);
     const messageRepository = new MessageRepository(store, attachmentRepository, changeRepository);
     const workspaceRepository = new WorkspaceRepository(store);
+    const settings = new SettingsService(new SettingsRepository(store));
     const computers = new ComputerManager(dir, options.guestBundleDir, diagnostics);
     const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
     const capabilities = new CapabilityService(store, workspaces, (value) =>
@@ -150,6 +161,7 @@ export function createApiServer(options: ApiOptions = {}) {
       diagnostics,
       memory,
       approvals,
+      new ChatFollowupRepository(store),
     );
     const bots = new BotService(
       botRepository,
@@ -159,6 +171,7 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaceRepository,
     );
     chats.initialize();
+    chats.attachFollowups((id) => bots.require(id));
     capabilities.setWake(async (botId, workspaceId, message, requestId) => {
       const bot = bots.require(botId);
       if (bot.workspaceId !== workspaceId)
@@ -220,7 +233,18 @@ export function createApiServer(options: ApiOptions = {}) {
       if (ownerBotId && ownerBotId !== botId)
         botManagement.requireMessageTarget(bots.require(ownerBotId), botId);
     });
-    const desktops = new DesktopTransport();
+    const ownerAuth = options.webDir ? new OwnerAuth(store) : undefined;
+    const browserSession = options.webDir ? new BrowserSession(randomUUID()) : undefined;
+    const desktops = new DesktopTransport(
+      Boolean(options.webDir),
+      ownerAuth
+        ? (request) =>
+            ownerAuth.authenticated(request) ||
+            (!ownerAuth.configured() &&
+              localBrowserRequest(request) &&
+              Boolean(browserSession?.authenticated(request)))
+        : undefined,
+    );
     computers.attachDisposalHandler((computer) => desktops.forget(computer));
     attachments.attachDeletionGuard((id) => {
       bots.require(id);
@@ -246,6 +270,9 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      settings,
+      browserMode: Boolean(options.webDir),
+      version: options.version,
       chatOutputs,
       notifications,
       desktops,
@@ -267,8 +294,14 @@ export function createApiServer(options: ApiOptions = {}) {
       memory,
       skills,
     });
+    if (browserSession) diagnostics.registerSecret(browserSession.connectToken);
+    if (ownerAuth) diagnostics.registerSecret(ownerAuth.setupCode);
+    const handler =
+      options.webDir && browserSession
+        ? createWebHandler(options.webDir, token, browserSession, route, ownerAuth)
+        : route;
     const server = createServer((request, response) => {
-      void route(request, response).catch((error) => {
+      void handler(request, response).catch((error) => {
         if (!(error instanceof ApiError) && !(error instanceof ZodError))
           diagnostics.record('http.failed', error, { phase: 'http-request' });
         sendError(response, error);
@@ -320,11 +353,14 @@ export function createApiServer(options: ApiOptions = {}) {
       });
     server.once('listening', () => {
       chats.restorePending((id) => bots.require(id));
+      chats.restoreFollowups();
       pursuits.start();
       capabilities.start();
       memory.start();
     });
     return {
+      browserSession,
+      ownerAuth,
       notifications,
       conversationHistory,
       access,

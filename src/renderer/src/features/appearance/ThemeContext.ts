@@ -6,6 +6,9 @@ export interface ThemeContextValue {
   resolvedMode: ResolvedMode;
   setMode: (mode: ColorMode) => void;
   setTheme: (theme: ThemeId) => void;
-  storageAvailable: boolean;
+  ready: boolean;
+  saving: boolean;
+  error: string;
+  retry: () => void;
 }
 export const ThemeContext = createContext<ThemeContextValue | null>(null);

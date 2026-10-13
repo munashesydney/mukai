@@ -215,7 +215,11 @@ it('rejects unsupported schemes, embedded credentials, and missing sessions befo
 it('handles unavailable embedded browsing and cancellation without leaking a tab', async () => {
   service = new BrowserService('unused');
   await expect(
-    service.execute(owner, { action: 'open', url: 'https://example.com' }, signal()),
+    service.execute(
+      owner,
+      { action: 'open', target: 'mukai', url: 'https://example.com' },
+      signal(),
+    ),
   ).rejects.toThrow('desktop');
   const { service: available, page } = fixture();
   const controller = new AbortController();
@@ -225,6 +229,16 @@ it('handles unavailable embedded browsing and cancellation without leaking a tab
   ).rejects.toThrow();
   expect(available.list(owner.workspaceId)).toEqual([]);
   expect(page.isClosed()).toBe(false);
+});
+it('standalone mode defaults to workspace Chrome without invoking embedded browsing', async () => {
+  service = new BrowserService('unused');
+  const open = vi
+    .spyOn(ChromeHost.prototype, 'open')
+    .mockRejectedValue(new Error('workspace Chrome selected'));
+  await expect(
+    service.execute(owner, { action: 'open', url: 'https://example.com' }, signal()),
+  ).rejects.toThrow('workspace Chrome selected');
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ target: 'chrome' }), undefined);
 });
 
 it('closes workspace-owned tabs while retaining another workspace tabs', async () => {

@@ -1,10 +1,21 @@
-import type { ChatEvent, ChatInput, ChatMessage } from '../../../shared/ai';
+import type {
+  ChatEvent,
+  ChatInput,
+  ChatMessage,
+  ChatFollowup,
+  FollowupAction,
+} from '../../../shared/ai';
 import { api, apiFetch } from './http';
 import { chatRoot as root } from './chatTarget';
 
 export const chatService = {
   history: (id: string) => api<ChatMessage[]>(`${root(id)}/messages`),
   stop: (id: string) => api<{ ok: boolean }>(`${root(id)}/stop`, 'POST'),
+  followups: (id: string) => api<ChatFollowup[]>(`${root(id)}/followups`),
+  queue: (id: string, input: { id: string; text: string; botId?: string }) =>
+    api<ChatFollowup[]>(`${root(id)}/followups`, 'POST', input),
+  updateFollowup: (id: string, input: FollowupAction) =>
+    api<ChatFollowup[]>(`${root(id)}/followups`, 'PUT', input),
   async stream(
     id: string,
     input: ChatInput & { botId?: string | null },

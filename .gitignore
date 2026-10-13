@@ -20,3 +20,4 @@ credentials.key
 *.p8
 api.token
 server.lock
+cli-server.json

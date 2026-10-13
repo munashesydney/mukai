@@ -93,13 +93,13 @@ export function WorkspacePanel({
         <dl className="settings-data">
           <div>
             <dt>Application version</dt>
-            <dd>
-              0.1.0 <span className="settings-inline-badge">UI preview</span>
-            </dd>
+            <dd>{health?.version || 'Checking…'}</dd>
           </div>
           <div>
             <dt>Environment</dt>
-            <dd>{window.mukai ? `Electron · ${window.mukai.platform}` : 'Browser preview'}</dd>
+            <dd>
+              {window.mukai ? `Electron · ${window.mukai.platform}` : 'Browser · Local server'}
+            </dd>
           </div>
           <div>
             <dt>

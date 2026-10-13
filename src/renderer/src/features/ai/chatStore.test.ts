@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../../shared/ai';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ChatState } from '../../models/chat';
 
 const saved = new Map<string, string>();
 const user = (requestId: string): ChatMessage => ({
@@ -35,6 +36,129 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('Durable chat drafts and transport recovery', () => {
+  it('queues during an active run and preserves text typed while the queue request is in flight', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json([])),
+    );
+    const { chatStore } = await import('./chatStore');
+    const { chatService } = await import('../../services/chatService');
+    const id = 'private:queue-chat';
+    await chatStore.load(id);
+    let finish!: () => void;
+    vi.spyOn(chatService, 'stream').mockImplementation(async (_id, input, emit) => {
+      emit({
+        type: 'start',
+        user: user(input.requestId),
+        assistant: assistant(input.requestId, 'streaming'),
+      });
+      await new Promise<void>((resolve) => {
+        finish = () => {
+          emit({ type: 'done', message: assistant(input.requestId) });
+          resolve();
+        };
+      });
+    });
+    chatStore.draft(id, 'Original task');
+    const running = chatStore.send(id);
+    let deliver!: () => void;
+    const queue = vi.spyOn(chatService, 'queue').mockImplementation(async (_id, input) => {
+      await new Promise<void>((resolve) => {
+        deliver = resolve;
+      });
+      return [
+        {
+          id: input.id,
+          conversationId: 'queue-chat',
+          botId: 'scout',
+          text: input.text,
+          state: 'queued',
+          targetMessageId: null,
+          createdAt: '',
+          error: null,
+        },
+      ];
+    });
+    chatStore.draft(id, 'Focus on mobile');
+    const submitting = chatStore.send(id);
+    chatStore.draft(id, 'Another detail');
+    deliver();
+    await submitting;
+    expect(queue).toHaveBeenCalledTimes(1);
+    expect(queue.mock.calls[0][1].text).toBe('Focus on mobile');
+    expect(JSON.parse(saved.get('mukai.draft.' + id)!).text).toBe('Another detail');
+    finish();
+    await running;
+  });
+
+  it('does not resurrect pending steering when its HTTP receipt arrives after the applied event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json([])),
+    );
+    const { chatStore, useChat } = await import('./chatStore');
+    const { chatService } = await import('../../services/chatService');
+    const id = 'private:steering-race';
+    await chatStore.load(id);
+    let emit!: Parameters<typeof chatService.stream>[2];
+    let finish!: () => void;
+    vi.spyOn(chatService, 'stream').mockImplementation(async (_id, input, onEvent) => {
+      emit = onEvent;
+      emit({
+        type: 'start',
+        user: user(input.requestId),
+        assistant: assistant(input.requestId, 'streaming'),
+      });
+      await new Promise<void>((resolve) => {
+        finish = () => {
+          emit({ type: 'done', message: assistant(input.requestId) });
+          resolve();
+        };
+      });
+    });
+    chatStore.draft(id, 'Original task');
+    const running = chatStore.send(id);
+    const followupId = crypto.randomUUID();
+    vi.spyOn(chatService, 'updateFollowup').mockImplementation(async () => {
+      emit({
+        type: 'part',
+        id: 'assistant-id',
+        part: { id: followupId, type: 'steering', text: 'Correction' },
+      });
+      emit({ type: 'followups', followups: [] });
+      return [
+        {
+          id: followupId,
+          conversationId: 'steering-race',
+          botId: 'scout',
+          text: 'Correction',
+          state: 'steering',
+          targetMessageId: 'assistant-id',
+          createdAt: '',
+          error: null,
+        },
+      ];
+    });
+    await chatStore.followup(id, {
+      action: 'steer',
+      id: followupId,
+      expectedRequestId: crypto.randomUUID(),
+    });
+    let state!: ChatState;
+    const Inspect = () => {
+      state = useChat(id);
+      return null;
+    };
+    renderToStaticMarkup(createElement(Inspect));
+    expect(state.followups).toEqual([]);
+    expect(state.messages[1].parts).toContainEqual({
+      id: followupId,
+      type: 'steering',
+      text: 'Correction',
+    });
+    finish();
+    await running;
+  });
   it.each(['complete', 'stopped', 'failed'] as const)(
     'shows conversation activity only for the working chat and clears it on %s',
     async (status) => {

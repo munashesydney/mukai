@@ -152,7 +152,6 @@ export class ToolService {
     this.capabilities?.cancelConfirmations(messageId);
   }
   customForBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void) {
-    if (this.workspaces.require(bot.workspaceId).computer === 'qemu') return {};
     const ids = Object.fromEntries(
       (this.capabilities?.list(bot.workspaceId) || [])
         .filter((item) => item.kind === 'tool')
@@ -219,7 +218,7 @@ export class ToolService {
               : tool.id === 'manage_pursuit'
                 ? Boolean(this.pursuits)
                 : tool.id.startsWith('register_custom_')
-                  ? workspace.computer !== 'qemu' && Boolean(this.capabilities)
+                  ? Boolean(this.capabilities)
                   : [
                         'browser',
                         'computer_use',
@@ -251,7 +250,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Custom tool/route registration and host project mounts are unavailable in VM v1. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Reach Mukai on the host at http://10.0.2.2:47831; send Host: localhost:47831 when testing custom routes. Direct HTTP requests to auth=mukai routes require a bearer token; custom modules can use context.callRoute instead without handling the token. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }

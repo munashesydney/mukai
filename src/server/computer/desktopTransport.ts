@@ -5,9 +5,14 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { QemuComputer } from './qemuComputer';
 import type { ComputerViewSession } from '../../shared/computer';
+import { trustedLocalRequest } from '../web/origin';
 
 /** Authenticated HTTP issues short-lived, single-use viewer tickets. No API token in websocket URLs. */
 export class DesktopTransport {
+  constructor(
+    private readonly browserMode = false,
+    private readonly authenticate?: (request: IncomingMessage) => boolean,
+  ) {}
   private tickets = new Map<
     string,
     { computer: QemuComputer; port: number; password: string; expires: number }
@@ -19,6 +24,12 @@ export class DesktopTransport {
   });
   private closed = false;
   private viewers = new Map<WebSocket, QemuComputer>();
+  private viewerRequests = new Map<WebSocket, IncomingMessage>();
+  private authTimer = setInterval(() => {
+    if (this.authenticate)
+      for (const [viewer, request] of this.viewerRequests)
+        if (!this.authenticate(request)) viewer.terminate();
+  }, 5000).unref();
   forget(computer: QemuComputer) {
     for (const [key, ticket] of this.tickets)
       if (ticket.computer === computer) this.tickets.delete(key);
@@ -55,16 +66,8 @@ export class DesktopTransport {
     const reject = () => {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     };
-    const origin = request.headers.origin;
-    if (
-      this.closed ||
-      !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(request.headers.host || '') ||
-      (origin &&
-        origin !== 'null' &&
-        origin !== 'file://' &&
-        !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
-    )
-      return reject();
+    if (this.closed || !trustedLocalRequest(request, this.browserMode, true)) return reject();
+    if (this.authenticate && !this.authenticate(request)) return reject();
     let url: URL;
     try {
       url = new URL(request.url || '/', 'http://localhost');
@@ -73,7 +76,12 @@ export class DesktopTransport {
     }
     const key = url.searchParams.get('ticket') || '';
     const ticket = this.tickets.get(key);
-    if (url.pathname !== '/computer-view' || !ticket || ticket.expires <= Date.now())
+    if (
+      (url.pathname !== '/computer-view' &&
+        (!this.browserMode || url.pathname !== '/api/computer-view')) ||
+      !ticket ||
+      ticket.expires <= Date.now()
+    )
       return reject();
     this.tickets.delete(key);
     try {
@@ -85,7 +93,11 @@ export class DesktopTransport {
     if (this.sockets.clients.size >= 4) return reject();
     this.sockets.handleUpgrade(request, socket, head, (viewer) => {
       this.viewers.set(viewer, ticket.computer);
-      viewer.once('close', () => this.viewers.delete(viewer));
+      this.viewerRequests.set(viewer, request);
+      viewer.once('close', () => {
+        this.viewers.delete(viewer);
+        this.viewerRequests.delete(viewer);
+      });
       const upstream = connect(ticket.port, '127.0.0.1');
       upstream.setTimeout(10000, () => upstream.destroy());
       upstream.once('connect', () => upstream.setTimeout(0));
@@ -116,6 +128,7 @@ export class DesktopTransport {
   };
   shutdown() {
     this.closed = true;
+    clearInterval(this.authTimer);
     this.tickets.clear();
     for (const socket of this.sockets.clients) socket.terminate();
     this.sockets.close();

@@ -127,9 +127,7 @@ async function main() {
     // A stale selection after deletion must return to the same empty state.
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run button"))');
-    await evaluate(
-      `localStorage.setItem(${JSON.stringify(themeStorageKey)},JSON.stringify({mode:"dark",theme:"mukai"}))`,
-    );
+    await request('/settings/appearance', 'PUT', { mode: 'dark', theme: 'mukai' });
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run button"))');
     await capture('first-workspace-dark.png');
@@ -146,6 +144,7 @@ async function main() {
     // The remaining bot-specific scenarios explicitly provide their workspace.
     seedTestWorkspace(api.store);
     window.setSize(1480, 980);
+    await request('/settings/appearance', 'PUT', { mode: 'light', theme: 'mukai' });
     await evaluate(`localStorage.removeItem(${JSON.stringify(themeStorageKey)})`);
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-onboarding button"))');

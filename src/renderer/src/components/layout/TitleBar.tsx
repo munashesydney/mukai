@@ -1,8 +1,19 @@
-import { ArrowLeft, ArrowRight, Search, Minus, Square, X, PanelLeft, Monitor } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Search,
+  Minus,
+  Square,
+  X,
+  PanelLeft,
+  Monitor,
+  LogOut,
+} from 'lucide-react';
 import { Brand } from '../ui/Brand';
 import { IconButton } from '../ui/IconButton';
 import { useEffect, useState } from 'react';
 import { getHealth } from '../../services/healthService';
+import { signOut } from '../../services/ownerAuthService';
 
 export function TitleBar({
   onSearch,
@@ -103,6 +114,18 @@ export function TitleBar({
               <X size={16} />
             </button>
           </div>
+        )}
+        {!window.mukai && !import.meta.env.DEV && (
+          <IconButton
+            label="Sign out"
+            onClick={() =>
+              void signOut().catch(() =>
+                window.alert('Could not sign out. Check your connection and try again.'),
+              )
+            }
+          >
+            <LogOut size={16} />
+          </IconButton>
         )}
       </div>
     </header>

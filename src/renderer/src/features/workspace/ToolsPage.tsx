@@ -42,7 +42,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
 function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (vm && ['terminal', 'browser', 'image', 'file_operations', 'computer_use'].includes(tool.id))
     return 'Runs inside the workspace Linux VM';
-  if (vm && tool.id.startsWith('register_custom_')) return 'Unavailable in VM v1';
+  if (vm && tool.id.startsWith('register_custom_')) return 'Modules run inside the Linux VM';
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
   if (tool.id === 'memory') return 'Workspace memories · Shared by every bot in this workspace';
   if (tool.id === 'communicate') return 'Questions, approvals and autonomous updates';
@@ -274,12 +274,10 @@ export function ToolsPage({
       {!capabilitySection && !loading && !visible.length && (
         <div className="tools-empty">No tools match “{query}”.</div>
       )}
-      {capabilitySection && vm && (
-        <p className="ai-caption">Custom tools and routes are unavailable in VM v1.</p>
-      )}
-      {capabilitySection && !vm && (
+      {capabilitySection && (
         <CustomCapabilities
           workspaceId={workspaceId}
+          vm={vm}
           query={query}
           section={capabilitySection}
           onSelect={(id) => onSelectTool('custom:' + id)}

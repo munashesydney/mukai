@@ -309,6 +309,10 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
           if(request.health) { if(loseProbe) { loseProbe=false; continue; } verified=true; diagnostics.sampledAt=new Date().toISOString(); diagnostics.uptimeSeconds=process.uptime(); socket.write(JSON.stringify({health:request.health,diagnostics})+'\\n'); continue; }
           if(!verified && request.method) fs.writeFileSync(tokenPath+'.premature-tool', 'sent before probe acknowledgement');
           if(request.cancel) { fs.writeFileSync(tokenPath+'.cancel', request.cancel); continue; }
+          if(request.rpcId) { socket.write(JSON.stringify({id:request.requestId,result:request.error?{error:request.error}:request.value})+'\\n'); continue; }
+          if(request.method === 'capability') {
+            socket.write(JSON.stringify({requestId:request.id,rpcId:require('node:crypto').randomUUID(),action:'enqueue',args:['fixture','event-1',{value:7}]})+'\\n'); continue;
+          }
           if(request.input.command === 'stale-health') {
             const stale = {...diagnostics,memory:{...diagnostics.memory,availableKiB:0},oomKillCount:999};
             socket.write(JSON.stringify({health:'00000000-0000-4000-8000-000000000000',diagnostics:{...stale,uptimeSeconds:100000}})+'\\n');
@@ -349,6 +353,20 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('round-trips controller helpers only for the active capability request', async () => {
+    const { vm } = await fixture();
+    const helper = vi.fn(async () => ({ id: 'persisted-job', duplicate: false }));
+    expect(await vm.request('capability', {}, owner, signal(), helper)).toEqual({
+      id: 'persisted-job',
+      duplicate: false,
+    });
+    expect(helper).toHaveBeenCalledExactlyOnceWith('enqueue', ['fixture', 'event-1', { value: 7 }]);
+    expect(await vm.request('capability', {}, owner, signal())).toEqual({
+      error: 'Controller helpers are unavailable for this request.',
+    });
+    await vm.request('terminal', { command: 'ls' }, owner, signal(), helper);
+    expect(helper).toHaveBeenCalledOnce();
+  });
   it('permanently disposes a running VM so retained viewers and recovery cannot restart it', async () => {
     const { vm, launch } = await fixture();
     await vm.start();

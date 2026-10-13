@@ -11,7 +11,7 @@ export async function upgradeGuest(
   signal: AbortSignal,
   onProgress?: (output: string) => void,
 ) {
-  const names = guestFiles.filter((name) => name !== 'package.json' && name !== 'install.sh');
+  const names = guestFiles.filter((name) => name !== 'install.sh');
   const files = Object.fromEntries(
     await Promise.all(
       names.map(

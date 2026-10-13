@@ -285,9 +285,12 @@ async function main() {
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
     await wait('document.querySelectorAll(".chat-activity-row").length===5');
-    await evaluate(
-      `localStorage.setItem('mukai.appearance.v1',JSON.stringify({mode:'dark',theme:'mukai'}))`,
-    );
+    const appearance = await fetch(api.url + '/settings/appearance', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'dark', theme: 'mukai' }),
+    });
+    assert(appearance.ok, await appearance.clone().text());
     await window.reload();
     await wait(
       'document.querySelectorAll(".chat-activity-row").length===5 && document.documentElement.dataset.mode==="dark"',

@@ -116,7 +116,7 @@ export class BrowserService {
       const info: BrowserSession = {
         ...owner,
         id: randomUUID(),
-        target: input.target || 'mukai',
+        target: input.target || (this.embedded ? 'mukai' : 'chrome'),
         url,
         title: 'New tab',
         createdAt: new Date().toISOString(),

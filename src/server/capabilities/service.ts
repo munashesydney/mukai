@@ -1,21 +1,21 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative, isAbsolute, extname } from 'node:path';
-import { Worker } from 'node:worker_threads';
+import { join, extname } from 'node:path';
 import {
   validateHeaderName,
   validateHeaderValue,
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { buildCapability } from './compiler';
+import { compileWorkspaceCapability } from './compilation';
+import { CapabilityWorkers } from './runtime';
+import { capabilityResult, compiledCapability } from '../computer/capabilityProtocol';
 import Ajv from 'ajv';
 import { jsonSchema, tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import type { Database, Row } from '../db/database';
 import { ApiError } from '../config';
 import type { WorkspaceService } from '../services/workspaceService';
-import { WorkspaceFileService } from '../services/workspaceFileService';
 import { body } from '../http/transport';
 import type { Bot, ChatActivity } from '../../shared/ai';
 import { customToolPermissionModes } from '../../shared/customCapabilities';
@@ -26,9 +26,14 @@ import type {
   CustomResponse,
 } from '../../shared/customCapabilities';
 import { CapabilityEnvironment, variableName } from './environment';
-import { workerSource } from './worker';
 import { registrationInput } from '../tools/custom-registration/shared';
 import { customRegistrationTools } from '../tools/registry';
+import {
+  MAX_ROUTE_CALL_DEPTH,
+  MAX_ROUTE_CALLS,
+  routeCallRequest,
+  type RouteCallChain,
+} from './routeCall';
 export { registrationInput } from '../tools/custom-registration/shared';
 
 const responseSchema = z.object({
@@ -83,7 +88,7 @@ const definitionSchema = z.object({
 export class CapabilityService {
   readonly environment: CapabilityEnvironment;
   private ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
-  private workers = new Set<Worker>();
+  private runtime = new CapabilityWorkers((error) => this.error(error));
   private timer?: ReturnType<typeof setInterval>;
   private queueRun?: Promise<void>;
   private closing = false;
@@ -101,7 +106,6 @@ export class CapabilityService {
     if (this.drainingWorkspace === id) await this.queueRun;
   }
 
-  private pending = new Set<Promise<unknown>>();
   private wake?: (
     botId: string,
     workspaceId: string,
@@ -191,8 +195,9 @@ export class CapabilityService {
   async shutdown() {
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
-    await Promise.all([...this.workers].map((worker) => worker.terminate()));
-    await Promise.allSettled([...this.pending]);
+    for (const { controller } of this.workspaceTasks.values()) controller.abort();
+    await this.runtime.shutdown();
+    await Promise.allSettled([...this.workspaceTasks.keys()]);
     await this.queueRun;
   }
   private file(version: string) {
@@ -280,11 +285,17 @@ export class CapabilityService {
     for (const row of this.db.all('SELECT * FROM capabilities WHERE enabled=1')) {
       try {
         const registration = this.record(row);
-        const definition = await this.validate(
-          registration.version,
-          registration.exportName,
-          registration.kind,
-        );
+        const definition =
+          this.workspaces.require(registration.workspaceId).computer === 'qemu'
+            ? definitionSchema.parse(
+                JSON.parse(
+                  readFileSync(
+                    join(this.db.dir, 'capabilities', registration.version, 'manifest.json'),
+                    'utf8',
+                  ),
+                ).definition,
+              )
+            : await this.validate(registration.version, registration.exportName, registration.kind);
         this.versions.set(registration.version, definition);
       } catch (error) {
         this.failures.set(String(row.id), this.error(error));
@@ -301,9 +312,10 @@ export class CapabilityService {
     exportName: string,
     kind: 'tool' | 'route',
     signal?: AbortSignal,
+    workspaceId?: string,
   ) {
     const value = await this.worker(
-      { file: this.file(version), exportName, kind, operation: 'validate', env: {} },
+      { file: this.file(version), exportName, kind, operation: 'validate', env: {}, workspaceId },
       5000,
       signal,
     );
@@ -362,8 +374,6 @@ export class CapabilityService {
   ) {
     signal?.throwIfAborted();
     const input = registrationInput.parse(value);
-    if (this.workspaces.require(workspaceId).computer === 'qemu')
-      throw new ApiError(409, 'Custom tools and routes are unavailable in VM v1.');
     if (kind === 'route' && (input.permissionMode || input.operation === 'set_permission'))
       throw new ApiError(400, 'Permission modes apply only to custom tools.');
     if (kind === 'tool' && input.operation === 'register' && !input.permissionMode)
@@ -401,7 +411,14 @@ export class CapabilityService {
         return { removed: true };
       }
       if (input.operation === 'enable') {
-        await this.validate(previous.version, previous.exportName, kind, signal);
+        const definition = await this.validate(
+          previous.version,
+          previous.exportName,
+          kind,
+          signal,
+          workspaceId,
+        );
+        this.versions.set(previous.version, definition);
         this.failures.delete(previous.id);
       }
       this.workspaces.require(workspaceId);
@@ -415,60 +432,34 @@ export class CapabilityService {
     if (input.operation === 'update' && !previous)
       throw new ApiError(400, 'Update requires an existing ID; register creates a new ID.');
     const workspace = this.workspaces.require(workspaceId);
-    if (!workspace.folder) throw new ApiError(400, 'Connect a workspace folder first.');
+    if (workspace.computer !== 'qemu' && !workspace.folder)
+      throw new ApiError(400, 'Connect a workspace folder first.');
     const modulePath = input.modulePath || previous?.modulePath;
     if (!modulePath || !['.ts', '.js', '.mjs', '.cjs'].includes(extname(modulePath)))
       throw new ApiError(400, 'Choose a .ts/.js module inside the workspace.');
-    const files = new WorkspaceFileService(workspace.folder, this.db.dir);
-    const entry = (await files.path(modulePath)).absolute;
-    signal?.throwIfAborted();
-    this.workspaces.require(workspaceId);
     const version = randomUUID();
     const directory = join(this.db.dir, 'capabilities', version);
     this.db.run('INSERT INTO workspace_capability_versions VALUES(?,?)', version, workspaceId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const source = readFileSync(entry, 'utf8');
-    if (Buffer.byteLength(source) > 262144) throw new ApiError(400, 'Module exceeds 256 KB.');
-    const sources: Record<string, string> = {};
     try {
-      const compiled = await buildCapability({
-        entryPoints: [entry],
-        bundle: true,
-        platform: 'node',
-        format: 'cjs',
-        target: 'node24',
-        write: false,
-        logLevel: 'silent',
-        metafile: true,
-        plugins: [
-          {
-            name: 'workspace-sources',
-            setup: (api) => {
-              api.onLoad({ filter: /.*/ }, async (args) => {
-                const local = relative(workspace.folder!, args.path);
-                if (isAbsolute(local) || local.split(/[\\/]/)[0] === '..')
-                  throw new Error('Dependencies must be installed inside the workspace.');
-                if (!local.split(/[\\/]/).includes('node_modules')) {
-                  await files.path(local);
-                  const text = readFileSync(args.path, 'utf8');
-                  if (Buffer.byteLength(text) > 262144)
-                    throw new Error('Source file exceeds 256 KB.');
-                  sources[local] = text;
-                }
-                return undefined;
-              });
-            },
-          },
-        ],
-      });
-      const output = compiled.outputFiles?.[0]?.text;
-      if (!output || Buffer.byteLength(output) > 10 * 1024 * 1024)
-        throw new Error('Compiled module exceeds 10 MB.');
+      const { output, source, sources } =
+        workspace.computer === 'qemu'
+          ? compiledCapability.parse(
+              await this.guestRequest(
+                workspaceId,
+                {
+                  operation: 'compile',
+                  modulePath,
+                },
+                signal,
+              ),
+            )
+          : await compileWorkspaceCapability(workspace.folder!, this.db.dir, modulePath, signal);
       writeFileSync(this.file(version), output, { mode: 0o600 });
       writeFileSync(join(directory, 'source.txt'), source, { mode: 0o600 });
       writeFileSync(join(directory, 'sources.json'), JSON.stringify(sources), { mode: 0o600 });
       const exportName = value.exportName || previous?.exportName || 'default';
-      const definition = await this.validate(version, exportName, kind, signal);
+      const definition = await this.validate(version, exportName, kind, signal, workspaceId);
       if (kind === 'tool')
         definition.permissionMode =
           input.permissionMode || previous?.definition.permissionMode || 'user_approval';
@@ -524,91 +515,57 @@ export class CapabilityService {
       throw new ApiError(error instanceof ApiError ? error.status : 400, this.error(error));
     }
   }
+  private async guestRequest(
+    workspaceId: string,
+    input: unknown,
+    signal?: AbortSignal,
+    helper?: (action: string, args: unknown[]) => Promise<unknown>,
+  ) {
+    if (this.closing) throw new ApiError(503, 'Capability runtime is stopping.');
+    const workspace = this.workspaces.require(workspaceId);
+    if (!this.workspaces.computers) throw new ApiError(503, 'Guest computer is unavailable.');
+    const envelope = capabilityResult.parse(
+      await this.workspaces.computers
+        .guest(workspace)
+        .request(
+          'capability',
+          input,
+          { workspaceId, botId: 'mukai-capabilities', conversationId: 'capability-runtime' },
+          signal || new AbortController().signal,
+          helper,
+        ),
+    );
+    if (!envelope.ok) throw new ApiError(envelope.status, envelope.error);
+    return envelope.value;
+  }
   private worker(
     data: Record<string, unknown>,
     timeoutMs: number,
     signal?: AbortSignal,
     rpc?: (action: string, args: unknown[]) => Promise<unknown>,
   ): Promise<unknown> {
-    if (this.closing) return Promise.reject(new ApiError(503, 'Capability runtime is stopping.'));
-    if (this.workers.size >= 8)
-      return Promise.reject(new ApiError(429, 'Custom capability concurrency limit reached.'));
-    const operation = new Promise<unknown>((resolve, reject) => {
-      signal?.throwIfAborted();
-      const worker = new Worker(workerSource, {
-        eval: true,
-        workerData: data,
-        env: {},
-        stdout: true,
-        stderr: true,
-        resourceLimits: { maxOldGenerationSizeMb: 128, stackSizeMb: 4 },
-      });
-      this.workers.add(worker);
-      // Drain and discard stdout/stderr: arbitrary module logs may contain secrets.
-      worker.stdout?.resume();
-      worker.stderr?.resume();
-      let settled = false;
-      const finish = (error?: unknown, value?: unknown) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', abort);
-        void worker.terminate().finally(() => this.workers.delete(worker));
-        if (error) reject(error);
-        else resolve(value);
-      };
-      const abort = () => {
-        worker.postMessage({ type: 'abort' });
-        finish(new ApiError(499, 'Capability execution cancelled.'));
-      };
-      const timer = setTimeout(
-        () =>
-          finish(new ApiError(504, 'Capability execution timed out; its worker was terminated.')),
-        timeoutMs,
+    const workspaceId = typeof data.workspaceId === 'string' ? data.workspaceId : undefined;
+    if (workspaceId && this.workspaces.require(workspaceId).computer === 'qemu') {
+      const { file, ...workerData } = data;
+      // Saved snapshots are transported as code, never imported or run by the host.
+      const code = readFileSync(String(file), 'utf8');
+      const input =
+        data.operation === 'handle'
+          ? {
+              ...(data.input as Record<string, unknown>),
+              rawBody: Buffer.from((data.input as { rawBody: Uint8Array }).rawBody).toString(
+                'base64',
+              ),
+            }
+          : data.input;
+      return this.guestRequest(
+        workspaceId,
+        { operation: 'run', code, data: { ...workerData, input }, timeoutMs },
+        signal,
+        rpc,
       );
-      signal?.addEventListener('abort', abort, { once: true });
-      worker.on('error', (error) => finish(new ApiError(500, this.error(error))));
-      worker.on('exit', () =>
-        finish(new ApiError(500, 'Capability worker exited before completing.')),
-      );
-      worker.on(
-        'message',
-        (message: {
-          type: string;
-          value?: unknown;
-          error?: string;
-          id: number;
-          action: string;
-          args: unknown[];
-        }) => {
-          if (message.type === 'result') finish(undefined, message.value);
-          else if (message.type === 'error')
-            finish(
-              new ApiError(400, this.environment.redact(message.error || 'Capability failed.')),
-            );
-          else if (message.type === 'rpc' && !settled) {
-            Promise.resolve()
-              .then(() =>
-                rpc
-                  ? rpc(message.action, message.args)
-                  : Promise.reject(new Error('Helpers are unavailable during validation.')),
-              )
-              .then(
-                (value) => {
-                  if (!settled) worker.postMessage({ type: 'reply', id: message.id, value });
-                },
-                (error) => {
-                  if (!settled)
-                    worker.postMessage({ type: 'reply', id: message.id, error: this.error(error) });
-                },
-              );
-          }
-        },
-      );
-    });
-    this.pending.add(operation);
-    void operation.finally(() => this.pending.delete(operation)).catch(() => {});
-    return operation;
+    }
+    return this.runtime.run(data, timeoutMs, signal, rpc);
   }
   private enqueue(
     registration: CapabilityRegistration,
@@ -649,6 +606,7 @@ export class CapabilityService {
     signal?: AbortSignal,
     version?: string,
     jobId?: string,
+    routeChain?: RouteCallChain,
   ) {
     const registration = this.require(id);
     this.workspaces.require(registration.workspaceId);
@@ -662,9 +620,15 @@ export class CapabilityService {
       signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       version,
       jobId,
+      routeChain || { ancestors: [id], budget: { remaining: MAX_ROUTE_CALLS } },
     );
     this.workspaceTasks.set(task, { workspaceId: registration.workspaceId, controller });
-    void task.finally(() => this.workspaceTasks.delete(task)).catch(() => {});
+    void task
+      .finally(() => {
+        controller.abort();
+        this.workspaceTasks.delete(task);
+      })
+      .catch(() => {});
     return task;
   }
   private async invokeInternal(
@@ -674,10 +638,9 @@ export class CapabilityService {
     signal?: AbortSignal,
     version?: string,
     jobId?: string,
+    routeChain?: RouteCallChain,
   ) {
     const registration = this.require(id);
-    if (this.workspaces.require(registration.workspaceId).computer === 'qemu')
-      throw new ApiError(409, 'Custom tools and routes are unavailable in VM v1.');
     if (registration.status !== 'ready')
       throw new ApiError(
         409,
@@ -686,6 +649,19 @@ export class CapabilityService {
           : registration.error || 'Capability is disabled.',
       );
     operation ||= registration.kind === 'tool' ? 'execute' : 'handle';
+    // The controller has already authenticated HTTP or internal Mukai calls.
+    // Never forward its management credential to custom code, including in a VM.
+    if (operation === 'handle' && registration.definition.auth === 'mukai') {
+      const request = input as { headers?: Record<string, unknown> };
+      input = {
+        ...request,
+        headers: Object.fromEntries(
+          Object.entries(request.headers || {}).filter(
+            ([name]) => name.toLowerCase() !== 'authorization',
+          ),
+        ),
+      };
+    }
     const selectedVersion = version || registration.version;
     const manifest = JSON.parse(
       readFileSync(join(this.db.dir, 'capabilities', selectedVersion, 'manifest.json'), 'utf8'),
@@ -724,6 +700,25 @@ export class CapabilityService {
         definition.timeoutMs,
         signal,
         async (action, args) => {
+          signal?.throwIfAborted();
+          if (action === 'callRoute') {
+            const routeId = z.string().min(1).max(100).parse(args[0]);
+            const target = this.require(routeId, registration.workspaceId);
+            if (target.kind !== 'route') throw new ApiError(400, 'Choose a registered route ID.');
+            const chain = routeChain!;
+            if (chain.ancestors.includes(routeId))
+              throw new ApiError(409, 'Route call cycle detected.');
+            if (chain.ancestors.length > MAX_ROUTE_CALL_DEPTH)
+              throw new ApiError(429, 'Route call nesting limit reached (4 levels).');
+            if (chain.budget.remaining <= 0)
+              throw new ApiError(429, 'Route call budget exceeded (16 calls).');
+            const request = routeCallRequest(target.definition, args[1]);
+            chain.budget.remaining--;
+            return this.invoke(routeId, request, 'handle', signal, undefined, undefined, {
+              ancestors: [...chain.ancestors, routeId],
+              budget: chain.budget,
+            });
+          }
           if (action === 'enqueue') {
             const [provider, eventId, payload] = args;
             if (provider === '__mukai_wake') throw new ApiError(403, 'Reserved provider name.');
@@ -831,7 +826,13 @@ export class CapabilityService {
           ) as { exportName: string };
           this.versions.set(
             String(job.version),
-            await this.validate(String(job.version), manifest.exportName, registration.kind),
+            await this.validate(
+              String(job.version),
+              manifest.exportName,
+              registration.kind,
+              undefined,
+              registration.workspaceId,
+            ),
           );
         }
         await this.invoke(

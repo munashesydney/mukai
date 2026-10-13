@@ -141,7 +141,7 @@ export function WorkspaceEditor({
               <small>
                 {computer === 'local'
                   ? 'Commands and browser tools run on this computer.'
-                  : 'Bots share a persistent Linux VM with 2 CPUs and 2 GiB RAM. Files stay on its disk. Headless browser; custom tools and routes are unavailable in v1.'}
+                  : 'Bots share a persistent Linux VM. Files, browser sessions, and custom tool and route modules run inside it.'}
               </small>
             </label>
           )}
@@ -190,7 +190,7 @@ export function WorkspaceEditor({
               <small>
                 {window.mukai
                   ? 'Select an existing folder or create one in the folder picker.'
-                  : 'The browser preview uses a local path. The desktop app includes a native folder picker.'}
+                  : 'Enter a folder path on the machine running Mukai. The desktop app includes a native folder picker.'}
               </small>
             </label>
           )}

@@ -100,6 +100,30 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libfuse2t64 xvfb dbus-x11 python3 libx11-6 libxtst6 libxrandr2
       - run: npm run build
+      - name: Build and package standalone CLI
+        run: |
+          npm run build:cli
+          npm run package:cli
+          npm run test:cli:packaged
+      - name: Smoke-test Windows CLI installer in an isolated directory
+        if: runner.os == 'Windows'
+        run: npm run test:cli:installer
+      - name: Verify shared desktop and browser preferences
+        if: runner.os == 'Windows'
+        run: npm run test:settings-ui
+      - name: Verify owner setup and browser login
+        if: runner.os == 'Windows'
+        run: npm run test:cli:browser
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/mukai-cli-*.zip
+            release/mukai-cli-*.tar.gz
+            release/mukai-cli-*.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - name: Package Windows or Linux
         if: runner.os != 'macOS'
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
@@ -186,11 +210,19 @@ jobs:
           pattern: installer-*
           path: release-artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cli-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Include installer scripts from this release
+        run: cp installers/install.sh installers/install.ps1 release-artifacts/
       - name: Verify real installer filenames, sizes, and checksums
         run: |
           node --experimental-strip-types --input-type=module -e '
             import { verifyInstallers } from "./scripts/release.ts";
-            await verifyInstallers("release-artifacts", process.env.RELEASE_VERSION);
+            import { cliReleaseFiles } from "./scripts/cli/release.ts";
+            await verifyInstallers("release-artifacts", process.env.RELEASE_VERSION, undefined, await cliReleaseFiles("release-artifacts", process.env.RELEASE_VERSION));
           '
 
   publish:
@@ -215,5 +247,12 @@ jobs:
           pattern: installer-*
           path: release-artifacts
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cli-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: Include installer scripts from this release
+        run: cp installers/install.sh installers/install.ps1 release-artifacts/
       - name: Publish all installers atomically
         run: npx tsx scripts/release.ts release-artifacts

@@ -87,10 +87,49 @@ it('expires unused viewer tickets', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31000);
   await denied(session.path, 'file://');
 });
+it('browser mode streams the API websocket on its selected origin and rejects the dev origin', async () => {
+  transport.shutdown();
+  server.removeAllListeners('upgrade');
+  transport = new DesktopTransport(true);
+  transport.attach(server);
+  const session = await transport.session(computer);
+  await denied('/api' + session.path, 'http://127.0.0.1:5173');
+  const viewer = new WebSocket(url + '/api' + session.path, {
+    origin: url.replace('ws:', 'http:'),
+  });
+  try {
+    await new Promise<void>((done, reject) => {
+      viewer.once('open', done);
+      viewer.once('error', reject);
+    });
+  } finally {
+    viewer.terminate();
+  }
+});
 it('keeps the existing desktop available when only the guest bridge disconnects', async () => {
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Guest bridge disconnected'));
   await expect(transport.session(computer)).resolves.toMatchObject({ password: 'temporary' });
 });
+it('requires browser authentication and revokes live desktop access when a session ends', async () => {
+  transport.shutdown();
+  server.removeAllListeners('upgrade');
+  let authenticated = false;
+  transport = new DesktopTransport(true, () => authenticated);
+  transport.attach(server);
+  const session = await transport.session(computer);
+  await denied('/api' + session.path, url.replace('ws:', 'http:'));
+  authenticated = true;
+  const viewer = new WebSocket(url + '/api' + session.path, {
+    origin: url.replace('ws:', 'http:'),
+  });
+  await new Promise<void>((done, reject) => {
+    viewer.once('open', done);
+    viewer.once('error', reject);
+  });
+  const closed = new Promise<void>((done) => viewer.once('close', () => done()));
+  authenticated = false;
+  await closed;
+}, 10000);
 it('preserves the startup error when the guest has no usable desktop endpoint', async () => {
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Linux guest crashed (kernel panic)'));
   vi.spyOn(computer, 'desktopConnection').mockImplementation(() => {

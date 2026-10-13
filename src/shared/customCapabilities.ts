@@ -20,6 +20,14 @@ export const customToolPermissionLabels: Record<CustomToolPermissionMode, string
   ask_bot: 'Ask bot',
   user_approval: 'User approval',
 };
+export interface CustomRouteCallRequest {
+  /** JSON request body. Mutually exclusive with rawBody. */
+  body?: unknown;
+  /** Exact UTF-8 request text, useful for signed webhooks. */
+  rawBody?: string;
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+}
 export interface CapabilityContext {
   env: Record<string, string>;
   signal: AbortSignal;
@@ -32,6 +40,8 @@ export interface CapabilityContext {
   ): Promise<{ id: string; duplicate: boolean }>;
   /** Queue a model run for botId, or the registration's owner when omitted. */
   wakeBot(message: string, options?: { botId?: string }): Promise<{ accepted: boolean }>;
+  /** Invoke a registered route in this workspace without handling Mukai credentials. */
+  callRoute(routeId: string, request?: CustomRouteCallRequest): Promise<CustomResponse>;
 }
 export interface CustomToolModule {
   name: string;

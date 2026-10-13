@@ -1,4 +1,5 @@
 import type { DesktopBridge } from '../../../shared/contracts';
+import { authChanged } from './ownerAuthService';
 
 let connection: Promise<{ url: string; token: string }> | undefined;
 export async function apiWebSocketUrl(path: string) {
@@ -23,6 +24,8 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
     throw new Error('Cannot reach Mukai’s server. Start the backend and try again.');
   }
   if (!response.ok) {
+    if (response.status === 401 && !bridge && !import.meta.env.DEV)
+      window.dispatchEvent(new Event(authChanged));
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(payload.error || `The request failed (${response.status}).`);
   }

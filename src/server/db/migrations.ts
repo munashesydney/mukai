@@ -333,6 +333,25 @@ export const migrations = [
     message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     session_id TEXT NOT NULL, url TEXT NOT NULL,
     UNIQUE(conversation_id,session_id,url));`,
+  `CREATE TABLE chat_followups (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('queued','steering','applied','sending','sent','cancelled')),
+    target_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL, error TEXT, steering_order INTEGER);
+   CREATE INDEX followup_conversation ON chat_followups(conversation_id,state,sequence);
+   CREATE TABLE chat_followup_queues (
+     conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+     paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0,1)));`,
+  `CREATE TABLE web_owner (
+    id INTEGER PRIMARY KEY CHECK(id=1), username TEXT NOT NULL,
+    password_hash TEXT NOT NULL, salt TEXT NOT NULL, created_at INTEGER NOT NULL);
+   CREATE TABLE web_sessions (
+    token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+   CREATE INDEX web_session_expiry ON web_sessions(expires_at);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.
