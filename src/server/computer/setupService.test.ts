@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir, platform } from 'node:os';
 import { ComputerSetupService } from './setupService';
 import { setupProcess } from './setupProcess';
-import { downloadImage } from './setupDownload';
+import { downloadImage, downloadVerifiedFile } from './setupDownload';
 import { probeAccelerator } from './setupProbe';
 import { guestFiles } from './bundleFiles';
 import { prepareLinuxKvm } from './linuxKvm';
@@ -29,6 +29,7 @@ vi.mock('./linuxKvm', () => ({ prepareLinuxKvm: vi.fn() }));
 vi.mock('./setupDownload', async (original) => ({
   ...(await original<typeof import('./setupDownload')>()),
   downloadImage: vi.fn(),
+  downloadVerifiedFile: vi.fn(),
 }));
 vi.mock('./qemuComputer', async (original) => ({
   ...(await original<typeof import('./qemuComputer')>()),
@@ -92,6 +93,63 @@ async function service() {
   return value;
 }
 describe('automatic computer setup', () => {
+  it('installs QEMU without WinGet and continues through Linux verification', async () => {
+    host.platform = 'win32';
+    vi.stubEnv('MUKAI_QEMU_BINARY', '');
+    vi.stubEnv('PATH', '');
+    vi.stubEnv('LOCALAPPDATA', join(directory, 'local'));
+    vi.stubEnv('ProgramFiles', join(directory, 'program-files'));
+    const qemu = join(process.env.ProgramFiles!, 'qemu', 'qemu-system-x86_64.exe');
+    vi.mocked(downloadVerifiedFile).mockImplementation(async (_url, path) => {
+      await writeFile(path, 'verified installer fixture');
+    });
+    vi.mocked(setupProcess).mockImplementation(async (_binary, args, _signal, _input, onOutput) => {
+      if (args.includes('-EncodedCommand')) {
+        await mkdir(join(process.env.ProgramFiles!, 'qemu'), { recursive: true });
+        await writeFile(qemu, 'qemu fixture');
+      }
+      if (args.includes('-smbios')) onOutput?.('MUKAI_IMAGE_READY\n');
+      return { code: 0, output: '' };
+    });
+    const setup = await service();
+    expect(setupProcess).not.toHaveBeenCalled();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    expect(downloadVerifiedFile).toHaveBeenCalledOnce();
+    expect(downloadImage).toHaveBeenCalledOnce();
+    expect(setup.configuration().binary).toBe(qemu);
+    await vi.waitFor(async () =>
+      expect(await readFile(join(directory, 'computer-setup', 'setup.log'), 'utf8')).toContain(
+        'Windows Package Manager is unavailable',
+      ),
+    );
+    expect(guestProbe.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ binary: qemu }),
+    );
+    expect(vi.mocked(setupProcess).mock.calls.some(([binary]) => binary === 'winget.exe')).toBe(
+      false,
+    );
+  });
+  it('reports installer download failures before preparing Linux or publishing a base image', async () => {
+    host.platform = 'win32';
+    vi.stubEnv('MUKAI_QEMU_BINARY', '');
+    vi.stubEnv('PATH', '');
+    vi.stubEnv('LOCALAPPDATA', join(directory, 'local'));
+    vi.stubEnv('ProgramFiles', join(directory, 'program-files'));
+    vi.mocked(downloadVerifiedFile).mockRejectedValueOnce(
+      new Error('QEMU installer checksum did not match.'),
+    );
+    const setup = await service();
+    await setup.start();
+    await vi.waitFor(async () => expect((await setup.status()).phase).toBe('failed'));
+    expect((await setup.status()).message).toContain('checksum did not match');
+    expect((await setup.status()).message).toContain('Install QEMU for Windows');
+    expect(setupProcess).not.toHaveBeenCalled();
+    expect(downloadImage).not.toHaveBeenCalled();
+    expect(guestProbe.create).not.toHaveBeenCalled();
+    await expect(readFile(join(directory, 'computer-setup', 'ready.json'))).rejects.toThrow();
+  });
   it('uses working KVM without requesting permission repair', async () => {
     host.platform = 'linux';
     vi.stubEnv('MUKAI_QEMU_ACCEL', '');

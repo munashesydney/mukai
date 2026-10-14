@@ -35,7 +35,11 @@ export function setupProcess(
       timedOut = true;
       child.kill();
     }, timeoutMs);
-    child.once('error', reject);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(error);
+    });
     child.once('close', (code) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);

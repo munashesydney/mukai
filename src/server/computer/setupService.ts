@@ -22,6 +22,7 @@ import { setupSeed } from './setupSeed';
 import { probeAccelerator } from './setupProbe';
 import { findQemuFirmware, qemuMachineArguments, qemuPlatform } from './qemuPlatform';
 import { prepareLinuxKvm } from './linuxKvm';
+import { installWindowsQemu } from './windowsQemu';
 
 const UBUNTU = 'https://cloud-images.ubuntu.com/noble/current/';
 const activePhases = ['checking', 'installing', 'downloading', 'preparing', 'verifying'];
@@ -258,21 +259,8 @@ export class ComputerSetupService {
       'Installing QEMU. Approve the operating system installer if prompted.',
     );
     if (platform() === 'win32') {
-      await this.command(
-        'winget.exe',
-        [
-          'install',
-          '--exact',
-          '--id',
-          'SoftwareFreedomConservancy.QEMU',
-          '--source',
-          'winget',
-          '--silent',
-          '--accept-package-agreements',
-          '--accept-source-agreements',
-          '--disable-interactivity',
-        ],
-        signal,
+      await installWindowsQemu(this.root, signal, this.output, (message) =>
+        this.phase('installing', message),
       );
     } else if (platform() === 'darwin') {
       let brew = '';

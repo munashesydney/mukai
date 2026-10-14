@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { imageChecksum, downloadImage } from './setupDownload';
+import { imageChecksum, downloadImage, downloadVerifiedFile } from './setupDownload';
 import { cloudConfig, setupSeed } from './setupSeed';
 import { setupProcess } from './setupProcess';
 import { guestFiles } from './bundleFiles';
@@ -64,6 +64,79 @@ describe('verified setup downloads', () => {
     await expect(readFile(destination)).rejects.toThrow();
     await expect(readFile(destination + '.part')).rejects.toThrow();
   });
+  it('verifies an installer download before publishing the executable', async () => {
+    const bytes = Buffer.from('verified installer');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(bytes)));
+    const destination = join(directory, 'setup.exe');
+    await downloadVerifiedFile(
+      'https://example.test/setup',
+      destination,
+      createHash('sha256').update(bytes).digest('hex'),
+      new AbortController().signal,
+      vi.fn(),
+      { label: 'QEMU installer', maxBytes: 512 * 1024 ** 2 },
+    );
+    expect(await readFile(destination)).toEqual(bytes);
+  });
+  it('removes an installer with an incorrect checksum and reports the artifact correctly', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('damaged installer')));
+    const destination = join(directory, 'setup.exe');
+    await expect(
+      downloadVerifiedFile(
+        'https://example.test/setup',
+        destination,
+        'a'.repeat(64),
+        new AbortController().signal,
+        vi.fn(),
+        { label: 'QEMU installer', maxBytes: 512 * 1024 ** 2 },
+      ),
+    ).rejects.toThrow('QEMU installer checksum');
+    await expect(readFile(destination)).rejects.toThrow();
+    await expect(readFile(destination + '.part')).rejects.toThrow();
+  });
+  it.each([true, false])(
+    'bounds installer downloads with content-length=%s',
+    async (withLength) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response('too large', {
+            headers: withLength ? { 'Content-Length': '9' } : {},
+          }),
+        ),
+      );
+      const destination = join(directory, 'setup.exe');
+      await expect(
+        downloadVerifiedFile(
+          'https://example.test/setup',
+          destination,
+          'a'.repeat(64),
+          new AbortController().signal,
+          vi.fn(),
+          { label: 'QEMU installer', maxBytes: 5 },
+        ),
+      ).rejects.toThrow('QEMU installer exceeds');
+      await expect(readFile(destination)).rejects.toThrow();
+      await expect(readFile(destination + '.part')).rejects.toThrow();
+    },
+  );
+  it('removes partial installer downloads after cancellation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('installer')));
+    const controller = new AbortController();
+    const destination = join(directory, 'setup.exe');
+    await expect(
+      downloadVerifiedFile(
+        'https://example.test/setup',
+        destination,
+        'a'.repeat(64),
+        controller.signal,
+        () => controller.abort(new Error('Cancelled')),
+        { label: 'QEMU installer', maxBytes: 512 },
+      ),
+    ).rejects.toThrow('Cancelled');
+    await expect(readFile(destination)).rejects.toThrow();
+    await expect(readFile(destination + '.part')).rejects.toThrow();
+  });
 });
 
 describe('cloud-init seed', () => {
@@ -111,6 +184,19 @@ describe('cloud-init seed', () => {
 });
 
 describe('setup subprocesses', () => {
+  it('clears the setup deadline when an executable cannot be found', async () => {
+    const scheduled = vi.spyOn(globalThis, 'setTimeout');
+    const cleared = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      await expect(
+        setupProcess(join(directory, 'missing.exe'), [], new AbortController().signal),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(cleared).toHaveBeenCalledWith(scheduled.mock.results[0].value);
+    } finally {
+      scheduled.mockRestore();
+      cleared.mockRestore();
+    }
+  });
   it('uses bounded output and excludes provider secrets from child environments', async () => {
     vi.stubEnv('MUKAI_TEST_API_KEY', 'should-not-be-inherited');
     const result = await setupProcess(

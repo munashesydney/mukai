@@ -34,11 +34,9 @@ export function qemuMachineArguments(config: QemuBootConfig, boot = true) {
     return ['-machine', 'q35', '-accel', config.accelerator, '-cpu', cpu];
   }
   if (boot && !config.firmware) throw new Error('ARM64 VM boot requires QEMU UEFI firmware.');
-  // ARM RAM starts at 1 GiB; disabling highmem leaves only 3 GiB for RAM.
-  // Allow the default 4 GiB allocation and larger workspace settings to fit.
   return [
     '-machine',
-    'virt,highmem=on',
+    'virt,highmem=off',
     '-accel',
     config.accelerator,
     '-cpu',

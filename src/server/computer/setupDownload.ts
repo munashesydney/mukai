@@ -16,16 +16,32 @@ export async function downloadImage(
   signal: AbortSignal,
   progress: (downloadedBytes: number, totalBytes?: number) => void,
 ) {
+  return downloadVerifiedFile(url, destination, checksum, signal, progress, {
+    label: 'Linux image',
+    maxBytes: 4 * 1024 ** 3,
+  });
+}
+
+/** Publish only a fully downloaded artifact matching a trusted SHA-256. */
+export async function downloadVerifiedFile(
+  url: string,
+  destination: string,
+  checksum: string,
+  signal: AbortSignal,
+  progress: (downloadedBytes: number, totalBytes?: number) => void,
+  options: { label: string; maxBytes: number },
+) {
+  signal.throwIfAborted();
   const response = await fetch(url, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(30 * 60 * 1000)]),
   });
   if (!response.ok || !response.body)
-    throw new Error(`Linux image download failed (${response.status}).`);
+    throw new Error(`${options.label} download failed (${response.status}).`);
   const total = Number(response.headers.get('content-length')) || undefined;
-  const limit = 4 * 1024 ** 3;
+  const limit = options.maxBytes;
   if (total && total > limit) {
     await response.body.cancel();
-    throw new Error('Linux image exceeds the download limit.');
+    throw new Error(`${options.label} exceeds the download limit.`);
   }
   const temporary = destination + '.part';
   const file = await open(temporary, 'w', 0o600);
@@ -35,13 +51,14 @@ export async function downloadImage(
     for await (const chunk of response.body) {
       signal.throwIfAborted();
       length += chunk.length;
-      if (length > limit) throw new Error('Linux image exceeds the download limit.');
+      if (length > limit) throw new Error(`${options.label} exceeds the download limit.`);
       hash.update(chunk);
       await file.writeFile(chunk);
       progress(length, total);
     }
-    if (hash.digest('hex') !== checksum)
-      throw new Error('Linux image checksum did not match. Retry to download a fresh copy.');
+    signal.throwIfAborted();
+    if (hash.digest('hex') !== checksum.toLowerCase())
+      throw new Error(`${options.label} checksum did not match. Retry to download a fresh copy.`);
     await file.sync();
   } catch (error) {
     await file.close();
