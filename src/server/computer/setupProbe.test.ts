@@ -27,7 +27,13 @@ describe('virtualization control socket', () => {
           const frame = JSON.parse(buffer.slice(0, end));
           buffer = buffer.slice(end + 1);
           commands.push(frame.execute);
-          socket.write(JSON.stringify({ return: {}, id: frame.id }) + '\n');
+          socket.write(
+            JSON.stringify({
+              return:
+                frame.execute === 'query-status' ? { running: false, status: 'prelaunch' } : {},
+              id: frame.id,
+            }) + '\n',
+          );
         }
       });
       socket.write('{"Q');
@@ -37,7 +43,62 @@ describe('virtualization control socket', () => {
       return { code: 0, output: '' };
     });
     expect((await probeAccelerator('qemu', 'whpx', new AbortController().signal)).code).toBe(0);
-    expect(commands).toEqual(['qmp_capabilities', 'quit']);
+    expect(commands).toEqual(['qmp_capabilities', 'query-status', 'quit']);
+  });
+  it.each([0, 1])('handles Linux QEMU closing without a quit reply (exit %s)', async (exitCode) => {
+    vi.mocked(setupProcess).mockImplementation(async (_binary, args) => {
+      const address = args[args.indexOf('-qmp') + 1];
+      const socket = createConnection({
+        host: '127.0.0.1',
+        port: Number(address.split(':').at(-1)),
+      });
+      await once(socket, 'connect');
+      let buffer = '';
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.on('data', (bytes) => {
+        buffer += bytes.toString();
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const frame = JSON.parse(buffer.slice(0, end));
+          buffer = buffer.slice(end + 1);
+          if (frame.execute === 'quit') {
+            socket.end(
+              JSON.stringify({ event: 'SHUTDOWN', data: { reason: 'host-qmp-quit' } }) + '\n',
+            );
+          } else {
+            socket.write(
+              JSON.stringify({
+                id: frame.id,
+                return:
+                  frame.execute === 'query-status' ? { running: false, status: 'prelaunch' } : {},
+              }) + '\n',
+            );
+          }
+        }
+      });
+      socket.write('{"QMP":{}}\n');
+      await closed;
+      return { code: exitCode, output: '' };
+    });
+    expect((await probeAccelerator('qemu', 'tcg', new AbortController().signal)).code).toBe(
+      exitCode,
+    );
+  });
+  it('rejects a clean exit after negotiation but before machine verification', async () => {
+    vi.mocked(setupProcess).mockImplementation(async (_binary, args) => {
+      const address = args[args.indexOf('-qmp') + 1];
+      const socket = createConnection({
+        host: '127.0.0.1',
+        port: Number(address.split(':').at(-1)),
+      });
+      await once(socket, 'connect');
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.once('data', () => socket.end('{"return":{},"id":"capabilities"}\n'));
+      socket.write('{"QMP":{}}\n');
+      await closed;
+      return { code: 0, output: '' };
+    });
+    expect((await probeAccelerator('qemu', 'tcg', new AbortController().signal)).code).toBe(-1);
   });
   it('does not treat an early clean exit as successful virtualization', async () => {
     vi.mocked(setupProcess).mockResolvedValue({ code: 0, output: '' });

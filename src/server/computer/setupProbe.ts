@@ -11,7 +11,7 @@ export async function probeAccelerator(
   config: QemuBootConfig = { accelerator },
 ) {
   const sockets = new Set<Socket>();
-  let complete = false;
+  let readyToQuit = false;
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on('error', () => socket.destroy());
@@ -34,11 +34,13 @@ export async function probeAccelerator(
               JSON.stringify({ execute: 'qmp_capabilities', id: 'capabilities' }) + '\n',
             );
           else if (frame.id === 'capabilities' && 'return' in frame)
+            socket.write(JSON.stringify({ execute: 'query-status', id: 'status' }) + '\n');
+          else if (frame.id === 'status' && typeof frame.return?.running === 'boolean') {
+            // QEMU may emit SHUTDOWN and close QMP without replying to quit.
+            // Verify the initialized machine before asking it to exit instead.
+            readyToQuit = true;
             socket.write(JSON.stringify({ execute: 'quit', id: 'quit' }) + '\n');
-          else if (frame.id === 'quit' && 'return' in frame) {
-            complete = true;
-            socket.end();
-          }
+          } else if (frame.id === 'quit' && 'return' in frame) socket.end();
         } catch {
           socket.destroy();
         }
@@ -71,7 +73,7 @@ export async function probeAccelerator(
       onOutput,
       30000,
     );
-    return { ...result, code: result.code === 0 && !complete ? -1 : result.code };
+    return { ...result, code: result.code === 0 && !readyToQuit ? -1 : result.code };
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));

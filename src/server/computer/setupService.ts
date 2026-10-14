@@ -335,7 +335,6 @@ export class ComputerSetupService {
         throw new Error(
           `QEMU cannot use the requested kvm accelerator. ${diagnosis || ''} ${detail}`.trim(),
         );
-      this.state.warning = [softwareWarning, diagnosis].filter(Boolean).join(' ');
       await this.phase(
         'checking',
         'Hardware acceleration is unavailable. Checking software emulation…',
@@ -346,6 +345,7 @@ export class ComputerSetupService {
         throw new Error(
           `QEMU cannot use KVM or software emulation. ${diagnosis || ''} KVM: ${detail} Software emulation: ${software.output.slice(-800)}`,
         );
+      this.state.warning = [softwareWarning, diagnosis].filter(Boolean).join(' ');
       return 'tcg';
     }
     if (platform() !== 'win32' || accelerator !== 'whpx')
