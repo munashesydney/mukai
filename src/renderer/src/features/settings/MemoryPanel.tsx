@@ -1,5 +1,7 @@
+import { SettingsCard } from './SettingsCard';
+import { SettingsHeading } from './SettingsHeading';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Upload, X } from 'lucide-react';
+import { Brain, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { memoryService } from '../../services/memoryService';
 import type { MemoryFact, MemorySettings, MemorySnapshot } from '../../../../shared/memory';
 import { errorText } from '../../utils/errors';
@@ -110,11 +112,11 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
     : null;
   return (
     <section className="provider-panel memory-panel">
-      <div className="settings-section-header">
-        <span className="settings-eyebrow">WORKSPACE KNOWLEDGE</span>
-        <h3>Memory</h3>
-        <p>Explore what this workspace remembers and how it’s used in conversations.</p>
-      </div>
+      <SettingsHeading
+        eyebrow="WORKSPACE KNOWLEDGE"
+        title="Memory"
+        description="Explore what this workspace remembers and how it’s used in conversations."
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -502,94 +504,102 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
             )}
             {view === 'preferences' && (
               <>
-                <div className="memory-section-heading">
-                  <h4>Conversation memory</h4>
-                  <p>Choose how this workspace captures and recalls useful facts.</p>
-                </div>
-                <div className="memory-preferences">
-                  <label>
-                    <Checkbox
-                      checked={snapshot.settings.automaticCapture}
-                      disabled={busy}
-                      onChange={(event) => saveSettings({ automaticCapture: event.target.checked })}
-                    />
-                    <span>
-                      <strong>Review conversations automatically</strong>
-                      <small>
-                        Review chats, spaces, and pursuit runs after one minute of inactivity using
-                        your configured AI. Memories from all chats are shared with every bot in
-                        this workspace.
-                      </small>
-                    </span>
-                  </label>
-                  <label>
-                    <Checkbox
-                      checked={snapshot.settings.automaticRecall}
-                      disabled={busy}
-                      onChange={(event) => saveSettings({ automaticRecall: event.target.checked })}
-                    />
-                    <span>
-                      <strong>Recall before each reply</strong>
-                      <small>
-                        Supply relevant memories automatically, with a bounded context budget.
-                      </small>
-                    </span>
-                  </label>
-                  <div className="memory-model">
-                    <div>
-                      <strong>Local semantic search</strong>
-                      <small>
-                        {snapshot.embedding.status === 'ready'
-                          ? 'BGE small · CPU model ready'
-                          : 'BGE small · one-time model download'}
-                        {snapshot.embedding.error && ' · ' + snapshot.embedding.error}
-                      </small>
-                    </div>
-                    <button
-                      className="button button--secondary"
-                      disabled={busy || snapshot.embedding.status === 'loading'}
-                      onClick={() =>
-                        void perform(
-                          () => memoryService.embeddings(workspaceId),
-                          'Local semantic search is ready.',
-                        )
-                      }
-                    >
-                      {busy || snapshot.embedding.status === 'loading'
-                        ? 'Working…'
-                        : snapshot.embedding.status === 'ready'
-                          ? 'Rebuild embeddings'
-                          : 'Download & enable'}
-                    </button>
-                  </div>
-                  <div className="memory-budget">
+                <SettingsCard
+                  title="Conversation memory"
+                  description="Choose how this workspace captures and recalls useful facts."
+                  icon={<Brain size={18} />}
+                  className="memory-preferences-card"
+                >
+                  <div className="settings-card-body memory-preferences">
                     <label>
                       <Checkbox
-                        checked={snapshot.settings.semanticSearch}
-                        disabled={busy || snapshot.embedding.status !== 'ready'}
-                        onChange={(event) => saveSettings({ semanticSearch: event.target.checked })}
-                      />{' '}
-                      Use semantic search
-                    </label>
-                    <label>
-                      Recall budget{' '}
-                      <select
-                        value={snapshot.settings.contextTokens}
+                        checked={snapshot.settings.automaticCapture}
                         disabled={busy}
                         onChange={(event) =>
-                          saveSettings({ contextTokens: Number(event.target.value) })
+                          saveSettings({ automaticCapture: event.target.checked })
+                        }
+                      />
+                      <span>
+                        <strong>Review conversations automatically</strong>
+                        <small>
+                          Review chats, spaces, and pursuit runs after one minute of inactivity
+                          using your configured AI. Memories from all chats are shared with every
+                          bot in this workspace.
+                        </small>
+                      </span>
+                    </label>
+                    <label>
+                      <Checkbox
+                        checked={snapshot.settings.automaticRecall}
+                        disabled={busy}
+                        onChange={(event) =>
+                          saveSettings({ automaticRecall: event.target.checked })
+                        }
+                      />
+                      <span>
+                        <strong>Recall before each reply</strong>
+                        <small>
+                          Supply relevant memories automatically, with a bounded context budget.
+                        </small>
+                      </span>
+                    </label>
+                    <div className="memory-model">
+                      <div>
+                        <strong>Local semantic search</strong>
+                        <small>
+                          {snapshot.embedding.status === 'ready'
+                            ? 'BGE small · CPU model ready'
+                            : 'BGE small · one-time model download'}
+                          {snapshot.embedding.error && ' · ' + snapshot.embedding.error}
+                        </small>
+                      </div>
+                      <button
+                        className="button button--secondary"
+                        disabled={busy || snapshot.embedding.status === 'loading'}
+                        onClick={() =>
+                          void perform(
+                            () => memoryService.embeddings(workspaceId),
+                            'Local semantic search is ready.',
+                          )
                         }
                       >
-                        {[512, 1024, 1600, 2048, 4096].map((value) => (
-                          <option key={value} value={value}>
-                            {value} tokens
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        {busy || snapshot.embedding.status === 'loading'
+                          ? 'Working…'
+                          : snapshot.embedding.status === 'ready'
+                            ? 'Rebuild embeddings'
+                            : 'Download & enable'}
+                      </button>
+                    </div>
+                    <div className="memory-budget">
+                      <label>
+                        <Checkbox
+                          checked={snapshot.settings.semanticSearch}
+                          disabled={busy || snapshot.embedding.status !== 'ready'}
+                          onChange={(event) =>
+                            saveSettings({ semanticSearch: event.target.checked })
+                          }
+                        />{' '}
+                        Use semantic search
+                      </label>
+                      <label>
+                        Recall budget{' '}
+                        <select
+                          value={snapshot.settings.contextTokens}
+                          disabled={busy}
+                          onChange={(event) =>
+                            saveSettings({ contextTokens: Number(event.target.value) })
+                          }
+                        >
+                          {[512, 1024, 1600, 2048, 4096].map((value) => (
+                            <option key={value} value={value}>
+                              {value} tokens
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   </div>
-                </div>
-
+                </SettingsCard>
                 <div className="memory-section-heading">
                   <h4>Manage memory data</h4>
                   <p>Export a backup, import saved memories, or clear this workspace’s memory.</p>

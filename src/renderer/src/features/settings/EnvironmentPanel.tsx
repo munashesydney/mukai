@@ -1,3 +1,5 @@
+import { SettingsHeading } from './SettingsHeading';
+import { SettingsCard } from './SettingsCard';
 import { KeyRound, Plus } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
@@ -44,14 +46,36 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   }
   return (
     <section className="provider-panel capability-panel">
-      <div className="settings-section-header">
-        <span className="settings-eyebrow">WORKSPACE CONFIGURATION</span>
-        <h3>Environment variables</h3>
-        <p>
-          Private configuration for this workspace’s custom tools and routes. Values are encrypted
-          and never returned to bots.
-        </p>
-      </div>
+      <SettingsHeading
+        eyebrow="WORKSPACE CONFIGURATION"
+        title="Environment Variables"
+        description="Private configuration for this workspace’s custom tools and routes. Values are encrypted and never returned to bots."
+        actions={
+          <>
+            <button
+              className="button button--primary"
+              onClick={() => {
+                setName('');
+                setValue('');
+                setError('');
+                setEditor('variable');
+              }}
+            >
+              <Plus size={15} />
+              Add variable
+            </button>
+            <button
+              className="button"
+              onClick={() => {
+                setError('');
+                setEditor('import');
+              }}
+            >
+              Import .env
+            </button>
+          </>
+        }
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -62,29 +86,6 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           {notice}
         </p>
       )}
-      <div className="ai-form-actions">
-        <button
-          className="button button--primary"
-          onClick={() => {
-            setName('');
-            setValue('');
-            setError('');
-            setEditor('variable');
-          }}
-        >
-          <Plus size={15} />
-          Add variable
-        </button>
-        <button
-          className="button"
-          onClick={() => {
-            setError('');
-            setEditor('import');
-          }}
-        >
-          Import .env
-        </button>
-      </div>
       {editor === 'variable' && (
         <Sheet title="Environment variable" onClose={() => setEditor(null)}>
           <div className="bot-editor-body capability-sheet-body">
@@ -93,41 +94,47 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 {error}
               </div>
             )}
-            <form
-              className="ai-form capability-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void perform(async () => {
-                  await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
-                  setName('');
-                  setValue('');
-                });
-              }}
+            <SettingsCard
+              title="Variable details"
+              description="Private values for your workspace tools and routes."
+              icon={<KeyRound size={18} />}
             >
-              <label>
-                Variable name
-                <input
-                  required
-                  pattern="[A-Za-z_][A-Za-z0-9_]*"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="REVENUE_API_KEY"
-                  autoComplete="off"
-                />
-              </label>
-              <label>
-                New value
-                <input
-                  type="password"
-                  value={value}
-                  onChange={(event) => setValue(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <button className="button button--primary" disabled={busy}>
-                Save variable
-              </button>
-            </form>
+              <form
+                className="ai-form capability-form settings-card-body"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void perform(async () => {
+                    await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
+                    setName('');
+                    setValue('');
+                  });
+                }}
+              >
+                <label>
+                  Variable name
+                  <input
+                    required
+                    pattern="[A-Za-z_][A-Za-z0-9_]*"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="REVENUE_API_KEY"
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  New value
+                  <input
+                    type="password"
+                    value={value}
+                    onChange={(event) => setValue(event.target.value)}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <button className="button button--primary" disabled={busy}>
+                  Save variable
+                </button>
+              </form>
+            </SettingsCard>
           </div>
         </Sheet>
       )}

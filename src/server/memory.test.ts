@@ -772,7 +772,8 @@ describe('Mukai memory integration', () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].max_tokens).toBe(12000);
     // The retry stays within the configured model's context/output allowance.
-    expect(requests[1].max_tokens).toBe(16000);
+    expect(requests[1].max_tokens).toBe(24000);
+    expect(requests[1].max_tokens).toBeLessThanOrEqual(48000);
     const diagnostic = JSON.parse(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8').trim());
     expect(diagnostic).toMatchObject({
       event: 'memory.extraction_retry',

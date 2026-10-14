@@ -1,3 +1,4 @@
+import { SettingsHeading } from './SettingsHeading';
 import { useEffect, useState } from 'react';
 import { limitsService } from '../../services/limitsService';
 import { errorText } from '../../utils/errors';
@@ -52,11 +53,11 @@ export function LimitsPanel() {
   }
   return (
     <section className="limits-panel">
-      <div className="settings-panel-heading">
-        <span className="settings-eyebrow">SHARED ACROSS YOUR WORKSPACES</span>
-        <h3>Limits</h3>
-        <p>Choose how much pursuit work Mukai can run at once.</p>
-      </div>
+      <SettingsHeading
+        eyebrow="SHARED ACROSS YOUR WORKSPACES"
+        title="Limits"
+        description="Choose how much pursuit work Mukai can run at once."
+      />
       {error && (
         <div role="alert" className="ai-alert">
           {error}

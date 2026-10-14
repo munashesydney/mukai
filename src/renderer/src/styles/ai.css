@@ -218,6 +218,34 @@
   flex-basis: 100%;
   margin: 0;
 }
+.provider-account-summary {
+  display: flex;
+  align-items: center;
+  flex: 1 1 100%;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.provider-account-identity {
+  min-width: 0;
+  flex: 1;
+}
+.provider-account-identity strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.provider-account-identity p {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.provider-account-summary > .service-badge {
+  flex-shrink: 0;
+}
 .workspace-picker-menu .workspace-mini {
   flex: 0 0 32px;
   height: 32px;
@@ -1581,40 +1609,28 @@
   flex-wrap: wrap;
 }
 .provider-panel {
-  max-width: 860px;
+  width: 100%;
+  min-width: 0;
   color: var(--ink);
-}
-.provider-page-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 24px;
-}
-.provider-page-heading > .settings-eyebrow,
-.provider-page-heading > h3,
-.provider-page-heading > p {
-  grid-column: 1;
-}
-.provider-page-heading > h3 {
-  overflow-wrap: anywhere;
-}
-.provider-heading-action {
-  grid-column: 2;
-  grid-row: 1 / 4;
-  align-self: center;
 }
 .provider-back {
   margin-bottom: 22px;
 }
-.provider-connection-form {
-  padding: 22px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-}
 .provider-docs {
   align-self: flex-start;
 }
+.ai-form label > .provider-type-value {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 10px 12px;
+  background: var(--surface-muted);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
 .provider-connection-actions {
-  padding-top: 4px;
+  padding-top: 18px;
 }
 .provider-connection-tools {
   margin-top: 28px;
@@ -1756,15 +1772,6 @@
   color: var(--text-secondary);
 }
 @media (max-width: 900px) {
-  .provider-page-heading {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .provider-heading-action {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: start;
-    margin-top: 14px;
-  }
   .provider-section-heading,
   .provider-model-row {
     align-items: flex-start;
@@ -1784,8 +1791,11 @@
   .provider-preset-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .provider-connection-form {
-    padding: 16px;
+  .provider-account-summary {
+    flex-wrap: wrap;
+  }
+  .provider-account-summary > .service-badge {
+    margin-left: 45px;
   }
 }
 .bot-editor-body {

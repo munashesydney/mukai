@@ -1,3 +1,4 @@
+import { SettingsHeading } from './SettingsHeading';
 import { Check, Monitor, Moon, Sun, Palette } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useTheme } from '../appearance/useTheme';
@@ -13,11 +14,11 @@ export function AppearancePanel() {
   const { preferences, resolvedMode, setMode, setTheme, ready, saving, error, retry } = useTheme();
   return (
     <>
-      <div className="settings-panel-heading">
-        <span className="settings-eyebrow">A SPACE THAT FEELS LIKE YOU</span>
-        <h3>Appearance</h3>
-        <p>Find your light. Set your own tone. Shared across desktop and browser.</p>
-      </div>
+      <SettingsHeading
+        eyebrow="A SPACE THAT FEELS LIKE YOU"
+        title="Appearance"
+        description="Find your light. Set your own tone. Shared across desktop and browser."
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}

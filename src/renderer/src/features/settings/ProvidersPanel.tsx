@@ -1,3 +1,5 @@
+import { SettingsHeading } from './SettingsHeading';
+import { SettingsCard } from './SettingsCard';
 import { useEffect, useRef, useState } from 'react';
 import {
   Check,
@@ -9,6 +11,7 @@ import {
   Settings2,
   Trash2,
   ExternalLink,
+  UserRound,
 } from 'lucide-react';
 import type {
   ProviderInput,
@@ -48,6 +51,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
   const pendingSignIn = useRef<string | undefined>(undefined);
   const retrySignIn = useRef<string | undefined>(undefined);
   const saved = providers.find((provider) => provider.id === editing);
+  const backToSelection = view === 'connection' && editing === 'new';
   const preset = providerPresets.find((preset) => preset.id === presetId);
   const connectionDirty = Boolean(
     saved &&
@@ -355,16 +359,16 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
           type="button"
           className="text-button provider-back"
           disabled={busy || Boolean(signIn)}
-          onClick={() => navigate('list')}
+          onClick={() => navigate(backToSelection ? 'choose' : 'list')}
         >
           <ChevronLeft size={15} />
-          All providers
+          {backToSelection ? 'Choose provider' : 'All providers'}
         </button>
       )}
-      <div className="settings-panel-heading provider-page-heading">
-        <span className="settings-eyebrow">YOUR AI CONNECTIONS</span>
-        <h3>
-          {view === 'models'
+      <SettingsHeading
+        eyebrow="YOUR AI CONNECTIONS"
+        title={
+          view === 'models'
             ? `${saved?.name ?? 'Provider'} models`
             : view === 'connection'
               ? saved
@@ -372,43 +376,44 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                 : `Connect ${value.name}`
               : view === 'choose'
                 ? 'Add a provider'
-                : 'Providers'}
-        </h3>
-        <p>
-          {view === 'models'
+                : 'Providers'
+        }
+        description={
+          view === 'models'
             ? 'Set model limits, capabilities, and the default your bots use.'
             : view === 'connection'
               ? 'Manage your connection and credentials.'
-              : 'Connect ChatGPT or bring your own API key. Models and limits are ready for popular providers.'}
-        </p>
-        {view === 'list' && (
-          <button
-            className="button button--primary provider-heading-action"
-            disabled={busy || loading}
-            onClick={() => {
-              setView('choose');
-              setError('');
-              setNotice('');
-            }}
-          >
-            <Plus size={15} />
-            Add provider
-          </button>
-        )}
-        {view === 'models' && saved && (
-          <button
-            className="button provider-heading-action"
-            disabled={busy}
-            onClick={() => {
-              setView('connection');
-              setNotice('');
-            }}
-          >
-            <Settings2 size={15} />
-            Connection settings
-          </button>
-        )}
-      </div>
+              : 'Connect ChatGPT or bring your own API key. Models and limits are ready for popular providers.'
+        }
+        actions={
+          view === 'list' ? (
+            <button
+              className="button button--primary"
+              disabled={busy || loading}
+              onClick={() => {
+                setView('choose');
+                setError('');
+                setNotice('');
+              }}
+            >
+              <Plus size={15} />
+              Add provider
+            </button>
+          ) : view === 'models' && saved ? (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => {
+                setView('connection');
+                setNotice('');
+              }}
+            >
+              <Settings2 size={15} />
+              Connection settings
+            </button>
+          ) : undefined
+        }
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -467,230 +472,262 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
       )}
       {view === 'connection' && (
         <>
-          <form
-            className="ai-form provider-connection-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (canSave) void save();
-            }}
+          <SettingsCard
+            title="Connection details"
+            description="Name, credentials, and the default connection for your bots."
+            icon={<KeyRound size={18} />}
+            className="provider-connection-card"
           >
-            <div className="ai-form-grid">
-              <label>
-                Provider type
-                <Dropdown
-                  label="Provider type"
-                  value={presetId}
-                  disabled={busy || Boolean(signIn) || editing !== 'new'}
-                  options={providerPresets.map((preset) => ({
-                    value: preset.id,
-                    label: preset.name,
-                  }))}
-                  onChange={(id) => choose(providerPresets.find((preset) => preset.id === id)!)}
-                />
-              </label>
-              <label>
-                Display name
-                <input
-                  required
-                  maxLength={80}
-                  value={value.name}
-                  disabled={busy || Boolean(signIn)}
-                  onChange={(event) => setValue({ ...value, name: event.target.value })}
-                />
-              </label>
-            </div>
-            {value.kind === 'compatible' && (
-              <>
-                {!!preset?.endpoints?.length && (
-                  <label>
-                    API endpoint
-                    <Dropdown
-                      label="API endpoint"
-                      value={
-                        preset.endpoints.some((endpoint) => endpoint.url === value.baseUrl)
-                          ? value.baseUrl
-                          : 'custom'
-                      }
-                      disabled={busy}
-                      options={[
-                        ...preset.endpoints.map((endpoint) => ({
-                          value: endpoint.url,
-                          label: endpoint.name,
-                        })),
-                        { value: 'custom', label: 'Custom endpoint' },
-                      ]}
-                      onChange={(url) =>
-                        setValue({ ...value, baseUrl: url === 'custom' ? '' : url })
-                      }
-                    />
-                  </label>
-                )}
+            <form
+              className="ai-form settings-card-body provider-connection-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (canSave) void save();
+              }}
+            >
+              <div className="ai-form-grid">
                 <label>
-                  Base URL
+                  Provider type
+                  {saved ? (
+                    <span className="provider-type-value">{preset?.name ?? value.kind}</span>
+                  ) : (
+                    <Dropdown
+                      label="Provider type"
+                      value={presetId}
+                      disabled={busy || Boolean(signIn) || editing !== 'new'}
+                      options={providerPresets.map((preset) => ({
+                        value: preset.id,
+                        label: preset.name,
+                      }))}
+                      onChange={(id) => choose(providerPresets.find((preset) => preset.id === id)!)}
+                    />
+                  )}
+                </label>
+                <label>
+                  Display name
                   <input
                     required
-                    type="url"
-                    value={value.baseUrl}
-                    disabled={busy}
-                    placeholder="http://127.0.0.1:11434/v1"
-                    spellCheck={false}
-                    onChange={(event) => setValue({ ...value, baseUrl: event.target.value })}
+                    maxLength={80}
+                    value={value.name}
+                    disabled={busy || Boolean(signIn)}
+                    onChange={(event) => setValue({ ...value, name: event.target.value })}
                   />
-                  <small>
-                    {preset?.note ??
-                      'Include the API prefix, usually /v1. Local HTTP and remote HTTPS endpoints are supported.'}
-                  </small>
                 </label>
-              </>
-            )}
-            {preset?.docsUrl && (
-              <button
-                type="button"
-                className="text-button provider-docs"
-                onClick={() => openUrl(preset.docsUrl!)}
-              >
-                <ExternalLink size={14} />
-                Provider documentation
-              </button>
-            )}
-            {value.kind !== 'chatgpt' && (
-              <label>
-                API key {saved?.hasKey && <span className="key-saved">Key saved</span>}
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  maxLength={4096}
-                  required={
-                    (value.kind !== 'compatible' || Boolean(preset?.baseUrl)) && !saved?.hasKey
-                  }
-                  value={value.apiKey || ''}
-                  disabled={busy}
-                  placeholder={
-                    saved?.hasKey
-                      ? 'Leave blank to keep the saved key'
-                      : value.kind === 'compatible' && !preset?.baseUrl
-                        ? 'Optional for local models'
-                        : 'Paste your provider API key'
-                  }
-                  onChange={(event) =>
-                    setValue({ ...value, apiKey: event.target.value, clearKey: false })
-                  }
-                />
-                <small>Encrypted on this device’s server. Saved keys are never shown.</small>
-              </label>
-            )}
-            {value.kind === 'chatgpt' && (
-              <div className="chatgpt-connection">
-                {saved?.account && (
-                  <p>
-                    {saved.account.label} ·{' '}
-                    {saved.account.connected
-                      ? saved.account.planEnabled
-                        ? 'Plan usage enabled'
-                        : 'Plan usage disabled'
-                      : 'Disconnected'}
+              </div>
+              {value.kind === 'compatible' && (
+                <>
+                  {!!preset?.endpoints?.length && (
+                    <label>
+                      API endpoint
+                      <Dropdown
+                        label="API endpoint"
+                        value={
+                          preset.endpoints.some((endpoint) => endpoint.url === value.baseUrl)
+                            ? value.baseUrl
+                            : 'custom'
+                        }
+                        disabled={busy}
+                        options={[
+                          ...preset.endpoints.map((endpoint) => ({
+                            value: endpoint.url,
+                            label: endpoint.name,
+                          })),
+                          { value: 'custom', label: 'Custom endpoint' },
+                        ]}
+                        onChange={(url) =>
+                          setValue({ ...value, baseUrl: url === 'custom' ? '' : url })
+                        }
+                      />
+                    </label>
+                  )}
+                  <label>
+                    Base URL
+                    <input
+                      required
+                      type="url"
+                      value={value.baseUrl}
+                      disabled={busy}
+                      placeholder="http://127.0.0.1:11434/v1"
+                      spellCheck={false}
+                      onChange={(event) => setValue({ ...value, baseUrl: event.target.value })}
+                    />
+                    <small>
+                      {preset?.note ??
+                        'Include the API prefix, usually /v1. Local HTTP and remote HTTPS endpoints are supported.'}
+                    </small>
+                  </label>
+                </>
+              )}
+              {preset?.docsUrl && (
+                <button
+                  type="button"
+                  className="text-button provider-docs"
+                  onClick={() => openUrl(preset.docsUrl!)}
+                >
+                  <ExternalLink size={14} />
+                  Provider documentation
+                </button>
+              )}
+              {value.kind !== 'chatgpt' && (
+                <label>
+                  API key {saved?.hasKey && <span className="key-saved">Key saved</span>}
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    maxLength={4096}
+                    required={
+                      (value.kind !== 'compatible' || Boolean(preset?.baseUrl)) && !saved?.hasKey
+                    }
+                    value={value.apiKey || ''}
+                    disabled={busy}
+                    placeholder={
+                      saved?.hasKey
+                        ? 'Leave blank to keep the saved key'
+                        : value.kind === 'compatible' && !preset?.baseUrl
+                          ? 'Optional for local models'
+                          : 'Paste your provider API key'
+                    }
+                    onChange={(event) =>
+                      setValue({ ...value, apiKey: event.target.value, clearKey: false })
+                    }
+                  />
+                  <small>Encrypted on this device’s server. Saved keys are never shown.</small>
+                </label>
+              )}
+              {value.kind === 'chatgpt' && (
+                <div className="chatgpt-connection">
+                  {saved?.account && (
+                    <div className="provider-account-summary">
+                      <span className="settings-card-icon">
+                        <UserRound size={18} />
+                      </span>
+                      <div className="provider-account-identity">
+                        <strong>ChatGPT account</strong>
+                        <p>{saved.account.label}</p>
+                      </div>
+                      <span
+                        className={`service-badge service-badge--${saved.account.connected && saved.account.planEnabled ? 'online' : 'offline'}`}
+                      >
+                        <i />
+                        {saved.account.connected
+                          ? saved.account.planEnabled
+                            ? 'Plan usage enabled'
+                            : 'Plan usage disabled'
+                          : 'Disconnected'}
+                      </span>
+                    </div>
+                  )}
+                  <p className="ai-caption">
+                    Eligible Plus and Pro accounts can authorize Mukai to use their ChatGPT plan.
+                    Requests share your plan and app limits.
                   </p>
-                )}
-                <p className="ai-caption">
-                  Eligible Plus and Pro accounts can authorize Mukai to use their ChatGPT plan.
-                  Requests share your plan and app limits.
-                </p>
-                {signIn ? (
-                  <>
-                    <p role="status">
-                      Finish signing in in your browser. This attempt expires after five minutes.
-                    </p>
-                    {signIn.url && (
+                  {signIn ? (
+                    <>
+                      <p role="status">
+                        Finish signing in in your browser. This attempt expires after five minutes.
+                      </p>
+                      {signIn.url && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => openUrl(signIn.url!)}
+                        >
+                          Open sign-in again
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="text-button"
-                        onClick={() => openUrl(signIn.url!)}
+                        className="button"
+                        disabled={busy}
+                        onClick={() => void cancelSignIn()}
                       >
-                        Open sign-in again
+                        Cancel sign-in
                       </button>
-                    )}
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className={
+                        saved?.account?.connected && saved.account.planEnabled
+                          ? 'button'
+                          : 'button button--primary'
+                      }
+                      disabled={busy}
+                      onClick={() => void connect()}
+                    >
+                      {saved?.account?.connected
+                        ? saved.account.planEnabled
+                          ? 'Reconnect ChatGPT'
+                          : 'Enable ChatGPT plan usage'
+                        : 'Continue with ChatGPT'}
+                    </button>
+                  )}
+                  {saved?.account?.connected && !signIn && (
                     <button
                       type="button"
                       className="button"
                       disabled={busy}
-                      onClick={() => void cancelSignIn()}
+                      onClick={() => void disconnect()}
                     >
-                      Cancel sign-in
+                      Disconnect ChatGPT
                     </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="button button--primary"
+                  )}
+                </div>
+              )}
+              {value.kind === 'compatible' && saved?.hasKey && (
+                <label className="ai-checkbox">
+                  <Checkbox
                     disabled={busy}
-                    onClick={() => void connect()}
-                  >
-                    {saved?.account?.connected
-                      ? saved.account.planEnabled
-                        ? 'Reconnect ChatGPT'
-                        : 'Enable ChatGPT plan usage'
-                      : 'Continue with ChatGPT'}
-                  </button>
-                )}
-                {saved?.account?.connected && !signIn && (
-                  <button
-                    type="button"
-                    className="button"
-                    disabled={busy}
-                    onClick={() => void disconnect()}
-                  >
-                    Disconnect ChatGPT
-                  </button>
-                )}
-              </div>
-            )}
-            {value.kind === 'compatible' && saved?.hasKey && (
+                    checked={Boolean(value.clearKey)}
+                    onChange={(event) =>
+                      setValue({ ...value, clearKey: event.target.checked, apiKey: '' })
+                    }
+                  />
+                  Remove the saved key (only for endpoints without authentication)
+                </label>
+              )}
               <label className="ai-checkbox">
                 <Checkbox
-                  disabled={busy}
-                  checked={Boolean(value.clearKey)}
-                  onChange={(event) =>
-                    setValue({ ...value, clearKey: event.target.checked, apiKey: '' })
-                  }
+                  disabled={busy || Boolean(signIn) || Boolean(saved?.isDefault)}
+                  checked={value.isDefault}
+                  onChange={(event) => setValue({ ...value, isDefault: event.target.checked })}
                 />
-                Remove the saved key (only for endpoints without authentication)
+                Use as the default provider
               </label>
-            )}
-            <label className="ai-checkbox">
-              <Checkbox
-                disabled={busy || Boolean(signIn) || Boolean(saved?.isDefault)}
-                checked={value.isDefault}
-                onChange={(event) => setValue({ ...value, isDefault: event.target.checked })}
-              />
-              Use as the default provider
-            </label>
-            {!saved && value.kind !== 'chatgpt' && (
-              <p className="ai-caption">
-                {value.models?.length
-                  ? `${value.models.length} models included with researched limits. You can customize them after saving.`
-                  : 'Save the connection, then add the models you want to use.'}
-              </p>
-            )}
-            {(saved || value.kind !== 'chatgpt') && (
-              <div className="ai-form-actions provider-connection-actions">
-                <button type="submit" className="button button--primary" disabled={!canSave}>
-                  {activity === 'save' ? 'Saving…' : saved ? 'Save changes' : 'Save connection'}
-                </button>
-                {saved && (
-                  <button
-                    type="button"
-                    className="button"
-                    disabled={busy || Boolean(signIn)}
-                    onClick={() => navigate('models')}
-                  >
-                    Configure models
-                    <ChevronRight size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-          </form>
+              {!saved && value.kind !== 'chatgpt' && (
+                <p className="ai-caption">
+                  {value.models?.length
+                    ? `${value.models.length} models included with researched limits. You can customize them after saving.`
+                    : 'Save the connection, then add the models you want to use.'}
+                </p>
+              )}
+              {(saved || value.kind !== 'chatgpt') && (
+                <div className="ai-form-actions settings-card-actions provider-connection-actions">
+                  {(!saved || connectionDirty) && (
+                    <button type="submit" className="button button--primary" disabled={!canSave}>
+                      {activity === 'save' ? 'Saving…' : saved ? 'Save changes' : 'Save connection'}
+                    </button>
+                  )}
+                  {saved && (
+                    <button
+                      type="button"
+                      className={
+                        !connectionDirty && (value.kind !== 'chatgpt' || saved.account?.planEnabled)
+                          ? 'button button--primary'
+                          : 'button'
+                      }
+                      disabled={busy || Boolean(signIn)}
+                      onClick={() => navigate('models')}
+                    >
+                      Configure models
+                      <ChevronRight size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </form>
+          </SettingsCard>
           {saved && (
             <div className="provider-connection-tools">
               <div className="provider-section-heading">

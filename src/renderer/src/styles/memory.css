@@ -1,12 +1,12 @@
 .memory-panel {
-  max-width: 1100px;
+  width: 100%;
 }
 .memory-preferences {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 18px;
   display: grid;
   gap: 18px;
+  margin-bottom: 0;
+}
+.memory-preferences-card {
   margin-bottom: 24px;
 }
 .memory-preferences > label {

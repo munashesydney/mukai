@@ -59,6 +59,73 @@ async function main() {
       'Presets must not create unauthenticated provider records.',
     );
     await mkdir('artifacts', { recursive: true });
+    // Every settings page uses identical rendered heading typography and spacing,
+    // and fills the panel's available width.
+    let expectedHeading: unknown;
+    for (const name of [
+      'Workspace',
+      'Appearance',
+      'Domain',
+      'Providers',
+      'E Variables',
+      'Memory',
+      'Limits',
+    ]) {
+      await page.getByRole('tab', { name, exact: true }).click();
+      await page
+        .getByRole('heading', {
+          name: name === 'E Variables' ? 'Environment Variables' : name,
+          exact: true,
+          level: 3,
+        })
+        .waitFor();
+      const layout = await page.locator('.settings-panel').evaluate((element) => {
+        const heading = element.querySelector('.settings-heading-copy')!;
+        const title = heading.querySelector('h3')!;
+        const description = heading.querySelector('p')!;
+        const header = heading.parentElement!;
+        const titleStyle = getComputedStyle(title),
+          descriptionStyle = getComputedStyle(description);
+        const content = element.querySelector(
+          '.provider-panel, .limits-panel, .appearance-group, .settings-account-card',
+        )!;
+        const style = getComputedStyle(element);
+        return {
+          typography: {
+            titleFont: titleStyle.font,
+            titleSpacing: titleStyle.letterSpacing,
+            titleMargin: titleStyle.margin,
+            descriptionFont: descriptionStyle.font,
+            descriptionSpacing: descriptionStyle.letterSpacing,
+            descriptionMargin: descriptionStyle.margin,
+            gap: description.getBoundingClientRect().top - title.getBoundingClientRect().bottom,
+            bottom: getComputedStyle(header).marginBottom,
+          },
+          available:
+            element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+          width: content.getBoundingClientRect().width,
+        };
+      });
+      expectedHeading ??= layout.typography;
+      assert.deepEqual(
+        layout.typography,
+        expectedHeading,
+        `${name} must use the shared heading style.`,
+      );
+      assert.ok(
+        Math.abs(layout.width - layout.available) < 2,
+        `${name} content must fill the settings panel.`,
+      );
+      if (['E Variables', 'Domain', 'Memory'].includes(name)) {
+        if (name === 'Memory') {
+          await page.getByRole('tab', { name: 'Preferences', exact: true }).click();
+          await page.getByRole('heading', { name: 'Conversation memory', exact: true }).waitFor();
+        }
+        await capture(`settings-${name.toLowerCase().replaceAll(' ', '-')}-light`);
+      }
+    }
+    await page.getByRole('tab', { name: 'Providers', exact: true }).click();
+    await page.getByRole('button', { name: 'Add DeepSeek', exact: true }).waitFor();
     await capture('providers-catalog-light');
     // Every requested provider opens with its documented endpoint and model catalog.
     for (const [name, url, count] of [
@@ -77,7 +144,8 @@ async function main() {
           )
           .isVisible(),
       );
-      await panel.getByRole('button', { name: 'All providers', exact: true }).click();
+      await panel.getByRole('button', { name: 'Choose provider', exact: true }).click();
+      await panel.getByRole('heading', { name: 'Add a provider', exact: true }).waitFor();
     }
     await page.getByRole('button', { name: 'Add DeepSeek', exact: true }).click();
     assert.equal(await panel.getByLabel('Base URL').inputValue(), 'https://api.deepseek.com');
@@ -213,6 +281,54 @@ async function main() {
     await panel.getByRole('status').filter({ hasText: 'Provider deleted.' }).waitFor();
     assert.equal((await request<ProviderSettings[]>('/providers')).length, 0);
     await page.getByRole('button', { name: 'Add Qwen', exact: true }).waitFor();
+    // Render a connected ChatGPT account without contacting a real account.
+    const accountProvider: ProviderSettings = {
+      ...provider,
+      id: 'b077d858-109c-4c8f-a40a-c2f123b6204b',
+      name: 'ChatGPT',
+      kind: 'chatgpt',
+      baseUrl: '',
+      hasKey: false,
+      account: {
+        label: 'qa@example.com',
+        clientId: 'ui-fixture',
+        connected: true,
+        planEnabled: true,
+      },
+    };
+    await page.route('**/api/providers', async (route) => {
+      if (route.request().method() === 'GET')
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([accountProvider]),
+        });
+      else await route.continue();
+    });
+    await page.reload();
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    await page.getByRole('tab', { name: 'Providers', exact: true }).click();
+    await panel.getByRole('button', { name: 'Connection settings', exact: true }).click();
+    await panel.locator('.provider-account-summary').waitFor();
+    assert.equal(
+      await panel.getByRole('button', { name: 'Save changes', exact: true }).count(),
+      0,
+      'A clean connection should not show a redundant save button.',
+    );
+    assert.ok(
+      await panel.getByRole('button', { name: 'Reconnect ChatGPT', exact: true }).isVisible(),
+    );
+    assert.equal(
+      await panel.locator('.settings-card-heading h4').textContent(),
+      'Connection details',
+    );
+    await capture('settings-chatgpt-connection-dark');
+    await page.setViewportSize({ width: 720, height: 900 });
+    await capture('settings-chatgpt-connection-narrow');
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      true,
+    );
     assert.deepEqual(errors, []);
     console.log(
       'PASS providers UI: official presets, immediate model persistence, retry after save failure, defaults, credentials, navigation, reload, light/dark/narrow layouts, and provider deletion.',

@@ -15,7 +15,7 @@ const sections = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'routes', label: 'Domain', icon: Globe },
   { id: 'providers', label: 'Providers', icon: KeyRound },
-  { id: 'environment', label: 'Environment variables', icon: KeyRound },
+  { id: 'environment', label: 'E Variables', icon: KeyRound },
   { id: 'memory', label: 'Memory', icon: Brain },
   { id: 'limits', label: 'Limits', icon: Gauge },
 ] as const;
