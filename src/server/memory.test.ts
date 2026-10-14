@@ -432,7 +432,9 @@ describe('Mukai memory integration', () => {
   it('exposes one memory function and dispatches actions with their required fields', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
-    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const add = vi
+      .spyOn(api.memory, 'add')
+      .mockResolvedValue({ queued: true, episodeId: 'queued-episode', status: 'pending' });
     const forget = vi.spyOn(api.memory.engine, 'forgetMemory').mockImplementation(() => {});
     const activities: { tool: string; action: string; status: string }[] = [];
     const tools = memoryTools({
@@ -502,7 +504,9 @@ describe('Mukai memory integration', () => {
   it('allows a multi-scenario investigation to search more than twelve times and still write', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
-    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const add = vi
+      .spyOn(api.memory, 'add')
+      .mockResolvedValue({ queued: true, episodeId: 'queued-episode', status: 'pending' });
     const tools = memoryTools({
       bot,
       conversationId: 'bot-scout',
@@ -612,10 +616,67 @@ describe('Mukai memory integration', () => {
         { toolCallId: 'shared-write', messages: [], context: {} },
       ),
     ).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const snapshot = api.memory.snapshot('default');
     expect(snapshot.facts[0].ownerId).toBeNull();
     expect(snapshot.episodes[0].ownerId).toBeNull();
     expect(await api.memory.search({ ...bot, id: 'other-bot' }, 'espresso', {})).toHaveLength(1);
+  });
+  it('acknowledges durable memory adds before extraction and processes them independently of the chat', async () => {
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    const caller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = api.memory.engine.processEpisode.bind(api.memory.engine);
+    const processing = vi
+      .spyOn(api.memory.engine, 'processEpisode')
+      .mockImplementation(async (id, signal) => {
+        await gate;
+        return original(id, signal);
+      });
+    const tools = memoryTools({
+      bot,
+      conversationId: 'bot-scout',
+      messageId: 'background-memory',
+      memory: api.memory,
+      signal: caller.signal,
+      onActivity: () => {},
+    });
+    const invoke = () =>
+      tools.memory.execute!(
+        { action: 'add', content: 'User prefers espresso.' },
+        { toolCallId: 'background-add', messages: [], context: {} },
+      );
+    try {
+      let acknowledged = false;
+      const response = Promise.resolve(invoke()).then((result) => {
+        acknowledged = true;
+        return result;
+      });
+      await vi.waitFor(() => expect(acknowledged).toBe(true), { timeout: 500 });
+      expect(await response).toMatchObject({
+        ok: true,
+        result: { queued: true, episodeId: expect.any(String), status: 'pending' },
+      });
+      expect(api.memory.snapshot('default').facts).toHaveLength(0);
+      expect(api.memory.snapshot('default').episodes).toHaveLength(1);
+      await invoke();
+      expect(api.memory.snapshot('default').episodes).toHaveLength(1);
+      await vi.waitFor(() => expect(processing).toHaveBeenCalled());
+      expect(processing.mock.calls[0][1]).not.toBe(caller.signal);
+      caller.abort();
+      release();
+      await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+      expect(api.memory.snapshot('default').episodes[0].status).toBe('complete');
+    } finally {
+      release();
+    }
   });
   it('honors controls and survives restart without replay', async () => {
     const first = await chat('I prefer espresso every morning.');

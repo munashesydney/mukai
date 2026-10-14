@@ -314,7 +314,7 @@ export class MemoryService {
     this.reviews.schedule(bot.workspaceId, conversationId, bot.id);
     this.kick();
   }
-  /* Explicit memory writes still use immediate extraction; automatic reviews batch messages. */
+  /* Explicit writes use the persisted episode queue; automatic reviews batch messages. */
   private async drainReviews() {
     const updated = await this.reviews.drain(this.controller.signal);
     for (const workspaceId of updated) {
@@ -386,6 +386,7 @@ export class MemoryService {
     sourceKey: string,
     signal: AbortSignal,
   ) {
+    signal.throwIfAborted();
     this.scope(bot);
     const input: EpisodeInput = {
       workspaceId: bot.workspaceId,
@@ -398,7 +399,13 @@ export class MemoryService {
       conversationId,
       messageId,
     };
-    return this.engine.addMemory(input, signal);
+    const episode = this.engine.enqueue(input);
+    this.kick();
+    return {
+      queued: episode.status === 'pending' || episode.status === 'processing',
+      episodeId: episode.id,
+      status: episode.status,
+    };
   }
   async search(bot: Bot, query: string, options: SearchOptions) {
     return this.searchScope(this.scope(bot), query, options);
