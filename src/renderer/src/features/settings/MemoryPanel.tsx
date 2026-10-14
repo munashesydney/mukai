@@ -422,10 +422,12 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
             )}
             {view === 'activity' && (
               <div className="memory-activity">
-                <div className="memory-section-heading">
-                  <h4>Capture activity</h4>
-                  <p>Track saved statements and retry failed extractions.</p>
+                <div className="pursuit-section-heading">
+                  <h2>Capture activity</h2>
                 </div>
+                <p className="memory-run-meta">
+                  Track saved statements and retry failed extractions.
+                </p>
                 <details className="memory-processing" open>
                   <summary>
                     Capture activity ·{' '}
@@ -473,10 +475,12 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                   ))}
                 </details>
 
-                <div className="memory-section-heading">
-                  <h4>Automatic recall</h4>
-                  <p>See which memories were supplied to recent conversations.</p>
+                <div className="pursuit-section-heading">
+                  <h2>Automatic recall</h2>
                 </div>
+                <p className="memory-run-meta">
+                  See which memories were supplied to recent conversations.
+                </p>
                 <div className="memory-recalls">
                   {snapshot.recalls.length ? (
                     snapshot.recalls.map((recall) => (

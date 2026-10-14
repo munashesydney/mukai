@@ -591,6 +591,16 @@ p {
   flex: 1;
   min-width: 0;
 }
+.bot-conversation-row > .bot-conversation-origin {
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  overflow: visible;
+}
+.bot-conversation-origin > .avatar {
+  width: 18px;
+  height: 18px;
+}
 .bot-conversation-row > time {
   flex-shrink: 0;
   color: var(--text-muted);

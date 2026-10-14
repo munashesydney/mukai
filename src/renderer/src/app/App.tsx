@@ -363,6 +363,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             <NotificationsPage
               workspaceId={ai.workspaceId}
               inbox={notifications}
+              onGoToBots={() => navigateSection('bots')}
               onOpen={(conversation) => {
                 botChats.include(conversation);
                 select({

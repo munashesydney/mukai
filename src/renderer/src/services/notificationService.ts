@@ -9,6 +9,8 @@ export const notificationService = {
     api<NotificationInbox>(root(workspaceId) + `&offset=${offset}`),
   mark: (workspaceId: string, id: string, action: 'read' | 'dismiss') =>
     api<{ ok: boolean }>(root(workspaceId, id, action), 'POST'),
+  dismissAll: (workspaceId: string) =>
+    api<{ ok: boolean }>(root(workspaceId, 'dismiss-all'), 'POST'),
   continue: (workspaceId: string, id: string) =>
     api<Conversation>(root(workspaceId, id, 'continue'), 'POST'),
 };

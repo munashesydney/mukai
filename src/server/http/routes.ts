@@ -281,6 +281,8 @@ export function createRoutes({
     }
     if (resource === 'notifications') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      if (id === 'dismiss-all' && !action && method === 'POST')
+        return send(response, notifications.dismissAll(workspaceId));
       if (!id && method === 'GET') {
         const offset = z.coerce
           .number()

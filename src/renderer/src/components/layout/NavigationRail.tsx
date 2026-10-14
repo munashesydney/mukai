@@ -4,7 +4,7 @@ import { botAvatarSrc } from '../../../../shared/mascots';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
-  { id: 'notifications', label: 'Updates', icon: Bell },
+  { id: 'notifications', label: 'Messages', icon: Bell },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
@@ -41,7 +41,7 @@ export function NavigationRail({
         className="workspace-emblem"
         disabled={disabled}
         title={disabled ? 'Create your first workspace to get started' : undefined}
-        onClick={() => onNavigate(hasBots ? 'spaces' : 'bots')}
+        onClick={() => onNavigate('bots')}
         aria-label={workspaceName}
       >
         {workspaceName[0]?.toUpperCase() || 'M'}

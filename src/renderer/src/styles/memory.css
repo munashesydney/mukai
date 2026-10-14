@@ -65,6 +65,10 @@
   color: var(--ink);
   font-size: 13px;
 }
+.memory-search input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
 .memory-content {
   display: flex;
   align-items: flex-start;
@@ -90,22 +94,33 @@
   align-items: center;
   gap: 8px;
 }
-.memory-graph svg {
-  width: 100%;
-  display: block;
+.memory-graph-canvas {
+  overflow: hidden;
   background: var(--surface-muted);
-  min-height: 300px;
-  max-height: 500px;
+}
+.memory-graph-canvas > svg {
+  width: 100%;
+  height: 520px;
+  max-height: 65vh;
+  min-height: 340px;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.memory-graph-canvas > svg:active {
+  cursor: grabbing;
 }
 .memory-graph-edge {
   cursor: pointer;
   color: var(--text-muted);
 }
-.memory-graph-edge line {
-  stroke: var(--line);
+.memory-graph-edge path {
+  fill: none;
+  stroke: var(--text-muted);
   stroke-width: 1.5;
+  stroke-opacity: 0.55;
 }
-.memory-graph-edge.is-historical line {
+.memory-graph-edge.is-historical path {
   stroke-dasharray: 4 4;
 }
 .memory-graph-edge .memory-graph-hit {
@@ -113,48 +128,59 @@
   stroke-width: 15;
 }
 .memory-graph-edge text {
-  fill: var(--text-muted);
-  font-size: 8px;
+  fill: var(--text-secondary);
+  font-size: 11px;
+  opacity: 0;
+  pointer-events: none;
   paint-order: stroke;
   stroke: var(--surface-muted);
   stroke-width: 3px;
 }
-.memory-graph-edge:hover line:not(.memory-graph-hit),
-.memory-graph-edge:focus line:not(.memory-graph-hit) {
-  stroke: var(--teal);
+.memory-graph-edge:hover text,
+.memory-graph-edge:focus-visible text {
+  opacity: 1;
+}
+.memory-graph-edge:hover path:not(.memory-graph-hit),
+.memory-graph-edge:focus-visible path:not(.memory-graph-hit) {
+  stroke: var(--theme-text);
   stroke-width: 3;
+  stroke-opacity: 1;
 }
 .memory-graph-node {
   cursor: pointer;
 }
 .memory-graph-node circle {
-  fill: var(--surface);
-  stroke: var(--teal);
+  fill: var(--memory-node-color);
+  stroke: var(--surface);
   stroke-width: 1.5;
 }
-.memory-graph-node.is-private circle {
+.memory-graph-node .memory-node-halo {
+  opacity: 0;
+  stroke: none;
+}
+.memory-graph-node.is-private circle:not(.memory-node-halo) {
   stroke-dasharray: 3 2;
 }
 .memory-graph-node text {
   fill: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 400;
   pointer-events: none;
 }
 .memory-graph-node .memory-node-label {
-  font-size: 10px;
-  font-weight: 400;
   paint-order: stroke;
   stroke: var(--surface-muted);
   stroke-width: 3px;
 }
-.memory-graph-node:hover circle,
-.memory-graph-node:focus circle {
-  stroke-width: 3;
+.memory-graph-node:hover .memory-node-halo,
+.memory-graph-node:focus-visible .memory-node-halo,
+.memory-graph-node.is-selected .memory-node-halo {
+  opacity: 0.25;
 }
 .memory-caption {
-  padding: 0 14px;
-  color: var(--text-muted);
+  padding: 10px 14px;
+  margin: 0;
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.7;
 }
@@ -446,6 +472,9 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.6;
+}
+.memory-activity > .memory-run-meta {
+  margin-bottom: 16px;
 }
 .memory-run-summary,
 .memory-run-operations {

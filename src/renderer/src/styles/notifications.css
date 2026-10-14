@@ -2,8 +2,17 @@
   overflow-y: auto;
 }
 .notifications-heading {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
   padding: 28px 40px 22px;
   border-bottom: 1px solid var(--line);
+}
+.notifications-dismiss-all {
+  flex-shrink: 0;
 }
 .notifications-heading h1 {
   display: flex;
@@ -31,6 +40,11 @@
 }
 .notifications-content {
   padding: 20px 40px;
+}
+.notifications-content.is-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 .notification-list {
   display: grid;
@@ -189,7 +203,9 @@
   opacity: 0.5;
 }
 .notifications-empty {
+  flex: 1;
   display: grid;
+  align-content: center;
   justify-items: center;
   padding: 50px 20px;
   text-align: center;
@@ -207,6 +223,9 @@
 .notifications-empty p {
   font-size: 13px;
   color: var(--text-muted);
+}
+.notifications-empty > .button {
+  margin-top: 20px;
 }
 .rail-unread {
   position: absolute;
