@@ -74,7 +74,9 @@ export function contextLimits(window: number | null, requestedOutput: number) {
   // Legacy models with unknown capacity use a conservative working budget while
   // the UI continues to say "unknown", rather than presenting an invented limit.
   const capacity = window ?? 32768;
-  const output = Math.min(requestedOutput, Math.floor(capacity / 8));
+  // Long-context models can honor a 32K response cap while retaining ample input
+  // room. Keep the conservative reserve for small and unknown model capacities.
+  const output = Math.min(requestedOutput, Math.floor(capacity / (capacity >= 65536 ? 2 : 8)));
   return {
     capacity,
     output,

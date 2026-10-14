@@ -2953,3 +2953,49 @@ it('cancels an active response before deleting the workspace conversation record
   expect(api.store.all('SELECT * FROM bots')).toEqual([]);
   expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
 });
+
+it('saves model configuration independently of the provider connection and rejects invalid model updates', async () => {
+  const provider = await configure();
+  const encryptedKey = api.store.get(
+    'SELECT encrypted_key FROM providers WHERE id=?',
+    provider.id,
+  )?.encrypted_key;
+  const models = [
+    {
+      id: 'new-default',
+      name: 'New default',
+      contextWindowTokens: 128000,
+      maxOutputTokens: 32768,
+      supportsImages: true,
+    },
+  ];
+  const updated = await request<ProviderSettings>(`/providers/${provider.id}/models`, 'PUT', {
+    models,
+    defaultModel: 'new-default',
+  });
+  expect(updated.response.status).toBe(200);
+  expect(updated.data).toMatchObject({
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    hasKey: true,
+    isDefault: true,
+    models,
+    defaultModel: 'new-default',
+    contextWindowTokens: 128000,
+    maxOutputTokens: 32768,
+    supportsImages: true,
+  });
+  expect(
+    api.store.get('SELECT encrypted_key FROM providers WHERE id=?', provider.id)?.encrypted_key,
+  ).toBe(encryptedKey);
+  for (const input of [
+    { models, defaultModel: 'missing' },
+    { models, defaultModel: '' },
+    { models: [models[0], models[0]], defaultModel: 'new-default' },
+    { models, defaultModel: 'new-default', apiKey: 'should-not-change' },
+  ])
+    expect((await request(`/providers/${provider.id}/models`, 'PUT', input)).response.status).toBe(
+      400,
+    );
+  expect((await request<ProviderSettings[]>('/providers')).data[0].models).toEqual(models);
+});

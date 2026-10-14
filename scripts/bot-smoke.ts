@@ -2005,11 +2005,11 @@ async function main() {
       `Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Add provider' && !button.disabled)`,
     );
     await click('Add provider');
-    await wait(`Boolean(document.querySelector('button[aria-label="Provider type"]'))`);
-    await evaluate(`document.querySelector('button[aria-label="Provider type"]').click()`);
-    await wait(`Boolean(document.querySelector('[role=option]'))`);
+    await wait(
+      `Boolean(document.querySelector('button[aria-label="Add OpenAI-compatible / local"]'))`,
+    );
     await evaluate(
-      `Array.from(document.querySelectorAll('[role=option]')).find(e=>e.textContent==='OpenAI-compatible / local').click()`,
+      `document.querySelector('button[aria-label="Add OpenAI-compatible / local"]').click()`,
     );
     await wait('Boolean(document.querySelector(".provider-panel input[type=url]"))');
     await fill('.provider-panel input[maxlength="80"]', 'GLM');
@@ -2033,10 +2033,8 @@ async function main() {
     await fill('.provider-model-editor label:nth-of-type(2) input', 'GLM Test');
     await fill('.provider-model-editor input[type="number"]', '131072');
     await capture('provider-model-sheet.png');
-    await click('Keep model');
+    await click('Save model');
     await wait('!document.querySelector(".provider-model-editor")');
-    await click('Save connection');
-    await wait('!document.querySelector(".provider-panel button[type=submit]").disabled');
     const glm = (await request<{ name: string; models: { id: string }[] }[]>('/providers')).find(
       (provider) => provider.name === 'GLM',
     );

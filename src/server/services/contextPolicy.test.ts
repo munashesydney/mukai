@@ -186,6 +186,8 @@ describe('working context', () => {
   it('reserves output space and treats unknown capacity conservatively', () => {
     expect(contextLimits(4096, 8192).output).toBe(512);
     expect(contextLimits(null, 8192).capacity).toBe(32768);
+    expect(contextLimits(128000, 32768).output).toBe(32768);
+    expect(contextLimits(128000, 100000).output).toBe(64000);
     expect(estimateTokens('🦊资料')).toBeGreaterThan(estimateTokens('abc'));
   });
   it.each([10000, 28000, 128000, 1000000])(

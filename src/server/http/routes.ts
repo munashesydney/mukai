@@ -17,6 +17,7 @@ import {
   botModelSchema,
   createBotSchema,
   providerSchema,
+  providerModelsSchema,
   chatSchema,
   workspaceSchema,
   spaceSchema,
@@ -716,6 +717,11 @@ export function createRoutes({
       }
       if (id && action === 'models' && method === 'GET')
         return send(response, await providers.models(id));
+      if (id && action === 'models' && method === 'PUT') {
+        const input = providerModelsSchema.parse(await jsonBody(request));
+        await providers.validateModel(id, input.defaultModel);
+        return send(response, providers.saveModels(id, input));
+      }
       if (id && action === 'disconnect' && method === 'POST')
         return send(response, await providers.chatgpt.disconnect(id));
       if (!id && method === 'GET') return send(response, providers.list());

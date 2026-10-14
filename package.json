@@ -16,6 +16,7 @@
     "test:cli:packaged": "tsx scripts/cli/smoke.ts",
     "test:cli:browser": "tsx scripts/cli/browser-smoke.ts",
     "test:settings-ui": "tsx scripts/run-shared-settings-smoke.ts",
+    "test:providers-ui": "node --import tsx scripts/provider-settings-smoke.ts",
     "test:cli:installer": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/cli/install-smoke.ps1",
     "build:guest": "tsx scripts/build-guest.ts",
     "build:computer-use": "tsx scripts/build-computer-use.ts",

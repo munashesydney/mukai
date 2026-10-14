@@ -1,45 +1,51 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ProviderInput, ProviderSettings, SavedProviderModel } from '../../../../shared/ai';
+import { Plus } from 'lucide-react';
+import type {
+  ProviderModelsInput,
+  ProviderSettings,
+  SavedProviderModel,
+} from '../../../../shared/ai';
+import {
+  defaultCompatibleContext,
+  defaultCompatibleOutput,
+  findProviderPreset,
+} from '../../../../shared/providerPresets';
 import { ChatGPTModelSelect } from '../../components/ChatGPTModelSelect';
 import { Sheet } from '../../components/ui/Sheet';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
+import { errorText } from '../../utils/errors';
 
-const empty = (): SavedProviderModel => ({
-  id: '',
-  name: '',
-  contextWindowTokens: null,
-  maxOutputTokens: 8192,
-  supportsImages: false,
-});
 export function ProviderModels({
-  value,
-  onChange,
-  disabled,
   provider,
+  onSave,
+  disabled,
 }: {
-  value: ProviderInput;
-  onChange: (value: ProviderInput) => void;
-  disabled: boolean;
   provider: ProviderSettings;
+  onSave: (value: ProviderModelsInput) => Promise<void>;
+  disabled: boolean;
 }) {
-  const models = value.models ?? [];
-  const [editing, setEditing] = useState<string | null>(null),
-    [draft, setDraft] = useState(empty),
-    [error, setError] = useState('');
-  function update(next: SavedProviderModel[], defaultModel = value.defaultModel) {
-    const selected = next.find((model) => model.id === defaultModel) ?? next[0];
-    onChange({
-      ...value,
-      models: next,
-      defaultModel: selected?.id ?? '',
-      contextWindowTokens: selected?.contextWindowTokens ?? null,
-      maxOutputTokens: selected?.maxOutputTokens ?? 8192,
-      supportsImages: selected?.supportsImages ?? false,
-    });
+  const models = provider.models ?? [];
+  const preset = findProviderPreset(provider);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SavedProviderModel>(() => empty());
+  const [error, setError] = useState('');
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  function empty(): SavedProviderModel {
+    return {
+      id: '',
+      name: '',
+      contextWindowTokens: provider.kind === 'compatible' ? defaultCompatibleContext : null,
+      maxOutputTokens: provider.kind === 'compatible' ? defaultCompatibleOutput : 8192,
+      supportsImages: false,
+    };
   }
-  function keep() {
+  async function update(next: SavedProviderModel[], defaultModel = provider.defaultModel) {
+    const selected = next.find((model) => model.id === defaultModel) ?? next[0];
+    await onSave({ models: next, defaultModel: selected?.id ?? '' });
+  }
+  async function saveModel() {
     const id = draft.id.trim();
     if (
       !id ||
@@ -50,7 +56,15 @@ export function ProviderModels({
       draft.maxOutputTokens < 256 ||
       draft.maxOutputTokens > 262144
     ) {
-      setError('Enter a model ID and valid context and output limits.');
+      setError(
+        'Enter a model ID, a context window from 4,096 to 10,000,000 tokens, and an output limit from 256 to 262,144 tokens.',
+      );
+      return;
+    }
+    if (draft.maxOutputTokens >= draft.contextWindowTokens!) {
+      setError(
+        'The output limit must be smaller than the context window to leave room for your messages.',
+      );
       return;
     }
     if (models.some((model) => model.id === id && model.id !== editing)) {
@@ -58,91 +72,202 @@ export function ProviderModels({
       return;
     }
     const model = { ...draft, id, name: draft.name.trim() || id };
-    update(
-      editing ? models.map((item) => (item.id === editing ? model : item)) : [...models, model],
-      value.defaultModel === editing ? id : value.defaultModel,
-    );
-    setEditing(null);
+    setError('');
+    try {
+      await update(
+        editing ? models.map((item) => (item.id === editing ? model : item)) : [...models, model],
+        provider.defaultModel === editing ? id : provider.defaultModel,
+      );
+      setEditing(null);
+    } catch (error) {
+      setError(errorText(error));
+    }
+  }
+  async function remove() {
+    setError('');
+    try {
+      await update(models.filter((model) => model.id !== removeId));
+      setRemoveId(null);
+    } catch (error) {
+      setError(errorText(error));
+    }
+  }
+  function edit(model?: SavedProviderModel) {
+    setEditing(model?.id ?? '');
+    setDraft(model ? { ...model } : empty());
+    setError('');
+    setRemoveId(null);
   }
   return (
-    <section className="provider-models ai-form" aria-label="Saved models">
-      <div>
-        <h4>Models</h4>
-        <p className="ai-caption">
-          Add the models you want in the picker. Each model has its own limits and capabilities.
-        </p>
-      </div>
-      {models.map((model) => (
-        <div className="provider-model-row" key={model.id}>
-          <span>
-            <strong>{model.name}</strong>
-            <small>
-              {model.id} · {model.contextWindowTokens?.toLocaleString() ?? 'Unknown'} context ·{' '}
-              {model.maxOutputTokens.toLocaleString()} output
-            </small>
-          </span>
-          <button
-            type="button"
-            className="text-button"
-            disabled={disabled}
-            onClick={() => {
-              setEditing(model.id);
-              setDraft({ ...model });
-              setError('');
-            }}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className="text-button danger-text"
-            disabled={disabled}
-            onClick={() => update(models.filter((item) => item.id !== model.id))}
-          >
-            Remove
-          </button>
+    <section className="provider-models" aria-label="Saved models" aria-busy={disabled}>
+      <div className="provider-section-heading">
+        <div>
+          <h4>Models</h4>
+          <p className="ai-caption">
+            Choose the models available to your bots. Every change saves directly.
+          </p>
         </div>
-      ))}
-      {!!models.length && (
-        <label>
-          Default model
-          <Dropdown
-            label="Default model"
-            value={value.defaultModel}
-            disabled={disabled}
-            options={models.map((model) => ({ value: model.id, label: model.name }))}
-            onChange={(id) => update(models, id)}
-          />
-        </label>
-      )}
-      {editing === null ? (
         <button
           type="button"
-          className="button"
-          disabled={disabled}
-          onClick={() => {
-            setEditing('');
-            setDraft(empty());
-            setError('');
-          }}
+          className="button button--primary"
+          disabled={disabled || models.length >= 200}
+          onClick={() => edit()}
         >
-          Add model
+          <Plus size={15} /> Add model
         </button>
-      ) : (
+      </div>
+      {error && editing === null && (
+        <div className="ai-alert" role="alert">
+          {error}
+        </div>
+      )}
+      {!!models.length && (
+        <div className="provider-default-model ai-form">
+          <label>
+            Default model
+            <Dropdown
+              label="Default model"
+              value={provider.defaultModel}
+              disabled={disabled}
+              options={models.map((model) => ({ value: model.id, label: model.name }))}
+              onChange={(id) => {
+                setError('');
+                void update(models, id).catch((error) => setError(errorText(error)));
+              }}
+            />
+            <small>Used when a bot follows this provider’s default.</small>
+          </label>
+        </div>
+      )}
+      <div className="provider-model-list">
+        {models.map((model) => (
+          <div className="provider-model-item" key={model.id}>
+            <div className="provider-model-row">
+              <div className="provider-model-info">
+                <div className="provider-model-name">
+                  <strong>{model.name}</strong>
+                  {model.id === provider.defaultModel && (
+                    <span className="provider-default">Default</span>
+                  )}
+                </div>
+                <small className="provider-model-id">{model.id}</small>
+                <span className="provider-model-limits">
+                  {model.contextWindowTokens?.toLocaleString() ?? 'Unknown'} context ·{' '}
+                  {model.maxOutputTokens.toLocaleString()} output ·{' '}
+                  {model.supportsImages ? 'Text & images' : 'Text only'}
+                </span>
+              </div>
+              <div className="ai-form-actions">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={disabled}
+                  onClick={() => edit(model)}
+                  aria-label={`Edit ${model.name}`}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="text-button danger-text"
+                  disabled={disabled}
+                  onClick={() => {
+                    setRemoveId(model.id);
+                    setError('');
+                  }}
+                  aria-label={`Remove ${model.name}`}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+            {removeId === model.id && (
+              <div className="delete-confirm" role="group" aria-label={`Remove ${model.name}`}>
+                <p>
+                  Remove {model.name} from this provider’s model picker?
+                  {model.id === provider.defaultModel &&
+                    (models.length > 1
+                      ? ' The next saved model becomes the default.'
+                      : ' Add another model before using this provider again.')}{' '}
+                  Bots assigned this model may need a new selection.
+                </p>
+                <button
+                  type="button"
+                  className="button button--danger"
+                  disabled={disabled}
+                  onClick={() => void remove()}
+                >
+                  Remove model
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={disabled}
+                  onClick={() => setRemoveId(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {!models.length && (
+          <div className="provider-empty">
+            <h4>No models yet</h4>
+            <p>Add a model to make this connection available to your bots.</p>
+          </div>
+        )}
+      </div>
+      <p className="ai-caption">
+        Context is the model’s total token capacity. Output is your per-response cap; shorter
+        replies can use less. Set limits to match your model.
+      </p>
+      {editing !== null &&
         createPortal(
           <Sheet
             title={editing ? 'Edit model' : 'Add model'}
             className="provider-model-sheet"
-            onClose={() => setEditing(null)}
+            onClose={() => {
+              if (!disabled) setEditing(null);
+            }}
           >
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                event.stopPropagation();
-                keep();
+                void saveModel();
               }}
             >
               <div className="provider-model-editor ai-form bot-editor-body">
+                {!!preset?.models.length && (
+                  <label>
+                    Suggested model
+                    <Dropdown
+                      label="Suggested model"
+                      value={
+                        preset.models.some((model) => model.id === draft.id) ? draft.id : 'custom'
+                      }
+                      disabled={disabled}
+                      options={[
+                        { value: 'custom', label: 'Custom model' },
+                        ...preset.models.map((model) => ({
+                          value: model.id,
+                          label: model.name,
+                          disabled: models.some(
+                            (saved) => saved.id === model.id && saved.id !== editing,
+                          ),
+                        })),
+                      ]}
+                      onChange={(id) => {
+                        setDraft(
+                          id === 'custom'
+                            ? empty()
+                            : { ...preset.models.find((model) => model.id === id)! },
+                        );
+                        setError('');
+                      }}
+                    />
+                  </label>
+                )}
                 {provider.kind === 'chatgpt' ? (
                   <label>
                     Account model
@@ -165,11 +290,18 @@ export function ProviderModels({
                   <label>
                     Model ID
                     <input
+                      required
                       maxLength={150}
                       value={draft.id}
                       disabled={disabled}
                       placeholder="Exact model ID from your provider"
-                      onChange={(event) => setDraft({ ...draft, id: event.target.value })}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => {
+                        const id = event.target.value;
+                        const known = preset?.models.find((model) => model.id === id);
+                        setDraft(known ? { ...known } : { ...draft, id });
+                      }}
                     />
                   </label>
                 )}
@@ -187,6 +319,7 @@ export function ProviderModels({
                   <label>
                     Context window (tokens)
                     <input
+                      required
                       type="number"
                       min={4096}
                       max={10000000}
@@ -209,6 +342,7 @@ export function ProviderModels({
                       ? 'Output reserve (tokens)'
                       : 'Maximum output (tokens)'}
                     <input
+                      required
                       type="number"
                       min={256}
                       max={262144}
@@ -219,6 +353,11 @@ export function ProviderModels({
                         setDraft({ ...draft, maxOutputTokens: Number(event.target.value) })
                       }
                     />
+                    <small>
+                      {provider.kind === 'chatgpt'
+                        ? 'Space reserved for the response.'
+                        : 'Your per-response cap, within the model’s supported limit.'}
+                    </small>
                   </label>
                 </div>
                 <label className="ai-checkbox">
@@ -240,7 +379,7 @@ export function ProviderModels({
               <div className="modal-footer">
                 <div className="ai-form-actions">
                   <button type="submit" className="button button--primary" disabled={disabled}>
-                    Keep model
+                    {disabled ? 'Saving…' : 'Save model'}
                   </button>
                   <button
                     type="button"
@@ -255,9 +394,7 @@ export function ProviderModels({
             </form>
           </Sheet>,
           document.body,
-        )
-      )}
-      <small>Save the connection to apply model changes.</small>
+        )}
     </section>
   );
 }

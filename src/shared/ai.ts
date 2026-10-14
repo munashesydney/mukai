@@ -57,6 +57,10 @@ export interface ProviderInput {
   contextWindowTokens?: number | null;
   maxOutputTokens?: number;
 }
+export interface ProviderModelsInput {
+  models: SavedProviderModel[];
+  defaultModel: string;
+}
 export interface Bot {
   id: string;
   workspaceId: string;

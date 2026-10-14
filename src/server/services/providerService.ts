@@ -8,7 +8,8 @@ import { compatibleImageMiddleware } from './compatibleImageMiddleware';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
-import type { ProviderInput } from '../../shared/ai';
+import type { ProviderInput, ProviderModelsInput } from '../../shared/ai';
+import { defaultCompatibleContext, defaultCompatibleOutput } from '../../shared/providerPresets';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { modelContextWindow } from '../../shared/modelLimits';
@@ -166,6 +167,8 @@ export class ProviderService {
   save(input: ProviderInput, id?: string) {
     const value = { ...input };
     const existing = id ? this.require(id) : undefined;
+    const fallbackOutput = value.kind === 'compatible' ? defaultCompatibleOutput : 8192;
+    const fallbackContext = value.kind === 'compatible' ? defaultCompatibleContext : null;
     if (value.kind === 'chatgpt' && !existing)
       throw new ApiError(400, 'Use Continue with ChatGPT to add this provider.');
     if (value.kind === 'chatgpt' && (value.apiKey || value.clearKey))
@@ -215,8 +218,11 @@ export class ProviderService {
               {
                 id: value.defaultModel,
                 name: value.defaultModel,
-                contextWindowTokens: value.contextWindowTokens ?? null,
-                maxOutputTokens: value.maxOutputTokens ?? 8192,
+                contextWindowTokens:
+                  value.contextWindowTokens !== undefined
+                    ? value.contextWindowTokens
+                    : fallbackContext,
+                maxOutputTokens: value.maxOutputTokens ?? fallbackOutput,
                 supportsImages: value.supportsImages,
               },
             ]
@@ -235,8 +241,8 @@ export class ProviderService {
           ? value.contextWindowTokens
           : ((existing?.defaultModel === value.defaultModel
               ? existing.contextWindowTokens
-              : null) ?? null),
-      maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? 8192,
+              : fallbackContext) ?? fallbackContext),
+      maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? fallbackOutput,
     };
     if (value.models !== undefined) {
       const selected = value.models.find((model) => model.id === value.defaultModel);
@@ -250,6 +256,12 @@ export class ProviderService {
     }
     this.providers.save(provider);
     return this.public(provider);
+  }
+  saveModels(id: string, input: ProviderModelsInput) {
+    if (input.models.length && !input.defaultModel)
+      throw new ApiError(400, 'Choose a saved model as the provider default.');
+    const existing = this.require(id);
+    return this.save({ ...publicProvider(existing), ...input }, id);
   }
   async remove(id: string) {
     this.require(id);
