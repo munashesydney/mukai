@@ -17,7 +17,7 @@ export function Avatar({
       aria-label={person === 'munashe' ? 'Munashe' : botAvatarLabels[avatar]}
     >
       {person === 'munashe' ? (
-        <span className="user-initials">M</span>
+        <span className="user-initials">U</span>
       ) : (
         <img className="avatar-mascot" src={botAvatarSrc(avatar)} alt="" draggable={false} />
       )}

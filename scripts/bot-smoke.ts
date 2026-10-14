@@ -308,13 +308,20 @@ async function main() {
       const mainBot = (await request<Bot[]>('/bots'))[0];
       assert.equal(
         await evaluate(
-          'getComputedStyle(document.querySelector(".bot-conversation-parent .main-bot-badge")).color',
+          `(() => {
+            const expected = document.createElement('span');
+            expected.style.color = 'var(--theme-text)';
+            document.body.append(expected);
+            const matches = getComputedStyle(document.querySelector('.bot-conversation-action .main-bot-badge')).color === getComputedStyle(expected).color;
+            expected.remove();
+            return matches;
+          })()`,
         ),
-        'rgb(173, 120, 237)',
+        true,
       );
       assert.equal(
         await evaluate(
-          'document.querySelectorAll(".bot-conversation-parent .main-bot-badge").length',
+          'document.querySelectorAll(".bot-conversation-action .main-bot-badge").length',
         ),
         1,
       );
@@ -1047,6 +1054,7 @@ async function main() {
       kind: 'tool',
       operation: 'register',
       modulePath: 'echo.ts',
+      permissionMode: 'user_approval',
     });
     console.log('Bot UI: custom tool registered.');
     await click('Custom tools');
@@ -1112,6 +1120,7 @@ async function main() {
                         arguments: JSON.stringify({
                           action: 'send_message',
                           botId: delegationFixture,
+                          mode: 'wait',
                           message: 'Review and ask for permission.',
                         }),
                       },
@@ -1447,6 +1456,10 @@ async function main() {
     );
     await fill('.composer textarea', 'Run with full access.');
     await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    // Explicit user-approval tools still wait in Full access mode.
+    await wait('Boolean(document.querySelector(".tool-approval-card"))');
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 1);
+    await click('Approve tool call');
     await wait(
       `document.querySelectorAll('.ai-message--assistant').length===5 && !document.querySelector('button[aria-label="Stop generation"]')`,
     );
