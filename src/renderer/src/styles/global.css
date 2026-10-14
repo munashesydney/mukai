@@ -143,6 +143,10 @@ p {
 .title-bar button {
   -webkit-app-region: no-drag;
 }
+.title-bar.title-bar-mac {
+  /* Reserve the native traffic lights at x=20, vertically centered in the 58px header. */
+  padding-left: 96px;
+}
 .title-brand {
   width: 140px;
   display: flex;

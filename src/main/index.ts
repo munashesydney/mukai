@@ -26,7 +26,9 @@ function createWindow() {
       app.getAppPath(),
       app.isPackaged ? 'out/renderer/mukai-logo.png' : 'src/renderer/public/mukai-logo.png',
     ),
-    frame: false,
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 20, y: 23 } }
+      : { frame: false }),
     backgroundColor: '#12232e',
     show: false,
     webPreferences: {

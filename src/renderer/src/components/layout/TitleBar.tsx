@@ -38,6 +38,7 @@ export function TitleBar({
   workspaceName?: string;
   disabled?: boolean;
 }) {
+  const isMacDesktop = window.mukai?.platform === 'darwin';
   const [connection, setConnection] = useState('Connecting…');
   useEffect(() => {
     let disposed = false;
@@ -57,7 +58,7 @@ export function TitleBar({
     };
   }, []);
   return (
-    <header className="title-bar">
+    <header className={`title-bar${isMacDesktop ? ' title-bar-mac' : ''}`}>
       <div className="title-brand">
         <Brand />
       </div>
@@ -95,7 +96,7 @@ export function TitleBar({
         <span className="workspace-state">
           <i /> {connection}
         </span>
-        {window.mukai && (
+        {window.mukai && !isMacDesktop && (
           <div className="window-controls">
             <button aria-label="Minimize window" onClick={() => window.mukai?.minimize()}>
               <Minus size={15} />
