@@ -2553,8 +2553,9 @@
 }
 
 .main-bot-badge,
+.heading-identity h1 svg.main-bot-badge,
 .sidebar-row > svg.main-bot-badge {
-  color: #ad78ed;
+  color: var(--theme-text);
   flex-shrink: 0;
   vertical-align: middle;
   margin-left: 8px;

@@ -90,20 +90,22 @@ export function BotConversationsSidebar({
                 }}
               >
                 <span className="bot-conversation-toggle">
-                  <Avatar person={bot.avatar} size="xs" />
+                  <Avatar person={bot.avatar} size="sm" />
                   {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </span>
                 <span>{bot.name}</span>
-                {bot.isMain && <MainBotBadge />}
               </button>
-              <IconButton
-                label={`New conversation with ${bot.name}`}
-                disabled={Boolean(creating)}
-                onClick={() => void create(bot.id)}
-              >
-                <MessageCirclePlus size={17} />
-              </IconButton>
               {!open && <BotConversationStatus conversations={chats} />}
+              <div className="bot-conversation-action">
+                {bot.isMain && <MainBotBadge />}
+                <IconButton
+                  label={`New conversation with ${bot.name}`}
+                  disabled={Boolean(creating)}
+                  onClick={() => void create(bot.id)}
+                >
+                  <MessageCirclePlus size={17} />
+                </IconButton>
+              </div>
             </div>
             {count > 0 && (
               <button

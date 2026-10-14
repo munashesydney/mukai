@@ -513,6 +513,7 @@ p {
   min-width: 0;
   color: inherit;
   font-weight: 600;
+  min-height: 47px;
 }
 .bot-conversation-parent:hover {
   background: transparent;
@@ -522,35 +523,58 @@ p {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 33px;
+  height: 33px;
+}
+.bot-conversation-toggle > .avatar {
+  width: 33px;
+  height: 33px;
 }
 .bot-conversation-toggle > svg {
   position: absolute;
   opacity: 0;
 }
-.bot-conversation-heading > .icon-button {
+.bot-conversation-action {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+}
+.bot-conversation-action > .main-bot-badge {
+  position: absolute;
+  margin-left: 0;
+  color: var(--theme-text);
+  pointer-events: none;
+}
+.bot-conversation-action > .icon-button {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   opacity: 0;
   pointer-events: none;
 }
-.bot-conversation-heading:hover > .icon-button,
-.bot-conversation-heading:has(:focus-visible) > .icon-button,
+.bot-conversation-heading:hover .bot-conversation-action > .icon-button,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-action > .icon-button,
 .bot-conversation-heading:hover .bot-conversation-toggle > svg,
 .bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > svg {
   opacity: 1;
   pointer-events: auto;
 }
 .bot-conversation-heading:hover .bot-conversation-toggle > .avatar,
-.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar {
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar,
+.bot-conversation-heading:hover .bot-conversation-action > .main-bot-badge,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-action > .main-bot-badge {
   opacity: 0;
 }
 @media (hover: none) {
-  .bot-conversation-heading > .icon-button {
+  .bot-conversation-action > .icon-button {
     opacity: 1;
     pointer-events: auto;
+  }
+  .bot-conversation-action > .main-bot-badge {
+    opacity: 0;
   }
 }
 .bot-conversation-list {
