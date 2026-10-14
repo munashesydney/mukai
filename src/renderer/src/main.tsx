@@ -21,6 +21,7 @@ import './styles/memory.css';
 import './styles/skills.css';
 import './styles/computer.css';
 import './styles/notifications.css';
+import './styles/telegram.css';
 
 applyTheme(readPreferences(), window.matchMedia('(prefers-color-scheme: dark)').matches);
 

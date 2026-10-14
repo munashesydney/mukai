@@ -94,7 +94,7 @@ async function main() {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run button"))');
     assert.deepEqual(await request('/workspaces'), []);
-    assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 5);
+    assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 6);
     assert.equal(
       await evaluate(
         'Array.from(document.querySelectorAll(".navigation-rail button")).every(button=>button.disabled)',

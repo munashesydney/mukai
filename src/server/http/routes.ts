@@ -44,6 +44,8 @@ import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 import { trustedLocalRequest } from '../web/origin';
 import type { SettingsService } from '../services/settingsService';
+import type { TelegramService } from '../services/telegramService';
+import { telegramRoutes } from './telegramRoutes';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -67,6 +69,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  telegram,
   settings,
   browserMode = false,
   version = '0.1.0',
@@ -91,6 +94,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  telegram: TelegramService;
   settings: SettingsService;
   browserMode?: boolean;
   version?: string;
@@ -155,7 +159,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(telegram|settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -164,6 +168,8 @@ export function createRoutes({
     const expected = Buffer.from(token);
     if (given.length !== expected.length || !timingSafeEqual(given, expected))
       throw new ApiError(401, 'API authentication required.');
+    if (path === '/telegram' || path.startsWith('/telegram/'))
+      return telegramRoutes(telegram, request, response, path);
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');

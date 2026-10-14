@@ -1,4 +1,4 @@
-import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
+import { Layers3, Target, Puzzle, Settings, Plus, Bell, Send } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { botAvatarSrc } from '../../../../shared/mascots';
 
@@ -8,6 +8,7 @@ const items = [
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
+  { id: 'telegram', label: 'Telegram', icon: Send },
 ] as const;
 export function NavigationRail({
   section,
@@ -54,11 +55,11 @@ export function NavigationRail({
             <button
               className={`rail-link ${!disabled && section === id ? 'is-active' : ''}`}
               key={id}
-              disabled={disabled || (!hasBots && id !== 'bots')}
+              disabled={disabled || (!hasBots && id !== 'bots' && id !== 'telegram')}
               title={
                 disabled
                   ? 'Create your first workspace to unlock this'
-                  : !hasBots && id !== 'bots'
+                  : !hasBots && id !== 'bots' && id !== 'telegram'
                     ? 'Add your first bot to unlock this'
                     : undefined
               }
@@ -85,7 +86,7 @@ export function NavigationRail({
           ))}
       </div>
       <div className="rail-bottom">
-        {section !== 'pursuits' && section !== 'notifications' && (
+        {section !== 'pursuits' && section !== 'notifications' && section !== 'telegram' && (
           <button
             className="rail-add"
             disabled={disabled}

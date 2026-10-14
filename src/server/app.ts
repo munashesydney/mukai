@@ -58,6 +58,11 @@ import { localBrowserRequest } from './web/origin';
 import { CapabilityService } from './capabilities/service';
 import { MemoryService } from './services/memoryService';
 import type { Extractor } from '../../mukai_memory/src';
+import { TelegramConnectionRepository } from './repositories/telegramConnectionRepository';
+import { TelegramSessionRepository } from './repositories/telegramSessionRepository';
+import { TelegramJobRepository } from './repositories/telegramJobRepository';
+import { TelegramService } from './services/telegramService';
+import { TelegramRuntime } from './telegram/runtime';
 
 export interface ApiOptions {
   webDir?: string;
@@ -70,6 +75,8 @@ export interface ApiOptions {
   memoryReviewIdleMs?: number;
   guestBundleDir?: string;
   desktopHelperDir?: string;
+  /** Injectable transport for integration tests; production always uses the fixed Telegram origin. */
+  telegramFetch?: typeof fetch;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -216,6 +223,19 @@ export function createApiServer(options: ApiOptions = {}) {
       chats,
       memory,
     );
+    const telegram = new TelegramService(
+      new TelegramConnectionRepository(store),
+      new TelegramSessionRepository(store),
+      new TelegramJobRepository(store),
+      workspaces,
+      bots,
+      conversations,
+      chats,
+      diagnostics,
+      dir,
+      options.telegramFetch,
+    );
+    const telegramRuntime = new TelegramRuntime(telegram);
     const access = new ToolAccessService(new ToolAssignmentRepository(store));
     const botManagement = new BotManagementService(
       bots,
@@ -250,6 +270,7 @@ export function createApiServer(options: ApiOptions = {}) {
       bots.require(id);
     });
     workspaces.attachDeletionHandler(async (id) => {
+      telegram.stopWorkspace(id);
       const botIds = botRepository.list(id).map((bot) => bot.id);
       // Mark both schedulers stopped synchronously before awaiting cancellations.
       const pursuitStop = pursuits.stopWorkspace(id);
@@ -270,6 +291,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      telegram,
       settings,
       browserMode: Boolean(options.webDir),
       version: options.version,
@@ -326,8 +348,10 @@ export function createApiServer(options: ApiOptions = {}) {
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.
         const capabilityShutdown = capabilities.shutdown();
+        const telegramShutdown = telegramRuntime.shutdown();
         pursuits.stopScheduling();
         await chats.shutdown();
+        await telegramShutdown;
         await pursuits.shutdown();
         await memory.shutdown();
         await capabilityShutdown;
@@ -357,6 +381,7 @@ export function createApiServer(options: ApiOptions = {}) {
       pursuits.start();
       capabilities.start();
       memory.start();
+      telegramRuntime.start();
     });
     return {
       browserSession,
@@ -378,6 +403,7 @@ export function createApiServer(options: ApiOptions = {}) {
       capabilities,
       memory,
       skills,
+      telegram,
     };
   } catch (error) {
     store.db.close();

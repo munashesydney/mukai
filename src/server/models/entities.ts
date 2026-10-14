@@ -12,6 +12,7 @@ export interface AttachmentRecord extends Attachment {
 }
 export interface MessageRecord extends Omit<ChatMessage, 'attachments'> {
   sequence: number;
+  source?: 'telegram';
 }
 
 export function publicProvider(record: ProviderRecord): ProviderSettings {

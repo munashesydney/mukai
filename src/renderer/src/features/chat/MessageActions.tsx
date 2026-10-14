@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Bookmark, Check, Copy } from 'lucide-react';
 import { IconButton } from '../../components/ui/IconButton';
+import { copyText } from '../../services/clipboardService';
 
 export function MessageActions({
   text,
@@ -35,7 +36,7 @@ export function MessageActions({
         disabled={!text}
         onClick={async () => {
           try {
-            await navigator.clipboard.writeText(text);
+            await copyText(text);
             setCopied(true);
             setCopyError(false);
           } catch {

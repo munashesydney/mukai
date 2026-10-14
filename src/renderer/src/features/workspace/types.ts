@@ -1,4 +1,5 @@
-export type Section = 'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications';
+export type Section =
+  'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications' | 'telegram';
 export type SettingsSection =
   'workspace' | 'appearance' | 'providers' | 'environment' | 'memory' | 'routes' | 'limits';
 export type BotId = 'atlas' | 'nova' | 'scout';

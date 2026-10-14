@@ -30,6 +30,7 @@ import { ConversationNavigation } from '../features/ai/ConversationNavigation';
 import { ComputerPanel } from '../features/computer/ComputerPanel';
 import { useNotifications } from '../features/notifications/useNotifications';
 import { NotificationsPage } from '../features/notifications/NotificationsPage';
+import { TelegramPage } from '../features/telegram/TelegramPage';
 
 function WorkspaceLayout({
   children,
@@ -144,7 +145,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const { location, navigate, replace } = workspace;
   const hasBots = ai.bots.length > 0;
   useEffect(() => {
-    if (!ai.loading && !hasBots && location.section !== 'bots' && location.section !== 'settings')
+    if (
+      !ai.loading &&
+      !hasBots &&
+      location.section !== 'bots' &&
+      location.section !== 'settings' &&
+      location.section !== 'telegram'
+    )
       replace({ section: 'bots', item: 'empty' });
   }, [ai.loading, hasBots, location.section, replace]);
   useEffect(() => {
@@ -158,7 +165,13 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   }, []);
   const select = useCallback(
     (next: Location) => {
-      if (!hasBots && next.section !== 'bots' && next.section !== 'settings') return;
+      if (
+        !hasBots &&
+        next.section !== 'bots' &&
+        next.section !== 'settings' &&
+        next.section !== 'telegram'
+      )
+        return;
       navigate(next);
       setTab('Messages');
       setSavedOpen(false);
@@ -288,7 +301,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       <div className={`app-body ${viewingComputer ? 'computer-mode' : ''}`}>
         <div
-          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' || location.section === 'notifications' ? 'is-compact' : ''}`}
+          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' || location.section === 'notifications' || location.section === 'telegram' ? 'is-compact' : ''}`}
           inert={viewingComputer}
           aria-hidden={viewingComputer}
         >
@@ -309,34 +322,36 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                   : setDialog('create-space')
             }
           />
-          {location.section !== 'settings' && location.section !== 'notifications' && (
-            <WorkspaceSidebar
-              workspace={ai.workspace}
-              workspaces={ai.workspaces}
-              onWorkspace={ai.selectWorkspace}
-              onCreateWorkspace={() => setEditingWorkspace('new')}
-              location={
-                location.section === 'bots' && location.item !== 'hierarchy' && bot
-                  ? { ...location, item: bot.id }
-                  : location
-              }
-              spaces={spaceState.spaces}
-              pursuits={pursuitState.pursuits}
-              pursuitsLoading={pursuitState.loading}
-              pursuitsError={pursuitState.error}
-              onSelect={select}
-              collapsed={sidebarCollapsed}
-              bots={ai.bots}
-              botConversations={botChats.conversations}
-              botPairConversations={botPairs.conversations}
-              botPairLoading={botPairs.loading}
-              botPairError={botPairs.error}
-              onRefreshBotPairs={botPairs.refresh}
-              onCreateConversation={createBotConversation}
-              onDialog={openDialog}
-              onSettings={() => openSettings('workspace')}
-            />
-          )}
+          {location.section !== 'settings' &&
+            location.section !== 'notifications' &&
+            location.section !== 'telegram' && (
+              <WorkspaceSidebar
+                workspace={ai.workspace}
+                workspaces={ai.workspaces}
+                onWorkspace={ai.selectWorkspace}
+                onCreateWorkspace={() => setEditingWorkspace('new')}
+                location={
+                  location.section === 'bots' && location.item !== 'hierarchy' && bot
+                    ? { ...location, item: bot.id }
+                    : location
+                }
+                spaces={spaceState.spaces}
+                pursuits={pursuitState.pursuits}
+                pursuitsLoading={pursuitState.loading}
+                pursuitsError={pursuitState.error}
+                onSelect={select}
+                collapsed={sidebarCollapsed}
+                bots={ai.bots}
+                botConversations={botChats.conversations}
+                botPairConversations={botPairs.conversations}
+                botPairLoading={botPairs.loading}
+                botPairError={botPairs.error}
+                onRefreshBotPairs={botPairs.refresh}
+                onCreateConversation={createBotConversation}
+                onDialog={openDialog}
+                onSettings={() => openSettings('workspace')}
+              />
+            )}
         </div>
         <div className="workspace-content">
           {location.section === 'settings' ? (
@@ -359,6 +374,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               }}
               onProvidersChanged={() => void ai.refresh()}
             />
+          ) : location.section === 'telegram' ? (
+            <TelegramPage />
           ) : location.section === 'notifications' ? (
             <NotificationsPage
               workspaceId={ai.workspaceId}

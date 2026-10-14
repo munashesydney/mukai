@@ -3,6 +3,7 @@ import {
   buildBotAttemptPrompt,
   mukaiEnvironmentInstructions,
 } from '../../shared/botSystemPrompt';
+import { telegramUserMessagePrefix } from '../../shared/telegram';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   tool,
@@ -432,6 +433,7 @@ export class ChatService {
           type: 'text',
           text:
             (botChat ? '[' + row.authorName + '] ' : privateChat ? '' : '[You] ') +
+            (row.source === 'telegram' ? telegramUserMessagePrefix + '\n\n' : '') +
             (String(row.content) || 'Please review the attached files.'),
         },
       ];
@@ -462,7 +464,7 @@ export class ChatService {
   }
   async respond(
     bot: BotRecord,
-    value: ChatInput,
+    value: ChatInput & { source?: 'telegram' },
     output: ChatOutput,
     conversationId = 'bot-' + bot.id,
     runtime?: {
@@ -563,6 +565,7 @@ export class ChatService {
         text: value.text,
         attachmentIds: files.map((file) => file.id),
         sender,
+        source: value.source,
       });
     }
     // Recover sender context for responses restored after an approval or server restart, too.

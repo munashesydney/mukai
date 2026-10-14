@@ -138,6 +138,54 @@ On the client, components and chat state call typed services rather than buildin
 
 Each tool has its own folder with a Zod definition and executor. `registry.ts` adapts definitions to the AI SDK and supports `all-bots` or `selected-bots` with explicit bot IDs. Services supply the workspace, cancellation, activity, and artifact context. Add future tools through this registry rather than embedding tool implementations in chat or HTTP routes.
 
+## Telegram
+
+Open **Telegram** in the navigation rail to connect a dedicated bot from
+[@BotFather](https://t.me/BotFather). The guided setup validates the token, creates
+a five-minute one-time pairing link, and asks you to approve the exact Telegram
+account in Mukai. Claiming the link alone grants no access. Choose the workspaces
+to enable and use each workspace’s main bot or select a specific bot.
+
+In your bot’s private Telegram chat, send `/workspaces` and select a workspace.
+Text messages then use a dedicated, persistent Mukai conversation. Switching
+workspaces resumes its conversation; `/new` creates a fresh one and `/stop`
+cancels the selected conversation’s response and queued messages. Conversations
+remain available in the desktop/browser app. Attachments and group chats are not
+supported in this version. Tool approvals still happen in Mukai according to the
+workspace’s existing approval settings.
+
+The existing backend owns one long poller, a durable SQLite inbox, a separate AI
+turn queue, and a rate-limited outbound queue. It requires no webhook, public
+endpoint, or extra worker deployment. Mukai must be running and the computer
+awake; the standalone CLI/backend can also host the connection. Use only one
+poller per Telegram bot. A bot with an existing webhook must be disconnected
+from that integration before Mukai can connect; Mukai never removes it silently.
+
+Replies use Telegram’s streaming drafts when available and persist a final text
+answer; otherwise a typing indicator accompanies the final reply. Long answers
+are split into messages. Reasoning, raw tool outputs, and approval payloads are
+not forwarded. Incoming messages are deduplicated and queued against their
+original workspace/conversation. Access is checked again before execution and
+delivery. Interrupted AI/tool executions are not automatically replayed after
+a restart, and ambiguous outbound sends are marked uncertain rather than sent
+again. Review the saved conversation and Telegram chat before retrying those.
+
+Tokens use the existing local AES-256-GCM credential key and never return in API
+responses or logs. Pairing secrets are stored only as hashes; numeric Telegram
+identity and signed workspace callbacks enforce account and workspace access.
+Pause, revoke the paired account, or disconnect the bot from the Telegram tab.
+Disconnecting removes the saved token and pairing/session data while preserving
+Mukai conversations. As with provider credentials, protect the complete local
+data directory, which also holds the encryption key. Telegram carries the chat
+text in addition to the AI provider you configured.
+
+`npm run test:telegram-ui` runs the production Electron renderer against a
+disposable real Mukai backend and a test-only Telegram transport. It covers the
+interactive setup, explicit account approval, workspace/bot selection, connection
+controls, keyboard focus, and light/dark/narrow layouts. Build the app first.
+Backend tests under `src/server/telegram/` cover access isolation, durable routing,
+recovery, cancellation, transport sanitization, and the shared AI runtime.
+
 ## Workspace skills
 
 Tools → Skills manages reusable workflow folders. Create or edit `SKILL.md` (YAML `name` and `description`, followed by instructions), add supporting text files, or preview an import from a public GitHub file/folder URL. Imports preserve references, scripts, licenses, and binary assets, record a pinned commit, and validate all files before saving. Exported JSON bundles can be imported again. Files live in Mukai’s workspace-scoped SQLite store; importing never executes scripts or installs dependencies.

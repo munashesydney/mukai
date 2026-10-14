@@ -251,6 +251,7 @@ export class MessageRepository {
     text: string;
     attachmentIds: string[];
     sender?: { id: string; name: string };
+    source?: 'telegram';
   }) {
     this.database.transaction(() => {
       const now = new Date().toISOString();
@@ -263,7 +264,7 @@ export class MessageRepository {
       }
       for (const role of ['user', 'assistant'] as const) {
         this.database.run(
-          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
           role === 'user' ? input.userId : input.assistantId,
           role === 'user' && input.sender ? input.sender.id : input.botId,
           input.requestId,
@@ -274,6 +275,7 @@ export class MessageRepository {
           role === 'assistant' ? now : null,
           input.conversationId,
           role === 'user' ? input.sender?.name || 'You' : input.authorName,
+          role === 'user' ? (input.source ?? null) : null,
         );
       }
       for (const id of input.attachmentIds) {
