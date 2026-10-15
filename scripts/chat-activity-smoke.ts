@@ -117,13 +117,15 @@ async function main() {
       conversationId,
       JSON.stringify(activities),
     );
+  const telegramMessageId = randomUUID();
   addMessage(
-    randomUUID(),
+    telegramMessageId,
     conversation.id,
     'user',
     'Build a project preview and ask Nova to review it.',
     null,
   );
+  api.store.run("UPDATE messages SET source='telegram' WHERE id=?", telegramMessageId);
   const messageId = randomUUID();
   addMessage(
     messageId,
@@ -229,6 +231,24 @@ async function main() {
     );
     await window.reload();
     await wait('document.querySelectorAll(".chat-activity-row").length===5');
+    assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
+    assert(
+      await evaluate(
+        `document.querySelector('.message-telegram-source').closest('.ai-message').textContent.includes('Build a project preview')`,
+      ),
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".message-telegram-source").getAttribute("aria-label")',
+      ),
+      'Sent from Telegram',
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelectorAll(".ai-message--assistant .message-telegram-source").length',
+      ),
+      0,
+    );
     assert(
       await evaluate(
         `getComputedStyle(document.querySelector('.conversation')).backgroundColor===getComputedStyle(document.querySelector('.chat-activity-drawer')).backgroundColor`,

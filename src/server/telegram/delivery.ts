@@ -1,6 +1,7 @@
 import { TelegramApiError, type TelegramClient } from './client';
 import type { TelegramService } from '../services/telegramService';
 import type { TelegramJob } from './types';
+import { telegramFormatting } from './formatting';
 
 interface Draft {
   job: TelegramJob;
@@ -18,6 +19,7 @@ export class TelegramDeliveryQueue {
   private draftsSupported = true;
   private stopped = false;
   private blocked = false;
+  private lastWasDraft = false;
   constructor(
     private service: TelegramService,
     private client: TelegramClient,
@@ -76,45 +78,97 @@ export class TelegramDeliveryQueue {
       }
       return;
     }
-    const delivery = jobs.delivery(Date.now());
+    let delivery = jobs.delivery(Date.now());
+    if (
+      delivery &&
+      (delivery.priority ?? 0) >= 2 &&
+      !this.lastWasDraft &&
+      [...this.drafts.values()].some((draft) => draft.text && draft.text !== draft.sent)
+    )
+      delivery = undefined;
     if (delivery) {
+      this.lastWasDraft = false;
       if (!this.service.deliveryAllowed(delivery)) {
         jobs.deliveryState(delivery.id, 'cancelled');
         return;
       }
+      if (jobs.splitPending(delivery)) return;
       jobs.sending(delivery.id);
       this.nextAt = Date.now() + 1100;
       try {
-        const result = await this.client.call<{ message_id: number }>(
-          'sendMessage',
-          {
-            chat_id: delivery.chatId,
-            text: delivery.text,
-            ...(delivery.markup ? { reply_markup: delivery.markup } : {}),
-            ...(delivery.replyTo
-              ? {
-                  reply_parameters: {
-                    message_id: delivery.replyTo,
-                    allow_sending_without_reply: true,
-                  },
-                }
-              : {}),
-            link_preview_options: { is_disabled: true },
-          },
-          signal,
+        const plainText = this.service.messageText(
+          delivery.text,
+          delivery.workspaceId,
+          delivery.botId,
         );
-        if (!Number.isSafeInteger(result?.message_id)) {
+        const formatted = telegramFormatting(plainText);
+        const payload = delivery.editMessageId
+          ? {
+              chat_id: delivery.chatId,
+              message_id: delivery.editMessageId,
+              reply_markup: delivery.markup,
+            }
+          : {
+              chat_id: delivery.chatId,
+              ...formatted,
+              ...(delivery.markup ? { reply_markup: delivery.markup } : {}),
+              ...(delivery.replyTo
+                ? {
+                    reply_parameters: {
+                      message_id: delivery.replyTo,
+                      allow_sending_without_reply: true,
+                    },
+                  }
+                : {}),
+              link_preview_options: { is_disabled: true },
+            };
+        let result: { message_id: number } | true;
+        try {
+          result = await this.client.call(
+            delivery.editMessageId ? 'editMessageReplyMarkup' : 'sendMessage',
+            payload,
+            signal,
+          );
+        } catch (error) {
+          // A confirmed rejection is safe to retry as plain text; uncertain sends are never replayed.
+          if (
+            delivery.editMessageId ||
+            !formatted.entities ||
+            !(error instanceof TelegramApiError) ||
+            error.code !== 400 ||
+            error.uncertain
+          )
+            throw error;
+          result = await this.client.call(
+            'sendMessage',
+            { ...payload, text: plainText, entities: undefined },
+            signal,
+          );
+        }
+        const messageId =
+          delivery.editMessageId ?? (typeof result === 'object' ? result?.message_id : undefined);
+        if (!Number.isSafeInteger(messageId)) {
           jobs.deliveryState(delivery.id, 'uncertain');
           this.service.reportDeliveryError(
             'Telegram did not confirm reply delivery. Check Telegram before sending another request.',
           );
           return;
         }
-        jobs.delivered(delivery.id, result.message_id);
+        jobs.delivered(delivery.id, messageId!);
       } catch (error) {
         const failure =
           error instanceof TelegramApiError ? error : new TelegramApiError(0, 0, true);
-        if (failure.uncertain) jobs.deliveryState(delivery.id, 'uncertain');
+        if (delivery.editMessageId && failure.code === 400) {
+          jobs.delivered(delivery.id, delivery.editMessageId);
+          return;
+        } else if (
+          delivery.editMessageId &&
+          delivery.attempts < 3 &&
+          (failure.uncertain || failure.code >= 500 || failure.code === 0)
+        ) {
+          this.nextAt = Date.now() + 2000;
+          jobs.deliveryState(delivery.id, 'pending', this.nextAt);
+        } else if (failure.uncertain) jobs.deliveryState(delivery.id, 'uncertain');
         else if (failure.code === 429 && delivery.attempts < 10) {
           this.nextAt = Date.now() + Math.max(1000, failure.retryAfter * 1000);
           jobs.deliveryState(delivery.id, 'pending', this.nextAt);
@@ -145,11 +199,19 @@ export class TelegramDeliveryQueue {
       this.nextAt = Date.now() + 1100;
       draft.sent = draft.text;
       draft.refreshedAt = Date.now();
+      this.lastWasDraft = true;
       try {
         await this.client.call(
           this.draftsSupported ? 'sendMessageDraft' : 'sendChatAction',
           this.draftsSupported
-            ? { chat_id: draft.job.chatId, draft_id: draft.draftId, text: draft.text }
+            ? {
+                chat_id: draft.job.chatId,
+                draft_id: draft.draftId,
+                ...telegramFormatting(
+                  this.service.messageText(draft.text, draft.job.workspaceId, draft.job.botId),
+                  false,
+                ),
+              }
             : { chat_id: draft.job.chatId, action: 'typing' },
           signal,
         );

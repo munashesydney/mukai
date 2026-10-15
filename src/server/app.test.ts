@@ -1147,6 +1147,37 @@ describe('Mukai bots and AI API', () => {
     },
   );
 
+  it('delivers a denial reason through the API into the ask tool result and activity', async () => {
+    await configure();
+    mode = 'ask-approval';
+    const result = chat('Ask permission to publish');
+    const item = await pendingApproval('custom-call-1');
+    for (const body of [
+      { approved: true, reason: 'Not yet.' },
+      { approved: false, reason: '   ' },
+      { approved: false, reason: 'x'.repeat(16001) },
+    ])
+      expect((await request(`/approvals/${item.id}`, 'POST', body)).response.status).toBe(400);
+    expect(
+      (
+        await request(`/approvals/${item.id}`, 'POST', {
+          approved: false,
+          reason: '  Let me review it first.  ',
+        })
+      ).response.status,
+    ).toBe(200);
+    await result;
+    const toolMessages = calls.at(-1)!.messages.filter((message) => message.role === 'tool');
+    expect(JSON.parse(String(toolMessages[0].content))).toEqual({
+      action: 'approval',
+      approved: false,
+      reason: 'Let me review it first.',
+    });
+    expect(
+      (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity![0].summary,
+    ).toContain('Reason: Let me review it first.');
+  });
+
   it('keeps parallel questions separate from tool permissions and rejects bulk clarification grants atomically', async () => {
     await configure();
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });

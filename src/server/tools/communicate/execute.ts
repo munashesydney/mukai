@@ -46,7 +46,7 @@ export function communicateTools(context: {
           action: input.action,
           path: question.question.slice(0, 120),
           status: 'complete',
-          summary: `${input.question}\n\n${result.action === 'clarification' ? 'User answer: ' + result.answer : result.approved ? 'Approved by the user.' : 'Denied by the user. The proposed action is not authorized.'}`,
+          summary: `${input.question}\n\n${result.action === 'clarification' ? 'User answer: ' + result.answer : result.approved ? 'Approved by the user.' : 'Denied by the user. The proposed action is not authorized.' + (result.reason ? '\nReason: ' + result.reason : '')}`,
         });
         return result;
       },

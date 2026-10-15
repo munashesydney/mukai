@@ -1,6 +1,7 @@
 import type { AskInput } from './ask';
 
 export type ApprovalMode = 'ask-for-approval' | 'full-access';
+export type ApprovalDecision = boolean | { approved: false; reason: string };
 
 export interface ApprovalTarget {
   kind: 'private' | 'space' | 'pursuit_run' | 'bot';

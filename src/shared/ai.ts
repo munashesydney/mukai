@@ -163,6 +163,7 @@ export interface ChatMessage {
   requestId: string;
   botId: string;
   role: 'user' | 'assistant';
+  source?: 'telegram';
   content: string;
   status: MessageStatus;
   error: string | null;

@@ -13,6 +13,7 @@ const messageSchema = z.object({
   chat: z.object({ id: z.number().int().safe(), type: z.string().max(32) }),
   from: userSchema.optional(),
   text: z.string().max(16000).optional(),
+  reply_to_message: z.object({ message_id: telegramId }).optional(),
 });
 export const updateSchema = z.object({
   update_id: z.number().int().nonnegative().safe(),
@@ -28,7 +29,9 @@ export const updateSchema = z.object({
 });
 export type TelegramUpdate = z.infer<typeof updateSchema>;
 export type TelegramUserRecord = z.infer<typeof userSchema>;
-export type TelegramMarkup = { inline_keyboard: { text: string; callback_data: string }[][] };
+export type TelegramMarkup =
+  | { inline_keyboard: { text: string; callback_data: string }[][] }
+  | { force_reply: true; input_field_placeholder?: string; selective?: boolean };
 export interface TelegramSession {
   id: string;
   connectionId: string;
@@ -36,6 +39,7 @@ export interface TelegramSession {
   workspaceId: string;
   botId: string;
   conversationId: string;
+  notificationId?: string;
 }
 export interface TelegramJob extends TelegramSession {
   sequence: number;
@@ -51,7 +55,12 @@ export interface TelegramDelivery {
   text: string;
   markup?: TelegramMarkup;
   replyTo?: number;
+  replyAction?: 'deny_reason';
   workspaceId?: string;
   botId?: string;
   attempts: number;
+  workspaceEvent?: boolean;
+  eventId?: string;
+  editMessageId?: number;
+  priority?: number;
 }

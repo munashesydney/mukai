@@ -30,6 +30,10 @@ import type { BotService } from './botService';
 import type { ConversationService } from './conversationService';
 import type { ChatService } from './chatService';
 import type { DiagnosticService } from './diagnosticService';
+import type { TelegramActivity } from '../telegram/activity';
+import type { ToolApproval } from '../../shared/approvals';
+import type { TelegramSession } from '../telegram/types';
+import { telegramMessage } from '../telegram/presentation';
 
 interface TelegramLifecycle {
   start(): void;
@@ -52,6 +56,7 @@ function requestId(value: string) {
 export class TelegramService {
   private key: Buffer;
   private lifecycle?: TelegramLifecycle;
+  private activity?: TelegramActivity;
   private changing = false;
   private pairingCode?: { hash: string; code: string };
   private deliveryError: string | null = null;
@@ -77,6 +82,74 @@ export class TelegramService {
   }
   attachRuntime(runtime: TelegramLifecycle) {
     this.lifecycle = runtime;
+  }
+  attachActivity(activity: TelegramActivity) {
+    this.activity = activity;
+  }
+  workspaceAllowed(connectionId: string, chatId: number, workspaceId: string, botId?: string) {
+    if (!this.targetAllowed(connectionId, chatId)) return false;
+    try {
+      return (
+        !this.workspaces.require(workspaceId).deleting &&
+        this.connections.access().some((row) => row.workspace_id === workspaceId) &&
+        (!botId || this.bots.require(botId).workspaceId === workspaceId)
+      );
+    } catch {
+      return false;
+    }
+  }
+  approvalWorkspace(request: ToolApproval) {
+    try {
+      const bot = this.bots.require(request.botId);
+      const conversation = this.conversations.require(request.conversationId);
+      if (conversation.workspaceId !== bot.workspaceId) return;
+      if (!conversation.botIds.includes(request.botId)) return;
+      if (request.target && request.target.workspaceId !== bot.workspaceId) return;
+      return bot.workspaceId;
+    } catch {
+      return;
+    }
+  }
+  sessionAllowed(session: TelegramSession) {
+    if (!session.notificationId)
+      return this.targetAllowed(
+        session.connectionId,
+        session.chatId,
+        session.workspaceId,
+        session.botId,
+      );
+    if (
+      !this.workspaceAllowed(
+        session.connectionId,
+        session.chatId,
+        session.workspaceId,
+        session.botId,
+      )
+    )
+      return false;
+    return !!this.jobs.database.get(
+      `SELECT 1 FROM bot_notifications n JOIN conversations c ON c.id=?
+       WHERE n.id=? AND n.workspace_id=? AND n.bot_id=? AND c.workspace_id=n.workspace_id AND c.owner_bot_id=n.bot_id AND c.kind='private'`,
+      session.conversationId,
+      session.notificationId,
+      session.workspaceId,
+      session.botId,
+    );
+  }
+  messageText(text: string, workspaceId?: string, botId?: string) {
+    const name = workspaceId
+      ? this.workspaces.list().find((workspace) => workspace.id === workspaceId)?.name
+      : undefined;
+    let botName: string | undefined;
+    if (botId) {
+      try {
+        const bot = this.bots.require(botId);
+        if (bot.workspaceId === workspaceId) botName = bot.name;
+      } catch {
+        /* A deleted bot has no public label. */
+      }
+    }
+    return telegramMessage(this.diagnostics.redactSecrets(text), name, botName);
   }
   connection() {
     return this.connections.get();
@@ -250,14 +323,7 @@ export class TelegramService {
       const previous = this.sessions.all();
       this.connections.setAccess(input.workspaces);
       for (const session of previous) {
-        if (
-          !this.targetAllowed(
-            session.connectionId,
-            session.chatId,
-            session.workspaceId,
-            session.botId,
-          )
-        ) {
+        if (!this.sessionAllowed(session)) {
           this.chats.stopConversation(session.conversationId);
           this.jobs.cancelConversation(session.conversationId);
         }
@@ -374,10 +440,7 @@ export class TelegramService {
     return !workspaceId || (!!botId && this.resolvedBot(workspaceId)?.id === botId);
   }
   jobAllowed(job: TelegramJob) {
-    return (
-      this.jobs.runnable(job.id) &&
-      this.targetAllowed(job.connectionId, job.chatId, job.workspaceId, job.botId)
-    );
+    return this.jobs.runnable(job.id) && this.sessionAllowed(job);
   }
   private callback(connection: TelegramConnection, workspaceId: string) {
     const bot = this.resolvedBot(workspaceId);
@@ -397,8 +460,21 @@ export class TelegramService {
     if (!message) return;
     const chatId = message.chat.id,
       id = requestId(`${connectionId}:${update.update_id}`);
-    const reply = (text: string, workspaceId?: string, botId?: string) =>
-      this.jobs.queue({ connectionId, chatId, text, workspaceId, botId }, id);
+    const selected = this.sessions.current(connectionId, chatId);
+    const context = selected && this.sessionAllowed(selected) ? selected : undefined;
+    const reply = (text: string, workspaceId = context?.workspaceId, botId = context?.botId) =>
+      this.jobs.queue(
+        {
+          connectionId,
+          chatId,
+          text,
+          workspaceId,
+          botId,
+          workspaceEvent: !!context?.notificationId,
+        },
+        id,
+      );
+    if (this.activity?.handle(connection, update, id)) return;
     if (update.callback_query) {
       const data = update.callback_query.data ?? '',
         match = /^w:(.{1,40}):([A-Za-z0-9_-]{12})$/.exec(data);
@@ -454,11 +530,18 @@ export class TelegramService {
       this.jobs.cancelConversation(session.conversationId);
       this.chats.stopConversation(session.conversationId);
       if (command === 'new') {
-        if (!this.targetAllowed(connectionId, chatId, session.workspaceId, session.botId)) {
+        if (!this.sessionAllowed(session)) {
           reply('Workspace access changed. Send /workspaces to choose again.');
           return;
         }
-        this.sessions.select(connectionId, chatId, session.workspaceId, session.botId, true);
+        this.sessions.select(
+          connectionId,
+          chatId,
+          session.workspaceId,
+          session.botId,
+          true,
+          session.notificationId,
+        );
       }
       reply(
         command === 'new'
@@ -469,7 +552,7 @@ export class TelegramService {
     }
     if (command) {
       reply(
-        'Send /workspaces to choose a workspace, then write a message. Use /new for a fresh conversation or /stop to stop a response. Tool approvals are handled in Mukai.',
+        'Send /workspaces to choose a workspace, then write a message. Use /new for a fresh conversation or /stop to stop a response. Approvals, questions, and bot updates from enabled workspaces arrive here. Use their buttons or reply to a question. /approvals shows waiting requests; /updates shows unread updates.',
       );
       return;
     }
@@ -477,7 +560,7 @@ export class TelegramService {
       reply('Telegram v1 supports text messages. Please type what you’d like Mukai to work on.');
       return;
     }
-    if (!session || !this.targetAllowed(connectionId, chatId, session.workspaceId, session.botId)) {
+    if (!session || !this.sessionAllowed(session)) {
       reply('Send /workspaces and choose an enabled workspace first.');
       return;
     }
@@ -517,7 +600,11 @@ export class TelegramService {
     this.finish(job, message ?? undefined);
   }
   deliveryAllowed(value: TelegramDelivery) {
-    return this.targetAllowed(value.connectionId, value.chatId, value.workspaceId, value.botId);
+    const allowed =
+      value.workspaceEvent && value.workspaceId
+        ? this.workspaceAllowed(value.connectionId, value.chatId, value.workspaceId, value.botId)
+        : this.targetAllowed(value.connectionId, value.chatId, value.workspaceId, value.botId);
+    return allowed && (this.activity?.validDelivery(value) ?? true);
   }
   stopWorkspace(workspaceId: string) {
     for (const session of this.sessions

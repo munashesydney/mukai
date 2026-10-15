@@ -63,6 +63,7 @@ import { TelegramSessionRepository } from './repositories/telegramSessionReposit
 import { TelegramJobRepository } from './repositories/telegramJobRepository';
 import { TelegramService } from './services/telegramService';
 import { TelegramRuntime } from './telegram/runtime';
+import { TelegramActivity } from './telegram/activity';
 
 export interface ApiOptions {
   webDir?: string;
@@ -235,7 +236,10 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
       options.telegramFetch,
     );
-    const telegramRuntime = new TelegramRuntime(telegram);
+    const telegramRuntime = new TelegramRuntime(
+      telegram,
+      new TelegramActivity(telegram, approvals, notifications),
+    );
     const access = new ToolAccessService(new ToolAssignmentRepository(store));
     const botManagement = new BotManagementService(
       bots,
@@ -387,6 +391,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browserSession,
       ownerAuth,
       notifications,
+      approvals,
       conversationHistory,
       access,
       botManagement,

@@ -31,7 +31,10 @@ describe('Existing database upgrades', () => {
     database.run('UPDATE conversations SET name=? WHERE id=?', label + ' Act', 'bot-scout');
     // Recreate the preceding schema so reopening runs the actual append-only upgrade.
     database.db.exec('ALTER TABLE messages DROP COLUMN source');
-    database.run('DELETE FROM schema_migrations WHERE version=?', migrations.length);
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE messages ADD COLUMN source')) + 1,
+    );
     database.db.close();
     database = new Database(dir);
     try {

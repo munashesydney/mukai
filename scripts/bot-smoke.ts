@@ -444,6 +444,7 @@ async function main() {
     if (process.argv.includes('--approvals-only')) {
       let explicit = false;
       let parallel = false;
+      let receivedDenialReason = false;
       modelFixture = createServer(async (req, res) => {
         if (req.method === 'GET') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -457,6 +458,8 @@ async function main() {
         const completed = input.messages
           .slice(lastUser + 1)
           .some((message) => message.role === 'tool');
+        if (completed && JSON.stringify(input.messages).includes('Review the draft first.'))
+          receivedDenialReason = true;
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const delta = completed
           ? { role: 'assistant', content: 'Approval check complete.' }
@@ -575,6 +578,34 @@ async function main() {
       await wait(
         `!document.querySelector('.ask-request-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
       );
+      await send('Ask for confirmation with a reason.');
+      await wait('Boolean(document.querySelector(".ask-request-card"))');
+      await click('Deny with reason');
+      await wait('Boolean(document.querySelector(\'textarea[aria-label="Reason for denying"]\'))');
+      assert.equal(
+        await evaluate('document.activeElement.getAttribute("aria-label")'),
+        'Reason for denying',
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".ask-request-actions button[type=submit]").disabled',
+        ),
+        true,
+      );
+      await click('Cancel');
+      assert.equal((await request<ApprovalState>('/approvals')).pending.length, 1);
+      assert.equal(await evaluate('document.querySelector(".ask-request-card textarea")'), null);
+      await click('Deny with reason');
+      await fill('textarea[aria-label="Reason for denying"]', 'Review the draft first.');
+      window.setSize(900, 900);
+      await capture('ask-deny-reason-narrow.png');
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('ask-deny-reason-dark.png');
+      await evaluate('document.querySelector(".ask-request-actions button[type=submit]").click()');
+      await wait(
+        `!document.querySelector('.ask-request-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+      );
+      assert.equal(receivedDenialReason, true);
       explicit = false;
       parallel = true;
       await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
@@ -1684,7 +1715,7 @@ async function main() {
     );
     assert(await evaluate('Boolean(document.querySelector(".composer textarea"))'));
     parallelFixture = false;
-    // Approval questions offer just Approve and Deny, and report both outcomes.
+    // Approval questions keep immediate Approve/Deny alongside the optional reason flow.
     askFixture = 'approval';
     for (const choice of ['Deny', 'Approve']) {
       await evaluate(
@@ -1698,7 +1729,7 @@ async function main() {
         await evaluate(
           'Array.from(document.querySelectorAll(".ask-request-actions button")).map(button=>button.textContent)',
         ),
-        ['Deny', 'Approve'],
+        ['Deny', 'Deny with reason', 'Approve'],
       );
       assert.equal(await evaluate('document.querySelector(".ask-request-card textarea")'), null);
       if (choice === 'Deny') await capture('ask-approval-card.png');

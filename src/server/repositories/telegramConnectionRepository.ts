@@ -103,15 +103,18 @@ export class TelegramConnectionRepository {
           value.workspaceId,
           value.botId,
         );
+      this.database.run(
+        'DELETE FROM telegram_events WHERE NOT EXISTS (SELECT 1 FROM telegram_access a WHERE a.workspace_id=telegram_events.workspace_id)',
+      );
       // Workspace menus are snapshots; do not send an old access list after a settings change.
       this.database.run(
         "UPDATE telegram_outbox SET state='cancelled' WHERE state='pending' AND markup_json IS NOT NULL",
       );
       this.database.run(`DELETE FROM telegram_sessions WHERE NOT EXISTS (
-        SELECT 1 FROM telegram_access a WHERE a.workspace_id=telegram_sessions.workspace_id AND (a.bot_id IS NULL OR a.bot_id=telegram_sessions.bot_id))`);
+        SELECT 1 FROM telegram_access a WHERE a.workspace_id=telegram_sessions.workspace_id AND (telegram_sessions.notification_id IS NOT NULL OR a.bot_id IS NULL OR a.bot_id=telegram_sessions.bot_id))`);
       this.database
         .run(`UPDATE telegram_outbox SET state='cancelled' WHERE state IN ('pending','sending') AND workspace_id IS NOT NULL
-        AND NOT EXISTS(SELECT 1 FROM telegram_access a WHERE a.workspace_id=telegram_outbox.workspace_id AND (a.bot_id IS NULL OR a.bot_id=telegram_outbox.bot_id))`);
+        AND NOT EXISTS(SELECT 1 FROM telegram_access a WHERE a.workspace_id=telegram_outbox.workspace_id AND (telegram_outbox.workspace_event=1 OR a.bot_id IS NULL OR a.bot_id=telegram_outbox.bot_id))`);
     });
   }
 }

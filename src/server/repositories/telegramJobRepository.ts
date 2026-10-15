@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { splitTelegramText } from '../telegram/commands';
+import { telegramBodyLimit } from '../telegram/presentation';
 import type { Database, Row } from '../db/database';
 import type {
   TelegramDelivery,
@@ -75,6 +77,12 @@ export class TelegramJobRepository {
       text,
       Date.now(),
     );
+    if (session.notificationId)
+      this.database.run(
+        'UPDATE telegram_chat_jobs SET notification_id=? WHERE id=?',
+        session.notificationId,
+        id,
+      );
   }
   private project(row: Row): TelegramJob {
     return {
@@ -89,6 +97,7 @@ export class TelegramJobRepository {
       sourceMessageId: Number(row.source_message_id),
       text: String(row.text),
       state: row.state as TelegramJob['state'],
+      notificationId: (row.notification_id as string | null) ?? undefined,
     };
   }
   jobs(state: TelegramJob['state']) {
@@ -114,19 +123,33 @@ export class TelegramJobRepository {
     );
   }
   queue(value: Omit<TelegramDelivery, 'id' | 'attempts'>, id: string = randomUUID()) {
-    this.database.run(
-      `INSERT OR IGNORE INTO telegram_outbox(id,connection_id,chat_id,text,markup_json,reply_to,workspace_id,bot_id,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?)`,
-      id,
-      value.connectionId,
-      value.chatId,
-      value.text,
-      value.markup ? JSON.stringify(value.markup) : null,
-      value.replyTo ?? null,
-      value.workspaceId ?? null,
-      value.botId ?? null,
-      Date.now(),
-    );
+    const parts = splitTelegramText(value.text || ' ', telegramBodyLimit);
+    this.database.db.exec('SAVEPOINT telegram_delivery');
+    try {
+      for (const [index, text] of parts.entries()) {
+        this.database.run(
+          `INSERT OR IGNORE INTO telegram_outbox(id,connection_id,chat_id,text,markup_json,reply_to,workspace_id,bot_id,created_at,workspace_event,event_id,edit_message_id,reply_action)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          index ? `${id}:part:${index}` : id,
+          value.connectionId,
+          value.chatId,
+          text,
+          value.markup && index === parts.length - 1 ? JSON.stringify(value.markup) : null,
+          value.replyTo ?? null,
+          value.workspaceId ?? null,
+          value.botId ?? null,
+          Date.now(),
+          Number(value.workspaceEvent ?? false),
+          value.eventId ?? null,
+          value.editMessageId ?? null,
+          value.replyAction ?? null,
+        );
+      }
+      this.database.db.exec('RELEASE telegram_delivery');
+    } catch (error) {
+      this.database.db.exec('ROLLBACK TO telegram_delivery; RELEASE telegram_delivery');
+      throw error;
+    }
   }
   complete(job: TelegramJob, parts: string[], state: 'done' | 'interrupted') {
     this.database.transaction(() => {
@@ -139,15 +162,40 @@ export class TelegramJobRepository {
             replyTo: job.sourceMessageId,
             workspaceId: job.workspaceId,
             botId: job.botId,
+            workspaceEvent: !!job.notificationId,
           },
           `${job.id}:${index}`,
         );
       this.state(job.id, state);
     });
   }
+  splitPending(value: TelegramDelivery) {
+    const parts = splitTelegramText(value.text, telegramBodyLimit);
+    if (parts.length <= 1) return false;
+    this.database.transaction(() => {
+      this.database.run(
+        'UPDATE telegram_outbox SET text=?,markup_json=NULL WHERE id=?',
+        parts[0],
+        value.id,
+      );
+      for (let index = 1; index < parts.length; index++)
+        this.queue(
+          {
+            ...value,
+            text: parts[index],
+            markup: index === parts.length - 1 ? value.markup : undefined,
+          },
+          `${value.id}:continued:${index}`,
+        );
+    });
+    return true;
+  }
   delivery(now: number): TelegramDelivery | undefined {
     const row = this.database.get(
-      "SELECT * FROM telegram_outbox WHERE state='pending' AND next_attempt_at<=? ORDER BY sequence LIMIT 1",
+      `SELECT o.*,CASE WHEN o.edit_message_id IS NOT NULL THEN 0
+        WHEN o.event_id IS NULL THEN 0 WHEN e.kind='approval' THEN 1 ELSE 2 END AS priority
+       FROM telegram_outbox o LEFT JOIN telegram_events e ON e.id=o.event_id
+       WHERE o.state='pending' AND o.next_attempt_at<=? ORDER BY priority,o.sequence LIMIT 1`,
       now,
     );
     if (!row) return;
@@ -161,6 +209,11 @@ export class TelegramJobRepository {
       workspaceId: row.workspace_id as string | undefined,
       botId: row.bot_id as string | undefined,
       attempts: Number(row.attempts),
+      workspaceEvent: !!row.workspace_event,
+      eventId: (row.event_id as string | null) ?? undefined,
+      replyAction: row.reply_action === 'deny_reason' ? 'deny_reason' : undefined,
+      editMessageId: row.edit_message_id === null ? undefined : Number(row.edit_message_id),
+      priority: Number(row.priority),
     };
   }
   sending(id: string) {

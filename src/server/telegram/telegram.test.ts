@@ -312,7 +312,8 @@ describe('Telegram sessions and durable work', () => {
           expect(
             calls.some(
               (call) =>
-                call.method === 'sendMessageDraft' && call.input.text === 'Real streamed answer. ',
+                call.method === 'sendMessageDraft' &&
+                call.input.text === 'Workspace Test workspace\nBot Scout\n\nReal streamed answer. ',
             ),
           ).toBe(true),
         { timeout: 7000 },
@@ -326,7 +327,8 @@ describe('Telegram sessions and durable work', () => {
             calls.some(
               (call) =>
                 call.method === 'sendMessage' &&
-                call.input.text === 'Real streamed answer. Finished safely.',
+                call.input.text ===
+                  'Workspace Test workspace\nBot Scout\n\nReal streamed answer. Finished safely.',
             ),
           ).toBe(true),
         { timeout: 5000 },
@@ -340,6 +342,8 @@ describe('Telegram sessions and durable work', () => {
         'Reply through the real AI runtime.',
       );
       const user = history.find((item) => item.role === 'user')!;
+      expect(user.source).toBe('telegram');
+      expect(history.find((item) => item.role === 'assistant')?.source).toBeUndefined();
       expect(api.store.get('SELECT content,source FROM messages WHERE id=?', user.id)).toEqual({
         content: 'Reply through the real AI runtime.',
         source: 'telegram',
@@ -364,6 +368,7 @@ describe('Telegram sessions and durable work', () => {
         'Mukai has a built-in Telegram integration.',
       );
       expect(JSON.stringify(providerInputs)).not.toContain(TOKEN);
+      expect(JSON.stringify(providerInputs)).not.toContain('Workspace Test workspace');
     } finally {
       finishProvider?.();
       fixture.closeAllConnections();
@@ -371,7 +376,7 @@ describe('Telegram sessions and durable work', () => {
     }
   }, 20000);
 
-  it('forwards the final public answer and approval notice while keeping reasoning and tool details local', async () => {
+  it('forwards the final public answer while keeping reasoning and tool results local', async () => {
     await paired();
     await choose();
     vi.spyOn(api.telegram.conversations, 'sendPrivate').mockImplementation(
@@ -394,7 +399,7 @@ describe('Telegram sessions and durable work', () => {
     await vi.waitFor(() => expect(api.telegram.jobs.jobs('done')).toHaveLength(1));
     const content = JSON.stringify(api.store.all('SELECT text FROM telegram_outbox'));
     expect(content).toContain('Only this public answer.');
-    expect(content).toContain('needs your approval in Mukai');
+    expect(content).not.toContain('needs your approval in Mukai');
     for (const secret of [
       'private-reasoning-secret',
       'internal-process-commentary',
@@ -700,5 +705,654 @@ describe('Telegram sessions and durable work', () => {
     expect(
       api.store.get('SELECT text FROM telegram_outbox WHERE id=?', queued[0].id + ':0')?.text,
     ).toBe('Resumed the unstarted turn.');
+  });
+});
+
+function pendingApproval(
+  botId = 'scout',
+  input: unknown = { action: 'run', command: 'echo safe' },
+) {
+  const bot = new BotRepository(api.store).find(botId)!;
+  const conversation = new ConversationRepository(api.store).createPrivate(bot.workspaceId, botId);
+  const id = 'activity-' + ++serial;
+  api.store.run(
+    `INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,conversation_id)
+    VALUES(?,?,?,'assistant','','streaming',?,?)`,
+    id,
+    botId,
+    id,
+    new Date().toISOString(),
+    conversation.id,
+  );
+  const details = {
+    botId,
+    botName: bot.name,
+    conversationId: conversation.id,
+    messageId: id,
+    toolCallId: id,
+    batchId: id,
+    toolName: 'computer_use',
+    input,
+  };
+  const controller = new AbortController();
+  const decision = api.approvals
+    .request(details, controller.signal, () => {}, true)
+    .catch(() => false);
+  return {
+    details,
+    decision,
+    controller,
+    request: api.approvals.state().pending.find((item) => item.messageId === id)!,
+  };
+}
+async function postedEvent(sourceId: string) {
+  await vi.waitFor(
+    () =>
+      expect(
+        api.store.get('SELECT id FROM telegram_events WHERE source_id=?', sourceId),
+      ).toBeTruthy(),
+    { timeout: 5000 },
+  );
+  return api.store.get('SELECT * FROM telegram_events WHERE source_id=?', sourceId)!;
+}
+function tap(eventId: string, action: string, userId = OWNER, chatType = 'private') {
+  const id = ++serial;
+  const update: TelegramUpdate = {
+    update_id: id,
+    callback_query: {
+      id: 'tap-' + id,
+      from: { id: userId, first_name: 'Owner' },
+      data: `t:${eventId}:${action}`,
+      message: {
+        message_id: 10000 + id,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: userId, type: chatType },
+      },
+    },
+  };
+  accept(update);
+  return update;
+}
+function notify(botId = 'scout', title = 'A finding') {
+  const bot = new BotRepository(api.store).find(botId)!;
+  const conversation = new ConversationRepository(api.store).createPrivate(bot.workspaceId, botId);
+  const id = 'notification-source-' + ++serial;
+  api.store.run(
+    `INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,conversation_id)
+    VALUES(?,?,?,'assistant','A finding from autonomous work.','complete',?,?)`,
+    id,
+    botId,
+    id,
+    new Date().toISOString(),
+    conversation.id,
+  );
+  return api.notifications.notify(bot, id, id, {
+    title,
+    message: 'A finding from autonomous work.',
+  }).notificationId;
+}
+
+describe('Telegram workspace approvals and updates', () => {
+  it('forwards approvals from non-Telegram conversations and other bots, with scoped one-time decisions', async () => {
+    await paired();
+    new BotRepository(api.store).create({
+      ...scoutBot('default', 'reviewer'),
+      name: 'Reviewer',
+      isMain: false,
+    });
+    const pending = pendingApproval('reviewer', {
+      command: 'echo safe',
+      password: 'do-not-forward-this',
+      nested: { api_key: 'do-not-forward-either' },
+    });
+    const event = await postedEvent(pending.request.id);
+    expect(event.workspace_id).toBe('default');
+    expect(event.bot_id).toBe('reviewer');
+    const text = String(
+      api.store.get('SELECT text FROM telegram_outbox WHERE event_id=?', String(event.id))!.text,
+    );
+    expect(text).not.toContain('Bot Reviewer');
+    expect(api.telegram.messageText(text, 'default', 'reviewer')).toContain(
+      'Workspace Test workspace\nBot Reviewer\n\n',
+    );
+    expect(text).toContain('echo safe');
+    expect(text).not.toContain('do-not-forward');
+    const decide = vi.spyOn(api.approvals, 'decide');
+    tap(String(event.id), 'yes', OWNER + 1);
+    tap(String(event.id), 'yes', OWNER, 'group');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(decide).not.toHaveBeenCalled();
+    const update = tap(String(event.id), 'yes');
+    expect(await pending.decision).toBe(true);
+    accept(update);
+    tap(String(event.id), 'yes');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(decide).toHaveBeenCalledOnce();
+    expect(api.approvals.state().pending).toHaveLength(0);
+  }, 15000);
+
+  it('denies requests and rejects buttons after a decision made in Mukai', async () => {
+    await paired();
+    const denied = pendingApproval();
+    const event = await postedEvent(denied.request.id);
+    tap(String(event.id), 'no');
+    expect(await denied.decision).toBe(false);
+    const local = pendingApproval();
+    const localEvent = await postedEvent(local.request.id);
+    const original = api.store.get(
+      'SELECT id FROM telegram_outbox WHERE event_id=?',
+      String(localEvent.id),
+    )!;
+    api.telegram.jobs.delivered(String(original.id), 7654321);
+    api.approvals.decide(local.request.id, true);
+    expect(await local.decision).toBe(true);
+    const decide = vi.spyOn(api.approvals, 'decide');
+    tap(String(localEvent.id), 'yes');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(decide).not.toHaveBeenCalled();
+    await vi.waitFor(
+      () =>
+        expect(
+          api.store.get(
+            'SELECT edit_message_id FROM telegram_outbox WHERE id=?',
+            'clear:' + original.id,
+          )?.edit_message_id,
+        ).toBe(7654321),
+      { timeout: 5000 },
+    );
+  }, 15000);
+
+  it('waits for a denial reason, passes it to the asking bot, and rejects a late reason after approval', async () => {
+    await paired();
+    const initial = pendingApproval();
+    api.approvals.decide(initial.request.id, false);
+    await initial.decision;
+    const ask = () =>
+      api.approvals.ask(
+        initial.details,
+        { action: 'approval', question: 'May I publish?' },
+        new AbortController().signal,
+        () => {},
+        () => {},
+      );
+    const response = ask();
+    const pending = api.approvals.state().pending[0];
+    const event = await postedEvent(pending.id);
+    const markup = String(
+      api.store.get('SELECT markup_json FROM telegram_outbox WHERE event_id=?', String(event.id))!
+        .markup_json,
+    );
+    expect(markup).toContain('Deny with reason');
+    tap(String(event.id), 'reason', OWNER + 1);
+    tap(String(event.id), 'reason');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+          String(event.id),
+        ),
+      ).toBeTruthy(),
+    );
+    expect(api.approvals.state().pending).toHaveLength(1);
+    const prompt = api.store.get(
+      "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+      String(event.id),
+    )!;
+    api.telegram.jobs.delivered(String(prompt.id), 701111);
+    const reply = message('  Review the draft first.  ');
+    reply.message!.reply_to_message = { message_id: 701111 };
+    accept(reply);
+    expect(await response).toEqual({
+      action: 'approval',
+      approved: false,
+      reason: 'Review the draft first.',
+    });
+    expect(api.store.all('SELECT id FROM telegram_chat_jobs')).toHaveLength(0);
+    const second = ask();
+    const secondEvent = await postedEvent(api.approvals.state().pending[0].id);
+    tap(String(secondEvent.id), 'reason');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+          String(secondEvent.id),
+        ),
+      ).toBeTruthy(),
+    );
+    const secondPrompt = api.store.get(
+      "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+      String(secondEvent.id),
+    )!;
+    api.telegram.jobs.delivered(String(secondPrompt.id), 701112);
+    tap(String(secondEvent.id), 'yes');
+    expect(await second).toEqual({ action: 'approval', approved: true });
+    const late = message('Do not publish.');
+    late.message!.reply_to_message = { message_id: 701112 };
+    accept(late);
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(api.store.all('SELECT id FROM telegram_chat_jobs')).toHaveLength(0);
+    expect(api.approvals.state().pending).toHaveLength(0);
+  }, 15000);
+
+  it('answers clarifications with options or a direct reply without passing the answer to an unrelated AI chat', async () => {
+    await paired();
+    const first = pendingApproval();
+    // Replace the plain tool checkpoint with an explicit clarification for the same saved turn.
+    api.approvals.decide(first.request.id, false);
+    await first.decision;
+    const question = {
+      action: 'clarification' as const,
+      question: 'Which branch?',
+      options: [
+        { label: 'Main', recommended: true },
+        { label: 'Preview', recommended: false },
+      ],
+    };
+    const answers: unknown[] = [];
+    const response = api.approvals.ask(
+      first.details,
+      question,
+      new AbortController().signal,
+      () => {},
+      (answer) => answers.push(answer),
+    );
+    const request = api.approvals.state().pending[0];
+    const event = await postedEvent(request.id);
+    tap(String(event.id), 'o1');
+    expect(await response).toEqual({ action: 'clarification', answer: 'Preview' });
+    expect(answers).toEqual([{ action: 'clarification', answer: 'Preview' }]);
+    const next = pendingApproval();
+    api.approvals.decide(next.request.id, false);
+    await next.decision;
+    const typed = api.approvals.ask(
+      next.details,
+      question,
+      new AbortController().signal,
+      () => {},
+      () => {},
+    );
+    const typedEvent = await postedEvent(api.approvals.state().pending[0].id);
+    tap(String(typedEvent.id), 'answer');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          "SELECT id FROM telegram_outbox WHERE event_id=? AND json_extract(markup_json,'$.force_reply')=1",
+          String(typedEvent.id),
+        ),
+      ).toBeTruthy(),
+    );
+    const prompt = api.store.get(
+      "SELECT id FROM telegram_outbox WHERE event_id=? AND json_extract(markup_json,'$.force_reply')=1",
+      String(typedEvent.id),
+    )!;
+    api.telegram.jobs.delivered(String(prompt.id), 444111);
+    const reply = message('Use release/candidate.');
+    reply.message!.reply_to_message = { message_id: 444111 };
+    accept(reply);
+    expect(await typed).toEqual({ action: 'clarification', answer: 'Use release/candidate.' });
+    expect(api.store.all('SELECT text FROM telegram_chat_jobs')).toHaveLength(0);
+  }, 15000);
+
+  it('sends updates from all bots in an enabled workspace and continues with the correct bot and conversation', async () => {
+    await paired();
+    new BotRepository(api.store).create({
+      ...scoutBot('default', 'researcher'),
+      name: 'Researcher',
+      isMain: false,
+    });
+    const id = notify('researcher');
+    const event = await postedEvent(id);
+    tap(String(event.id), 'continue');
+    await vi.waitFor(() =>
+      expect(
+        api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)?.notificationId,
+      ).toBe(id),
+    );
+    const session = api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)!;
+    expect(session.botId).toBe('researcher');
+    expect(api.notifications.list('default').items[0].conversationId).toBe(session.conversationId);
+    const send = vi
+      .spyOn(api.telegram.conversations, 'sendPrivate')
+      .mockImplementation(async (conversationId, input, output, source) => {
+        expect(conversationId).toBe(session.conversationId);
+        expect(input.text).toBe('Tell me more.');
+        expect(source).toBe('telegram');
+        output.emit({
+          type: 'done',
+          message: { ...answer(input, 'Here is the finding.'), botId: 'researcher' },
+        });
+      });
+    accept(message('Tell me more.'));
+    await vi.waitFor(() => expect(api.telegram.jobs.jobs('done')).toHaveLength(1));
+    expect(send).toHaveBeenCalledOnce();
+    expect(api.telegram.jobs.jobs('done')[0].notificationId).toBe(id);
+    expect(api.telegram.messageText('Here is the finding.', 'default', 'researcher')).toBe(
+      'Workspace Test workspace\nBot Researcher\n\nHere is the finding.',
+    );
+    expect(api.telegram.conversations.history(session.conversationId)[0].content).toBe(
+      'A finding from autonomous work.',
+    );
+    await choose();
+    expect(api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)!.botId).toBe(
+      'scout',
+    );
+  }, 15000);
+
+  it('marks updates read or dismissed and does not resend them after restarting', async () => {
+    await paired();
+    const read = notify(),
+      dismissed = notify('scout', 'Second finding'),
+      unread = notify('scout', 'Unread finding');
+    const readEvent = await postedEvent(read),
+      dismissEvent = await postedEvent(dismissed);
+    await postedEvent(unread);
+    tap(String(readEvent.id), 'read');
+    tap(String(dismissEvent.id), 'dismiss');
+    await vi.waitFor(() => expect(api.notifications.list('default').unread).toBe(1));
+    expect(api.notifications.list('default').total).toBe(2);
+    await close();
+    api = await startApiServer(0, {
+      dataDir: folder,
+      telegramFetch,
+      memoryExtractor: async () => ({ facts: [] }),
+    });
+    const fresh = notify('scout', 'Finding after restart');
+    await postedEvent(fresh);
+    expect(
+      api.store.all(
+        "SELECT id FROM telegram_events WHERE kind='notification' AND source_id=?",
+        unread,
+      ),
+    ).toHaveLength(1);
+    expect(
+      api.store.all(
+        'SELECT id FROM telegram_outbox WHERE event_id=(SELECT id FROM telegram_events WHERE source_id=?) AND edit_message_id IS NULL',
+        unread,
+      ),
+    ).toHaveLength(1);
+  }, 15000);
+
+  it('invalidates actions on access removal and never forwards activity from a disabled workspace', async () => {
+    await paired();
+    new WorkspaceRepository(api.store).create({
+      id: 'hidden',
+      name: 'Hidden',
+      folder: null,
+      createdAt: new Date().toISOString(),
+      computer: 'local',
+    });
+    new BotRepository(api.store).create(scoutBot('hidden', 'hidden-bot'));
+    const hidden = notify('hidden-bot');
+    const pending = pendingApproval();
+    const original = await postedEvent(pending.request.id);
+    expect(
+      api.store.get('SELECT id FROM telegram_events WHERE source_id=?', hidden),
+    ).toBeUndefined();
+    await api.telegram.setAccess({ workspaces: [] });
+    tap(String(original.id), 'yes');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(api.approvals.state().pending).toHaveLength(1);
+    await api.telegram.setAccess({ workspaces: [{ workspaceId: 'default', botId: null }] });
+    const next = await postedEvent(pending.request.id);
+    expect(next.id).not.toBe(original.id);
+    tap(String(original.id), 'yes');
+    tap(String(next.id), 'no');
+    expect(await pending.decision).toBe(false);
+    expect(
+      api.store.get('SELECT id FROM telegram_events WHERE source_id=?', hidden),
+    ).toBeUndefined();
+  }, 15000);
+
+  it('requires Mukai review for oversized approval payloads even when a callback is forged', async () => {
+    await paired();
+    const pending = pendingApproval('scout', { command: 'x'.repeat(14000) });
+    const event = await postedEvent(pending.request.id);
+    const markup = String(
+      api.store.get('SELECT markup_json FROM telegram_outbox WHERE event_id=?', String(event.id))!
+        .markup_json,
+    );
+    expect(markup).not.toContain(':yes');
+    tap(String(event.id), 'yes');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          "SELECT id FROM telegram_actions WHERE event_id=? AND state='done'",
+          String(event.id),
+        ),
+      ).toBeTruthy(),
+    );
+    expect(api.approvals.state().pending).toHaveLength(1);
+    tap(String(event.id), 'no');
+    expect(await pending.decision).toBe(false);
+  }, 15000);
+});
+
+describe('Telegram activity edge cases', () => {
+  it('rejects old approval buttons after unpairing and pairing the same Telegram account again', async () => {
+    await paired();
+    const pending = pendingApproval();
+    const oldEvent = await postedEvent(pending.request.id);
+    const oldAuthorization = api.telegram.connection()!.authorizationId;
+    await api.telegram.disconnect(true);
+    const pairing = api.telegram.pairing();
+    accept(message('/start ' + pairing.pairing!.code));
+    api.telegram.approve(OWNER);
+    expect(api.telegram.connection()!.authorizationId).not.toBe(oldAuthorization);
+    const decide = vi.spyOn(api.approvals, 'decide');
+    tap(String(oldEvent.id), 'yes');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(decide).not.toHaveBeenCalled();
+    accept(message('/approvals'));
+    await vi.waitFor(
+      () =>
+        expect(
+          api.store.get(
+            'SELECT id FROM telegram_events WHERE source_id=? AND authorization_id=?',
+            pending.request.id,
+            api.telegram.connection()!.authorizationId,
+          ),
+        ).toBeTruthy(),
+      { timeout: 5000 },
+    );
+    const fresh = api.store.get(
+      'SELECT id FROM telegram_events WHERE source_id=? AND authorization_id=?',
+      pending.request.id,
+      api.telegram.connection()!.authorizationId,
+    )!;
+    tap(String(fresh.id), 'no');
+    expect(await pending.decision).toBe(false);
+  }, 15000);
+
+  it('routes a direct reply to an update and keeps the same bot when starting a fresh conversation', async () => {
+    await paired();
+    new BotRepository(api.store).create({ ...scoutBot('default', 'reporter'), isMain: false });
+    const notificationId = notify('reporter');
+    const event = await postedEvent(notificationId);
+    const sent = api.store.get(
+      'SELECT id FROM telegram_outbox WHERE event_id=?',
+      String(event.id),
+    )!;
+    api.telegram.jobs.delivered(String(sent.id), 555222);
+    const send = vi
+      .spyOn(api.telegram.conversations, 'sendPrivate')
+      .mockImplementation(async (_conversationId, input, output) => {
+        expect(input.text).toBe('Explain the update.');
+        output.emit({ type: 'done', message: { ...answer(input), botId: 'reporter' } });
+      });
+    const reply = message('Explain the update.');
+    reply.message!.reply_to_message = { message_id: 555222 };
+    accept(reply);
+    await vi.waitFor(() => expect(api.telegram.jobs.jobs('done')).toHaveLength(1));
+    expect(send).toHaveBeenCalledOnce();
+    const previous = api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)!;
+    expect(previous.botId).toBe('reporter');
+    accept(message('/new'));
+    await vi.waitFor(() =>
+      expect(
+        api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)?.conversationId,
+      ).not.toBe(previous.conversationId),
+    );
+    const fresh = api.telegram.sessions.current(api.telegram.connection()!.id, OWNER)!;
+    expect(fresh.botId).toBe('reporter');
+    expect(fresh.notificationId).toBe(notificationId);
+    expect(api.telegram.sessionAllowed(fresh)).toBe(true);
+    expect(api.telegram.conversations.history(fresh.conversationId)).toEqual([]);
+  }, 15000);
+
+  it('preserves old queued replies that need extra space for the new workspace header', async () => {
+    await paired();
+    const text = 'Old queued reply 📨 '.repeat(220);
+    api.store.run(
+      `INSERT INTO telegram_outbox(id,connection_id,chat_id,workspace_id,bot_id,text,created_at)
+      VALUES('old-long-reply',?,?,'default','scout',?,?)`,
+      api.telegram.connection()!.id,
+      OWNER,
+      text,
+      Date.now(),
+    );
+    const value = api.telegram.jobs.delivery(Date.now());
+    // Find the legacy row directly, independent of the pairing greeting ahead of it.
+    expect(value).toBeTruthy();
+    const legacy = {
+      id: 'old-long-reply',
+      connectionId: api.telegram.connection()!.id,
+      chatId: OWNER,
+      workspaceId: 'default',
+      botId: 'scout',
+      text,
+      attempts: 0,
+    };
+    expect(api.telegram.jobs.splitPending(legacy)).toBe(true);
+    const parts = api.store.all(
+      "SELECT text FROM telegram_outbox WHERE id='old-long-reply' OR id LIKE 'old-long-reply:continued:%' ORDER BY sequence",
+    );
+    expect(parts.map((row) => row.text).join('')).toBe(text);
+    for (const row of parts) {
+      const formatted = api.telegram.messageText(String(row.text), 'default');
+      expect(formatted.startsWith('Workspace Test workspace\n\n')).toBe(true);
+      expect(formatted.length).toBeLessThanOrEqual(4096);
+    }
+  });
+});
+
+describe('Telegram update read state', () => {
+  it('removes Reply after continuing, preserves Dismiss, and prevents stale edits or taps restoring it', async () => {
+    await paired();
+    const id = notify();
+    const event = await postedEvent(id);
+    const row = api.store.get('SELECT id FROM telegram_outbox WHERE event_id=?', String(event.id))!;
+    api.telegram.jobs.delivered(String(row.id), 900778);
+    tap(String(event.id), 'read');
+    await vi.waitFor(() => expect(api.notifications.list('default').unread).toBe(0));
+    tap(String(event.id), 'continue');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get('SELECT continued FROM telegram_events WHERE id=?', String(event.id))
+          ?.continued,
+      ).toBe(1),
+    );
+    await vi.waitFor(
+      () =>
+        expect(
+          api.store.get(
+            'SELECT markup_json FROM telegram_outbox WHERE id=?',
+            'continued:' + row.id,
+          ),
+        ).toBeTruthy(),
+      { timeout: 5000 },
+    );
+    const markup = String(
+      api.store.get('SELECT markup_json FROM telegram_outbox WHERE id=?', 'continued:' + row.id)!
+        .markup_json,
+    );
+    expect(markup).toContain(':dismiss');
+    expect(markup).not.toContain(':continue');
+    expect(markup).not.toContain(':read');
+    const staleReadEdit = {
+      id: 'read:' + row.id,
+      connectionId: api.telegram.connection()!.id,
+      chatId: OWNER,
+      text: ' ',
+      attempts: 0,
+      workspaceId: 'default',
+      botId: 'scout',
+      workspaceEvent: true,
+      eventId: String(event.id),
+      editMessageId: 900778,
+      markup: { inline_keyboard: [[{ text: 'Reply', callback_data: `t:${event.id}:continue` }]] },
+    };
+    expect(api.telegram.deliveryAllowed(staleReadEdit)).toBe(true);
+    expect(JSON.stringify(staleReadEdit.markup)).not.toContain(':continue');
+    expect(JSON.stringify(staleReadEdit.markup)).toContain(':dismiss');
+    const resume = vi.spyOn(api.notifications, 'continue');
+    tap(String(event.id), 'continue');
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(resume).not.toHaveBeenCalled();
+    tap(String(event.id), 'dismiss');
+    await vi.waitFor(() => expect(api.notifications.list('default').total).toBe(0));
+    expect(api.telegram.deliveryAllowed(staleReadEdit)).toBe(true);
+    expect(staleReadEdit.markup).toEqual({ inline_keyboard: [] });
+  }, 15000);
+  it('keeps reply and dismiss available after marking an update read', async () => {
+    await paired();
+    const id = notify();
+    const event = await postedEvent(id);
+    const row = api.store.get('SELECT id FROM telegram_outbox WHERE event_id=?', String(event.id))!;
+    api.telegram.jobs.delivered(String(row.id), 900777);
+    tap(String(event.id), 'read');
+    await vi.waitFor(() => expect(api.notifications.list('default').unread).toBe(0));
+    expect(api.notifications.list('default').total).toBe(1);
+    await vi.waitFor(
+      () =>
+        expect(
+          api.store.get('SELECT markup_json FROM telegram_outbox WHERE id=?', 'read:' + row.id),
+        ).toBeTruthy(),
+      { timeout: 5000 },
+    );
+    const markup = String(
+      api.store.get('SELECT markup_json FROM telegram_outbox WHERE id=?', 'read:' + row.id)!
+        .markup_json,
+    );
+    expect(markup).toContain(':continue');
+    expect(markup).toContain(':dismiss');
+    expect(markup).not.toContain(':read');
+    tap(String(event.id), 'dismiss');
+    await vi.waitFor(() => expect(api.notifications.list('default').total).toBe(0));
+  }, 15000);
+});
+
+describe('Telegram delivery scheduling', () => {
+  it('sends direct replies ahead of an update backlog', async () => {
+    await paired();
+    const id = notify();
+    await postedEvent(id);
+    api.store.run("UPDATE telegram_outbox SET state='sent' WHERE event_id IS NULL");
+    api.telegram.jobs.queue(
+      {
+        connectionId: api.telegram.connection()!.id,
+        chatId: OWNER,
+        workspaceId: 'default',
+        botId: 'scout',
+        text: 'A direct reply.',
+      },
+      'direct-priority',
+    );
+    expect(api.telegram.jobs.delivery(Date.now())!.id).toBe('direct-priority');
+    expect(api.telegram.jobs.delivery(Date.now())!.text).toBe('A direct reply.');
+    api.telegram.jobs.delivered('direct-priority', 456);
+    api.telegram.jobs.queue(
+      {
+        connectionId: api.telegram.connection()!.id,
+        chatId: OWNER,
+        workspaceId: 'default',
+        botId: 'scout',
+        workspaceEvent: true,
+        text: ' ',
+        editMessageId: 123,
+        markup: { inline_keyboard: [] },
+      },
+      'button-update',
+    );
+    expect(api.telegram.jobs.delivery(Date.now())!.id).toBe('button-update');
   });
 });

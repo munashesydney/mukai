@@ -8,11 +8,11 @@ export const approvalService = {
     api<ApprovalState>(`/approvals?workspaceId=${encodeURIComponent(workspaceId)}`, 'PUT', {
       mode,
     }),
-  decide: (id: string, approved: boolean, workspaceId: string) =>
+  decide: (id: string, approved: boolean, workspaceId: string, reason?: string) =>
     api<ApprovalState>(
       `/approvals/${encodeURIComponent(id)}?workspaceId=${encodeURIComponent(workspaceId)}`,
       'POST',
-      { approved },
+      { approved, ...(reason === undefined ? {} : { reason }) },
     ),
   answer: (id: string, answer: string, workspaceId: string) =>
     api<ApprovalState>(

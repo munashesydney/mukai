@@ -230,7 +230,13 @@ export function createRoutes({
       if (id && !action && method === 'POST') {
         const input = z
           .union([
-            z.object({ approved: z.boolean() }).strict(),
+            z.object({ approved: z.literal(true) }).strict(),
+            z
+              .object({
+                approved: z.literal(false),
+                reason: z.string().trim().min(1).max(16000).optional(),
+              })
+              .strict(),
             z.object({ answer: z.string().trim().min(1).max(16000) }).strict(),
           ])
           .parse(await jsonBody(request));
@@ -238,7 +244,12 @@ export function createRoutes({
           response,
           'answer' in input
             ? approvals.answer(id, input.answer, workspaceId)
-            : approvals.decide(id, input.approved, workspaceId),
+            : approvals.decide(
+                id,
+                input.approved,
+                workspaceId,
+                'reason' in input ? input.reason : undefined,
+              ),
         );
       }
       throw new ApiError(404, 'Not found');

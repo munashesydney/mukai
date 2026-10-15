@@ -12,6 +12,7 @@ export class TelegramSessionRepository {
       workspaceId: String(row.workspace_id),
       botId: String(row.bot_id),
       conversationId: String(row.conversation_id),
+      notificationId: (row.notification_id as string | null) ?? undefined,
     };
   }
   current(connectionId: string, chatId: number) {
@@ -25,7 +26,14 @@ export class TelegramSessionRepository {
   all() {
     return this.database.all('SELECT * FROM telegram_sessions').map((row) => this.project(row));
   }
-  select(connectionId: string, chatId: number, workspaceId: string, botId: string, fresh = false) {
+  select(
+    connectionId: string,
+    chatId: number,
+    workspaceId: string,
+    botId: string,
+    fresh = false,
+    notificationId?: string,
+  ) {
     // Savepoints compose with the inbox transaction that consumes this command.
     this.database.db.exec('SAVEPOINT telegram_session');
     try {
@@ -41,7 +49,7 @@ export class TelegramSessionRepository {
           chatId,
           workspaceId,
         );
-        if (existing && !fresh && existing.bot_id === botId) {
+        if (existing && !fresh && existing.bot_id === botId && !existing.notification_id) {
           this.database.run(
             'UPDATE telegram_sessions SET selected=1 WHERE id=?',
             String(existing.id),
@@ -63,12 +71,13 @@ export class TelegramSessionRepository {
         this.database.run('INSERT INTO conversation_bots VALUES(?,?)', conversationId, botId);
         if (existing) {
           this.database.run(
-            'UPDATE telegram_sessions SET bot_id=?,conversation_id=?,selected=1 WHERE id=?',
+            'UPDATE telegram_sessions SET bot_id=?,conversation_id=?,selected=1,notification_id=? WHERE id=?',
             botId,
             conversationId,
+            notificationId ?? null,
             String(existing.id),
           );
-          return { ...this.project(existing), botId, conversationId };
+          return { ...this.project(existing), botId, conversationId, notificationId };
         }
         const session = {
           id: randomUUID(),
@@ -77,15 +86,17 @@ export class TelegramSessionRepository {
           workspaceId,
           botId,
           conversationId,
+          notificationId,
         };
         this.database.run(
-          'INSERT INTO telegram_sessions VALUES(?,?,?,?,?,?,1)',
+          'INSERT INTO telegram_sessions(id,connection_id,chat_id,workspace_id,bot_id,conversation_id,notification_id,selected) VALUES(?,?,?,?,?,?,?,1)',
           session.id,
           connectionId,
           chatId,
           workspaceId,
           botId,
           conversationId,
+          notificationId ?? null,
         );
         return session;
       })();
@@ -98,5 +109,34 @@ export class TelegramSessionRepository {
   }
   forgetWorkspace(id: string) {
     this.database.run('DELETE FROM telegram_sessions WHERE workspace_id=?', id);
+  }
+  selectNotification(
+    connectionId: string,
+    chatId: number,
+    workspaceId: string,
+    botId: string,
+    notificationId: string,
+    conversationId: string,
+  ) {
+    this.database.transaction(() => {
+      this.database.run(
+        'UPDATE telegram_sessions SET selected=0 WHERE connection_id=? AND chat_id=?',
+        connectionId,
+        chatId,
+      );
+      this.database.run(
+        `INSERT INTO telegram_sessions(id,connection_id,chat_id,workspace_id,bot_id,conversation_id,notification_id,selected)
+        VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(connection_id,chat_id,workspace_id) DO UPDATE SET
+        bot_id=excluded.bot_id,conversation_id=excluded.conversation_id,notification_id=excluded.notification_id,selected=1`,
+        randomUUID(),
+        connectionId,
+        chatId,
+        workspaceId,
+        botId,
+        conversationId,
+        notificationId,
+      );
+    });
+    return this.current(connectionId, chatId)!;
   }
 }

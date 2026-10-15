@@ -4,6 +4,7 @@ import { TelegramDeliveryQueue } from './delivery';
 import { TelegramChatOutput } from './chatOutput';
 import type { TelegramJob } from './types';
 import { telegramCommands } from './commands';
+import type { TelegramActivity } from './activity';
 
 /** One installation-owned poller; AI turns are independent from incoming commands. */
 export class TelegramRuntime {
@@ -14,7 +15,10 @@ export class TelegramRuntime {
   private stopping?: Promise<void>;
   private control?: AbortController;
   private registration?: Promise<unknown>;
-  constructor(private service: TelegramService) {
+  constructor(
+    private service: TelegramService,
+    private activity: TelegramActivity,
+  ) {
     service.attachRuntime(this);
   }
   start() {
@@ -58,6 +62,7 @@ export class TelegramRuntime {
             value.update.callback_query.message.chat.id,
           );
       }
+      this.activity.tick();
       for (const job of this.service.jobs.jobs('running')) {
         if (this.active.has(job.conversationId)) continue;
         if (!this.service.jobAllowed(job)) this.service.jobs.state(job.id, 'cancelled');
@@ -100,19 +105,7 @@ export class TelegramRuntime {
   private async run(job: TelegramJob) {
     const delivery = this.delivery;
     if (!delivery) return;
-    const output = new TelegramChatOutput(job, delivery, () => {
-      if (this.service.jobAllowed(job))
-        this.service.jobs.queue(
-          {
-            connectionId: job.connectionId,
-            chatId: job.chatId,
-            workspaceId: job.workspaceId,
-            botId: job.botId,
-            text: 'This task needs your approval in Mukai. Open the Telegram conversation there to continue.',
-          },
-          `${job.id}:approval`,
-        );
-    });
+    const output = new TelegramChatOutput(job, delivery, () => {});
     try {
       await this.service.conversations.sendPrivate(
         job.conversationId,

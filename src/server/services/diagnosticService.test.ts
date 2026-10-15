@@ -5,6 +5,19 @@ import { tmpdir } from 'node:os';
 import { DiagnosticService } from './diagnosticService';
 
 let dir: string;
+it('preserves short placeholder words in public prose while protecting credentials and logs', () => {
+  const logger = new DiagnosticService(dir);
+  logger.registerSecret('test');
+  logger.registerSecret('sk-private-value123');
+  logger.registerSecret('long private/key123');
+  expect(
+    logger.redactSecrets('A harmless test in random-approval-test.txt: sk-private-value123'),
+  ).toBe('A harmless test in random-approval-test.txt: [redacted]');
+  expect(logger.redactSecrets(encodeURIComponent('long private/key123'))).toBe('[redacted]');
+  logger.record('provider.failed', new Error('test sk-private-value123'));
+  expect(readFileSync(logger.path, 'utf8')).not.toContain('test');
+  expect(readFileSync(logger.path, 'utf8')).not.toContain('sk-private-value123');
+});
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'mukai-diagnostics-'));
   vi.spyOn(console, 'error').mockImplementation(() => {});

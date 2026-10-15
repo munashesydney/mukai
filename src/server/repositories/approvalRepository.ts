@@ -1,7 +1,12 @@
-import type { ApprovalMode, ApprovalTarget, ToolApproval } from '../../shared/approvals';
+import type {
+  ApprovalDecision,
+  ApprovalMode,
+  ApprovalTarget,
+  ToolApproval,
+} from '../../shared/approvals';
 import type { Database } from '../db/database';
 
-export type ApprovalCheckpoint = ToolApproval & { decision?: boolean | string };
+export type ApprovalCheckpoint = ToolApproval & { decision?: ApprovalDecision | string };
 
 export class ApprovalRepository {
   constructor(private store: Database) {

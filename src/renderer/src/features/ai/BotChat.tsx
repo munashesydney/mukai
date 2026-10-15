@@ -1,4 +1,5 @@
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
+import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   FileText,
@@ -580,6 +581,7 @@ const MessageRow = memo(function MessageRow({
                   ? 'You'
                   : bot.name}
             </strong>
+            <TelegramSourceBadge message={message} />
             {(readOnly || message.role === 'assistant') && (
               <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
             )}

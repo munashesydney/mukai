@@ -2,6 +2,8 @@ export const telegramCommands = [
   { command: 'workspaces', description: 'Choose a Mukai workspace' },
   { command: 'new', description: 'Start a fresh conversation in this workspace' },
   { command: 'stop', description: 'Stop the current response and queued messages' },
+  { command: 'approvals', description: 'Show waiting approvals and questions' },
+  { command: 'updates', description: 'Show unread workspace updates' },
   { command: 'help', description: 'Show how to use Mukai' },
 ];
 

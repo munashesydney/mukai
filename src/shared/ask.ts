@@ -11,4 +11,5 @@ export interface AskInput {
 }
 
 export type AskResponse =
-  { action: 'clarification'; answer: string } | { action: 'approval'; approved: boolean };
+  | { action: 'clarification'; answer: string }
+  | { action: 'approval'; approved: boolean; reason?: string };

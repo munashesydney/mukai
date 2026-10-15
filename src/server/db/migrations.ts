@@ -407,6 +407,29 @@ export const migrations = [
      ORDER BY m.sequence LIMIT 1),name)
    WHERE kind='private' AND instr(name,'Message coming from the Telegram integration by the user.')=1
      AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=conversations.id AND m.source='telegram');`,
+  `CREATE TABLE telegram_events (
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    authorization_id TEXT NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('approval','notification')), source_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','resolved')),
+    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    UNIQUE(connection_id,authorization_id,kind,source_id));
+   CREATE TABLE telegram_actions (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES telegram_events(id) ON DELETE CASCADE,
+    action TEXT NOT NULL, value TEXT, source_message_id INTEGER,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','done')),
+    created_at INTEGER NOT NULL);
+   CREATE INDEX telegram_pending_actions ON telegram_actions(state,created_at);
+   ALTER TABLE telegram_sessions ADD COLUMN notification_id TEXT REFERENCES bot_notifications(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_chat_jobs ADD COLUMN notification_id TEXT REFERENCES bot_notifications(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_outbox ADD COLUMN workspace_event INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE telegram_outbox ADD COLUMN event_id TEXT REFERENCES telegram_events(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_outbox ADD COLUMN edit_message_id INTEGER;
+   CREATE INDEX telegram_event_deliveries ON telegram_outbox(event_id);`,
+  `ALTER TABLE telegram_events ADD COLUMN buttons_cleared INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE telegram_events ADD COLUMN continued INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE telegram_outbox ADD COLUMN reply_action TEXT CHECK(reply_action IS NULL OR reply_action='deny_reason');`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -19,6 +19,8 @@ export function AskRequestCard({
   const [selected, setSelected] = useState('');
   const [typed, setTyped] = useState('');
   const [collapsed, setCollapsed] = useState(false);
+  const [denying, setDenying] = useState(false);
+  const [reason, setReason] = useState('');
   const question = request.ask;
   if (!question) return null;
   const clarification = question.action === 'clarification';
@@ -73,9 +75,29 @@ export function AskRequestCard({
         onSubmit={(event) => {
           event.preventDefault();
           if (clarification && answer && !busy) void approvalStore.answer(request.id, answer);
+          if (!clarification && denying && reason.trim() && !busy)
+            void approvalStore.decide(request.id, false, reason.trim());
         }}
       >
         <div className="ask-request-content" id={contentId} hidden={collapsed}>
+          {!clarification && denying && (
+            <label className={`ask-answer-field ${reason ? 'is-selected' : ''}`}>
+              <span className="ask-option-number" aria-hidden="true">
+                <SquarePen size={12} />
+              </span>
+              <textarea
+                aria-label="Reason for denying"
+                placeholder="Tell the bot why you’re denying this request…"
+                rows={reason.includes('\n') || reason.length > 100 ? 3 : 1}
+                value={reason}
+                maxLength={16000}
+                autoFocus
+                required
+                disabled={busy}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </label>
+          )}
           {clarification && (
             <>
               <fieldset className="ask-options" disabled={busy} aria-label="Suggested answers">
@@ -153,6 +175,24 @@ export function AskRequestCard({
                   {busy ? 'Sending…' : 'Submit'}
                 </button>
               </>
+            ) : denying ? (
+              <>
+                <button
+                  type="button"
+                  className="button button--small"
+                  disabled={busy}
+                  onClick={() => setDenying(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="button button--danger button--small"
+                  disabled={busy || !reason.trim()}
+                >
+                  {busy ? 'Sending…' : 'Deny with reason'}
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -162,6 +202,17 @@ export function AskRequestCard({
                   onClick={() => void approvalStore.decide(request.id, false)}
                 >
                   Deny
+                </button>
+                <button
+                  type="button"
+                  className="button button--small"
+                  disabled={busy}
+                  onClick={() => {
+                    setDenying(true);
+                    setCollapsed(false);
+                  }}
+                >
+                  Deny with reason
                 </button>
                 <button
                   type="button"
