@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromium } from 'playwright-core';
+import { chromium, type Route } from 'playwright-core';
 import { startApiServer } from '../src/server/app';
 import type { Bot, ProviderSettings } from '../src/shared/ai';
 
@@ -50,7 +50,49 @@ async function main() {
     }
     await page.goto(`${api.url}/#mukai-connect=${api.browserSession!.connectToken}`);
     await page.getByRole('button', { name: 'Open settings' }).click();
-    await page.getByRole('tab', { name: 'Providers', exact: true }).click();
+    async function checkPageLoading(tab: string, label: string, pattern: string) {
+      let release!: () => void;
+      const gate = new Promise<void>((done) => {
+        release = done;
+      });
+      const ongoing: Promise<void>[] = [];
+      const hold = (route: Route) => {
+        const task = gate.then(() => route.continue());
+        ongoing.push(task);
+        return task;
+      };
+      await page.route(pattern, hold);
+      try {
+        await page.getByRole('tab', { name: tab, exact: true }).click();
+        const loader = page.getByRole('status', { name: label, exact: true });
+        await loader.waitFor();
+        assert.equal(
+          await loader.innerText(),
+          '',
+          'Loading labels should be accessible without visible placeholder text.',
+        );
+        assert.equal(
+          await loader.evaluate((element) => {
+            const area = element.getBoundingClientRect();
+            const spinner = element.querySelector('svg')!.getBoundingClientRect();
+            return (
+              Math.abs(spinner.x + spinner.width / 2 - (area.x + area.width / 2)) < 1 &&
+              Math.abs(spinner.y + spinner.height / 2 - (area.y + area.height / 2)) < 1 &&
+              area.height >= 240
+            );
+          }),
+          true,
+          'The circular loader should be centered in the available content area.',
+        );
+        await capture(`settings-${tab.toLowerCase()}-loading`);
+      } finally {
+        release();
+        await Promise.all(ongoing);
+        await page.unroute(pattern, hold);
+      }
+      await page.locator('.page-loader').waitFor({ state: 'hidden' });
+    }
+    await checkPageLoading('Providers', 'Loading providers…', '**/api/providers');
     const panel = page.locator('.provider-panel');
     await page.getByRole('button', { name: 'Add DeepSeek', exact: true }).waitFor();
     assert.equal(
@@ -71,7 +113,9 @@ async function main() {
       'Memory',
       'Limits',
     ]) {
-      await page.getByRole('tab', { name, exact: true }).click();
+      if (name === 'Memory')
+        await checkPageLoading('Memory', 'Loading memories…', '**/api/memory?*');
+      else await page.getByRole('tab', { name, exact: true }).click();
       await page
         .getByRole('heading', {
           name: name === 'E Variables' ? 'Environment Variables' : name,

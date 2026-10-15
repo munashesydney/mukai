@@ -1613,6 +1613,11 @@
   min-width: 0;
   color: var(--ink);
 }
+.provider-panel.is-loading {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 .provider-back {
   margin-bottom: 22px;
 }

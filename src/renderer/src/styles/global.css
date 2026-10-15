@@ -77,6 +77,13 @@ p {
   white-space: nowrap;
   border: 0;
 }
+.page-loader {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 240px;
+  color: var(--theme-text);
+}
 .app-shell {
   height: 100dvh;
   min-height: 560px;

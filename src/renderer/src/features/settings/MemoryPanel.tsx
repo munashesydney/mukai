@@ -1,5 +1,6 @@
 import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { SettingsCard } from './SettingsCard';
+import { PageLoader } from '../../components/ui/PageLoader';
 import { SettingsHeading } from './SettingsHeading';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Brain, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
@@ -112,7 +113,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
     ? snapshot?.facts.find((fact) => fact.id === selected.id) || null
     : null;
   return (
-    <section className="provider-panel memory-panel">
+    <section className={`provider-panel memory-panel${!snapshot ? ' is-loading' : ''}`}>
       <SettingsHeading
         eyebrow="WORKSPACE KNOWLEDGE"
         title="Memory"
@@ -129,7 +130,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
         </p>
       )}
       {!snapshot ? (
-        <p role="status">Loading memories…</p>
+        <PageLoader label="Loading memories…" />
       ) : (
         <>
           <div className="conversation-tabs memory-tabs" role="tablist" aria-label="Memory view">

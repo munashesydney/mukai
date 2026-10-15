@@ -1,6 +1,5 @@
 import { SettingsHeading } from './SettingsHeading';
-import { SettingsCard } from './SettingsCard';
-import { KeyRound, Plus } from 'lucide-react';
+import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
@@ -94,47 +93,41 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 {error}
               </div>
             )}
-            <SettingsCard
-              title="Variable details"
-              description="Private values for your workspace tools and routes."
-              icon={<KeyRound size={18} />}
+            <form
+              className="ai-form capability-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void perform(async () => {
+                  await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
+                  setName('');
+                  setValue('');
+                });
+              }}
             >
-              <form
-                className="ai-form capability-form settings-card-body"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void perform(async () => {
-                    await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
-                    setName('');
-                    setValue('');
-                  });
-                }}
-              >
-                <label>
-                  Variable name
-                  <input
-                    required
-                    pattern="[A-Za-z_][A-Za-z0-9_]*"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="REVENUE_API_KEY"
-                    autoComplete="off"
-                  />
-                </label>
-                <label>
-                  New value
-                  <input
-                    type="password"
-                    value={value}
-                    onChange={(event) => setValue(event.target.value)}
-                    autoComplete="new-password"
-                  />
-                </label>
-                <button className="button button--primary" disabled={busy}>
-                  Save variable
-                </button>
-              </form>
-            </SettingsCard>
+              <label>
+                Variable name
+                <input
+                  required
+                  pattern="[A-Za-z_][A-Za-z0-9_]*"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="REVENUE_API_KEY"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                New value
+                <input
+                  type="password"
+                  value={value}
+                  onChange={(event) => setValue(event.target.value)}
+                  autoComplete="new-password"
+                />
+              </label>
+              <button className="button button--primary" disabled={busy}>
+                Save variable
+              </button>
+            </form>
           </div>
         </Sheet>
       )}
@@ -228,7 +221,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 Edit
               </button>
               <button
-                className="text-button"
+                className="text-button danger-text"
                 disabled={busy}
                 onClick={() =>
                   void perform(() =>
@@ -236,6 +229,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                   )
                 }
               >
+                <Trash2 size={14} aria-hidden="true" />
                 Delete
               </button>
             </div>

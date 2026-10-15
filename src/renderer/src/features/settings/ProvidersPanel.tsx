@@ -2,6 +2,7 @@ import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { Modal } from '../../components/ui/Modal';
 import { SettingsHeading } from './SettingsHeading';
 import { SettingsCard } from './SettingsCard';
+import { PageLoader } from '../../components/ui/PageLoader';
 import { useEffect, useRef, useState } from 'react';
 import {
   Check,
@@ -349,7 +350,10 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     );
   }
   return (
-    <div className="provider-panel" aria-busy={busy || loading}>
+    <div
+      className={`provider-panel${loading && view === 'list' ? ' is-loading' : ''}`}
+      aria-busy={busy || loading}
+    >
       {view !== 'list' && (
         <button
           type="button"
@@ -826,9 +830,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
       )}
       {view === 'list' &&
         (loading ? (
-          <p className="ai-caption" role="status">
-            Loading providers…
-          </p>
+          <PageLoader label="Loading providers…" />
         ) : (
           !!providers.length && (
             <div className="provider-list">
