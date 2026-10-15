@@ -228,15 +228,32 @@ async function main() {
       true,
     );
     await panel.getByRole('button', { name: 'Configure models', exact: true }).click();
-    await panel.getByRole('group', { name: 'Unsaved connection changes', exact: true }).waitFor();
-    await panel.getByRole('button', { name: 'Save and continue', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Unsaved connection changes', exact: true }).waitFor();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Save and continue', exact: true })
+      .click();
     await panel.getByRole('heading', { name: 'DeepSeek work models', exact: true }).waitFor();
     updated = (await request<ProviderSettings[]>('/providers'))[0];
     assert.equal(updated.name, 'DeepSeek work');
     assert.equal(updated.models?.length, 3);
     assert.equal(updated.hasKey, true);
     await panel.getByRole('button', { name: 'Remove QA model', exact: true }).click();
-    await panel.getByRole('button', { name: 'Remove model', exact: true }).click();
+    const modelConfirmation = page.getByRole('dialog', { name: 'Remove QA model?', exact: true });
+    await modelConfirmation.waitFor();
+    assert.equal(await modelConfirmation.locator('input').count(), 0);
+    assert.equal((await request<ProviderSettings[]>('/providers'))[0].models?.length, 3);
+    await capture('model-removal-confirmation');
+    await page.keyboard.press('Escape');
+    await modelConfirmation.waitFor({ state: 'hidden' });
+    assert.equal(
+      await panel
+        .getByRole('button', { name: 'Remove QA model', exact: true })
+        .evaluate((element) => element === document.activeElement),
+      true,
+    );
+    await panel.getByRole('button', { name: 'Remove QA model', exact: true }).click();
+    await modelConfirmation.getByRole('button', { name: 'Remove model', exact: true }).click();
     await panel
       .getByRole('button', { name: 'Remove QA model', exact: true })
       .waitFor({ state: 'hidden' });
@@ -269,15 +286,27 @@ async function main() {
       avatar: 'atlas',
     });
     await panel.getByRole('button', { name: 'Delete DeepSeek work', exact: true }).click();
-    await panel.getByRole('button', { name: 'Delete provider', exact: true }).click();
-    await panel.getByRole('alert').filter({ hasText: 'A bot uses this provider' }).waitFor();
+    const providerConfirmation = page.getByRole('dialog', {
+      name: 'Delete DeepSeek work?',
+      exact: true,
+    });
+    await providerConfirmation
+      .getByRole('button', { name: 'Delete provider', exact: true })
+      .click();
+    await providerConfirmation
+      .getByRole('alert')
+      .filter({ hasText: 'A bot uses this provider' })
+      .waitFor();
+    await capture('provider-deletion-confirmation-error');
     assert.equal((await request<ProviderSettings[]>('/providers')).length, 1);
     await request(`/bots/${bot.id}/model`, 'PUT', {
       providerId: null,
       model: null,
       supportsImages: null,
     });
-    await panel.getByRole('button', { name: 'Delete provider', exact: true }).click();
+    await providerConfirmation
+      .getByRole('button', { name: 'Delete provider', exact: true })
+      .click();
     await panel.getByRole('status').filter({ hasText: 'Provider deleted.' }).waitFor();
     assert.equal((await request<ProviderSettings[]>('/providers')).length, 0);
     await page.getByRole('button', { name: 'Add Qwen', exact: true }).waitFor();
@@ -329,9 +358,101 @@ async function main() {
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       true,
     );
+    // Memory confirmations use the same modal without typed confirmation fields.
+    api.memory.import(
+      workspace.id,
+      ['coffee', 'tea'].map((drink) => ({
+        subject: 'User',
+        relation: 'likes',
+        object: drink,
+        text: `User likes ${drink}.`,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: null,
+        state: 'confirmed' as const,
+      })),
+    );
+    await page.getByRole('tab', { name: 'Memory', exact: true }).click();
+    await page.getByRole('tab', { name: 'Memories', exact: true }).click();
+    await page.locator('.memory-fact').first().click();
+    await page.getByRole('button', { name: 'Forget', exact: true }).click();
+    const forgetConfirmation = page.getByRole('dialog', {
+      name: 'Forget this memory?',
+      exact: true,
+    });
+    await forgetConfirmation.waitFor();
+    assert.equal(await forgetConfirmation.locator('input').count(), 0);
+    await forgetConfirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(api.memory.snapshot(workspace.id).facts.length, 2);
+    await page.getByRole('button', { name: 'Forget', exact: true }).click();
+    await forgetConfirmation
+      .getByRole('button', { name: 'Forget source memories', exact: true })
+      .click();
+    await forgetConfirmation.waitFor({ state: 'hidden' });
+    assert.equal(api.memory.snapshot(workspace.id).facts.length, 1);
+    await page.getByRole('tab', { name: 'Preferences', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear workspace memory', exact: true }).click();
+    const clearConfirmation = page.getByRole('dialog', {
+      name: 'Clear workspace memory?',
+      exact: true,
+    });
+    await capture('memory-clear-confirmation-narrow');
+    await clearConfirmation.getByRole('button', { name: 'Clear all memory', exact: true }).click();
+    await clearConfirmation.waitFor({ state: 'hidden' });
+    assert.equal(api.memory.snapshot(workspace.id).facts.length, 0);
+    // A confirmation opened from a sheet must not close or submit the underlying botEditor.
+    await page.setViewportSize({ width: 1480, height: 980 });
+    await page.getByRole('button', { name: 'Bots', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit QA', exact: true }).click();
+    const botEditor = page.getByRole('dialog', { name: 'Edit QA', exact: true });
+    await botEditor.getByRole('button', { name: 'Delete bot', exact: true }).click();
+    const botConfirmation = page.getByRole('dialog', { name: 'Delete QA?', exact: true });
+    await botConfirmation.waitFor();
+    assert.equal(await botConfirmation.locator('input').count(), 0);
+    await capture('bot-deletion-confirmation');
+    await page.keyboard.press('Escape');
+    await botConfirmation.waitFor({ state: 'hidden' });
+    assert.equal(await botEditor.isVisible(), true);
+    assert.equal(
+      await botEditor
+        .getByRole('button', { name: 'Delete bot', exact: true })
+        .evaluate((element) => element === document.activeElement),
+      true,
+    );
+    let releaseDeletion!: () => void;
+    const deletionGate = new Promise<void>((done) => {
+      releaseDeletion = done;
+    });
+    let failDeletion = true;
+    await page.route(`**/api/bots/${bot.id}`, async (route) => {
+      if (route.request().method() !== 'DELETE' || !failDeletion) return route.continue();
+      failDeletion = false;
+      await deletionGate;
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Temporary deletion failure.' }),
+      });
+    });
+    await botEditor.getByRole('button', { name: 'Delete bot', exact: true }).click();
+    await botConfirmation.getByRole('button', { name: 'Delete bot and chat', exact: true }).click();
+    assert.equal(
+      await botConfirmation.getByRole('button', { name: 'Cancel', exact: true }).isDisabled(),
+      true,
+    );
+    await page.keyboard.press('Escape');
+    assert.equal(await botConfirmation.isVisible(), true);
+    releaseDeletion();
+    await botConfirmation
+      .getByRole('alert')
+      .filter({ hasText: 'Temporary deletion failure' })
+      .waitFor();
+    await botConfirmation.getByRole('button', { name: 'Delete bot and chat', exact: true }).click();
+    await botConfirmation.waitFor({ state: 'hidden' });
+    await botEditor.waitFor({ state: 'hidden' });
+    assert.equal((await request<Bot[]>('/bots?workspaceId=' + workspace.id)).length, 0);
     assert.deepEqual(errors, []);
     console.log(
-      'PASS providers UI: official presets, immediate model persistence, retry after save failure, defaults, credentials, navigation, reload, light/dark/narrow layouts, and provider deletion.',
+      'PASS providers and confirmation UI: provider/model deletion, unsaved changes, memory forget/clear, nested bot deletion, cancellation, focus restoration, blocked dismissal while busy, visible errors and retry, no typed confirmation fields, and light/dark/narrow layouts.',
     );
   } finally {
     await browser?.close();

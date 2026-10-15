@@ -1640,17 +1640,6 @@
   padding-top: 24px;
   border-top: 1px solid var(--line);
 }
-.provider-unsaved {
-  border: 1px solid var(--theme-border);
-  background: var(--theme-soft);
-  padding: 16px;
-  border-radius: 10px;
-  margin-bottom: 20px;
-  font-size: 12px;
-}
-.provider-unsaved > p {
-  margin: 0 0 12px;
-}
 .provider-preset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1837,18 +1826,6 @@
   color: #fff;
   background: #ac514b;
   border-color: #ac514b;
-}
-.delete-confirm {
-  padding: 16px;
-  background: var(--surface-muted);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  margin-top: 14px;
-  font-size: 12px;
-  line-height: 1.7;
-}
-.delete-confirm .button {
-  margin: 8px 8px 0 0;
 }
 .ai-attachments {
   display: flex;

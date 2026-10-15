@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { ArrowRight, ExternalLink, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ExternalLink, KeyRound, Loader2 } from 'lucide-react';
 import { ExternalAnchor } from '../../components/ui/ExternalAnchor';
-import { TelegramLogo } from '../../components/ui/TelegramLogo';
+import { TelegramHero } from './TelegramHero';
 
 export function TelegramConnectionForm({
   pending,
@@ -16,94 +16,68 @@ export function TelegramConnectionForm({
 }) {
   const [token, setToken] = useState('');
   return (
-    <div className="telegram-setup-grid">
-      <section className="telegram-card telegram-connect">
-        <span className="telegram-feature-icon">
-          <TelegramLogo size={23} />
+    <section className="telegram-connect telegram-stage">
+      <TelegramHero title="Connect Telegram">
+        Link your Telegram account to use your bots in Mukai.
+      </TelegramHero>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const value = token.trim();
+          if (!value || pending) return;
+          setToken('');
+          onConnect(value);
+        }}
+      >
+        <label className="visually-hidden" htmlFor="telegram-token">
+          Bot token
+        </label>
+        <div className="telegram-token-field">
+          <KeyRound size={19} aria-hidden="true" />
+          <input
+            id="telegram-token"
+            type="password"
+            value={token}
+            autoComplete="off"
+            spellCheck={false}
+            autoCapitalize="none"
+            placeholder="Paste bot token from @BotFather"
+            aria-describedby="telegram-token-help"
+            required
+            disabled={pending}
+            onChange={(event) => setToken(event.target.value)}
+          />
+        </div>
+        <span id="telegram-token-help" className="visually-hidden">
+          Your token is stored encrypted and is never shown again.
         </span>
-        <h2>Meet your bots in Telegram</h2>
-        <p>
-          Bring a conversation along. Pick a workspace, send a message, and let your bot take it
-          from there.
-        </p>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const value = token.trim();
-            if (!value) return;
-            setToken('');
-            onConnect(value);
-          }}
+        <button
+          type="submit"
+          className="button button--primary telegram-primary"
+          disabled={pending || !token.trim()}
         >
-          <label htmlFor="telegram-token">Bot token</label>
-          <div className="telegram-token-field">
-            <KeyRound size={16} />
-            <input
-              id="telegram-token"
-              type="password"
-              value={token}
-              autoComplete="off"
-              spellCheck={false}
-              autoCapitalize="none"
-              placeholder="Paste the token from BotFather"
-              aria-describedby="telegram-token-help"
-              required
-              disabled={pending}
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </div>
-          <small id="telegram-token-help">
-            Stored encrypted on this Mukai installation. Your token is never shown again.
-          </small>
-          <button
-            type="submit"
-            className="button button--primary"
-            disabled={pending || !token.trim()}
-          >
-            {connecting ? (
-              <>
-                <Loader2 size={15} className="telegram-spin" />
-                Connecting…
-              </>
-            ) : (
-              <>
-                Connect bot
-                <ArrowRight size={15} />
-              </>
-            )}
-          </button>
-        </form>
-      </section>
-      <aside className="telegram-guide">
-        <span className="settings-eyebrow">A QUICK FIRST STEP</span>
-        <h3>Create a Telegram bot</h3>
+          {connecting && <Loader2 size={17} className="telegram-spin" />}
+          {connecting ? 'Connecting…' : 'Connect'}
+        </button>
+      </form>
+      <details className="telegram-help telegram-guide">
+        <summary>
+          How to get a bot token? <ChevronDown size={14} />
+        </summary>
         <ol>
           <li>
-            <span>1</span>
-            <p>
-              Open{' '}
-              <ExternalAnchor href="https://t.me/BotFather" onError={onError}>
-                @BotFather <ExternalLink size={11} />
-              </ExternalAnchor>
-              , Telegram’s official bot manager.
-            </p>
+            Open{' '}
+            <ExternalAnchor href="https://t.me/BotFather" onError={onError}>
+              @BotFather <ExternalLink size={12} />
+            </ExternalAnchor>{' '}
+            in Telegram.
           </li>
           <li>
-            <span>2</span>
-            <p>
-              Send <code>/newbot</code> and choose a name and username for your bot.
-            </p>
+            Send <code>/newbot</code> and follow the prompts.
           </li>
-          <li>
-            <span>3</span>
-            <p>Copy the bot token and paste it here.</p>
-          </li>
+          <li>Paste the token here. That’s it.</li>
         </ol>
-        <div className="telegram-trust">
-          <ShieldCheck size={18} />
-          <p>Only the Telegram account you explicitly approve can reach your enabled workspaces.</p>
-        </div>
-      </aside>
-    </div>
+      </details>
+    </section>
   );
 }

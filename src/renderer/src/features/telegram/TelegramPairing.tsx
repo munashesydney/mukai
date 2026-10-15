@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Copy, ExternalLink, Loader2, ShieldCheck, UserRound } from 'lucide-react';
+import { Copy, ExternalLink, Loader2, UserRound } from 'lucide-react';
 import type { TelegramStatus } from '../../../../shared/telegram';
 import { ExternalAnchor } from '../../components/ui/ExternalAnchor';
 import { copyText } from '../../services/clipboardService';
-import { TelegramLogo } from '../../components/ui/TelegramLogo';
+import { TelegramHero } from './TelegramHero';
 
 export function TelegramPairing({
   status,
@@ -22,139 +22,146 @@ export function TelegramPairing({
   onResume: () => void;
   onError: (message: string) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState('');
+  const [copiedCommand, setCopiedCommand] = useState('');
   const pairing = status.pairing;
   const expired = Boolean(pairing && Date.parse(pairing.expiresAt) <= Date.now());
   const pairingUrl =
     pairing?.url && /^https:\/\/t\.me\/[A-Za-z0-9_]+\?start=[A-Za-z0-9_-]+$/.test(pairing.url)
       ? pairing.url
       : null;
-  const needsPairingLink =
-    !pairing || expired || (!pairing.candidate && !pairingUrl && !pairing.code);
+  const needsLink = !pairing || expired || (!pairing.candidate && !pairingUrl && !pairing.code);
   return (
-    <section className="telegram-card telegram-pair-card">
-      <span className="telegram-feature-icon">
-        <ShieldCheck size={23} strokeWidth={1.6} />
-      </span>
-      <h2>Make it your private line</h2>
-      <p>
-        Your bot is <strong>@{status.bot?.username}</strong>. Pair your own Telegram account, then
-        approve it here in Mukai.
-      </p>
-      {needsPairingLink ? (
-        <>
-          <div className="telegram-callout">
-            <UserRound size={18} />
-            <p>
+    <section className="telegram-pair-card telegram-stage">
+      <TelegramHero title={pairing?.candidate && !expired ? 'Is this you?' : 'Pair your account'}>
+        {pairing?.candidate && !expired ? (
+          'Confirm the account you just opened in Telegram.'
+        ) : (
+          <>Open @{status.bot?.username} in Telegram. We’ll meet you back here.</>
+        )}
+      </TelegramHero>
+      {needsLink ? (
+        <div className="telegram-pair-start">
+          {pairing && (
+            <p className="telegram-note">
               {expired
-                ? 'This pairing link has expired. Create a fresh one to continue.'
-                : pairing
-                  ? 'Create a fresh pairing link to continue after restarting Mukai.'
-                  : 'Create a one-time link, open it in Telegram, and tap Start. No workspace access is granted until you approve the account here.'}
+                ? 'Your link expired. Let’s make a fresh one.'
+                : 'Create a fresh pairing link to continue after restarting Mukai.'}
             </p>
-          </div>
+          )}
           <button
-            className="button button--primary"
+            className="button button--primary telegram-primary"
             disabled={pending || !status.enabled}
             onClick={onPair}
           >
-            {busy === 'pair' ? (
-              <Loader2 size={15} className="telegram-spin" />
-            ) : (
-              <TelegramLogo size={15} />
-            )}
-            {pairing ? 'Create a new pairing link' : 'Create pairing link'}
+            {busy === 'pair' && <Loader2 size={17} className="telegram-spin" />}
+            {busy === 'pair'
+              ? 'Creating link…'
+              : pairing
+                ? 'Create a new pairing link'
+                : 'Create pairing link'}
           </button>
           {!status.enabled && (
             <button className="text-button" disabled={pending} onClick={onResume}>
               Resume connection to pair
             </button>
           )}
-        </>
+          <p className="telegram-note">Only the account you approve here can connect.</p>
+        </div>
       ) : pairing.candidate ? (
         <div className="telegram-candidate" aria-live="polite">
-          <span className="telegram-avatar">
-            <UserRound size={23} />
-          </span>
-          <div>
-            <h3>Is this you?</h3>
-            <strong>{pairing.candidate.firstName}</strong>
-            <p>
-              {pairing.candidate.username ? `@${pairing.candidate.username} · ` : ''}
-              Telegram ID <code>{pairing.candidate.id}</code>
-            </p>
-            <small>Approve only if this is the account you just used in Telegram.</small>
+          <div className="telegram-account">
+            <span className="telegram-avatar">
+              <UserRound size={23} />
+            </span>
+            <div>
+              <strong>{pairing.candidate.firstName}</strong>
+              <span>
+                {pairing.candidate.username ? '@' + pairing.candidate.username + ' · ' : ''}ID{' '}
+                {pairing.candidate.id}
+              </span>
+            </div>
           </div>
-          <div className="telegram-actions">
-            <button
-              className="button button--primary"
-              disabled={pending}
-              onClick={() => onApprove(pairing.candidate!.id)}
-            >
-              <ShieldCheck size={15} />
-              {busy === 'approve' ? 'Approving…' : 'Yes, pair my account'}
-            </button>
-            <button className="button button--ghost" disabled={pending} onClick={onPair}>
-              That’s not me · reset link
-            </button>
-          </div>
+          <button
+            className="button button--primary telegram-primary"
+            disabled={pending}
+            onClick={() => onApprove(pairing.candidate!.id)}
+          >
+            {busy === 'approve' && <Loader2 size={17} className="telegram-spin" />}
+            {busy === 'approve' ? 'Pairing…' : 'Yes, pair my account'}
+          </button>
+          <button className="text-button" disabled={pending} onClick={onPair}>
+            That’s not me · reset link
+          </button>
         </div>
       ) : (
         <div className="telegram-pairing">
-          <div className="telegram-actions">
-            {pairingUrl && (
+          {pairingUrl && (
+            <>
               <ExternalAnchor
-                className="button button--primary"
+                className="button button--primary telegram-primary"
                 href={pairingUrl}
                 onError={onError}
               >
-                Open in Telegram
-                <ExternalLink size={14} />
+                Open in Telegram <ExternalLink size={16} />
               </ExternalAnchor>
-            )}
-            {pairingUrl && (
               <button
-                className="button button--secondary"
+                className="text-button telegram-copy"
                 onClick={() => {
                   void copyText(pairingUrl)
-                    .then(() => setCopied(true))
+                    .then(() => setCopiedLink(pairingUrl))
                     .catch(() =>
                       onError('Could not copy the link. Open it in Telegram using the button.'),
                     );
                 }}
               >
-                <Copy size={14} />
-                {copied ? 'Copied' : 'Copy link'}
+                <Copy size={14} /> {copiedLink === pairingUrl ? 'Copied' : 'Copy link'}
               </button>
-            )}
-          </div>
-          {pairing.code && (
-            <p className="telegram-code-help">
-              Or send <code>/start {pairing.code}</code> to @{status.bot?.username}.
-            </p>
+            </>
           )}
           <div className="telegram-waiting" role="status">
-            <Loader2 size={15} className="telegram-spin" />
-            <span>Waiting for you to tap Start in Telegram…</span>
+            <span className="telegram-dot" />
+            Waiting for you to tap Start in Telegram…
           </div>
-          <small>
-            Link expires at{' '}
-            {new Date(pairing.expiresAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-            . Keep it private.
-          </small>
-          <button
-            className="text-button"
-            disabled={pending}
-            onClick={() => {
-              setCopied(false);
-              onPair();
-            }}
-          >
-            Create a fresh link
-          </button>
+          {pairing.code && (
+            <div className="telegram-manual">
+              <div className="telegram-or">
+                <span>or</span>
+              </div>
+              <p>Send this to @{status.bot?.username}</p>
+              <div className="telegram-command">
+                <code>/start {pairing.code}</code>
+                <button
+                  className="text-button"
+                  aria-label={
+                    copiedCommand === pairing.code ? 'Command copied' : 'Copy pairing command'
+                  }
+                  onClick={() => {
+                    void copyText('/start ' + pairing.code)
+                      .then(() => setCopiedCommand(pairing.code!))
+                      .catch(() =>
+                        onError('Could not copy the command. Select and copy it manually.'),
+                      );
+                  }}
+                >
+                  <Copy size={15} />
+                  {copiedCommand === pairing.code && <span>Copied</span>}
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="telegram-link-meta">
+            <span>
+              Expires at{' '}
+              {new Date(pairing.expiresAt).toLocaleTimeString([], {
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </span>
+            <button className="text-button" disabled={pending} onClick={onPair}>
+              Create a fresh link
+            </button>
+          </div>
         </div>
       )}
     </section>

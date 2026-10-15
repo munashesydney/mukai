@@ -1,3 +1,4 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { SettingsCard } from './SettingsCard';
 import { SettingsHeading } from './SettingsHeading';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -371,37 +372,37 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                           <button
                             className="button button--ghost"
                             disabled={busy}
-                            onClick={() => setConfirmation('forget')}
+                            onClick={() => {
+                              setError('');
+                              setConfirmation('forget');
+                            }}
                           >
                             Forget
                           </button>
                         </div>
                       )}
                       {confirmation === 'forget' && (
-                        <div className="memory-confirm">
+                        <ConfirmationModal
+                          title="Forget this memory?"
+                          confirmLabel="Forget source memories"
+                          busy={busy}
+                          error={error}
+                          onClose={() => {
+                            setConfirmation(null);
+                            setError('');
+                          }}
+                          onConfirm={() =>
+                            void perform(async () => {
+                              await memoryService.forget(workspaceId, selectedCurrent.id);
+                              setSelected(null);
+                            }, 'Memory and its source material forgotten.')
+                          }
+                        >
                           <p>
                             Forget this memory and all facts derived from its source statements?
                             Original chat messages remain.
                           </p>
-                          <button
-                            className="button button--secondary"
-                            disabled={busy}
-                            onClick={() =>
-                              void perform(async () => {
-                                await memoryService.forget(workspaceId, selectedCurrent.id);
-                                setSelected(null);
-                              }, 'Memory and its source material forgotten.')
-                            }
-                          >
-                            Forget source memories
-                          </button>
-                          <button
-                            className="button button--ghost"
-                            onClick={() => setConfirmation(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
+                        </ConfirmationModal>
                       )}
                     </aside>
                   )}
@@ -642,33 +643,36 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                   <button
                     className="button button--danger"
                     disabled={busy}
-                    onClick={() => setConfirmation('clear')}
+                    onClick={() => {
+                      setError('');
+                      setConfirmation('clear');
+                    }}
                   >
                     Clear workspace memory
                   </button>
                 </div>
                 {confirmation === 'clear' && (
-                  <div className="memory-confirm">
+                  <ConfirmationModal
+                    title="Clear workspace memory?"
+                    confirmLabel="Clear all memory"
+                    busy={busy}
+                    error={error}
+                    onClose={() => {
+                      setConfirmation(null);
+                      setError('');
+                    }}
+                    onConfirm={() =>
+                      void perform(async () => {
+                        await memoryService.clear(workspaceId);
+                        setSelected(null);
+                      }, 'Workspace memory cleared.')
+                    }
+                  >
                     <p>
                       Clear all memory in this workspace, including source evidence and recall
                       records? Original chats remain.
                     </p>
-                    <button
-                      className="button button--secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        void perform(async () => {
-                          await memoryService.clear(workspaceId);
-                          setSelected(null);
-                        }, 'Workspace memory cleared.')
-                      }
-                    >
-                      Clear all memory
-                    </button>
-                    <button className="button button--ghost" onClick={() => setConfirmation(null)}>
-                      Cancel
-                    </button>
-                  </div>
+                  </ConfirmationModal>
                 )}
                 <p className="memory-caption">
                   Embeddings run locally. Automatic extraction uses your configured AI, which may be

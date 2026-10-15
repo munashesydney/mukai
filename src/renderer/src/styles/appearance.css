@@ -304,6 +304,17 @@
   padding: 8px 16px;
   font-size: 12px;
 }
+.confirmation-modal {
+  width: min(480px, calc(100vw - 40px));
+}
+.confirmation-body {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.confirmation-body .ai-alert {
+  margin-top: 16px;
+}
 .button {
   background: var(--surface);
   border-color: var(--line-strong);

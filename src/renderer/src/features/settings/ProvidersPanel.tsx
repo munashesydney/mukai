@@ -1,3 +1,5 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
+import { Modal } from '../../components/ui/Modal';
 import { SettingsHeading } from './SettingsHeading';
 import { SettingsCard } from './SettingsCard';
 import { useEffect, useRef, useState } from 'react';
@@ -324,7 +326,17 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
     const provider = providers.find((provider) => provider.id === id);
     return (
       removeId === id && (
-        <div className="delete-confirm" role="group" aria-label="Delete provider confirmation">
+        <ConfirmationModal
+          title={`Delete ${provider?.name}?`}
+          confirmLabel="Delete provider"
+          busy={busy}
+          error={error}
+          onConfirm={() => void remove()}
+          onClose={() => {
+            setRemoveId(null);
+            setError('');
+          }}
+        >
           <p>
             Delete {provider?.name} and its saved credentials?
             {provider?.isDefault
@@ -332,23 +344,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               : ''}{' '}
             Bots assigned directly to this provider must be switched to another provider first.
           </p>
-          <button
-            type="button"
-            className="button button--danger"
-            disabled={busy}
-            onClick={() => void remove()}
-          >
-            {activity === 'delete' ? 'Deleting…' : 'Delete provider'}
-          </button>
-          <button
-            type="button"
-            className="button"
-            disabled={busy}
-            onClick={() => setRemoveId(null)}
-          >
-            Cancel
-          </button>
-        </div>
+        </ConfirmationModal>
       )
     );
   }
@@ -431,9 +427,21 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
         </div>
       )}
       {pendingView && (
-        <div className="provider-unsaved" role="group" aria-label="Unsaved connection changes">
-          <p>Your connection has unsaved changes.</p>
-          <div className="ai-form-actions">
+        <Modal
+          title="Unsaved connection changes"
+          className="confirmation-modal"
+          dismissible={!busy}
+          onClose={() => setPendingView(null)}
+        >
+          <div className="bot-editor-body confirmation-body">
+            <p>Your connection has unsaved changes.</p>
+            {error && (
+              <p className="ai-alert" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="modal-footer">
             <button
               type="button"
               className="button button--primary"
@@ -465,7 +473,7 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
               Stay here
             </button>
           </div>
-        </div>
+        </Modal>
       )}
       {view === 'models' && saved && (
         <ProviderModels key={saved.id} provider={saved} onSave={saveModels} disabled={busy} />
@@ -764,7 +772,10 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                   type="button"
                   className="button danger-text"
                   disabled={busy || Boolean(signIn)}
-                  onClick={() => setRemoveId(saved.id)}
+                  onClick={() => {
+                    setError('');
+                    setRemoveId(saved.id);
+                  }}
                 >
                   <Trash2 size={14} />
                   Delete

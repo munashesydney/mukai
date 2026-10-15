@@ -1,3 +1,4 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus } from 'lucide-react';
@@ -182,7 +183,17 @@ export function ProviderModels({
               </div>
             </div>
             {removeId === model.id && (
-              <div className="delete-confirm" role="group" aria-label={`Remove ${model.name}`}>
+              <ConfirmationModal
+                title={`Remove ${model.name}?`}
+                confirmLabel="Remove model"
+                busy={disabled}
+                error={error}
+                onConfirm={() => void remove()}
+                onClose={() => {
+                  setRemoveId(null);
+                  setError('');
+                }}
+              >
                 <p>
                   Remove {model.name} from this provider’s model picker?
                   {model.id === provider.defaultModel &&
@@ -191,23 +202,7 @@ export function ProviderModels({
                       : ' Add another model before using this provider again.')}{' '}
                   Bots assigned this model may need a new selection.
                 </p>
-                <button
-                  type="button"
-                  className="button button--danger"
-                  disabled={disabled}
-                  onClick={() => void remove()}
-                >
-                  Remove model
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={disabled}
-                  onClick={() => setRemoveId(null)}
-                >
-                  Cancel
-                </button>
-              </div>
+              </ConfirmationModal>
             )}
           </div>
         ))}
