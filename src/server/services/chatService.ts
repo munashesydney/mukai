@@ -655,7 +655,14 @@ export class ChatService {
       if (index < 0) generation.activity.push(activity);
       else generation.activity[index] = activity;
       save();
-      emit({ type: 'activity', id: assistantId, activity });
+      emit({
+        type: 'activity',
+        id: assistantId,
+        activity,
+        ...(activity.status === 'complete'
+          ? { changes: this.messages.message(assistantId).changes }
+          : {}),
+      });
     };
     try {
       const scope = this.tools.checkpointScope(bot);

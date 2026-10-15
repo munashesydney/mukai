@@ -198,7 +198,7 @@ export type ChatEvent =
   | { type: 'delta'; id: string; text: string; partId?: string }
   | { type: 'reasoning'; id: string; text: string; partId?: string }
   | { type: 'part'; id: string; part: ResponsePart }
-  | { type: 'activity'; id: string; activity: ChatActivity }
+  | { type: 'activity'; id: string; activity: ChatActivity; changes?: FileChangeSummary[] }
   | { type: 'context'; id: string; usage: ContextUsage }
   | { type: 'done' | 'error'; message: ChatMessage };
 export interface ChatInput {

@@ -566,6 +566,28 @@ export function createRoutes({
         }
         if (action === 'outputs' && method === 'GET')
           return send(response, await chatOutputs.list(id));
+        if (action === 'activity-image' && method === 'POST') {
+          const input = z
+            .object({ messageId: z.string().min(1), activityId: z.string().min(1) })
+            .strict()
+            .parse(await jsonBody(request));
+          const message = conversations.history(id).find((item) => item.id === input.messageId);
+          const activity = message?.activity?.find((item) => item.id === input.activityId);
+          if (
+            message?.role !== 'assistant' ||
+            !activity ||
+            activity.status !== 'complete' ||
+            activity.tool !== 'image' ||
+            activity.action !== 'view'
+          )
+            throw new ApiError(404, 'Viewed image not found in this conversation.');
+          const bytes = await artifacts.previewImage(message.botId, id, activity.path);
+          response.setHeader('Content-Type', 'image/png');
+          response.setHeader('X-Content-Type-Options', 'nosniff');
+          response.setHeader('Cache-Control', 'no-store');
+          response.writeHead(200).end(bytes);
+          return;
+        }
         if (action === 'open-output' && method === 'POST') {
           const input = z.object({ outputId: z.string().uuid() }).parse(await jsonBody(request));
           return send(response, await chatOutputs.open(id, input.outputId));

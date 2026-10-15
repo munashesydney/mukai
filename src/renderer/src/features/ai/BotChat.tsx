@@ -145,390 +145,394 @@ export function BotChat({
     <div
       className={`conversation-layout ${activity.open && !detailsOpen ? 'has-chat-activity' : ''}`}
     >
-      <main className="conversation">
-        <header className="conversation-header conversation-header--minimal">
-          <div className="conversation-heading">
-            <div className="heading-identity">
-              {readOnly ? (
-                <span className="bot-pair-avatars">
-                  {participants.map((item) => (
-                    <Avatar key={item.id} person={item.avatar} />
-                  ))}
-                </span>
-              ) : (
-                <Avatar person={bot.avatar} />
-              )}
-              <div>
-                <h1>
-                  {title}
-                  {!readOnly && bot.isMain && <MainBotBadge />}
-                </h1>
-                <p title={conversation.name}>{conversation.name}</p>
+      <div className="conversation-panels">
+        <main className="conversation">
+          <header className="conversation-header conversation-header--minimal">
+            <div className="conversation-heading">
+              <div className="heading-identity">
+                {readOnly ? (
+                  <span className="bot-pair-avatars">
+                    {participants.map((item) => (
+                      <Avatar key={item.id} person={item.avatar} />
+                    ))}
+                  </span>
+                ) : (
+                  <Avatar person={bot.avatar} />
+                )}
+                <div>
+                  <h1>
+                    {title}
+                    {!readOnly && bot.isMain && <MainBotBadge />}
+                  </h1>
+                  <p title={conversation.name}>{conversation.name}</p>
+                </div>
               </div>
-            </div>
-            <div className="header-actions">
-              {!readOnly && <BrowserToggle />}
-              {!readOnly && (
+              <div className="header-actions">
+                {!readOnly && <BrowserToggle />}
+                {!readOnly && (
+                  <IconButton
+                    label={`New conversation with ${bot.name}`}
+                    disabled={creatingChat}
+                    onClick={() => void createChat()}
+                  >
+                    <MessageCirclePlus size={18} />
+                  </IconButton>
+                )}
                 <IconButton
-                  label={`New conversation with ${bot.name}`}
-                  disabled={creatingChat}
-                  onClick={() => void createChat()}
+                  label={filesOpen ? 'Back to chat' : 'Artifacts'}
+                  className={filesOpen ? 'is-on' : ''}
+                  onClick={() => setFilesOpen(!filesOpen)}
                 >
-                  <MessageCirclePlus size={18} />
+                  <FileText size={18} />
                 </IconButton>
-              )}
-              <IconButton
-                label={filesOpen ? 'Back to chat' : 'Artifacts'}
-                className={filesOpen ? 'is-on' : ''}
-                onClick={() => setFilesOpen(!filesOpen)}
-              >
-                <FileText size={18} />
-              </IconButton>
-              {activity.count > 0 && (
+                {activity.available && (
+                  <IconButton
+                    label={
+                      activity.open && !detailsOpen ? 'Hide chat activity' : 'Show chat activity'
+                    }
+                    className={activity.open && !detailsOpen ? 'is-on' : ''}
+                    aria-expanded={activity.open && !detailsOpen}
+                    aria-controls="chat-activity-drawer"
+                    onClick={() => {
+                      activity.setOpen(!activity.open || detailsOpen);
+                      setDetailsOpen(false);
+                    }}
+                  >
+                    <ListTree size={18} />
+                  </IconButton>
+                )}
                 <IconButton
-                  label={
-                    activity.open && !detailsOpen ? 'Hide chat activity' : 'Show chat activity'
-                  }
-                  className={activity.open && !detailsOpen ? 'is-on' : ''}
-                  aria-expanded={activity.open && !detailsOpen}
-                  aria-controls="chat-activity-drawer"
+                  label="Bot details"
+                  className={detailsOpen ? 'is-on' : ''}
                   onClick={() => {
-                    activity.setOpen(!activity.open || detailsOpen);
-                    setDetailsOpen(false);
+                    setDetailsOpen(!detailsOpen);
+                    activity.setOpen(false);
                   }}
                 >
-                  <ListTree size={18} />
+                  <Info size={18} />
                 </IconButton>
-              )}
-              <IconButton
-                label="Bot details"
-                className={detailsOpen ? 'is-on' : ''}
-                onClick={() => {
-                  setDetailsOpen(!detailsOpen);
-                  activity.setOpen(false);
+                {!readOnly && (
+                  <IconButton label={`Edit ${bot.name}`} onClick={onEdit}>
+                    <SlidersHorizontal size={18} />
+                  </IconButton>
+                )}
+              </div>
+            </div>
+          </header>
+          {filesOpen ? (
+            <ArtifactsView
+              conversationId={conversation.id}
+              attachments={files}
+              messages={state.messages}
+            />
+          ) : (
+            <>
+              <div
+                ref={feed}
+                className="ai-message-feed"
+                role="log"
+                aria-label={`${title} chat`}
+                aria-busy={state.busy}
+                onScroll={() => {
+                  if (feed.current)
+                    follow.current =
+                      feed.current.scrollHeight -
+                        feed.current.scrollTop -
+                        feed.current.clientHeight <
+                      120;
                 }}
               >
-                <Info size={18} />
-              </IconButton>
-              {!readOnly && (
-                <IconButton label={`Edit ${bot.name}`} onClick={onEdit}>
-                  <SlidersHorizontal size={18} />
-                </IconButton>
-              )}
-            </div>
-          </div>
-        </header>
-        {filesOpen ? (
-          <ArtifactsView
-            conversationId={conversation.id}
-            attachments={files}
-            messages={state.messages}
-          />
-        ) : (
-          <>
-            <div
-              ref={feed}
-              className="ai-message-feed"
-              role="log"
-              aria-label={`${title} chat`}
-              aria-busy={state.busy}
-              onScroll={() => {
-                if (feed.current)
-                  follow.current =
-                    feed.current.scrollHeight - feed.current.scrollTop - feed.current.clientHeight <
-                    120;
-              }}
-            >
-              {state.loading ? (
-                <div className="ai-chat-empty">
-                  <LoaderCircle className="is-spinning" size={24} />
-                  <p>Loading your chat…</p>
-                </div>
-              ) : (
-                !state.messages.length && (
+                {state.loading ? (
                   <div className="ai-chat-empty">
-                    <Avatar person={bot.avatar} size="lg" />
-                    <h2>A good place to start.</h2>
-                    <p>
-                      {readOnly
-                        ? 'Messages between these bots will appear here.'
-                        : provider
-                          ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
-                          : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
-                    </p>
-                    {!readOnly && !provider && (
-                      <button className="button button--primary" onClick={onProviders}>
-                        Configure a provider
-                      </button>
-                    )}
+                    <LoaderCircle className="is-spinning" size={24} />
+                    <p>Loading your chat…</p>
                   </div>
-                )
-              )}
-              {readOnly && state.error && (
-                <p className="ai-alert" role="alert">
-                  {state.error}
-                </p>
-              )}
-              {state.messages.map((message) => (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  bot={bot}
-                  author={readOnly ? bots.find((item) => item.id === message.botId) : undefined}
-                  readOnly={readOnly}
-                  busy={state.busy}
-                  canRetry={!readOnly && message.id === latestAssistant?.id}
-                  onReview={openReview}
-                  onRetry={retryResponse}
-                />
-              ))}
-            </div>
-            {readOnly && hasRequests && (
-              <div className="bot-conversation-requests">
-                <ToolApprovalCards conversationId={conversation.id} />
-                <AskComposer
-                  conversationId={conversation.id}
-                  onCancel={() => void chatStore.stop(chatId)}
-                >
-                  {null}
-                </AskComposer>
-              </div>
-            )}
-            {!readOnly && (
-              <div className="composer-area ai-composer-area">
-                <FollowupQueue chatId={chatId} state={state} />
-                <ToolApprovalCards conversationId={conversation.id} />
-                {newChatError && (
+                ) : (
+                  !state.messages.length && (
+                    <div className="ai-chat-empty">
+                      <Avatar person={bot.avatar} size="lg" />
+                      <h2>A good place to start.</h2>
+                      <p>
+                        {readOnly
+                          ? 'Messages between these bots will appear here.'
+                          : provider
+                            ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
+                            : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
+                      </p>
+                      {!readOnly && !provider && (
+                        <button className="button button--primary" onClick={onProviders}>
+                          Configure a provider
+                        </button>
+                      )}
+                    </div>
+                  )
+                )}
+                {readOnly && state.error && (
                   <p className="ai-alert" role="alert">
-                    {newChatError}
+                    {state.error}
                   </p>
                 )}
-                {state.error && (
-                  <div className="ai-alert" role="alert">
-                    {state.error}
-                    {!state.busy && (
-                      <button className="text-button" onClick={() => void chatStore.load(chatId)}>
-                        Refresh chat
+                {state.messages.map((message) => (
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    bot={bot}
+                    author={readOnly ? bots.find((item) => item.id === message.botId) : undefined}
+                    readOnly={readOnly}
+                    busy={state.busy}
+                    canRetry={!readOnly && message.id === latestAssistant?.id}
+                    onReview={openReview}
+                    onRetry={retryResponse}
+                  />
+                ))}
+              </div>
+              {readOnly && hasRequests && (
+                <div className="bot-conversation-requests">
+                  <ToolApprovalCards conversationId={conversation.id} />
+                  <AskComposer
+                    conversationId={conversation.id}
+                    onCancel={() => void chatStore.stop(chatId)}
+                  >
+                    {null}
+                  </AskComposer>
+                </div>
+              )}
+              {!readOnly && (
+                <div className="composer-area ai-composer-area">
+                  <FollowupQueue chatId={chatId} state={state} />
+                  <ToolApprovalCards conversationId={conversation.id} />
+                  {newChatError && (
+                    <p className="ai-alert" role="alert">
+                      {newChatError}
+                    </p>
+                  )}
+                  {state.error && (
+                    <div className="ai-alert" role="alert">
+                      {state.error}
+                      {!state.busy && (
+                        <button className="text-button" onClick={() => void chatStore.load(chatId)}>
+                          Refresh chat
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {blocked && (
+                    <div className="ai-alert" role="alert">
+                      This model is configured for text only. Remove the image or choose a vision
+                      model before sending.
+                      <button className="text-button" onClick={onProviders}>
+                        Configure models
                       </button>
-                    )}
-                  </div>
-                )}
-                {blocked && (
-                  <div className="ai-alert" role="alert">
-                    This model is configured for text only. Remove the image or choose a vision
-                    model before sending.
-                    <button className="text-button" onClick={onProviders}>
-                      Configure models
-                    </button>
-                  </div>
-                )}
-                <AskComposer
-                  conversationId={conversation.id}
-                  onCancel={() => void chatStore.stop(chatId)}
-                >
-                  <div className="composer">
-                    {!!state.files.length && (
-                      <div className="ai-attachments ai-pending-attachments">
-                        {state.files.map((file) => (
-                          <AttachmentCard
-                            key={file.id}
-                            attachment={file}
-                            onRemove={
-                              !state.busy && !state.uploading
-                                ? () => void chatStore.removeFile(chatId, file.id)
-                                : undefined
-                            }
-                          />
-                        ))}
-                      </div>
-                    )}
-                    <textarea
-                      rows={2}
-                      aria-label={`Message ${bot.name}`}
-                      placeholder={
-                        state.busy ? 'Add a follow-up while working…' : `Message ${bot.name}…`
-                      }
-                      value={state.text}
-                      maxLength={16000}
-                      disabled={state.loading}
-                      onChange={(event) => chatStore.draft(chatId, event.target.value)}
-                      onPaste={(event) => {
-                        const files = Array.from(event.clipboardData.files);
-                        if (!files.length) return;
-
-                        // Keep ordinary text pastes intact, but turn copied files into pending attachments.
-                        event.preventDefault();
-                        void chatStore.upload(chatId, files);
-                      }}
-                      onKeyDown={(event) => {
-                        if (
-                          event.key === 'Enter' &&
-                          !event.shiftKey &&
-                          !event.nativeEvent.isComposing
-                        ) {
-                          event.preventDefault();
-                          send();
+                    </div>
+                  )}
+                  <AskComposer
+                    conversationId={conversation.id}
+                    onCancel={() => void chatStore.stop(chatId)}
+                  >
+                    <div className="composer">
+                      {!!state.files.length && (
+                        <div className="ai-attachments ai-pending-attachments">
+                          {state.files.map((file) => (
+                            <AttachmentCard
+                              key={file.id}
+                              attachment={file}
+                              onRemove={
+                                !state.busy && !state.uploading
+                                  ? () => void chatStore.removeFile(chatId, file.id)
+                                  : undefined
+                              }
+                            />
+                          ))}
+                        </div>
+                      )}
+                      <textarea
+                        rows={2}
+                        aria-label={`Message ${bot.name}`}
+                        placeholder={
+                          state.busy ? 'Add a follow-up while working…' : `Message ${bot.name}…`
                         }
-                      }}
-                    />
-                    <div className="composer-toolbar">
-                      <div className="composer-actions">
-                        <ApprovalModePicker />
-                        <IconButton
-                          label="Attach images or files"
-                          disabled={state.busy || state.uploading || state.loading}
-                          onClick={() => fileInput.current?.click()}
-                        >
-                          <Paperclip size={18} />
-                        </IconButton>
-                        {state.uploading ? (
-                          <span className="ai-model-label">Uploading & reading…</span>
-                        ) : (
-                          <BotModelPicker
-                            bot={bot}
-                            providers={providers}
-                            disabled={state.busy || state.loading}
-                            onSelected={onBotChanged}
-                            onSaving={setChangingModel}
-                            onProviders={onProviders}
+                        value={state.text}
+                        maxLength={16000}
+                        disabled={state.loading}
+                        onChange={(event) => chatStore.draft(chatId, event.target.value)}
+                        onPaste={(event) => {
+                          const files = Array.from(event.clipboardData.files);
+                          if (!files.length) return;
+
+                          // Keep ordinary text pastes intact, but turn copied files into pending attachments.
+                          event.preventDefault();
+                          void chatStore.upload(chatId, files);
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === 'Enter' &&
+                            !event.shiftKey &&
+                            !event.nativeEvent.isComposing
+                          ) {
+                            event.preventDefault();
+                            send();
+                          }
+                        }}
+                      />
+                      <div className="composer-toolbar">
+                        <div className="composer-actions">
+                          <ApprovalModePicker />
+                          <IconButton
+                            label="Attach images or files"
+                            disabled={state.busy || state.uploading || state.loading}
+                            onClick={() => fileInput.current?.click()}
+                          >
+                            <Paperclip size={18} />
+                          </IconButton>
+                          {state.uploading ? (
+                            <span className="ai-model-label">Uploading & reading…</span>
+                          ) : (
+                            <BotModelPicker
+                              bot={bot}
+                              providers={providers}
+                              disabled={state.busy || state.loading}
+                              onSelected={onBotChanged}
+                              onSaving={setChangingModel}
+                              onProviders={onProviders}
+                            />
+                          )}
+                          <ContextMeter
+                            usage={latestAssistant?.contextUsage}
+                            window={modelContextWindow(bot, provider)}
+                            onConfigure={onProviders}
                           />
-                        )}
-                        <ContextMeter
-                          usage={latestAssistant?.contextUsage}
-                          window={modelContextWindow(bot, provider)}
-                          onConfigure={onProviders}
-                        />
-                      </div>
-                      {state.busy ? (
-                        <div className="followup-send-actions">
+                        </div>
+                        {state.busy ? (
+                          <div className="followup-send-actions">
+                            <button
+                              className="send-button"
+                              aria-label="Queue follow-up"
+                              title="Queue follow-up"
+                              disabled={state.submittingFollowup || !state.text.trim()}
+                              onClick={send}
+                            >
+                              <ArrowUp size={18} />
+                            </button>
+                            <button
+                              className="send-button ai-stop"
+                              aria-label="Stop generation"
+                              onClick={() => void chatStore.stop(chatId)}
+                            >
+                              <Square size={13} fill="currentColor" />
+                            </button>
+                          </div>
+                        ) : (
                           <button
                             className="send-button"
-                            aria-label="Queue follow-up"
-                            title="Queue follow-up"
-                            disabled={state.submittingFollowup || !state.text.trim()}
+                            aria-label="Send message"
+                            disabled={
+                              state.loading ||
+                              changingModel ||
+                              state.uploading ||
+                              blocked ||
+                              (!state.text.trim() && !state.files.length)
+                            }
                             onClick={send}
                           >
                             <ArrowUp size={18} />
                           </button>
-                          <button
-                            className="send-button ai-stop"
-                            aria-label="Stop generation"
-                            onClick={() => void chatStore.stop(chatId)}
-                          >
-                            <Square size={13} fill="currentColor" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          className="send-button"
-                          aria-label="Send message"
-                          disabled={
-                            state.loading ||
-                            changingModel ||
-                            state.uploading ||
-                            blocked ||
-                            (!state.text.trim() && !state.files.length)
-                          }
-                          onClick={send}
-                        >
-                          <ArrowUp size={18} />
-                        </button>
-                      )}
+                        )}
+                      </div>
+                      <input
+                        ref={fileInput}
+                        className="visually-hidden"
+                        type="file"
+                        multiple
+                        accept={ACCEPTED_FILES}
+                        tabIndex={-1}
+                        aria-label="Upload chat attachments"
+                        onChange={(event) => {
+                          void chatStore.upload(chatId, Array.from(event.target.files || []));
+                          event.target.value = '';
+                        }}
+                      />
                     </div>
-                    <input
-                      ref={fileInput}
-                      className="visually-hidden"
-                      type="file"
-                      multiple
-                      accept={ACCEPTED_FILES}
-                      tabIndex={-1}
-                      aria-label="Upload chat attachments"
-                      onChange={(event) => {
-                        void chatStore.upload(chatId, Array.from(event.target.files || []));
-                        event.target.value = '';
-                      }}
-                    />
-                  </div>
-                  <div className="composer-hint ai-composer-hint">
-                    <span>Enter to send · Shift + Enter for a new line</span>
-                    <span>
-                      Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
-                      {vision ? 'Images enabled' : 'Text only'}
-                    </span>
-                  </div>
-                  {!provider && (
-                    <button className="text-button ai-configure-link" onClick={onProviders}>
-                      Set up a provider in Settings
-                    </button>
-                  )}
-                </AskComposer>
-              </div>
-            )}
-          </>
-        )}
-      </main>
-      {activity.open && !detailsOpen && (
-        <ChatActivityDrawer
-          data={activity}
-          bots={bots}
-          workspaceId={bot.workspaceId}
-          onClose={() => activity.setOpen(false)}
-          onReview={openReview}
-          onOpenBot={onOpenBot}
-          onViewComputer={onViewComputer}
-        />
-      )}
-      {review && (
-        <DiffDrawer
-          changes={review.changes}
-          selectedId={review.selectedId}
-          onSelect={(selectedId) => setReview({ ...review, selectedId })}
-          onClose={() => setReview(null)}
-        />
-      )}
-      {detailsOpen && (
-        <aside className="ai-details">
-          <div className="ai-details-heading">
-            <h2>About {bot.name}</h2>
-            <IconButton label="Close bot details" onClick={() => setDetailsOpen(false)}>
-              <X size={18} />
-            </IconButton>
-          </div>
-          <Avatar person={bot.avatar} size="lg" />
-          <h3>{bot.name}</h3>
-          <p>{bot.role}</p>
-          <dl>
-            <dt>Workspace role</dt>
-            <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
-            <dt>Created by</dt>
-            <dd>
-              {bot.createdBy
-                ? bots.find((parent) => parent.id === bot.createdBy)?.name || 'Unavailable bot'
-                : 'You'}
-            </dd>
-            <dt>Provider</dt>
-            <dd>{provider?.name || 'Not configured'}</dd>
-            <dt>Model</dt>
-            <dd>{model || 'Workspace default'}</dd>
-            <dt>Images</dt>
-            <dd>{vision ? 'Enabled' : 'Text only'}</dd>
-            <dt>Model context</dt>
-            <dd>
-              Messages from this conversation, within the model context limits. Other chats stay
-              separate.
-            </dd>
-            <dt>Instructions</dt>
-            <dd className="bot-instructions">{bot.instructions}</dd>
-            <dt>Reasoning</dt>
-            <dd>Shown when your selected model shares reasoning or a thinking summary.</dd>
-          </dl>
-          {!readOnly && (
-            <button className="button" onClick={onEdit}>
-              Edit bot
-            </button>
+                    <div className="composer-hint ai-composer-hint">
+                      <span>Enter to send · Shift + Enter for a new line</span>
+                      <span>
+                        Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
+                        {vision ? 'Images enabled' : 'Text only'}
+                      </span>
+                    </div>
+                    {!provider && (
+                      <button className="text-button ai-configure-link" onClick={onProviders}>
+                        Set up a provider in Settings
+                      </button>
+                    )}
+                  </AskComposer>
+                </div>
+              )}
+            </>
           )}
-        </aside>
-      )}
+        </main>
+        {activity.open && !detailsOpen && (
+          <ChatActivityDrawer
+            data={activity}
+            bots={bots}
+            workspaceId={bot.workspaceId}
+            onClose={() => activity.setOpen(false)}
+            onReview={openReview}
+            onOpenBot={onOpenBot}
+            onViewComputer={onViewComputer}
+          />
+        )}
+        {review && (
+          <DiffDrawer
+            changes={review.changes}
+            selectedId={review.selectedId}
+            onSelect={(selectedId) => setReview({ ...review, selectedId })}
+            onClose={() => setReview(null)}
+          />
+        )}
+        {detailsOpen && (
+          <aside className="ai-details">
+            <div className="ai-details-heading">
+              <h2>About {bot.name}</h2>
+              <IconButton label="Close bot details" onClick={() => setDetailsOpen(false)}>
+                <X size={18} />
+              </IconButton>
+            </div>
+            <Avatar person={bot.avatar} size="lg" />
+            <h3>{bot.name}</h3>
+            <p>{bot.role}</p>
+            <dl>
+              <dt>Workspace role</dt>
+              <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
+              <dt>Created by</dt>
+              <dd>
+                {bot.createdBy
+                  ? bots.find((parent) => parent.id === bot.createdBy)?.name || 'Unavailable bot'
+                  : 'You'}
+              </dd>
+              <dt>Provider</dt>
+              <dd>{provider?.name || 'Not configured'}</dd>
+              <dt>Model</dt>
+              <dd>{model || 'Workspace default'}</dd>
+              <dt>Images</dt>
+              <dd>{vision ? 'Enabled' : 'Text only'}</dd>
+              <dt>Model context</dt>
+              <dd>
+                Messages from this conversation, within the model context limits. Other chats stay
+                separate.
+              </dd>
+              <dt>Instructions</dt>
+              <dd className="bot-instructions">{bot.instructions}</dd>
+              <dt>Reasoning</dt>
+              <dd>Shown when your selected model shares reasoning or a thinking summary.</dd>
+            </dl>
+            {!readOnly && (
+              <button className="button" onClick={onEdit}>
+                Edit bot
+              </button>
+            )}
+          </aside>
+        )}
+      </div>
     </div>
   );
 }

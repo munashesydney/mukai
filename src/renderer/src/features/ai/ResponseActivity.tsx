@@ -19,6 +19,7 @@ import {
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
 import { MessageMarkdown } from './MessageMarkdown';
+import { ToolImagePreview } from './ToolImagePreview';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
@@ -39,7 +40,21 @@ function ActivitySpinner() {
   );
 }
 
-function ToolRow({ activity }: { activity: ChatActivity }) {
+function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatMessage }) {
+  const [preview, setPreview] = useState(false);
+  let artifactId = '';
+  if (activity.action === 'screenshot' && ['browser', 'computer_use'].includes(activity.tool)) {
+    try {
+      const summary = JSON.parse(activity.summary);
+      if (typeof summary.artifactId === 'string') artifactId = summary.artifactId;
+    } catch {
+      /* Older or truncated results still have their diagnostic disclosure. */
+    }
+  }
+  const isImage =
+    activity.status === 'complete' &&
+    (Boolean(artifactId) || (activity.tool === 'image' && activity.action === 'view'));
+
   const openConversation = useContext(ConversationNavigation);
   const pursuitLabels: Record<string, string> = {
     create: 'Created pursuit',
@@ -67,41 +82,62 @@ function ToolRow({ activity }: { activity: ChatActivity }) {
                   : FileText;
   const running = activity.status === 'running';
   const problem = activity.status === 'failed' || activity.status === 'interrupted';
+  const label = (
+    <>
+      {running ? <ActivitySpinner /> : <Icon size={14} />}
+      <span className="response-tool-label">
+        {running
+          ? `Running ${activity.action.replaceAll('_', ' ')}`
+          : problem
+            ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
+            : (activity.tool === 'image'
+                ? activity.action === 'view'
+                  ? 'Viewed image'
+                  : 'Read image metadata'
+                : activity.tool === 'manage_pursuit'
+                  ? pursuitLabels[activity.action]
+                  : actionLabels[activity.action]) || activity.action.replaceAll('_', ' ')}{' '}
+        <span className="response-tool-path" title={activity.path}>
+          {activity.path}
+        </span>
+      </span>
+      {problem && <CircleAlert size={13} aria-label={activity.status} />}
+      {activity.delegation && openConversation && (
+        <button
+          type="button"
+          className="text-button response-delegation-link"
+          aria-label={`Open bot conversation with ${activity.delegation.botName}`}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openConversation(activity.delegation!.conversationId);
+          }}
+        >
+          Open bot conversation
+        </button>
+      )}
+    </>
+  );
+  if (isImage)
+    return (
+      <div className="response-tool">
+        <button type="button" className="response-tool-image" onClick={() => setPreview(true)}>
+          {label}
+        </button>
+        {preview && (
+          <ToolImagePreview
+            activity={activity}
+            message={message}
+            artifactId={artifactId}
+            onClose={() => setPreview(false)}
+          />
+        )}
+      </div>
+    );
   return (
     <details className={`response-tool response-tool--${activity.status}`}>
       <summary>
-        {running ? <ActivitySpinner /> : <Icon size={14} />}
-        <span className="response-tool-label">
-          {running
-            ? `Running ${activity.action.replaceAll('_', ' ')}`
-            : problem
-              ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
-              : (activity.tool === 'image'
-                  ? activity.action === 'view'
-                    ? 'Viewed image'
-                    : 'Read image metadata'
-                  : activity.tool === 'manage_pursuit'
-                    ? pursuitLabels[activity.action]
-                    : actionLabels[activity.action]) || activity.action.replaceAll('_', ' ')}{' '}
-          <span className="response-tool-path" title={activity.path}>
-            {activity.path}
-          </span>
-        </span>
-        {problem && <CircleAlert size={13} aria-label={activity.status} />}
-        {activity.delegation && openConversation && (
-          <button
-            type="button"
-            className="text-button response-delegation-link"
-            aria-label={`Open bot conversation with ${activity.delegation.botName}`}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              openConversation(activity.delegation!.conversationId);
-            }}
-          >
-            Open bot conversation
-          </button>
-        )}
+        {label}
         <ChevronDown size={13} className="response-chevron" />
       </summary>
       <div className="response-tool-detail">
@@ -186,7 +222,7 @@ function ToolPart({
 }) {
   const activity = message.activity?.find((item) => item.id === part.activityId);
   return activity ? (
-    <ToolRow activity={activity} />
+    <ToolRow activity={activity} message={message} />
   ) : (
     <div className="response-tool-pending">
       {message.status === 'streaming' && <ActivitySpinner />}

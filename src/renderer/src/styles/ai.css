@@ -1248,6 +1248,7 @@
 }
 .response-work > summary,
 .response-tool > summary,
+.response-tool-image,
 .response-tool-group > summary,
 .response-reasoning > summary {
   display: flex;
@@ -1268,12 +1269,14 @@
 .response-reasoning summary::-webkit-details-marker {
   display: none;
 }
+.response-tool-image:hover,
 .response-work summary:hover,
 .response-tool summary:hover,
 .response-tool-group summary:hover,
 .response-reasoning summary:hover {
   color: var(--text-body);
 }
+.response-tool-image:focus-visible,
 .response-work summary:focus-visible,
 .response-tool summary:focus-visible,
 .response-tool-group summary:focus-visible,
@@ -1292,6 +1295,7 @@
 .response-reasoning[open] > summary > .response-chevron {
   transform: rotate(180deg);
 }
+.response-tool-image > svg,
 .response-tool > summary > svg,
 .response-tool-group > summary > svg,
 .response-reasoning > summary > svg {
@@ -2669,4 +2673,12 @@
   .followup-actions {
     margin-left: auto;
   }
+}
+
+.response-tool-image {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
 }

@@ -295,6 +295,7 @@ export const chatStore = {
               message.id === event.id
                 ? {
                     ...message,
+                    ...(event.changes ? { changes: event.changes } : {}),
                     activity: message.activity?.some((item) => item.id === event.activity.id)
                       ? message.activity.map((item) =>
                           item.id === event.activity.id ? event.activity : item,

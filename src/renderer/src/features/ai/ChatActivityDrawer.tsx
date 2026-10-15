@@ -86,68 +86,11 @@ export function ChatActivityDrawer({
           <X size={17} />
         </IconButton>
       </div>
-      <ActivitySection title="Outputs" count={data.outputs.length + data.artifacts.length}>
-        {data.outputs.map((output) => (
-          <a
-            key={output.id}
-            className="chat-activity-row"
-            href={output.url}
-            target="_blank"
-            rel="noreferrer"
-            title={output.url}
-            onClick={(event) => {
-              if (window.mukai || output.computer === 'qemu') {
-                event.preventDefault();
-                if (!busy) void openOutput(output.id, data.conversationId);
-              }
-            }}
-          >
-            <Globe size={17} />
-            <span className="chat-activity-row-copy">
-              <strong>
-                {new URL(output.url).host}
-                {new URL(output.url).pathname !== '/' ? new URL(output.url).pathname : ''}
-              </strong>
-              <small>
-                <span
-                  className={`chat-activity-dot ${output.status === 'running' ? 'is-running' : ''}`}
-                />
-                {output.status === 'running'
-                  ? 'Running'
-                  : output.status === 'unavailable'
-                    ? 'Not running in this session'
-                    : 'Server stopped'}
-              </small>
-            </span>
-            {busy === output.id ? (
-              <LoaderCircle size={14} className="is-spinning" />
-            ) : (
-              <ArrowUpRight size={14} className="chat-activity-row-end" />
-            )}
-          </a>
-        ))}
-        {data.artifacts.map((artifact) => (
-          <ArtifactCard key={artifact.id} artifact={artifact} compact />
-        ))}
-      </ActivitySection>
-      <ActivitySection title="Changes" count={data.changes.length}>
-        {data.changes.map((change) => (
-          <button
-            key={change.id}
-            className="chat-activity-row"
-            title={change.path}
-            onClick={() => onReview(data.changes, change.id)}
-          >
-            <FileDiff size={17} />
-            <span className="chat-activity-row-copy">
-              <strong>{change.path.split(/[\\/]/).at(-1)}</strong>
-              <small>{change.path}</small>
-            </span>
-            <ChangeCounts added={change.added} removed={change.removed} />
-          </button>
-        ))}
-        <p className="chat-activity-footnote">Latest saved edit for each file</p>
-      </ActivitySection>
+      {data.working && (
+        <p className="chat-activity-progress" role="status">
+          <LoaderCircle size={14} className="is-spinning" /> Activity updates as the bot works
+        </p>
+      )}
       <ActivitySection title="Bots" count={data.delegated.length + data.spawned.length}>
         {data.delegated.map((item) => {
           const conversation = pairs.conversations.find(
@@ -209,6 +152,70 @@ export function ChatActivityDrawer({
             <ChevronRight size={14} className="chat-activity-row-end" />
           </button>
         ))}
+      </ActivitySection>
+      <ActivitySection title="Links" count={data.outputs.length}>
+        {data.outputs.map((output) => (
+          <a
+            key={output.id}
+            className="chat-activity-row"
+            href={output.url}
+            target="_blank"
+            rel="noreferrer"
+            title={output.url}
+            onClick={(event) => {
+              if (window.mukai || output.computer === 'qemu') {
+                event.preventDefault();
+                if (!busy) void openOutput(output.id, data.conversationId);
+              }
+            }}
+          >
+            <Globe size={17} />
+            <span className="chat-activity-row-copy">
+              <strong>
+                {new URL(output.url).host}
+                {new URL(output.url).pathname !== '/' ? new URL(output.url).pathname : ''}
+              </strong>
+              <small>
+                <span
+                  className={`chat-activity-dot ${output.status === 'running' ? 'is-running' : ''}`}
+                />
+                {output.status === 'running'
+                  ? 'Running'
+                  : output.status === 'unavailable'
+                    ? 'Not running in this session'
+                    : 'Server stopped'}
+              </small>
+            </span>
+            {busy === output.id ? (
+              <LoaderCircle size={14} className="is-spinning" />
+            ) : (
+              <ArrowUpRight size={14} className="chat-activity-row-end" />
+            )}
+          </a>
+        ))}
+      </ActivitySection>
+      <ActivitySection title="Outputs" count={data.artifacts.length}>
+        {data.artifacts.map((artifact) => (
+          <ArtifactCard key={artifact.id} artifact={artifact} compact />
+        ))}
+      </ActivitySection>
+      <ActivitySection title="Changes" count={data.changes.length}>
+        {data.changes.map((change) => (
+          <button
+            key={change.id}
+            className="chat-activity-row"
+            title={change.path}
+            onClick={() => onReview(data.changes, change.id)}
+          >
+            <FileDiff size={17} />
+            <span className="chat-activity-row-copy">
+              <strong>{change.path.split(/[\\/]/).at(-1)}</strong>
+              <small>{change.path}</small>
+            </span>
+            <ChangeCounts added={change.added} removed={change.removed} />
+          </button>
+        ))}
+        <p className="chat-activity-footnote">Latest saved edit for each file</p>
       </ActivitySection>
       {(error || data.error) && (
         <p className="chat-activity-error" role="alert">

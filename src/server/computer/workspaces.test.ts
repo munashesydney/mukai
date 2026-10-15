@@ -6,6 +6,9 @@ import { startApiServer } from '../app';
 import { seedTestWorkspace } from '../testFixtures';
 import type { Workspace, ToolInfo } from '../../shared/ai';
 import { buildBotSystemPrompt } from '../../shared/botSystemPrompt';
+import { BotRepository } from '../repositories/botRepository';
+import { ArtifactRepository } from '../repositories/artifactRepository';
+import { scoutBot } from '../services/botService';
 vi.mock('node:os', async (original) => ({
   ...(await original<typeof import('node:os')>()),
   arch: () => 'x64',
@@ -27,6 +30,7 @@ afterEach(async () => {
   await new Promise<void>((resolve) => api.server.close(() => resolve()));
   api.dispose();
   await rm(directory, { recursive: true, force: true });
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 async function request<T = Record<string, unknown>>(path: string, method = 'GET', input?: unknown) {
@@ -38,6 +42,98 @@ async function request<T = Record<string, unknown>>(path: string, method = 'GET'
   return { status: response.status, data: (await response.json()) as T };
 }
 describe('workspace computer choice', () => {
+  it('shows an unavailable-file message for stale VM artifacts and can read them again if restored', async () => {
+    const { data: workspace } = await request<Workspace>('/workspaces', 'POST', {
+      name: 'VM files',
+      computer: 'qemu',
+    });
+    new BotRepository(api.store).create(scoutBot(workspace.id, 'vm-bot'));
+    api.store
+      .run(`INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at)
+      VALUES('vm-message','vm-bot','bot-vm-bot','vm-request','assistant','Saved a file.','complete','now')`);
+    new ArtifactRepository(api.store).save({
+      id: 'vm-artifact',
+      botId: 'vm-bot',
+      messageId: 'vm-message',
+      path: 'blender/_diag_bool.py',
+      name: '_diag_bool.py',
+      createdAt: 'now',
+    });
+    const download = vi
+      .spyOn(api.computers.guest(workspace), 'request')
+      .mockRejectedValue(new Error('The requested file or directory is unavailable.'));
+    const missing = await request('/artifacts/vm-artifact');
+    expect(missing.status).toBe(404);
+    expect(missing.data.error).toContain('no longer available in the workspace VM');
+    expect(missing.data.error).toContain('moved, deleted, or become inaccessible');
+    expect(missing.data.error).not.toContain('server could not complete');
+    download.mockResolvedValue({
+      name: '_diag_bool.py',
+      bytes: Buffer.from('print("restored")').toString('base64'),
+    });
+    const restored = await fetch(api.url + '/artifacts/vm-artifact', {
+      headers: { Authorization: `Bearer ${api.token}` },
+    });
+    expect(restored.status).toBe(200);
+    expect(await restored.text()).toBe('print("restored")');
+    download.mockRejectedValue(new Error('VM is unavailable.'));
+    const offline = await request('/artifacts/vm-artifact');
+    expect(offline.status).toBe(500);
+    expect(offline.data.error).not.toContain('moved');
+    download.mockRejectedValue(
+      Object.assign(new Error('VM image is missing.'), { code: 'ENOENT' }),
+    );
+    expect((await request('/artifacts/vm-artifact')).status).toBe(500);
+  });
+  it('previews a previously viewed guest image through the VM and scopes it to its conversation', async () => {
+    const { data: workspace } = await request<Workspace>('/workspaces', 'POST', {
+      name: 'VM image',
+      computer: 'qemu',
+    });
+    new BotRepository(api.store).create(scoutBot(workspace.id, 'image-bot'));
+    api.store.run(
+      `INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at,activity_json)
+      VALUES('image-message','image-bot','bot-image-bot','image-request','assistant','','streaming','now',?)`,
+      JSON.stringify([
+        {
+          id: 'view',
+          tool: 'image',
+          action: 'view',
+          status: 'complete',
+          path: '/home/mukai/workspace/render.png',
+          summary: '{}',
+        },
+      ]),
+    );
+    const guest = vi
+      .spyOn(api.computers.guest(workspace), 'request')
+      .mockResolvedValue({ image: Buffer.from('fixture-image').toString('base64') });
+    const path = '/conversations/bot-image-bot/activity-image';
+    const input = { messageId: 'image-message', activityId: 'view' };
+    const preview = await fetch(api.url + path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get('content-type')).toBe('image/png');
+    expect(await preview.text()).toBe('fixture-image');
+    expect(guest).toHaveBeenCalledWith(
+      'image',
+      { action: 'view', path: '/home/mukai/workspace/render.png' },
+      { workspaceId: workspace.id, botId: 'image-bot', conversationId: 'bot-image-bot' },
+      expect.any(AbortSignal),
+    );
+    expect((await request(path, 'POST', { ...input, activityId: 'other' })).status).toBe(404);
+    guest.mockRejectedValue(
+      new Error("ENOENT: no such file or directory, open '/home/mukai/workspace/render.png'"),
+    );
+    expect((await request(path, 'POST', input)).status).toBe(404);
+    guest.mockRejectedValue(
+      Object.assign(new Error('ENOENT: VM image is missing.'), { code: 'ENOENT' }),
+    );
+    expect((await request(path, 'POST', input)).status).toBe(500);
+  });
   it('does not expose a VM viewer for local workspaces or unauthenticated callers', async () => {
     expect((await request('/workspaces/default/computer-view', 'POST')).status).toBe(400);
     const denied = await fetch(api.url + '/workspaces/default/computer-view', { method: 'POST' });

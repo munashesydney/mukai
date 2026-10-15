@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -1018,6 +1018,30 @@ describe('Mukai bots and AI API', () => {
           status: approved ? 'complete' : 'failed',
         },
       ]);
+      const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      const previewUrl = `/conversations/${message.conversationId}/activity-image`;
+      const input = { messageId: message.id, activityId: activities![0].id };
+      const preview = await fetch(api.url + previewUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      expect(preview.status).toBe(approved ? 200 : 404);
+      if (approved) {
+        expect(preview.headers.get('content-type')).toBe('image/png');
+        expect((await sharp(Buffer.from(await preview.arrayBuffer())).metadata()).width).toBe(30);
+        expect(
+          (await request(previewUrl, 'POST', { ...input, activityId: 'unknown' })).response.status,
+        ).toBe(404);
+        expect(
+          (await request('/conversations/bot-other/activity-image', 'POST', input)).response.status,
+        ).toBe(404);
+        unlinkSync(path);
+        const missing = await request<{ error: string }>(previewUrl, 'POST', input);
+        expect(missing.response.status).toBe(404);
+        expect(missing.data.error).toContain('This image is no longer available');
+      }
+      expect((await fetch(api.url + previewUrl, { method: 'POST' })).status).toBe(401);
       expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
     },
   );
@@ -2456,6 +2480,13 @@ describe('Mukai bots and AI API', () => {
     }
     expect(sent.events.some((event) => event.type === 'reasoning')).toBe(true);
     expect(sent.events.filter((event) => event.type === 'activity')).toHaveLength(10);
+    expect(sent.events).toContainEqual(
+      expect.objectContaining({
+        type: 'activity',
+        activity: expect.objectContaining({ action: 'write_file', status: 'complete' }),
+        changes: [expect.objectContaining({ path: 'draft.md', kind: 'created' })],
+      }),
+    );
     expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
     const messages = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
     expect(messages[1].status).toBe('complete');
@@ -2522,6 +2553,11 @@ describe('Mukai bots and AI API', () => {
     });
     expect(download.headers.get('content-disposition')).toContain('attachment');
     expect(await download.text()).toContain('A clearer second version.');
+    unlinkSync(join(project, 'draft.md'));
+    const missingFile = await request<{ error: string }>('/artifacts/' + artifacts[0].id);
+    expect(missingFile.response.status).toBe(404);
+    expect(missingFile.data.error).toContain('no longer available in the workspace folder');
+    writeFileSync(join(project, 'draft.md'), detail.after);
     await request(`/bots/${bot.id}`, 'DELETE');
     expect((await request(`/changes/${change.id}`)).response.status).toBe(404);
     expect(
