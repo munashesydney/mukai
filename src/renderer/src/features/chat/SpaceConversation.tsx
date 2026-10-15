@@ -72,80 +72,82 @@ export function SpaceConversation({
   );
   return (
     <div className={`conversation-layout ${activityOpen ? 'has-chat-activity' : ''}`}>
-      <main className="conversation">
-        <ConversationHeader
-          location={location}
-          space={space}
-          tab={tab}
-          onTab={onTab}
-          detailsOpen={detailsOpen}
-          onDetails={() => {
-            activity.setOpen(false);
-            onDetails();
-          }}
-          onSettings={onSettings}
-          onSaved={onSaved}
-          members={bots.filter((bot) => space.botIds.includes(bot.id))}
-          headerActions={
-            activity.count > 0 ? (
-              <IconButton
-                label={activityOpen ? 'Hide chat activity' : 'Show chat activity'}
-                className={activityOpen ? 'is-on' : ''}
-                aria-expanded={activityOpen}
-                aria-controls="chat-activity-drawer"
-                onClick={() => {
-                  activity.setOpen(!activityOpen);
-                  onCloseDetails();
-                }}
-              >
-                <ListTree size={18} />
-              </IconButton>
-            ) : undefined
-          }
-        />
-        {tab === 'Activity' && !savedOpen ? (
-          <ActivityView onPursuit={onPursuit} onDraft={onDraft} />
-        ) : (
-          <SpaceChat
+      <div className="conversation-panels">
+        <main className="conversation">
+          <ConversationHeader
+            location={location}
             space={space}
-            bots={bots}
-            providers={providers}
             tab={tab}
-            savedOpen={savedOpen}
-            onCloseSaved={onCloseSaved}
-            onProviders={onProviders}
-            onOpenBot={onOpenBot}
+            onTab={onTab}
+            detailsOpen={detailsOpen}
+            onDetails={() => {
+              activity.setOpen(false);
+              onDetails();
+            }}
+            onSettings={onSettings}
+            onSaved={onSaved}
+            members={bots.filter((bot) => space.botIds.includes(bot.id))}
+            headerActions={
+              activity.available ? (
+                <IconButton
+                  label={activityOpen ? 'Hide chat activity' : 'Show chat activity'}
+                  className={activityOpen ? 'is-on' : ''}
+                  aria-expanded={activityOpen}
+                  aria-controls="chat-activity-drawer"
+                  onClick={() => {
+                    activity.setOpen(!activityOpen);
+                    onCloseDetails();
+                  }}
+                >
+                  <ListTree size={18} />
+                </IconButton>
+              ) : undefined
+            }
+          />
+          {tab === 'Activity' && !savedOpen ? (
+            <ActivityView onPursuit={onPursuit} onDraft={onDraft} />
+          ) : (
+            <SpaceChat
+              space={space}
+              bots={bots}
+              providers={providers}
+              tab={tab}
+              savedOpen={savedOpen}
+              onCloseSaved={onCloseSaved}
+              onProviders={onProviders}
+              onOpenBot={onOpenBot}
+              onReview={openReview}
+            />
+          )}
+        </main>
+        {activityOpen && (
+          <ChatActivityDrawer
+            data={activity}
+            bots={bots}
+            workspaceId={space.workspaceId}
+            onClose={() => activity.setOpen(false)}
             onReview={openReview}
+            onOpenBot={onOpenBot}
+            onViewComputer={onViewComputer}
           />
         )}
-      </main>
-      {activityOpen && (
-        <ChatActivityDrawer
-          data={activity}
-          bots={bots}
-          workspaceId={space.workspaceId}
-          onClose={() => activity.setOpen(false)}
-          onReview={openReview}
-          onOpenBot={onOpenBot}
-          onViewComputer={onViewComputer}
-        />
-      )}
-      {detailsOpen && (
-        <SpaceDetails
-          space={space}
-          bots={bots}
-          onClose={onCloseDetails}
-          onSelectBot={onSelectBot}
-        />
-      )}
-      {review && (
-        <DiffDrawer
-          changes={review.changes}
-          selectedId={review.selectedId}
-          onSelect={(selectedId) => setReview({ ...review, selectedId })}
-          onClose={() => setReview(null)}
-        />
-      )}
+        {detailsOpen && (
+          <SpaceDetails
+            space={space}
+            bots={bots}
+            onClose={onCloseDetails}
+            onSelectBot={onSelectBot}
+          />
+        )}
+        {review && (
+          <DiffDrawer
+            changes={review.changes}
+            selectedId={review.selectedId}
+            onSelect={(selectedId) => setReview({ ...review, selectedId })}
+            onClose={() => setReview(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }

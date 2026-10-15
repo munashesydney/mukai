@@ -16,6 +16,7 @@
     "test:cli:packaged": "tsx scripts/cli/smoke.ts",
     "test:cli:browser": "tsx scripts/cli/browser-smoke.ts",
     "test:settings-ui": "tsx scripts/run-shared-settings-smoke.ts",
+    "test:providers-ui": "node --import tsx scripts/provider-settings-smoke.ts",
     "test:cli:installer": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/cli/install-smoke.ps1",
     "build:guest": "tsx scripts/build-guest.ts",
     "build:computer-use": "tsx scripts/build-computer-use.ts",
@@ -52,6 +53,7 @@
     "format:check": "prettier --check .",
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
     "test:bots-ui": "tsx scripts/run-bot-smoke.ts",
+    "test:telegram-ui": "tsx scripts/run-telegram-smoke.ts",
     "test:workspace-ui": "tsx scripts/run-bot-smoke.ts --workspace-only"
   },
   "dependencies": {
@@ -69,6 +71,7 @@
     "esbuild": "^0.25.12",
     "lucide-react": "^1.49.0",
     "mammoth": "^1.13.0",
+    "mdast-util-from-markdown": "^2.1.0",
     "pdf-parse": "^2.4.5",
     "playwright-core": "^1.63.0",
     "react": "^19.2.0",

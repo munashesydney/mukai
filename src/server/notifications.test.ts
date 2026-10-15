@@ -8,6 +8,7 @@ import { startApiServer } from './app';
 import { seedTestBot } from './testFixtures';
 import { scoutBot } from './services/botService';
 import { ConversationRepository } from './repositories/conversationRepository';
+import { BotRepository } from './repositories/botRepository';
 import { communicateTools } from './tools/communicate/execute';
 import { communicateDefinition } from './tools/communicate/definition';
 import { conversationsDefinition } from './tools/conversations/definition';
@@ -52,6 +53,56 @@ const query = (input: object, workspaceId = 'default') =>
   api.conversationHistory.execute(workspaceId, conversationsDefinition.inputSchema.parse(input));
 
 describe('Autonomous updates and conversation history', () => {
+  it('dismisses every page in the selected workspace without removing other workspace messages', async () => {
+    const source = message('bot-scout');
+    for (let index = 0; index < 35; index++)
+      api.notifications.notify(scoutBot(), source, `bulk-${index}`, {
+        title: `Update ${index}`,
+        message: 'A completed finding.',
+      });
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other','Other',NULL,?)",
+      new Date().toISOString(),
+    );
+    const otherBot = { ...scoutBot(), id: 'other-scout', workspaceId: 'other' };
+    new BotRepository(api.store).create(otherBot);
+    const conversation = new ConversationRepository(api.store).create('other', {
+      name: 'Other workspace task',
+      description: '',
+      botIds: [otherBot.id],
+    });
+    const otherMessageId = randomUUID();
+    api.store.run(
+      `INSERT INTO messages(id,conversation_id,bot_id,request_id,role,content,status,created_at,author_name)
+       VALUES(?,?,?,?,'assistant','Other finding','complete',?,'Scout')`,
+      otherMessageId,
+      conversation.id,
+      otherBot.id,
+      randomUUID(),
+      new Date().toISOString(),
+    );
+    api.notifications.notify(otherBot, otherMessageId, 'other-notify', {
+      title: 'Other update',
+      message: 'Keep this message.',
+    });
+    const before = (await request<NotificationInbox>('/notifications')).data;
+    expect(before).toMatchObject({ total: 35, unread: 35 });
+    expect(before.items).toHaveLength(30);
+    expect((await request('/notifications/dismiss-all', 'POST')).status).toBe(200);
+    expect((await request<NotificationInbox>('/notifications')).data).toEqual({
+      items: [],
+      total: 0,
+      unread: 0,
+    });
+    expect(
+      (await request<NotificationInbox>('/notifications?workspaceId=other')).data,
+    ).toMatchObject({ total: 1, unread: 1 });
+    expect(api.store.get('SELECT COUNT(*) AS count FROM bot_notifications')!.count).toBe(36);
+    expect((await request('/notifications/dismiss-all', 'POST')).status).toBe(200);
+    expect((await request('/notifications/dismiss-all?workspaceId=missing', 'POST')).status).toBe(
+      404,
+    );
+  });
   it('notifies without waiting, deduplicates retries, and continues as the bot’s first message', async () => {
     const source = message('bot-scout');
     const ask = vi.fn();

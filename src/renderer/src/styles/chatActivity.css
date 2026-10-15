@@ -3,6 +3,12 @@
   container-name: chat-layout;
   min-height: 0;
 }
+.conversation-panels {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 .chat-activity-drawer {
   flex: 0 0 292px;
   width: 292px;
@@ -36,6 +42,14 @@
 .chat-activity-heading .icon-button {
   width: 26px;
   height: 26px;
+}
+.chat-activity-progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -12px 0 20px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .chat-activity-section + .chat-activity-section {
   margin-top: 28px;
@@ -162,14 +176,28 @@
   line-height: 1.6;
 }
 @container chat-layout (max-width: 700px) {
-  .has-chat-activity > .conversation {
-    display: none;
+  .has-chat-activity > .conversation-panels {
+    flex-direction: column;
+  }
+  .has-chat-activity > .conversation-panels > .conversation {
+    min-height: 0;
   }
   .chat-activity-drawer {
-    flex: 1;
+    flex: 0 1 auto;
     width: 100%;
+    max-height: 28%;
     border-left: 0;
-    padding: 22px 24px 28px;
+    border-top: 1px solid var(--line);
+    padding: 12px 20px 16px;
+  }
+  .chat-activity-heading {
+    margin-bottom: 16px;
+  }
+  .chat-activity-heading p {
+    display: none;
+  }
+  .chat-activity-progress {
+    margin: 0 0 14px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

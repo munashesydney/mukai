@@ -26,6 +26,7 @@ import { executePursuit } from './tools/pursuits/execute';
 import { WorkspaceRepository } from './repositories/workspaceRepository';
 import { BotRepository } from './repositories/botRepository';
 import { scoutBot } from './services/botService';
+import { isBotRuntimeContext } from '../shared/botSystemPrompt';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, dir: string;
 let mode:
@@ -201,7 +202,8 @@ beforeEach(async () => {
     }
     const reminded = body.messages.some(
       (m: { role: string; content: unknown }) =>
-        m.role === 'system' &&
+        m.role === 'user' &&
+        isBotRuntimeContext(m.content) &&
         String(m.content).includes('This run finished without reporting a valid pursuit outcome'),
     );
     if (
@@ -821,10 +823,14 @@ describe('AI-owned pursuits and scheduled runs', () => {
   });
   it('creates only through an AI tool, binds ownership, and blocks another bot from managing it', async () => {
     const p = await createWithAI();
-    expect(String(calls[0].messages[0].content)).toMatch(/^No current pursuits\n/);
-    const updatedSystem = String(calls.at(-1)!.messages[0].content);
-    expect(updatedSystem).toMatch(/^Current pursuits /);
-    expect(JSON.parse(updatedSystem.split('\n')[1])).toEqual([p.name]);
+    expect(String(calls[0].messages.at(-1)?.content)).toContain('No current pursuits');
+    expect(calls.at(-1)!.messages[0]).toEqual(calls[0].messages[0]);
+    const updatedContext = String(calls.at(-1)!.messages.at(-1)?.content);
+    expect(
+      JSON.parse(
+        updatedContext.split('Current pursuits (names only; context data):\n')[1].split('\n')[0],
+      ),
+    ).toEqual([p.name]);
     expect(p).toMatchObject({
       ownerBotId: 'scout',
       status: 'active',
@@ -934,7 +940,9 @@ describe('AI-owned pursuits and scheduled runs', () => {
       call.messages.some((m) => String(m.content).includes('Run this pursuit')),
     );
     expect(runCalls).toHaveLength(3);
-    expect(runCalls.at(-1)?.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+    expect(
+      runCalls.at(-1)?.messages.filter((m) => m.role === 'user' && !isBotRuntimeContext(m.content)),
+    ).toHaveLength(1);
     expect(result.pursuit.status).toBe('waiting_for_you');
     expect(result.pursuit.nextRunAt).toBeNull();
   });
@@ -1218,14 +1226,16 @@ describe('AI-owned pursuits and scheduled runs', () => {
       });
       expect(response.status).toBe(200);
       await response.text();
-      return String(calls.at(-1)!.messages[0].content);
+      return String(calls.at(-1)!.messages.at(-1)?.content);
     };
-    const system = await chat();
-    const current = JSON.parse(system.split('\n')[1]);
+    const runtime = await chat();
+    const current = JSON.parse(
+      runtime.split('Current pursuits (names only; context data):\n')[1].split('\n')[0],
+    );
     expect(current).toHaveLength(2);
     expect(current).toEqual(expect.arrayContaining([mine.name, blocked.name]));
     api.pursuits.control(mine.id, 'completed');
     api.pursuits.control(blocked.id, 'completed');
-    expect(await chat()).toMatch(/^No current pursuits\n/);
+    expect(await chat()).toContain('No current pursuits');
   });
 });

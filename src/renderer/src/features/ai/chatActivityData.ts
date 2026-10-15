@@ -8,17 +8,15 @@ export function chatActivityData(
   artifacts: FileArtifact[],
   bots: Bot[],
 ) {
-  const finished = messages.filter(
-    (message) => message.role === 'assistant' && message.status !== 'streaming',
-  );
-  const ids = new Set(finished.map((message) => message.id));
+  const assistants = messages.filter((message) => message.role === 'assistant');
+  const ids = new Set(assistants.map((message) => message.id));
   const changes = new Map<string, FileChangeSummary>();
   const delegated = new Map<
     string,
     NonNullable<NonNullable<ChatMessage['activity']>[number]['delegation']>
   >();
   const created = new Set<string>();
-  for (const message of finished) {
+  for (const message of assistants) {
     for (const change of message.changes || []) changes.set(change.path, change);
     for (const activity of message.activity || []) {
       if (activity.createdBotId && activity.status === 'complete')
@@ -28,7 +26,7 @@ export function chatActivityData(
     }
   }
   const files = new Map<string, FileArtifact>();
-  for (const artifact of artifacts)
+  for (const artifact of [...artifacts].sort((a, b) => a.createdAt.localeCompare(b.createdAt)))
     if (ids.has(artifact.messageId)) files.set(artifact.path, artifact);
   const servers = new Map<string, ChatServerOutput>();
   for (const output of outputs) if (ids.has(output.messageId)) servers.set(output.url, output);

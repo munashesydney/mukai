@@ -33,9 +33,15 @@ it('only creates the first workspace on request and stays empty after deleting t
     expect(workspace.id).not.toBe('default');
     expect((await request('/workspaces')).data).toEqual([workspace]);
     expect((await request('/bots?workspaceId=' + workspace.id)).data).toEqual([]);
+    expect((await request('/memory?workspaceId=' + workspace.id)).data.settings.enabled).toBe(
+      false,
+    );
     await stop();
     api = await startApiServer(0, { dataDir });
     expect((await request('/workspaces')).data).toEqual([workspace]);
+    expect((await request('/memory?workspaceId=' + workspace.id)).data.settings.enabled).toBe(
+      false,
+    );
     expect(
       (await request('/workspaces/' + workspace.id, 'DELETE', { name: workspace.name })).status,
     ).toBe(200);

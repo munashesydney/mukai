@@ -67,8 +67,8 @@ export class ConversationService {
       throw new ApiError(400, 'Conversation workspace does not match its bot.');
     return bot;
   }
-  sendPrivate(id: string, input: ChatInput, output: ChatOutput) {
-    return this.chats.respond(this.privateBot(id), input, output, id);
+  sendPrivate(id: string, input: ChatInput, output: ChatOutput, source?: 'telegram') {
+    return this.chats.respond(this.privateBot(id), { ...input, source }, output, id);
   }
   create(workspaceId: string, input: SpaceInput) {
     const available = this.bots.list(workspaceId);

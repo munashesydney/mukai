@@ -17,6 +17,7 @@ import {
   botModelSchema,
   createBotSchema,
   providerSchema,
+  providerModelsSchema,
   chatSchema,
   workspaceSchema,
   spaceSchema,
@@ -43,6 +44,8 @@ import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 import { trustedLocalRequest } from '../web/origin';
 import type { SettingsService } from '../services/settingsService';
+import type { TelegramService } from '../services/telegramService';
+import { telegramRoutes } from './telegramRoutes';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -66,6 +69,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  telegram,
   settings,
   browserMode = false,
   version = '0.1.0',
@@ -90,6 +94,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  telegram: TelegramService;
   settings: SettingsService;
   browserMode?: boolean;
   version?: string;
@@ -154,7 +159,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(telegram|settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -163,6 +168,8 @@ export function createRoutes({
     const expected = Buffer.from(token);
     if (given.length !== expected.length || !timingSafeEqual(given, expected))
       throw new ApiError(401, 'API authentication required.');
+    if (path === '/telegram' || path.startsWith('/telegram/'))
+      return telegramRoutes(telegram, request, response, path);
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
@@ -223,7 +230,13 @@ export function createRoutes({
       if (id && !action && method === 'POST') {
         const input = z
           .union([
-            z.object({ approved: z.boolean() }).strict(),
+            z.object({ approved: z.literal(true) }).strict(),
+            z
+              .object({
+                approved: z.literal(false),
+                reason: z.string().trim().min(1).max(16000).optional(),
+              })
+              .strict(),
             z.object({ answer: z.string().trim().min(1).max(16000) }).strict(),
           ])
           .parse(await jsonBody(request));
@@ -231,7 +244,12 @@ export function createRoutes({
           response,
           'answer' in input
             ? approvals.answer(id, input.answer, workspaceId)
-            : approvals.decide(id, input.approved, workspaceId),
+            : approvals.decide(
+                id,
+                input.approved,
+                workspaceId,
+                'reason' in input ? input.reason : undefined,
+              ),
         );
       }
       throw new ApiError(404, 'Not found');
@@ -280,6 +298,8 @@ export function createRoutes({
     }
     if (resource === 'notifications') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
+      if (id === 'dismiss-all' && !action && method === 'POST')
+        return send(response, notifications.dismissAll(workspaceId));
       if (!id && method === 'GET') {
         const offset = z.coerce
           .number()
@@ -546,6 +566,28 @@ export function createRoutes({
         }
         if (action === 'outputs' && method === 'GET')
           return send(response, await chatOutputs.list(id));
+        if (action === 'activity-image' && method === 'POST') {
+          const input = z
+            .object({ messageId: z.string().min(1), activityId: z.string().min(1) })
+            .strict()
+            .parse(await jsonBody(request));
+          const message = conversations.history(id).find((item) => item.id === input.messageId);
+          const activity = message?.activity?.find((item) => item.id === input.activityId);
+          if (
+            message?.role !== 'assistant' ||
+            !activity ||
+            activity.status !== 'complete' ||
+            activity.tool !== 'image' ||
+            activity.action !== 'view'
+          )
+            throw new ApiError(404, 'Viewed image not found in this conversation.');
+          const bytes = await artifacts.previewImage(message.botId, id, activity.path);
+          response.setHeader('Content-Type', 'image/png');
+          response.setHeader('X-Content-Type-Options', 'nosniff');
+          response.setHeader('Cache-Control', 'no-store');
+          response.writeHead(200).end(bytes);
+          return;
+        }
         if (action === 'open-output' && method === 'POST') {
           const input = z.object({ outputId: z.string().uuid() }).parse(await jsonBody(request));
           return send(response, await chatOutputs.open(id, input.outputId));
@@ -716,6 +758,11 @@ export function createRoutes({
       }
       if (id && action === 'models' && method === 'GET')
         return send(response, await providers.models(id));
+      if (id && action === 'models' && method === 'PUT') {
+        const input = providerModelsSchema.parse(await jsonBody(request));
+        await providers.validateModel(id, input.defaultModel);
+        return send(response, providers.saveModels(id, input));
+      }
       if (id && action === 'disconnect' && method === 'POST')
         return send(response, await providers.chatgpt.disconnect(id));
       if (!id && method === 'GET') return send(response, providers.list());

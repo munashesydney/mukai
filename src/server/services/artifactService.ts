@@ -2,11 +2,14 @@ import { basename, join, relative, resolve, sep } from 'node:path';
 import { mkdir, lstat, realpath, open, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
+import { z } from 'zod';
+import { executeImage } from '../tools/image/execute';
 import { ApiError } from '../config';
 import { ArtifactRepository } from '../repositories/artifactRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { WorkspaceService } from './workspaceService';
 import { WorkspaceFileService } from './workspaceFileService';
+import type { FileArtifact, Workspace } from '../../shared/ai';
 
 const SCREENSHOT_LIMIT = 16 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -27,6 +30,49 @@ export class ArtifactService {
   }
   forConversation(id: string) {
     return this.artifacts.forConversation(id);
+  }
+  async previewImage(botId: string, conversationId: string, path: string) {
+    const bot = this.bots.find(botId);
+    if (!bot) throw new ApiError(404, 'Bot not found.');
+    const workspace = this.workspaces.require(bot.workspaceId);
+    const owner = { workspaceId: workspace.id, botId, conversationId };
+    const signal = AbortSignal.timeout(45000);
+    try {
+      let result: unknown;
+      if (workspace.computer === 'qemu') {
+        result = await this.workspaces
+          .computers!.guest(workspace)
+          .request('image', { action: 'view', path }, owner, signal);
+      } else {
+        const output = await executeImage(
+          { action: 'view', path },
+          {
+            owner,
+            signal,
+            folder: workspace.folder,
+            vision: true,
+            budget: { remaining: 1 },
+            onActivity: () => {},
+          },
+          'image-preview',
+        );
+        if (!output.ok) throw new ApiError(400, output.error!);
+        result = output.result;
+      }
+      const image = z.object({ image: z.string().max(14 * 1024 * 1024) }).parse(result);
+      return Buffer.from(image.image, 'base64');
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ((!('code' in error) && /^(ENOENT|ENOTDIR):/.test(error.message)) ||
+          error.message === 'The requested file or directory is unavailable.')
+      )
+        throw new ApiError(
+          404,
+          'This image is no longer available. It may have been moved, deleted, or become inaccessible.',
+        );
+      throw error;
+    }
   }
   record(botId: string, messageId: string, path: string) {
     this.artifacts.save({
@@ -110,11 +156,36 @@ export class ArtifactService {
     const bot = artifact && this.bots.find(artifact.botId);
     if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
     const workspace = this.workspaces.require(bot.workspaceId);
+    try {
+      return await this.readFile(artifact, workspace);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      const vmFile = workspace.computer === 'qemu' && artifact.kind !== 'image';
+      // Guest file errors currently cross the bridge as plain Errors, without
+      // their ApiError status. Recognize only the known unavailable-path reply.
+      if (
+        (!vmFile && (code === 'ENOENT' || code === 'ENOTDIR')) ||
+        (error instanceof Error &&
+          error.message === 'The requested file or directory is unavailable.')
+      ) {
+        const location =
+          workspace.computer === 'qemu' ? 'the workspace VM' : 'the workspace folder';
+        throw new ApiError(
+          404,
+          artifact.kind === 'image'
+            ? 'This saved screenshot is no longer available. It may have been moved or deleted.'
+            : `This file is no longer available in ${location}. It may have been moved, deleted, or become inaccessible.`,
+        );
+      }
+      throw error;
+    }
+  }
+  private async readFile(artifact: FileArtifact, workspace: Workspace) {
     if (artifact.kind === 'image') {
       const name = artifact.id + '.png';
       const folders = [
-        this.screenshotFolder(bot.workspaceId),
-        join(this.dataDir, 'artifacts', 'screenshots', bot.workspaceId),
+        this.screenshotFolder(workspace.id),
+        join(this.dataDir, 'artifacts', 'screenshots', workspace.id),
       ].map((folder) => resolve(folder));
       const folder = folders.find(
         (candidate) => resolve(join(candidate, name)) === resolve(artifact.path),
@@ -149,7 +220,7 @@ export class ArtifactService {
         .request(
           'download',
           { path: artifact.path },
-          { workspaceId: workspace.id, botId: bot.id, conversationId: 'artifact-download' },
+          { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
           AbortSignal.timeout(45000),
         )) as { name: string; bytes: string };
       return {

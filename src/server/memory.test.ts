@@ -169,6 +169,88 @@ afterEach(async () => {
 });
 
 describe('Mukai memory integration', () => {
+  it('aborts in-flight extraction when disabled and supports new work after re-enabling', async () => {
+    await close(api.server);
+    let release!: () => void;
+    let activeSignal: AbortSignal | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryExtractor: async ({ signal }) => {
+        activeSignal = signal;
+        await gate;
+        return { facts: [coffee] };
+      },
+    });
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    try {
+      await api.memory.add(
+        bot,
+        'bot-scout',
+        'in-flight',
+        'espresso',
+        'in-flight',
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(activeSignal).toBeDefined());
+      api.memory.saveSettings('default', { ...api.memory.settings('default'), enabled: false });
+      expect(activeSignal?.aborted).toBe(true);
+      release();
+      await vi.waitFor(() =>
+        expect(api.memory.snapshot('default').episodes[0].status).toBe('failed'),
+      );
+      expect(api.memory.snapshot('default').facts).toHaveLength(0);
+      api.memory.saveSettings('default', { ...api.memory.settings('default'), enabled: true });
+      await api.memory.add(
+        bot,
+        'bot-scout',
+        'after-enable',
+        'espresso',
+        'after-enable',
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+      expect(activeSignal?.aborted).toBe(false);
+    } finally {
+      release();
+    }
+  });
+  it('turns off capture, recall, and bot memory access while keeping saved facts and preferences', async () => {
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const before = api.memory.settings('default');
+    const saved = await request('/memory/settings', 'PUT', { ...before, enabled: false });
+    expect(saved.response.status).toBe(200);
+    await chat('My off-period secret is marmalade.');
+    const last = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(last.messages)).not.toContain('Retrieved memory reference');
+    expect(last.tools?.some((entry) => entry.function.name === 'memory')).toBe(false);
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    await expect(
+      api.memory.add(bot, 'bot-scout', 'off', 'espresso', 'off', new AbortController().signal),
+    ).rejects.toThrow('Memory is off');
+    await expect(api.memory.search(bot, 'espresso', {})).rejects.toThrow('Memory is off');
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect(api.memory.settings('default')).toEqual({ ...before, enabled: false });
+    await close(api.server);
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryExtractor: extractor,
+      memoryReviewIdleMs: 0,
+    });
+    expect(api.memory.settings('default').enabled).toBe(false);
+    await request('/memory/settings', 'PUT', before);
+    expect(api.memory.settings('default')).toEqual(before);
+    await chat('Continue with future exchanges.');
+    await api.memory.reviews.drain(new AbortController().signal);
+    expect(
+      api.memory
+        .snapshot('default')
+        .episodes.some((episode) => episode.content.includes('marmalade')),
+    ).toBe(false);
+  });
   it('serializes overlapping review requests across private and workspace conversations', async () => {
     api.memory.saveSettings('default', {
       ...api.memory.settings('default'),
@@ -432,7 +514,9 @@ describe('Mukai memory integration', () => {
   it('exposes one memory function and dispatches actions with their required fields', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
-    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const add = vi
+      .spyOn(api.memory, 'add')
+      .mockResolvedValue({ queued: true, episodeId: 'queued-episode', status: 'pending' });
     const forget = vi.spyOn(api.memory.engine, 'forgetMemory').mockImplementation(() => {});
     const activities: { tool: string; action: string; status: string }[] = [];
     const tools = memoryTools({
@@ -502,7 +586,9 @@ describe('Mukai memory integration', () => {
   it('allows a multi-scenario investigation to search more than twelve times and still write', async () => {
     const bot = (await request<Bot[]>('/bots')).data[0];
     const search = vi.spyOn(api.memory, 'search').mockResolvedValue([]);
-    const add = vi.spyOn(api.memory, 'add').mockResolvedValue([]);
+    const add = vi
+      .spyOn(api.memory, 'add')
+      .mockResolvedValue({ queued: true, episodeId: 'queued-episode', status: 'pending' });
     const tools = memoryTools({
       bot,
       conversationId: 'bot-scout',
@@ -592,6 +678,8 @@ describe('Mukai memory integration', () => {
     const snapshot = (await request<MemorySnapshot>('/memory?workspaceId=other')).data;
     expect(snapshot.facts).toHaveLength(0);
     expect(snapshot.recalls).toHaveLength(0);
+    expect(snapshot.settings.enabled).toBe(false);
+    api.memory.saveSettings('other', { ...snapshot.settings, enabled: true });
     expect(
       await api.memory.search({ ...otherBot, workspaceId: 'other' }, 'espresso', {}),
     ).toHaveLength(0);
@@ -612,10 +700,67 @@ describe('Mukai memory integration', () => {
         { toolCallId: 'shared-write', messages: [], context: {} },
       ),
     ).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const snapshot = api.memory.snapshot('default');
     expect(snapshot.facts[0].ownerId).toBeNull();
     expect(snapshot.episodes[0].ownerId).toBeNull();
     expect(await api.memory.search({ ...bot, id: 'other-bot' }, 'espresso', {})).toHaveLength(1);
+  });
+  it('acknowledges durable memory adds before extraction and processes them independently of the chat', async () => {
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    const caller = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = api.memory.engine.processEpisode.bind(api.memory.engine);
+    const processing = vi
+      .spyOn(api.memory.engine, 'processEpisode')
+      .mockImplementation(async (id, signal) => {
+        await gate;
+        return original(id, signal);
+      });
+    const tools = memoryTools({
+      bot,
+      conversationId: 'bot-scout',
+      messageId: 'background-memory',
+      memory: api.memory,
+      signal: caller.signal,
+      onActivity: () => {},
+    });
+    const invoke = () =>
+      tools.memory.execute!(
+        { action: 'add', content: 'User prefers espresso.' },
+        { toolCallId: 'background-add', messages: [], context: {} },
+      );
+    try {
+      let acknowledged = false;
+      const response = Promise.resolve(invoke()).then((result) => {
+        acknowledged = true;
+        return result;
+      });
+      await vi.waitFor(() => expect(acknowledged).toBe(true), { timeout: 500 });
+      expect(await response).toMatchObject({
+        ok: true,
+        result: { queued: true, episodeId: expect.any(String), status: 'pending' },
+      });
+      expect(api.memory.snapshot('default').facts).toHaveLength(0);
+      expect(api.memory.snapshot('default').episodes).toHaveLength(1);
+      await invoke();
+      expect(api.memory.snapshot('default').episodes).toHaveLength(1);
+      await vi.waitFor(() => expect(processing).toHaveBeenCalled());
+      expect(processing.mock.calls[0][1]).not.toBe(caller.signal);
+      caller.abort();
+      release();
+      await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+      expect(api.memory.snapshot('default').episodes[0].status).toBe('complete');
+    } finally {
+      release();
+    }
   });
   it('honors controls and survives restart without replay', async () => {
     const first = await chat('I prefer espresso every morning.');
@@ -772,7 +917,8 @@ describe('Mukai memory integration', () => {
     expect(requests).toHaveLength(2);
     expect(requests[0].max_tokens).toBe(12000);
     // The retry stays within the configured model's context/output allowance.
-    expect(requests[1].max_tokens).toBe(16000);
+    expect(requests[1].max_tokens).toBe(24000);
+    expect(requests[1].max_tokens).toBeLessThanOrEqual(48000);
     const diagnostic = JSON.parse(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8').trim());
     expect(diagnostic).toMatchObject({
       event: 'memory.extraction_retry',

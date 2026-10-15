@@ -6,7 +6,7 @@ export const askDefinition = {
   summary: 'Ask the user for clarification or an explicit approval and wait for their response.',
   actions: ['clarification', 'approval'],
   description:
-    'Ask a focused question and wait for the user. clarification requires 2–6 distinct suggested options, each with a label, optional description, and recommended boolean; mark exactly one recommended. The user may choose an option or type their own answer. approval asks for an explicit yes/no decision about the question; omit options. These requests always wait for the user, even in Full access. A denial does not authorize the proposed action. Ask only when an answer or permission is needed; do not ask for tool permission already handled by the harness. The result contains the actual user answer or approval decision.',
+    'Ask a focused question and wait for the user. clarification requires 2–6 distinct suggested options, each with a label, optional description, and recommended boolean; mark exactly one recommended. The user may choose an option or type their own answer. approval asks for an explicit yes/no decision about the question; omit options. A denied result may include the user’s reason in reason. These requests always wait for the user, even in Full access. A denial does not authorize the proposed action. Ask only when an answer or permission is needed; do not ask for tool permission already handled by the harness. The result contains the actual user answer or approval decision.',
   inputSchema: z
     .object({
       action: z.enum(['clarification', 'approval']),

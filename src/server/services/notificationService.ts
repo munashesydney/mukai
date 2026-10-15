@@ -24,6 +24,10 @@ export class NotificationService {
     this.workspaces.require(workspaceId);
     return this.repository.mark(workspaceId, id, action);
   }
+  dismissAll(workspaceId: string) {
+    this.workspaces.require(workspaceId);
+    return this.repository.dismissAll(workspaceId);
+  }
   continue(workspaceId: string, id: string) {
     this.workspaces.require(workspaceId);
     return this.repository.continue(workspaceId, id);

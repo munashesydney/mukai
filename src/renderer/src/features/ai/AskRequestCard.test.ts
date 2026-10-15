@@ -37,7 +37,7 @@ describe('Ask request cards', () => {
     expect(html).not.toContain('checked=""');
     expect(html).not.toContain('Approve tool call');
   });
-  it('shows only approve and deny for an explicit approval', () => {
+  it('offers immediate approve/deny and an optional denial reason for an explicit approval', () => {
     const html = renderToStaticMarkup(
       createElement(AskRequestCard, {
         request: { ...request, ask: { action: 'approval', question: 'Publish this?' } },
@@ -47,7 +47,8 @@ describe('Ask request cards', () => {
     expect(html).toContain('Publish this?');
     expect(html).toContain('>Approve</button>');
     expect(html).toContain('>Deny</button>');
+    expect(html).toContain('>Deny with reason</button>');
     expect(html).not.toContain('<textarea');
-    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(html.match(/disabled=""/g)).toHaveLength(3);
   });
 });

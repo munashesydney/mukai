@@ -44,6 +44,45 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace tool approvals', () => {
+  it('returns a denial reason to an approval question and keeps invalid decisions pending', async () => {
+    const onAnswer = vi.fn();
+    const result = service.ask(
+      details,
+      { action: 'approval', question: 'May I publish?' },
+      new AbortController().signal,
+      () => {},
+      onAnswer,
+    );
+    const id = service.state().pending[0].id;
+    for (const reason of ['', '   ', 'x'.repeat(16001)])
+      expect(() => service.decide(id, false, 'default', reason)).toThrow();
+    expect(() => service.decide(id, true, 'default', 'Publish later.')).toThrow();
+    expect(service.state().pending).toHaveLength(1);
+    service.decide(id, false, 'default', '  Wait until I review the draft.  ');
+    const expected = {
+      action: 'approval',
+      approved: false,
+      reason: 'Wait until I review the draft.',
+    };
+    expect(await result).toEqual(expected);
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(() => service.decide(id, true)).toThrow('no longer pending');
+  });
+  it('restores a saved denial reason without converting it into an approval', async () => {
+    const question = { action: 'approval' as const, question: 'May I publish?' };
+    new ApprovalRepository(store).save({
+      ...details,
+      id: 'saved-denial',
+      createdAt: new Date().toISOString(),
+      ask: question,
+      decision: { approved: false, reason: 'The draft needs review.' },
+    });
+    service = new ApprovalService(new ApprovalRepository(store));
+    expect(
+      await service.ask(details, question, new AbortController().signal, () => {}, vi.fn()),
+    ).toEqual({ action: 'approval', approved: false, reason: 'The draft needs review.' });
+    expect(new ApprovalRepository(store).pending()).toEqual([]);
+  });
   it('isolates mode changes across workspaces and uses the invoking conversation workspace', async () => {
     new WorkspaceRepository(store).create({
       id: 'other',

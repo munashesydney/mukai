@@ -47,6 +47,19 @@ export class DiagnosticService {
   registerSecret(value: string | undefined) {
     if (value) this.secrets.add(value);
   }
+  redactSecrets(value: string) {
+    for (const secret of this.secrets) {
+      // Public prose must not lose ordinary words used as local placeholder credentials.
+      // Logs remain strictly redacted, including short values, in text() below.
+      if (secret.length < 12) continue;
+      value = value
+        .split(secret)
+        .join('[redacted]')
+        .split(encodeURIComponent(secret))
+        .join('[redacted]');
+    }
+    return value;
+  }
   private text(value: unknown, limit = 2048): string | undefined {
     if (typeof value !== 'string') return undefined;
     let text = value.slice(0, 8192);

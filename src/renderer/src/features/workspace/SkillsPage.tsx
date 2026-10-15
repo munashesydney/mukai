@@ -1,3 +1,4 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -295,37 +296,40 @@ export function SkillsPage({
             </button>
           )}
           <div className="skill-remove">
-            <button className="text-button" disabled={busy} onClick={() => setRemoving(true)}>
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={() => {
+                setError('');
+                setRemoving(true);
+              }}
+            >
               Remove skill
             </button>
             {removing && (
-              <div className="memory-confirm">
+              <ConfirmationModal
+                title={`Remove ${selected.name}?`}
+                confirmLabel="Remove skill"
+                busy={busy}
+                error={error}
+                onClose={() => {
+                  setRemoving(false);
+                  setError('');
+                }}
+                onConfirm={() =>
+                  void perform(async () => {
+                    await skillService.remove(workspaceId, selected.id);
+                    setSelected(null);
+                    setRemoving(false);
+                    setNotice('Skill removed.');
+                  })
+                }
+              >
                 <p>
                   Remove {selected.name} and its files from this workspace? It will also be unloaded
                   from bot conversations.
                 </p>
-                <button
-                  className="button button--danger"
-                  disabled={busy}
-                  onClick={() =>
-                    void perform(async () => {
-                      await skillService.remove(workspaceId, selected.id);
-                      setSelected(null);
-                      setRemoving(false);
-                      setNotice('Skill removed.');
-                    })
-                  }
-                >
-                  Remove skill
-                </button>
-                <button
-                  className="button button--ghost"
-                  disabled={busy}
-                  onClick={() => setRemoving(false)}
-                >
-                  Cancel
-                </button>
-              </div>
+              </ConfirmationModal>
             )}
           </div>
         </div>

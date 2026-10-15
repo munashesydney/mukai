@@ -94,7 +94,7 @@ async function main() {
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run button"))');
     assert.deepEqual(await request('/workspaces'), []);
-    assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 5);
+    assert.equal(await evaluate('document.querySelectorAll(".rail-link:disabled").length'), 6);
     assert.equal(
       await evaluate(
         'Array.from(document.querySelectorAll(".navigation-rail button")).every(button=>button.disabled)',
@@ -308,13 +308,20 @@ async function main() {
       const mainBot = (await request<Bot[]>('/bots'))[0];
       assert.equal(
         await evaluate(
-          'getComputedStyle(document.querySelector(".bot-conversation-parent .main-bot-badge")).color',
+          `(() => {
+            const expected = document.createElement('span');
+            expected.style.color = 'var(--theme-text)';
+            document.body.append(expected);
+            const matches = getComputedStyle(document.querySelector('.bot-conversation-action .main-bot-badge')).color === getComputedStyle(expected).color;
+            expected.remove();
+            return matches;
+          })()`,
         ),
-        'rgb(173, 120, 237)',
+        true,
       );
       assert.equal(
         await evaluate(
-          'document.querySelectorAll(".bot-conversation-parent .main-bot-badge").length',
+          'document.querySelectorAll(".bot-conversation-action .main-bot-badge").length',
         ),
         1,
       );
@@ -437,6 +444,7 @@ async function main() {
     if (process.argv.includes('--approvals-only')) {
       let explicit = false;
       let parallel = false;
+      let receivedDenialReason = false;
       modelFixture = createServer(async (req, res) => {
         if (req.method === 'GET') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -450,6 +458,8 @@ async function main() {
         const completed = input.messages
           .slice(lastUser + 1)
           .some((message) => message.role === 'tool');
+        if (completed && JSON.stringify(input.messages).includes('Review the draft first.'))
+          receivedDenialReason = true;
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const delta = completed
           ? { role: 'assistant', content: 'Approval check complete.' }
@@ -568,6 +578,34 @@ async function main() {
       await wait(
         `!document.querySelector('.ask-request-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
       );
+      await send('Ask for confirmation with a reason.');
+      await wait('Boolean(document.querySelector(".ask-request-card"))');
+      await click('Deny with reason');
+      await wait('Boolean(document.querySelector(\'textarea[aria-label="Reason for denying"]\'))');
+      assert.equal(
+        await evaluate('document.activeElement.getAttribute("aria-label")'),
+        'Reason for denying',
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".ask-request-actions button[type=submit]").disabled',
+        ),
+        true,
+      );
+      await click('Cancel');
+      assert.equal((await request<ApprovalState>('/approvals')).pending.length, 1);
+      assert.equal(await evaluate('document.querySelector(".ask-request-card textarea")'), null);
+      await click('Deny with reason');
+      await fill('textarea[aria-label="Reason for denying"]', 'Review the draft first.');
+      window.setSize(900, 900);
+      await capture('ask-deny-reason-narrow.png');
+      await evaluate("document.documentElement.dataset.mode='dark'");
+      await capture('ask-deny-reason-dark.png');
+      await evaluate('document.querySelector(".ask-request-actions button[type=submit]").click()');
+      await wait(
+        `!document.querySelector('.ask-request-card') && !document.querySelector('button[aria-label="Stop generation"]')`,
+      );
+      assert.equal(receivedDenialReason, true);
       explicit = false;
       parallel = true;
       await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
@@ -1047,6 +1085,7 @@ async function main() {
       kind: 'tool',
       operation: 'register',
       modulePath: 'echo.ts',
+      permissionMode: 'user_approval',
     });
     console.log('Bot UI: custom tool registered.');
     await click('Custom tools');
@@ -1112,6 +1151,7 @@ async function main() {
                         arguments: JSON.stringify({
                           action: 'send_message',
                           botId: delegationFixture,
+                          mode: 'wait',
                           message: 'Review and ask for permission.',
                         }),
                       },
@@ -1447,6 +1487,10 @@ async function main() {
     );
     await fill('.composer textarea', 'Run with full access.');
     await evaluate(`document.querySelector('button[aria-label="Send message"]').click()`);
+    // Explicit user-approval tools still wait in Full access mode.
+    await wait('Boolean(document.querySelector(".tool-approval-card"))');
+    assert.equal(api.store.all('SELECT * FROM capability_runs').length, 1);
+    await click('Approve tool call');
     await wait(
       `document.querySelectorAll('.ai-message--assistant').length===5 && !document.querySelector('button[aria-label="Stop generation"]')`,
     );
@@ -1671,7 +1715,7 @@ async function main() {
     );
     assert(await evaluate('Boolean(document.querySelector(".composer textarea"))'));
     parallelFixture = false;
-    // Approval questions offer just Approve and Deny, and report both outcomes.
+    // Approval questions keep immediate Approve/Deny alongside the optional reason flow.
     askFixture = 'approval';
     for (const choice of ['Deny', 'Approve']) {
       await evaluate(
@@ -1685,7 +1729,7 @@ async function main() {
         await evaluate(
           'Array.from(document.querySelectorAll(".ask-request-actions button")).map(button=>button.textContent)',
         ),
-        ['Deny', 'Approve'],
+        ['Deny', 'Deny with reason', 'Approve'],
       );
       assert.equal(await evaluate('document.querySelector(".ask-request-card textarea")'), null);
       if (choice === 'Deny') await capture('ask-approval-card.png');
@@ -2005,11 +2049,11 @@ async function main() {
       `Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Add provider' && !button.disabled)`,
     );
     await click('Add provider');
-    await wait(`Boolean(document.querySelector('button[aria-label="Provider type"]'))`);
-    await evaluate(`document.querySelector('button[aria-label="Provider type"]').click()`);
-    await wait(`Boolean(document.querySelector('[role=option]'))`);
+    await wait(
+      `Boolean(document.querySelector('button[aria-label="Add OpenAI-compatible / local"]'))`,
+    );
     await evaluate(
-      `Array.from(document.querySelectorAll('[role=option]')).find(e=>e.textContent==='OpenAI-compatible / local').click()`,
+      `document.querySelector('button[aria-label="Add OpenAI-compatible / local"]').click()`,
     );
     await wait('Boolean(document.querySelector(".provider-panel input[type=url]"))');
     await fill('.provider-panel input[maxlength="80"]', 'GLM');
@@ -2033,10 +2077,8 @@ async function main() {
     await fill('.provider-model-editor label:nth-of-type(2) input', 'GLM Test');
     await fill('.provider-model-editor input[type="number"]', '131072');
     await capture('provider-model-sheet.png');
-    await click('Keep model');
+    await click('Save model');
     await wait('!document.querySelector(".provider-model-editor")');
-    await click('Save connection');
-    await wait('!document.querySelector(".provider-panel button[type=submit]").disabled');
     const glm = (await request<{ name: string; models: { id: string }[] }[]>('/providers')).find(
       (provider) => provider.name === 'GLM',
     );

@@ -16,7 +16,10 @@ export function useChatActivity(
   const [error, setError] = useState('');
   const revision = messages
     .filter((message) => message.role === 'assistant')
-    .map((message) => `${message.id}:${message.status}`)
+    .map(
+      (message) =>
+        `${message.id}:${message.status}:${(message.activity || []).map((item) => `${item.id}:${item.status}`).join(',')}`,
+    )
     .join('|');
   useEffect(() => {
     let alive = true,
@@ -53,28 +56,48 @@ export function useChatActivity(
     [messages, outputs, artifacts, bots],
   );
   const storageKey = `mukai.chat-activity.${conversationId}`;
-  const [preference, setPreference] = useState<boolean | null>(() => {
+  const latestRun = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.activity?.length);
+  const runKey = latestRun ? `${latestRun.id}:${latestRun.startedAt || ''}` : '';
+  const working = latestRun?.status === 'streaming';
+  function savedPreference() {
     try {
-      const value = localStorage.getItem(storageKey);
-      return value === null ? null : value === 'open';
+      return localStorage.getItem(storageKey) !== 'closed';
     } catch {
-      return null;
+      return true;
     }
-  });
+  }
+  const [preference, setPreference] = useState(() => ({
+    storageKey,
+    runKey,
+    open: working || savedPreference(),
+  }));
+  // A new run opens activity once. Closing it during that run stays respected.
+  if (preference.storageKey !== storageKey || (working && preference.runKey !== runKey)) {
+    setPreference({
+      storageKey,
+      runKey,
+      open: working || savedPreference(),
+    });
+  }
   function setOpen(open: boolean) {
-    setPreference(open);
+    setPreference({ storageKey, runKey, open });
     try {
       localStorage.setItem(storageKey, open ? 'open' : 'closed');
     } catch {
       /* Optional preference. */
     }
   }
+  const available = data.count > 0 || working;
   return {
     ...data,
     botId,
     conversationId,
     error,
-    open: data.count > 0 && (preference ?? true),
+    working,
+    available,
+    open: available && preference.open,
     setOpen,
   };
 }

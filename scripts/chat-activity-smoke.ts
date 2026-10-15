@@ -1,4 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import { createServer, type ServerResponse } from 'node:http';
+import sharp from 'sharp';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -117,14 +119,45 @@ async function main() {
       conversationId,
       JSON.stringify(activities),
     );
+  const telegramMessageId = randomUUID();
   addMessage(
-    randomUUID(),
+    telegramMessageId,
     conversation.id,
     'user',
     'Build a project preview and ask Nova to review it.',
     null,
   );
+  api.store.run("UPDATE messages SET source='telegram' WHERE id=?", telegramMessageId);
   const messageId = randomUUID();
+  const png = await sharp({
+    create: { width: 320, height: 240, channels: 3, background: '#0088cc' },
+  })
+    .png()
+    .toBuffer();
+  writeFileSync(join(dir, 'render.png'), png);
+  const screenshotId = randomUUID();
+  const screenshotFolder = join(dir, '.mukai', 'artifacts', 'screenshots');
+  mkdirSync(screenshotFolder, { recursive: true });
+  const screenshotPath = join(screenshotFolder, screenshotId + '.png');
+  writeFileSync(screenshotPath, png);
+  activity.push(
+    {
+      id: randomUUID(),
+      tool: 'image',
+      action: 'view',
+      status: 'complete',
+      path: join(dir, 'render.png'),
+      summary: '{}',
+    },
+    {
+      id: randomUUID(),
+      tool: 'computer_use',
+      action: 'screenshot',
+      status: 'complete',
+      path: '',
+      summary: JSON.stringify({ artifactId: screenshotId }),
+    },
+  );
   addMessage(
     messageId,
     conversation.id,
@@ -160,6 +193,15 @@ async function main() {
     messageId,
     path: 'project-notes.md',
     name: 'project-notes.md',
+    createdAt: new Date().toISOString(),
+  });
+  new ArtifactRepository(api.store).save({
+    id: screenshotId,
+    botId: 'scout',
+    messageId,
+    kind: 'image',
+    name: screenshotId + '.png',
+    path: screenshotPath,
     createdAt: new Date().toISOString(),
   });
   const changes = new FileChangeRepository(api.store);
@@ -228,7 +270,25 @@ async function main() {
       `localStorage.setItem('mukai.active-conversation.scout',${JSON.stringify(conversation.id)});`,
     );
     await window.reload();
-    await wait('document.querySelectorAll(".chat-activity-row").length===5');
+    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
+    assert(
+      await evaluate(
+        `document.querySelector('.message-telegram-source').closest('.ai-message').textContent.includes('Build a project preview')`,
+      ),
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelector(".message-telegram-source").getAttribute("aria-label")',
+      ),
+      'Sent from Telegram',
+    );
+    assert.equal(
+      await evaluate(
+        'document.querySelectorAll(".ai-message--assistant .message-telegram-source").length',
+      ),
+      0,
+    );
     assert(
       await evaluate(
         `getComputedStyle(document.querySelector('.conversation')).backgroundColor===getComputedStyle(document.querySelector('.chat-activity-drawer')).backgroundColor`,
@@ -239,7 +299,28 @@ async function main() {
         `document.querySelector('.conversation').getBoundingClientRect().right<=document.querySelector('.chat-activity-drawer').getBoundingClientRect().left+1`,
       ),
     );
+    assert.deepEqual(
+      await evaluate(
+        `Array.from(document.querySelectorAll('.chat-activity-section')).map(section=>section.getAttribute('aria-label'))`,
+      ),
+      ['Bots', 'Links', 'Outputs', 'Changes'],
+    );
     await capture('chat-activity-light');
+    // Both image actions use the shared modal rather than a JSON disclosure.
+    await click('.response-work > summary');
+    await click('.response-tool-group > summary');
+    for (let index = 0; index < 2; index++) {
+      await evaluate(`document.querySelectorAll('.response-tool-image')[${index}].click()`);
+      await wait('Boolean(document.querySelector("dialog .artifact-image-preview")?.naturalWidth)');
+      assert.equal(
+        await evaluate('document.querySelector("dialog .artifact-image-preview").naturalWidth'),
+        320,
+      );
+      assert(await evaluate('document.querySelector("dialog").open'));
+      assert(await evaluate('document.querySelector("dialog").getBoundingClientRect().width > 0'));
+      if (!index) await capture('chat-activity-image');
+      await click('dialog button[aria-label="Close dialog"]');
+    }
     await click('.chat-activity-section[aria-label="Changes"] button');
     await wait('Boolean(document.querySelector(".diff-file"))');
     assert(
@@ -259,7 +340,7 @@ async function main() {
     await click('.chat-activity-section[aria-label="Bots"] button');
     await wait('document.body.textContent.includes("Nova review complete")');
     await click('button[aria-label="Go back"]');
-    await wait('document.querySelectorAll(".chat-activity-row").length===5');
+    await wait('document.querySelectorAll(".chat-activity-row").length===6');
     await click('.chat-activity-section[aria-label="Bots"] button:last-child');
     await wait('document.body.textContent.includes("Atlas existing conversation")');
     assert.equal(
@@ -284,7 +365,7 @@ async function main() {
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
-    await wait('document.querySelectorAll(".chat-activity-row").length===5');
+    await wait('document.querySelectorAll(".chat-activity-row").length===6');
     const appearance = await fetch(api.url + '/settings/appearance', {
       method: 'PUT',
       headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
@@ -293,12 +374,22 @@ async function main() {
     assert(appearance.ok, await appearance.clone().text());
     await window.reload();
     await wait(
-      'document.querySelectorAll(".chat-activity-row").length===5 && document.documentElement.dataset.mode==="dark"',
+      'document.querySelectorAll(".chat-activity-row").length===6 && document.documentElement.dataset.mode==="dark"',
     );
     await capture('chat-activity-dark');
     window.setSize(740, 880);
     await wait('document.querySelector(".workspace-navigation").getBoundingClientRect().width<=77');
-    await wait('getComputedStyle(document.querySelector(".conversation")).display==="none"');
+    await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
+    assert(
+      await evaluate(
+        `document.querySelector('.conversation').getBoundingClientRect().height > document.querySelector('.conversation-layout').getBoundingClientRect().height * .65`,
+      ),
+    );
+    assert(
+      await evaluate(
+        `document.querySelector('.conversation').getBoundingClientRect().bottom <= document.querySelector('.chat-activity-drawer').getBoundingClientRect().top + 1`,
+      ),
+    );
     await capture('chat-activity-narrow');
     assert(
       await evaluate(
@@ -316,6 +407,136 @@ async function main() {
     await capture('chat-activity-space');
     await click('.chat-activity-section[aria-label="Bots"] button');
     await wait('document.body.textContent.includes("Nova review complete")');
+    // Return to the private chat and keep the final provider response open while
+    // a real file tool completes. No page reload is involved in these updates.
+    await click('button[aria-label="Go back"]');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
+    await click('button[aria-label="Show chat activity"]');
+    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    await click('button[aria-label="Close chat activity"]');
+    let finalResponse: ServerResponse | undefined;
+    const fixture = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (
+        body.messages.some(
+          (message: { tool_call_id?: string }) => message.tool_call_id === 'live-write',
+        )
+      ) {
+        finalResponse = response;
+        return;
+      }
+      response.write(
+        'data: ' +
+          JSON.stringify({
+            id: 'live',
+            model: 'fixture',
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'live-write',
+                      type: 'function',
+                      function: {
+                        name: 'file_operations',
+                        arguments: JSON.stringify({
+                          action: 'write_file',
+                          path: 'live-draft.md',
+                          content: '# Live draft',
+                        }),
+                      },
+                    },
+                  ],
+                },
+                finish_reason: 'tool_calls',
+              },
+            ],
+          }) +
+          '\n\n',
+      );
+      response.end('data: [DONE]\n\n');
+    });
+    await new Promise<void>((done) => fixture.listen(0, '127.0.0.1', done));
+    try {
+      const headers = { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' };
+      const provider = await fetch(api.url + '/providers', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Live activity fixture',
+          kind: 'compatible',
+          baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}/v1`,
+          defaultModel: 'fixture',
+          models: [
+            {
+              id: 'fixture',
+              name: 'Fixture',
+              contextWindowTokens: 32768,
+              maxOutputTokens: 4096,
+              supportsImages: false,
+            },
+          ],
+          supportsImages: false,
+          isDefault: true,
+        }),
+      });
+      assert.equal(provider.status, 201);
+      assert(
+        (
+          await fetch(api.url + '/approvals', {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ mode: 'full-access' }),
+          })
+        ).ok,
+      );
+      // Refresh the configured provider, then let the renderer send the live turn.
+      await window.reload();
+      await wait(`Boolean(document.querySelector('button[aria-label="Send message"]'))`);
+      await evaluate(
+        `(() => { const input = document.querySelector('.ai-composer-area .composer > textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Create a live draft.'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+      );
+      await click('button[aria-label="Send message"]');
+      await wait('Boolean(document.querySelector(".chat-activity-drawer"))');
+      await wait(`Boolean(document.querySelector('button[aria-label="Preview live-draft.md"]'))`);
+      await wait(
+        `document.querySelector('.chat-activity-section[aria-label="Changes"]').textContent.includes('live-draft.md')`,
+      );
+      assert(
+        await evaluate(`Boolean(document.querySelector('button[aria-label="Stop generation"]'))`),
+      );
+      await capture('chat-activity-live');
+      await click('button[aria-label="Close chat activity"]');
+      await new Promise((done) => setTimeout(done, 150));
+      assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      for (let attempt = 0; !finalResponse && attempt < 100; attempt++)
+        await new Promise((done) => setTimeout(done, 50));
+      assert(finalResponse);
+      finalResponse.end(
+        'data: ' +
+          JSON.stringify({
+            id: 'live',
+            model: 'fixture',
+            choices: [
+              { index: 0, delta: { content: 'The live draft is ready.' }, finish_reason: 'stop' },
+            ],
+          }) +
+          '\n\ndata: [DONE]\n\n',
+      );
+      await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
+      assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+    } finally {
+      fixture.closeAllConnections();
+      await new Promise<void>((done) => fixture.close(() => done()));
+    }
     assert.deepEqual(errors, []);
     console.log(
       'Chat activity: outputs open real preview, diffs, artifact previews, bot navigation, spaces, persistence, themes and narrow layout passed.',

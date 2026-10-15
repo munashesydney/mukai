@@ -1,3 +1,4 @@
+import { SettingsHeading } from './SettingsHeading';
 import { DeleteWorkspace } from './DeleteWorkspace';
 import { useEffect, useState } from 'react';
 import {
@@ -53,11 +54,11 @@ export function WorkspacePanel({
   }, [refresh]);
   return (
     <>
-      <div className="settings-panel-heading">
-        <span className="settings-eyebrow">THE PLACE YOU WORK FROM</span>
-        <h3>Workspace</h3>
-        <p>Your harness, at a glance.</p>
-      </div>
+      <SettingsHeading
+        eyebrow="THE PLACE YOU WORK FROM"
+        title="Workspace"
+        description="Your harness, at a glance."
+      />
       <div className="settings-account-card">
         <Avatar person="munashe" size="md" />
         <div>

@@ -44,12 +44,12 @@ it('keeps discoveries across turns and deduplicates files and delegated conversa
   ];
   b.activity = [{ ...a.activity[0], delegation: { ...delegation, requestId: 'two' } }];
   const data = chatActivityData([a, b, running], [], [], [{ id: 'child' } as Bot]);
-  expect(data.changes.map((item) => item.id)).toEqual(['latest']);
+  expect(data.changes.map((item) => item.id)).toEqual(['latest', 'not-yet']);
   expect(data.delegated).toEqual([{ ...delegation, requestId: 'two' }]);
   expect(data.spawned).toEqual([]);
-  expect(data.count).toBe(2);
+  expect(data.count).toBe(3);
 });
-it('never interprets assistant prose as an output and reveals saved outputs only after the turn', () => {
+it('reveals registered outputs during a turn without interpreting assistant prose as links', () => {
   const running = { ...message('a', 'streaming'), content: 'Started http://localhost:3000' };
   const output = {
     id: 'out',
@@ -60,7 +60,35 @@ it('never interprets assistant prose as an output and reveals saved outputs only
     computer: 'local' as const,
     status: 'running' as const,
   };
-  expect(chatActivityData([running], [output], [], []).count).toBe(0);
+  expect(chatActivityData([running], [output], [], []).count).toBe(1);
   expect(chatActivityData([{ ...running, status: 'complete' }], [output], [], []).count).toBe(1);
   expect(chatActivityData([{ ...running, status: 'complete' }], [], [], []).count).toBe(0);
+});
+
+it('includes saved artifacts and delegations before the response finishes', () => {
+  const running = message('live', 'streaming');
+  running.activity = [
+    {
+      id: 'delegate',
+      tool: 'bots',
+      action: 'send_message',
+      path: '',
+      summary: '',
+      status: 'running',
+      delegation: { botId: 'child', botName: 'Ada', conversationId: 'pair', requestId: 'request' },
+    },
+  ];
+  const artifact = {
+    id: 'file',
+    messageId: 'live',
+    botId: 'main',
+    path: 'draft.md',
+    name: 'draft.md',
+    createdAt: '',
+  };
+  const data = chatActivityData([running], [], [artifact], []);
+  expect(data.artifacts).toEqual([artifact]);
+  expect(data.delegated).toEqual([running.activity[0].delegation]);
+  expect(data.count).toBe(2);
+  expect(chatActivityData([message('other')], [], [artifact], []).count).toBe(0);
 });

@@ -40,10 +40,14 @@ async function main() {
     }
     throw new Error('UI did not settle: ' + code);
   };
-  const click = async (label: string) =>
-    evaluate(
+  const click = async (label: string) => {
+    await wait(
+      `Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()===${JSON.stringify(label)} && !button.disabled)`,
+    );
+    return evaluate(
       `Array.from(document.querySelectorAll('button')).find(button=>button.textContent.trim()===${JSON.stringify(label)}).click()`,
     );
+  };
   const input = async (selector: string, value: string) =>
     evaluate(
       `(()=>{const field=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(field.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(field,${JSON.stringify(value)});field.dispatchEvent(new Event('input',{bubbles:true}));})()`,
@@ -181,10 +185,12 @@ async function main() {
     await wait('!document.querySelector(".skill-import-preview")');
     assert.equal(api.skills.list('default').length, 3);
     await click('Remove skill');
+    await wait('Boolean(document.querySelector("dialog.confirmation-modal[open]"))');
+    await capture('skill-removal-confirmation.png');
     await click('Cancel');
     assert.equal(api.skills.list('default').length, 3);
     await click('Remove skill');
-    await evaluate(`document.querySelector('.memory-confirm .button--danger').click()`);
+    await evaluate(`document.querySelector('.confirmation-modal .button--danger').click()`);
     await wait('!document.querySelector(".skill-detail")');
     assert.equal(api.skills.list('default').length, 2);
     await evaluate(`document.querySelector('button[aria-label="Open settings"]').click()`);
@@ -207,6 +213,10 @@ async function main() {
     console.log(
       'Skills navigation, creation, supporting files, editing, import preview, search, enable/disable, removal, and light/dark/narrow rendering passed.',
     );
+  } catch (error) {
+    await capture('skills-smoke-failure.png');
+    console.error('Skills renderer errors:', errors);
+    throw error;
   } finally {
     window.destroy();
     await new Promise<void>((resolve) => api.server.close(() => resolve()));

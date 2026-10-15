@@ -1,14 +1,12 @@
-import { expect, it } from 'vitest';
-import { buildBotSystemPrompt } from './botSystemPrompt';
+import { expect, it, vi } from 'vitest';
+import { buildBotSystemPrompt, buildBotRuntimeContext } from './botSystemPrompt';
 
 function prompt(tools: object, computer: 'local' | 'qemu' = 'local') {
   return buildBotSystemPrompt({
     bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain: true, createdBy: null },
-    pursuits: [],
     instructions: 'Help the user.',
     computer,
     tools,
-    previousOperations: false,
   });
 }
 it('teaches general browser use and profile selection only when browser tools are available', () => {
@@ -40,11 +38,9 @@ it('gives main bots coordination guidance and sub-bots context-specific restrict
   const build = (isMain: boolean, delegated = false) =>
     buildBotSystemPrompt({
       bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: isMain ? null : 'main' },
-      pursuits: [],
       instructions: 'Help the user.',
       tools: { manage_bot: {} },
       delegated,
-      previousOperations: false,
     });
   expect(build(true)).toContain('Inspect and reuse an existing suitable bot first');
   expect(build(true)).toContain('create a specialist and use it');
@@ -56,4 +52,42 @@ it('gives main bots coordination guidance and sub-bots context-specific restrict
   expect(build(false, true)).toContain('automatically returned to the calling bot');
   expect(build(false, true)).not.toContain('you may use send_message');
   expect(build(true, true)).toContain('always have every manage_bot action');
+});
+
+it('keeps system instructions identical as the clock advances', () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date('2026-10-15T01:00:00Z'));
+    const first = prompt({ terminal: {} });
+    vi.advanceTimersByTime(60000);
+    expect(prompt({ terminal: {} })).toBe(first);
+    expect(first).not.toMatch(/Current UTC time:|Runtime UTC now:/);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('builds explicit runtime snapshots with fresh time and cleared notices', () => {
+  const state = {
+    now: '2026-10-15T01:00:00Z',
+    pursuits: [{ name: 'Ship Mukai' }],
+    previousOperations: true,
+  };
+  const active = buildBotRuntimeContext({
+    ...state,
+    notice: 'Resume saved work.',
+    progressNotice: 'Reassess.',
+    pausedReason: 'Step limit reached.',
+  });
+  expect(active).toContain('[Mukai runtime context]');
+  expect(active).toContain('Runtime UTC now: ' + state.now);
+  expect(active).toContain('["Ship Mukai"]');
+  expect(active).toContain('previous attempt performed operations');
+  expect(active).toContain('Runtime notice: Resume saved work.');
+  expect(active).toContain('Tools are now disabled');
+  const cleared = buildBotRuntimeContext({ ...state, now: '2026-10-15T01:01:00Z' });
+  expect(cleared).toContain('Runtime UTC now: 2026-10-15T01:01:00Z');
+  expect(cleared).toContain('Runtime notices: none.');
+  expect(cleared).not.toContain('Reassess.');
+  expect(cleared).not.toContain('Tools are now disabled');
 });

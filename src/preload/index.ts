@@ -6,6 +6,7 @@ const bridge: DesktopBridge = {
   getHealth: () => ipcRenderer.invoke(IPC.health),
   getApiConnection: () => ipcRenderer.invoke(IPC.apiConnection),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
+  writeClipboardText: (text) => ipcRenderer.invoke(IPC.writeClipboardText, text),
   chooseWorkspaceFolder: () => ipcRenderer.invoke(IPC.chooseWorkspaceFolder),
   minimize: () => ipcRenderer.send(IPC.minimize),
   toggleMaximize: () => ipcRenderer.send(IPC.maximize),

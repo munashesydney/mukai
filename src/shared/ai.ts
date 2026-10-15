@@ -57,6 +57,10 @@ export interface ProviderInput {
   contextWindowTokens?: number | null;
   maxOutputTokens?: number;
 }
+export interface ProviderModelsInput {
+  models: SavedProviderModel[];
+  defaultModel: string;
+}
 export interface Bot {
   id: string;
   workspaceId: string;
@@ -159,6 +163,7 @@ export interface ChatMessage {
   requestId: string;
   botId: string;
   role: 'user' | 'assistant';
+  source?: 'telegram';
   content: string;
   status: MessageStatus;
   error: string | null;
@@ -193,7 +198,7 @@ export type ChatEvent =
   | { type: 'delta'; id: string; text: string; partId?: string }
   | { type: 'reasoning'; id: string; text: string; partId?: string }
   | { type: 'part'; id: string; part: ResponsePart }
-  | { type: 'activity'; id: string; activity: ChatActivity }
+  | { type: 'activity'; id: string; activity: ChatActivity; changes?: FileChangeSummary[] }
   | { type: 'context'; id: string; usage: ContextUsage }
   | { type: 'done' | 'error'; message: ChatMessage };
 export interface ChatInput {

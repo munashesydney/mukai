@@ -1,5 +1,9 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
+import { SettingsCard } from './SettingsCard';
+import { PageLoader } from '../../components/ui/PageLoader';
+import { SettingsHeading } from './SettingsHeading';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, Search, Upload, X } from 'lucide-react';
+import { Brain, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { memoryService } from '../../services/memoryService';
 import type { MemoryFact, MemorySettings, MemorySnapshot } from '../../../../shared/memory';
 import { errorText } from '../../utils/errors';
@@ -7,6 +11,7 @@ import { MemoryGraph } from './MemoryGraph';
 import { MemoryRuns } from './MemoryRuns';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { IconButton } from '../../components/ui/IconButton';
+import { Toggle } from '../../components/ui/Toggle';
 
 const memoryTabs = [
   ['graph', 'Graph'],
@@ -91,7 +96,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
     if (snapshot)
       void perform(
         () => memoryService.settings(workspaceId, { ...snapshot.settings, ...patch }),
-        'Memory preferences saved.',
+        patch.enabled === undefined ? 'Memory preferences saved.' : '',
       );
   };
   async function exportFile() {
@@ -109,12 +114,23 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
     ? snapshot?.facts.find((fact) => fact.id === selected.id) || null
     : null;
   return (
-    <section className="provider-panel memory-panel">
-      <div className="settings-section-header">
-        <span className="settings-eyebrow">WORKSPACE KNOWLEDGE</span>
-        <h3>Memory</h3>
-        <p>Explore what this workspace remembers and how it’s used in conversations.</p>
-      </div>
+    <section className={`provider-panel memory-panel${!snapshot ? ' is-loading' : ''}`}>
+      <SettingsHeading
+        eyebrow="WORKSPACE KNOWLEDGE"
+        title="Memory"
+        description="Explore what this workspace remembers and how it’s used in conversations."
+        actions={
+          <label className="memory-enabled-control">
+            <span>Memory {snapshot?.settings.enabled ? 'on' : 'off'}</span>
+            <Toggle
+              aria-label="Enable workspace memory"
+              checked={snapshot?.settings.enabled ?? false}
+              disabled={busy || !snapshot}
+              onChange={(event) => saveSettings({ enabled: event.target.checked })}
+            />
+          </label>
+        }
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -125,8 +141,13 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
           {notice}
         </p>
       )}
+      {snapshot && !snapshot.settings.enabled && (
+        <p className="memory-off-notice">
+          Memory is off. Bots won’t save or recall memories. Your saved memories are kept.
+        </p>
+      )}
       {!snapshot ? (
-        <p role="status">Loading memories…</p>
+        <PageLoader label="Loading memories…" />
       ) : (
         <>
           <div className="conversation-tabs memory-tabs" role="tablist" aria-label="Memory view">
@@ -369,37 +390,37 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                           <button
                             className="button button--ghost"
                             disabled={busy}
-                            onClick={() => setConfirmation('forget')}
+                            onClick={() => {
+                              setError('');
+                              setConfirmation('forget');
+                            }}
                           >
                             Forget
                           </button>
                         </div>
                       )}
                       {confirmation === 'forget' && (
-                        <div className="memory-confirm">
+                        <ConfirmationModal
+                          title="Forget this memory?"
+                          confirmLabel="Forget source memories"
+                          busy={busy}
+                          error={error}
+                          onClose={() => {
+                            setConfirmation(null);
+                            setError('');
+                          }}
+                          onConfirm={() =>
+                            void perform(async () => {
+                              await memoryService.forget(workspaceId, selectedCurrent.id);
+                              setSelected(null);
+                            }, 'Memory and its source material forgotten.')
+                          }
+                        >
                           <p>
                             Forget this memory and all facts derived from its source statements?
                             Original chat messages remain.
                           </p>
-                          <button
-                            className="button button--secondary"
-                            disabled={busy}
-                            onClick={() =>
-                              void perform(async () => {
-                                await memoryService.forget(workspaceId, selectedCurrent.id);
-                                setSelected(null);
-                              }, 'Memory and its source material forgotten.')
-                            }
-                          >
-                            Forget source memories
-                          </button>
-                          <button
-                            className="button button--ghost"
-                            onClick={() => setConfirmation(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
+                        </ConfirmationModal>
                       )}
                     </aside>
                   )}
@@ -410,6 +431,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
               <MemoryRuns
                 key={workspaceId}
                 runs={snapshot.runs}
+                disabled={busy || !snapshot.settings.enabled}
                 onRetry={(id) =>
                   void perform(
                     () => memoryService.retryRun(workspaceId, id),
@@ -420,10 +442,12 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
             )}
             {view === 'activity' && (
               <div className="memory-activity">
-                <div className="memory-section-heading">
-                  <h4>Capture activity</h4>
-                  <p>Track saved statements and retry failed extractions.</p>
+                <div className="pursuit-section-heading">
+                  <h2>Capture activity</h2>
                 </div>
+                <p className="memory-run-meta">
+                  Track saved statements and retry failed extractions.
+                </p>
                 <details className="memory-processing" open>
                   <summary>
                     Capture activity ·{' '}
@@ -444,7 +468,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                       {episode.status === 'failed' && (
                         <button
                           className="button button--ghost"
-                          disabled={busy}
+                          disabled={busy || !snapshot.settings.enabled}
                           onClick={() =>
                             void perform(
                               () => memoryService.retry(workspaceId, episode.id),
@@ -471,10 +495,12 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                   ))}
                 </details>
 
-                <div className="memory-section-heading">
-                  <h4>Automatic recall</h4>
-                  <p>See which memories were supplied to recent conversations.</p>
+                <div className="pursuit-section-heading">
+                  <h2>Automatic recall</h2>
                 </div>
+                <p className="memory-run-meta">
+                  See which memories were supplied to recent conversations.
+                </p>
                 <div className="memory-recalls">
                   {snapshot.recalls.length ? (
                     snapshot.recalls.map((recall) => (
@@ -502,94 +528,106 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
             )}
             {view === 'preferences' && (
               <>
-                <div className="memory-section-heading">
-                  <h4>Conversation memory</h4>
-                  <p>Choose how this workspace captures and recalls useful facts.</p>
-                </div>
-                <div className="memory-preferences">
-                  <label>
-                    <Checkbox
-                      checked={snapshot.settings.automaticCapture}
-                      disabled={busy}
-                      onChange={(event) => saveSettings({ automaticCapture: event.target.checked })}
-                    />
-                    <span>
-                      <strong>Review conversations automatically</strong>
-                      <small>
-                        Review chats, spaces, and pursuit runs after one minute of inactivity using
-                        your configured AI. Memories from all chats are shared with every bot in
-                        this workspace.
-                      </small>
-                    </span>
-                  </label>
-                  <label>
-                    <Checkbox
-                      checked={snapshot.settings.automaticRecall}
-                      disabled={busy}
-                      onChange={(event) => saveSettings({ automaticRecall: event.target.checked })}
-                    />
-                    <span>
-                      <strong>Recall before each reply</strong>
-                      <small>
-                        Supply relevant memories automatically, with a bounded context budget.
-                      </small>
-                    </span>
-                  </label>
-                  <div className="memory-model">
-                    <div>
-                      <strong>Local semantic search</strong>
-                      <small>
-                        {snapshot.embedding.status === 'ready'
-                          ? 'BGE small · CPU model ready'
-                          : 'BGE small · one-time model download'}
-                        {snapshot.embedding.error && ' · ' + snapshot.embedding.error}
-                      </small>
-                    </div>
-                    <button
-                      className="button button--secondary"
-                      disabled={busy || snapshot.embedding.status === 'loading'}
-                      onClick={() =>
-                        void perform(
-                          () => memoryService.embeddings(workspaceId),
-                          'Local semantic search is ready.',
-                        )
-                      }
-                    >
-                      {busy || snapshot.embedding.status === 'loading'
-                        ? 'Working…'
-                        : snapshot.embedding.status === 'ready'
-                          ? 'Rebuild embeddings'
-                          : 'Download & enable'}
-                    </button>
-                  </div>
-                  <div className="memory-budget">
+                <SettingsCard
+                  title="Conversation memory"
+                  description="Choose how this workspace captures and recalls useful facts."
+                  icon={<Brain size={18} />}
+                  className="memory-preferences-card"
+                >
+                  <div className="settings-card-body memory-preferences">
                     <label>
                       <Checkbox
-                        checked={snapshot.settings.semanticSearch}
-                        disabled={busy || snapshot.embedding.status !== 'ready'}
-                        onChange={(event) => saveSettings({ semanticSearch: event.target.checked })}
-                      />{' '}
-                      Use semantic search
-                    </label>
-                    <label>
-                      Recall budget{' '}
-                      <select
-                        value={snapshot.settings.contextTokens}
+                        checked={snapshot.settings.automaticCapture}
                         disabled={busy}
                         onChange={(event) =>
-                          saveSettings({ contextTokens: Number(event.target.value) })
+                          saveSettings({ automaticCapture: event.target.checked })
+                        }
+                      />
+                      <span>
+                        <strong>Review conversations automatically</strong>
+                        <small>
+                          Review chats, spaces, and pursuit runs after one minute of inactivity
+                          using your configured AI. Memories from all chats are shared with every
+                          bot in this workspace.
+                        </small>
+                      </span>
+                    </label>
+                    <label>
+                      <Checkbox
+                        checked={snapshot.settings.automaticRecall}
+                        disabled={busy}
+                        onChange={(event) =>
+                          saveSettings({ automaticRecall: event.target.checked })
+                        }
+                      />
+                      <span>
+                        <strong>Recall before each reply</strong>
+                        <small>
+                          Supply relevant memories automatically, with a bounded context budget.
+                        </small>
+                      </span>
+                    </label>
+                    <div className="memory-model">
+                      <div>
+                        <strong>Local semantic search</strong>
+                        <small>
+                          {snapshot.embedding.status === 'ready'
+                            ? 'BGE small · CPU model ready'
+                            : 'BGE small · one-time model download'}
+                          {snapshot.embedding.error && ' · ' + snapshot.embedding.error}
+                        </small>
+                      </div>
+                      <button
+                        className="button button--secondary"
+                        disabled={
+                          busy ||
+                          !snapshot.settings.enabled ||
+                          snapshot.embedding.status === 'loading'
+                        }
+                        onClick={() =>
+                          void perform(
+                            () => memoryService.embeddings(workspaceId),
+                            'Local semantic search is ready.',
+                          )
                         }
                       >
-                        {[512, 1024, 1600, 2048, 4096].map((value) => (
-                          <option key={value} value={value}>
-                            {value} tokens
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        {busy || snapshot.embedding.status === 'loading'
+                          ? 'Working…'
+                          : snapshot.embedding.status === 'ready'
+                            ? 'Rebuild embeddings'
+                            : 'Download & enable'}
+                      </button>
+                    </div>
+                    <div className="memory-budget">
+                      <label>
+                        <Checkbox
+                          checked={snapshot.settings.semanticSearch}
+                          disabled={busy || snapshot.embedding.status !== 'ready'}
+                          onChange={(event) =>
+                            saveSettings({ semanticSearch: event.target.checked })
+                          }
+                        />{' '}
+                        Use semantic search
+                      </label>
+                      <label>
+                        Recall budget{' '}
+                        <select
+                          value={snapshot.settings.contextTokens}
+                          disabled={busy}
+                          onChange={(event) =>
+                            saveSettings({ contextTokens: Number(event.target.value) })
+                          }
+                        >
+                          {[512, 1024, 1600, 2048, 4096].map((value) => (
+                            <option key={value} value={value}>
+                              {value} tokens
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   </div>
-                </div>
-
+                </SettingsCard>
                 <div className="memory-section-heading">
                   <h4>Manage memory data</h4>
                   <p>Export a backup, import saved memories, or clear this workspace’s memory.</p>
@@ -628,33 +666,36 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                   <button
                     className="button button--danger"
                     disabled={busy}
-                    onClick={() => setConfirmation('clear')}
+                    onClick={() => {
+                      setError('');
+                      setConfirmation('clear');
+                    }}
                   >
                     Clear workspace memory
                   </button>
                 </div>
                 {confirmation === 'clear' && (
-                  <div className="memory-confirm">
+                  <ConfirmationModal
+                    title="Clear workspace memory?"
+                    confirmLabel="Clear all memory"
+                    busy={busy}
+                    error={error}
+                    onClose={() => {
+                      setConfirmation(null);
+                      setError('');
+                    }}
+                    onConfirm={() =>
+                      void perform(async () => {
+                        await memoryService.clear(workspaceId);
+                        setSelected(null);
+                      }, 'Workspace memory cleared.')
+                    }
+                  >
                     <p>
                       Clear all memory in this workspace, including source evidence and recall
                       records? Original chats remain.
                     </p>
-                    <button
-                      className="button button--secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        void perform(async () => {
-                          await memoryService.clear(workspaceId);
-                          setSelected(null);
-                        }, 'Workspace memory cleared.')
-                      }
-                    >
-                      Clear all memory
-                    </button>
-                    <button className="button button--ghost" onClick={() => setConfirmation(null)}>
-                      Cancel
-                    </button>
-                  </div>
+                  </ConfirmationModal>
                 )}
                 <p className="memory-caption">
                   Embeddings run locally. Automatic extraction uses your configured AI, which may be

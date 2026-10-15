@@ -1,3 +1,6 @@
+import { Globe } from 'lucide-react';
+import { SettingsCard } from './SettingsCard';
+import { SettingsHeading } from './SettingsHeading';
 import { useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
 import { errorText } from '../../utils/errors';
@@ -44,11 +47,11 @@ export function CustomRoutesPanel() {
   }
   return (
     <section className="provider-panel capability-panel">
-      <div className="settings-section-header">
-        <span className="settings-eyebrow">APP CONFIGURATION</span>
-        <h3>Domain</h3>
-        <p>Set the public address for custom routes across all workspaces.</p>
-      </div>
+      <SettingsHeading
+        eyebrow="APP CONFIGURATION"
+        title="Domain"
+        description="Set the public address for custom routes across all workspaces."
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -59,45 +62,51 @@ export function CustomRoutesPanel() {
           {notice}
         </p>
       )}
-      <form
-        className="ai-form capability-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
+      <SettingsCard
+        title="Public address"
+        description="The base address used by your workspace routes."
+        icon={<Globe size={18} />}
       >
-        <label>
-          Public base URL
-          <input
-            type="url"
-            placeholder="https://your-domain.com"
-            value={publicBaseUrl}
-            disabled={loading || saving}
-            onChange={(event) => {
-              setPublicBaseUrl(event.target.value);
-              setNotice('');
-            }}
-          />
-        </label>
-        <p className="ai-caption">
-          Use an HTTPS address without a path. Leave blank to use the local server address. Route
-          URLs append their path, for example{' '}
-          <code>{publicBaseUrl.trim().replace(/\/$/, '') || localBaseUrl}/custom/events</code>. Your
-          domain or tunnel must already forward requests to Mukai. Saving this address does not set
-          up hosting or a tunnel.
-          {localBaseUrl && (
-            <>
-              {' '}
-              Local server: <code>{localBaseUrl}</code>.
-            </>
-          )}
-        </p>
-        <div className="ai-form-actions">
-          <button className="button button--primary" type="submit" disabled={loading || saving}>
-            {loading ? 'Loading…' : saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </form>
+        <form
+          className="ai-form capability-form settings-card-body"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <label>
+            Public base URL
+            <input
+              type="url"
+              placeholder="https://your-domain.com"
+              value={publicBaseUrl}
+              disabled={loading || saving}
+              onChange={(event) => {
+                setPublicBaseUrl(event.target.value);
+                setNotice('');
+              }}
+            />
+          </label>
+          <p className="ai-caption">
+            Use an HTTPS address without a path. Leave blank to use the local server address. Route
+            URLs append their path, for example{' '}
+            <code>{publicBaseUrl.trim().replace(/\/$/, '') || localBaseUrl}/custom/events</code>.
+            Your domain or tunnel must already forward requests to Mukai. Saving this address does
+            not set up hosting or a tunnel.
+            {localBaseUrl && (
+              <>
+                {' '}
+                Local server: <code>{localBaseUrl}</code>.
+              </>
+            )}
+          </p>
+          <div className="ai-form-actions settings-card-actions">
+            <button className="button button--primary" type="submit" disabled={loading || saving}>
+              {loading ? 'Loading…' : saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </SettingsCard>
     </section>
   );
 }

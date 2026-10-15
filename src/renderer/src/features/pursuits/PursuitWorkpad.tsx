@@ -28,6 +28,7 @@ import {
 import { pursuitService } from '../../services/pursuitService';
 import { artifactService } from '../../services/artifactService';
 import { chatService } from '../../services/chatService';
+import { copyText } from '../../services/clipboardService';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
 import { Modal } from '../../components/ui/Modal';
 import { Dropdown } from '../../components/ui/Dropdown';
@@ -357,7 +358,7 @@ function WorkpadReference({
         anchor.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       } else {
-        await navigator.clipboard.writeText(link.target);
+        await copyText(link.target);
         setCopied(true);
       }
     } catch (caught) {

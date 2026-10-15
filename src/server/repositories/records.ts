@@ -67,6 +67,7 @@ export function messageRecord(row: Row): MessageRecord {
     saved: Boolean(row.saved),
     role: row.role as MessageRecord['role'],
     content: String(row.content),
+    ...(row.source === 'telegram' ? { source: 'telegram' as const } : {}),
     status: row.status as MessageRecord['status'],
     error: row.error as string | null,
     createdAt: String(row.created_at),

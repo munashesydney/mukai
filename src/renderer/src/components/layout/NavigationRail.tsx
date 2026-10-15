@@ -1,13 +1,15 @@
 import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { botAvatarSrc } from '../../../../shared/mascots';
+import { TelegramLogo } from '../ui/TelegramLogo';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
-  { id: 'notifications', label: 'Updates', icon: Bell },
+  { id: 'notifications', label: 'Messages', icon: Bell },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
+  { id: 'telegram', label: 'Telegram', icon: null },
 ] as const;
 export function NavigationRail({
   section,
@@ -41,7 +43,7 @@ export function NavigationRail({
         className="workspace-emblem"
         disabled={disabled}
         title={disabled ? 'Create your first workspace to get started' : undefined}
-        onClick={() => onNavigate(hasBots ? 'spaces' : 'bots')}
+        onClick={() => onNavigate('bots')}
         aria-label={workspaceName}
       >
         {workspaceName[0]?.toUpperCase() || 'M'}
@@ -54,11 +56,11 @@ export function NavigationRail({
             <button
               className={`rail-link ${!disabled && section === id ? 'is-active' : ''}`}
               key={id}
-              disabled={disabled || (!hasBots && id !== 'bots')}
+              disabled={disabled || (!hasBots && id !== 'bots' && id !== 'telegram')}
               title={
                 disabled
                   ? 'Create your first workspace to unlock this'
-                  : !hasBots && id !== 'bots'
+                  : !hasBots && id !== 'bots' && id !== 'telegram'
                     ? 'Add your first bot to unlock this'
                     : undefined
               }
@@ -66,7 +68,9 @@ export function NavigationRail({
               aria-current={!disabled && section === id ? 'page' : undefined}
             >
               <span className="rail-icon">
-                {Icon ? (
+                {id === 'telegram' ? (
+                  <TelegramLogo size={22} />
+                ) : Icon ? (
                   <Icon size={22} strokeWidth={1.8} />
                 ) : (
                   <img className="rail-mascot" src={botAvatarSrc('mukai-logo')} alt="" />
@@ -85,7 +89,7 @@ export function NavigationRail({
           ))}
       </div>
       <div className="rail-bottom">
-        {section !== 'pursuits' && section !== 'notifications' && (
+        {section !== 'pursuits' && section !== 'notifications' && section !== 'telegram' && (
           <button
             className="rail-add"
             disabled={disabled}

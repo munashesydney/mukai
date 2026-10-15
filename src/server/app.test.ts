@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -307,7 +307,10 @@ beforeEach(async () => {
                   empty || truncated
                     ? ''
                     : JSON.stringify(body.messages).includes('Summarize working memory')
-                      ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.' +
+                      ? (mode === 'oversized-results'
+                          ? // Leave the tight notebook budget for findings and omission notices.
+                            'Saved work. '
+                          : 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.') +
                         (mode === 'oversized-results'
                           ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED]
                               .filter((finding) => JSON.stringify(body.messages).includes(finding))
@@ -1015,6 +1018,30 @@ describe('Mukai bots and AI API', () => {
           status: approved ? 'complete' : 'failed',
         },
       ]);
+      const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      const previewUrl = `/conversations/${message.conversationId}/activity-image`;
+      const input = { messageId: message.id, activityId: activities![0].id };
+      const preview = await fetch(api.url + previewUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      expect(preview.status).toBe(approved ? 200 : 404);
+      if (approved) {
+        expect(preview.headers.get('content-type')).toBe('image/png');
+        expect((await sharp(Buffer.from(await preview.arrayBuffer())).metadata()).width).toBe(30);
+        expect(
+          (await request(previewUrl, 'POST', { ...input, activityId: 'unknown' })).response.status,
+        ).toBe(404);
+        expect(
+          (await request('/conversations/bot-other/activity-image', 'POST', input)).response.status,
+        ).toBe(404);
+        unlinkSync(path);
+        const missing = await request<{ error: string }>(previewUrl, 'POST', input);
+        expect(missing.response.status).toBe(404);
+        expect(missing.data.error).toContain('This image is no longer available');
+      }
+      expect((await fetch(api.url + previewUrl, { method: 'POST' })).status).toBe(401);
       expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
     },
   );
@@ -1146,6 +1173,37 @@ describe('Mukai bots and AI API', () => {
       ).toContain(approved ? 'Approved by the user' : 'Denied by the user');
     },
   );
+
+  it('delivers a denial reason through the API into the ask tool result and activity', async () => {
+    await configure();
+    mode = 'ask-approval';
+    const result = chat('Ask permission to publish');
+    const item = await pendingApproval('custom-call-1');
+    for (const body of [
+      { approved: true, reason: 'Not yet.' },
+      { approved: false, reason: '   ' },
+      { approved: false, reason: 'x'.repeat(16001) },
+    ])
+      expect((await request(`/approvals/${item.id}`, 'POST', body)).response.status).toBe(400);
+    expect(
+      (
+        await request(`/approvals/${item.id}`, 'POST', {
+          approved: false,
+          reason: '  Let me review it first.  ',
+        })
+      ).response.status,
+    ).toBe(200);
+    await result;
+    const toolMessages = calls.at(-1)!.messages.filter((message) => message.role === 'tool');
+    expect(JSON.parse(String(toolMessages[0].content))).toEqual({
+      action: 'approval',
+      approved: false,
+      reason: 'Let me review it first.',
+    });
+    expect(
+      (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity![0].summary,
+    ).toContain('Reason: Let me review it first.');
+  });
 
   it('keeps parallel questions separate from tool permissions and rejects bulk clarification grants atomically', async () => {
     await configure();
@@ -1596,6 +1654,7 @@ describe('Mukai bots and AI API', () => {
     expect(reply.status, readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toBe('complete');
     expect(reply.content).toContain('A real SDK response.');
     expect(calls).toHaveLength(2);
+    expect(calls[1].messages).toEqual(calls[0].messages);
     expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toContain('chat.provider_retry');
   });
 
@@ -1849,6 +1908,7 @@ describe('Mukai bots and AI API', () => {
       ).data;
       mode = 'checkpoint';
       const sent = await chat('Write once, then report.', randomUUID(), bot.id);
+      const savedMessages = structuredClone(calls.at(-1)!.messages);
       expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
       expect(api.store.get('SELECT in_flight FROM chat_jobs')?.in_flight).toBe(0);
       api.store.run(
@@ -1860,6 +1920,8 @@ describe('Mukai bots and AI API', () => {
       api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
       mode = 'normal';
       await chat('ignored', sent.requestId, bot.id);
+      expect(calls.at(-1)!.messages.slice(0, savedMessages.length)).toEqual(savedMessages);
+      expect(String(calls.at(-1)!.messages.at(-1)?.content)).toContain('Runtime notice: Resume');
       const history = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
       expect(history).toHaveLength(2);
       expect(history[1].status).toBe('complete');
@@ -2063,7 +2125,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls.length).toBe(count);
     const sent = await spaceChat(space.id, '@scout hello', 'scout');
     const serialized = JSON.stringify(calls.at(-1)!.messages);
-    expect(calls.at(-1)!.messages).toHaveLength(11);
+    expect(calls.at(-1)!.messages).toHaveLength(12);
     expect(serialized).toContain('Context 3');
     expect(serialized).not.toContain('Context 2');
     expect(serialized).toContain('[You] @scout hello');
@@ -2193,8 +2255,9 @@ describe('Mukai bots and AI API', () => {
       .data;
     mode = 'tool-limit';
     const sent = await chat('Work until the limit', randomUUID(), bot.id);
-    expect(calls).toHaveLength(10);
-    expect(JSON.stringify(calls.slice(5, 9))).toContain('Reassess the approach');
+    const steps = calls.filter((call) => call.stream);
+    expect(steps).toHaveLength(10);
+    expect(JSON.stringify(steps.slice(5, 9))).toContain('Reassess the approach');
     expect(calls.at(-1)).not.toHaveProperty('tools');
     expect(JSON.stringify(calls.at(-1))).toContain('Tools are now disabled');
     const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
@@ -2407,8 +2470,23 @@ describe('Mukai bots and AI API', () => {
       .data;
     mode = 'tools';
     const sent = await chat('Create a useful draft from my notes', randomUUID(), bot.id);
+    for (let index = 1; index < calls.length; index++) {
+      const previous = calls[index - 1].messages;
+      const current = calls[index].messages;
+      expect(current.slice(0, previous.length)).toEqual(previous);
+      expect(current.at(-2)?.role).toBe('tool');
+      expect(String(current.at(-1)?.content)).toContain('Runtime UTC now: ');
+      expect(String(current[0].content)).not.toMatch(/Current UTC time:|Runtime UTC now:/);
+    }
     expect(sent.events.some((event) => event.type === 'reasoning')).toBe(true);
     expect(sent.events.filter((event) => event.type === 'activity')).toHaveLength(10);
+    expect(sent.events).toContainEqual(
+      expect.objectContaining({
+        type: 'activity',
+        activity: expect.objectContaining({ action: 'write_file', status: 'complete' }),
+        changes: [expect.objectContaining({ path: 'draft.md', kind: 'created' })],
+      }),
+    );
     expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
     const messages = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
     expect(messages[1].status).toBe('complete');
@@ -2475,6 +2553,11 @@ describe('Mukai bots and AI API', () => {
     });
     expect(download.headers.get('content-disposition')).toContain('attachment');
     expect(await download.text()).toContain('A clearer second version.');
+    unlinkSync(join(project, 'draft.md'));
+    const missingFile = await request<{ error: string }>('/artifacts/' + artifacts[0].id);
+    expect(missingFile.response.status).toBe(404);
+    expect(missingFile.data.error).toContain('no longer available in the workspace folder');
+    writeFileSync(join(project, 'draft.md'), detail.after);
     await request(`/bots/${bot.id}`, 'DELETE');
     expect((await request(`/changes/${change.id}`)).response.status).toBe(404);
     expect(
@@ -2574,7 +2657,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls[1].model).toBe('writer-model');
     expect(calls[1].messages[0]).toEqual({
       role: 'system',
-      content: expect.stringMatching(/^No current pursuits\n/),
+      content: expect.stringContaining(mukaiEnvironmentInstructions),
     });
     const writerSystem = String(calls[1].messages[0].content);
     expect(writerSystem).toContain(mukaiEnvironmentInstructions);
@@ -2588,7 +2671,8 @@ describe('Mukai bots and AI API', () => {
       }),
     );
     expect(writerSystem).toContain('Write in short sentences.');
-    expect(writerSystem).toContain('Current UTC time: ');
+    expect(writerSystem).not.toMatch(/Current UTC time:|Runtime UTC now:/);
+    expect(String(calls[1].messages.at(-1)?.content)).toContain('Runtime UTC now: ');
     expect(writerSystem).toContain('You are a workspace sub-bot.');
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
@@ -2615,8 +2699,8 @@ describe('Mukai bots and AI API', () => {
     await configure();
     for (let index = 0; index < 7; index++) await chat(`Prompt ${index}`);
     const latest = calls.at(-1)!;
-    expect(latest.messages).toHaveLength(14); // System instructions plus thirteen messages.
-    expect(latest.messages.at(-1)).toEqual({ role: 'user', content: 'Prompt 6' });
+    expect(latest.messages).toHaveLength(15); // System, thirteen chat messages, runtime context.
+    expect(latest.messages.at(-2)).toEqual({ role: 'user', content: 'Prompt 6' });
     expect(JSON.stringify(latest.messages)).toContain('Prompt 0');
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(14);
   });
@@ -2952,4 +3036,50 @@ it('cancels an active response before deleting the workspace conversation record
   expect(api.store.all('SELECT * FROM conversations')).toEqual([]);
   expect(api.store.all('SELECT * FROM bots')).toEqual([]);
   expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+});
+
+it('saves model configuration independently of the provider connection and rejects invalid model updates', async () => {
+  const provider = await configure();
+  const encryptedKey = api.store.get(
+    'SELECT encrypted_key FROM providers WHERE id=?',
+    provider.id,
+  )?.encrypted_key;
+  const models = [
+    {
+      id: 'new-default',
+      name: 'New default',
+      contextWindowTokens: 128000,
+      maxOutputTokens: 32768,
+      supportsImages: true,
+    },
+  ];
+  const updated = await request<ProviderSettings>(`/providers/${provider.id}/models`, 'PUT', {
+    models,
+    defaultModel: 'new-default',
+  });
+  expect(updated.response.status).toBe(200);
+  expect(updated.data).toMatchObject({
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    hasKey: true,
+    isDefault: true,
+    models,
+    defaultModel: 'new-default',
+    contextWindowTokens: 128000,
+    maxOutputTokens: 32768,
+    supportsImages: true,
+  });
+  expect(
+    api.store.get('SELECT encrypted_key FROM providers WHERE id=?', provider.id)?.encrypted_key,
+  ).toBe(encryptedKey);
+  for (const input of [
+    { models, defaultModel: 'missing' },
+    { models, defaultModel: '' },
+    { models: [models[0], models[0]], defaultModel: 'new-default' },
+    { models, defaultModel: 'new-default', apiKey: 'should-not-change' },
+  ])
+    expect((await request(`/providers/${provider.id}/models`, 'PUT', input)).response.status).toBe(
+      400,
+    );
+  expect((await request<ProviderSettings[]>('/providers')).data[0].models).toEqual(models);
 });

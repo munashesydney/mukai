@@ -307,7 +307,7 @@ export class ToolService {
               onActivity,
             })
           : {}),
-        ...(this.memory
+        ...(this.memory && this.memory.settings(bot.workspaceId).enabled
           ? memoryTools({
               bot,
               conversationId: conversationId!,

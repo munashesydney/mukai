@@ -1,12 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import type { ApprovalMode, ApprovalState, ToolApproval } from '../../shared/approvals';
+import type {
+  ApprovalDecision,
+  ApprovalMode,
+  ApprovalState,
+  ToolApproval,
+} from '../../shared/approvals';
 import type { ApprovalRepository, ApprovalCheckpoint } from '../repositories/approvalRepository';
 import { ApiError } from '../config';
 import type { AskInput, AskResponse } from '../../shared/ask';
 import { askDefinition } from '../tools/ask/definition';
 import { inPursuitExecution, pausePursuitTask } from './pursuitScheduler';
 
-type Decision = boolean | string;
+type Decision = ApprovalDecision | string;
 
 interface PendingApproval {
   request: ApprovalCheckpoint;
@@ -83,13 +88,20 @@ export class ApprovalService {
     );
   }
 
-  decide(id: string, approved: boolean, workspaceId = 'default') {
+  decide(id: string, approved: boolean, workspaceId = 'default', reason?: string) {
     const item = this.pending.get(id);
     if (!item || item.request.decision !== undefined)
       throw new ApiError(409, 'This tool approval is no longer pending.');
     if (item.request.ask?.action === 'clarification')
       throw new ApiError(400, 'This request needs an answer, not an approval.');
-    item.settle(approved);
+    if (reason !== undefined) {
+      if (approved || item.request.ask?.action !== 'approval')
+        throw new ApiError(400, 'Only denied approval questions accept a reason.');
+      reason = reason.trim();
+      if (!reason || reason.length > 16000)
+        throw new ApiError(400, 'Enter a reason between 1 and 16000 characters.');
+    }
+    item.settle(reason === undefined ? approved : { approved: false, reason });
     return this.state(workspaceId);
   }
   answer(id: string, answer: string, workspaceId = 'default') {
@@ -158,7 +170,7 @@ export class ApprovalService {
         this.mode(this.repository.workspaceId(details)) === 'full-access')
     )
       return true;
-    return (await this.wait(details, signal, onChange)) as boolean;
+    return (await this.wait(details, signal, onChange)) === true;
   }
 
   async ask(
@@ -172,7 +184,11 @@ export class ApprovalService {
     const response = (decision: Decision): AskResponse =>
       question.action === 'clarification'
         ? { action: 'clarification', answer: String(decision) }
-        : { action: 'approval', approved: decision === true };
+        : {
+            action: 'approval',
+            approved: decision === true,
+            ...(typeof decision === 'object' ? { reason: decision.reason } : {}),
+          };
     const decision = await this.wait({ ...details, ask: question }, signal, onChange, (decision) =>
       onAnswer(response(decision)),
     );

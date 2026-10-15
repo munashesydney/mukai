@@ -94,6 +94,14 @@ export class NotificationRepository {
     );
     return { ok: true };
   }
+  dismissAll(workspaceId: string) {
+    this.database.run(
+      'UPDATE bot_notifications SET dismissed_at=? WHERE workspace_id=? AND dismissed_at IS NULL',
+      new Date().toISOString(),
+      workspaceId,
+    );
+    return { ok: true };
+  }
   continue(workspaceId: string, id: string) {
     return this.database.transaction(() => {
       const notification = this.require(workspaceId, id);

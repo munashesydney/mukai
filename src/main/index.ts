@@ -1,10 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, session } from 'electron';
 import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
 import type { Server } from 'node:http';
 import { MukaiBrowserHost } from './embeddedBrowserHost';
 import { z } from 'zod';
+import { registerDesktopActions } from './desktopActions';
 
 let apiServer: Server | undefined;
 let apiUrl = '';
@@ -26,7 +27,9 @@ function createWindow() {
       app.getAppPath(),
       app.isPackaged ? 'out/renderer/mukai-logo.png' : 'src/renderer/public/mukai-logo.png',
     ),
-    frame: false,
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 20, y: 23 } }
+      : { frame: false }),
     backgroundColor: '#12232e',
     show: false,
     webPreferences: {
@@ -123,13 +126,7 @@ else {
         });
         return result.canceled ? null : result.filePaths[0] || null;
       });
-      ipcMain.handle(IPC.openExternal, async (event, value: unknown) => {
-        if (!senderWindow(event) || typeof value !== 'string') throw new Error('Untrusted link');
-        const url = new URL(value);
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
-          throw new Error('Unsupported link');
-        await shell.openExternal(url.href);
-      });
+      registerDesktopActions((event) => Boolean(senderWindow(event)));
       ipcMain.on(IPC.maximize, (event) => {
         const window = senderWindow(event);
         if (window?.isMaximized()) window.unmaximize();

@@ -1,3 +1,4 @@
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { defaultBotInstructions } from '../../../../shared/botSystemPrompt';
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
@@ -91,156 +92,147 @@ export function BotEditor({
               {error}
             </div>
           )}
-          {deleting ? (
-            <div className="delete-confirm">
-              <h3>Delete {bot?.name}?</h3>
-              <p>This permanently deletes this bot, its entire chat, and its attachments.</p>
-              <button
-                type="button"
-                className="button button--danger"
-                disabled={busy}
-                onClick={() => void remove()}
-              >
-                Delete bot and chat
-              </button>
-              <button
-                type="button"
-                className="button"
-                disabled={busy}
-                onClick={() => setDeleting(false)}
-              >
-                Keep bot
-              </button>
+          {isFirst && (
+            <div className="first-bot-intro">
+              <strong>Your main bot</strong>
+              <p>
+                This bot leads your workspace. It can use all tools, manage pursuits, and create
+                other bots.
+              </p>
             </div>
-          ) : (
-            <>
-              {isFirst && (
-                <div className="first-bot-intro">
-                  <strong>Your main bot</strong>
-                  <p>
-                    This bot leads your workspace. It can use all tools, manage pursuits, and create
-                    other bots.
-                  </p>
-                </div>
-              )}
-              <div className="bot-avatar-options" role="group" aria-label="Bot identity">
-                {botAvatarIds.map((avatar) => (
-                  <button
-                    type="button"
-                    key={avatar}
-                    aria-label={`Use ${botAvatarLabels[avatar]} mascot`}
-                    title={botAvatarLabels[avatar]}
-                    aria-pressed={value.avatar === avatar}
-                    className={value.avatar === avatar ? 'is-selected' : ''}
-                    disabled={busy}
-                    onClick={() => setValue({ ...value, avatar })}
-                  >
-                    <Avatar person={avatar} />
-                  </button>
-                ))}
-              </div>
-              <label>
-                Name
-                <input
-                  required
-                  maxLength={60}
-                  disabled={busy}
-                  value={value.name}
-                  placeholder="What shall we call them?"
-                  onChange={(event) => setValue({ ...value, name: event.target.value })}
-                />
-              </label>
-              {!bot && (
-                <div className="bot-name-suggestions" role="group" aria-label="Suggested bot names">
-                  <span>Try a name</span>
-                  {botNameSuggestions.map((name) => (
-                    <button
-                      type="button"
-                      key={name}
-                      disabled={busy}
-                      className={value.name === name ? 'is-selected' : ''}
-                      onClick={() => setValue({ ...value, name })}
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <label>
-                Role
-                <input
-                  required
-                  maxLength={120}
-                  disabled={busy}
-                  readOnly={isFirst || bot?.isMain}
-                  value={value.role}
-                  placeholder="e.g. Code architect"
-                  onChange={(event) => setValue({ ...value, role: event.target.value })}
-                />
-                <small>
-                  {isFirst || bot?.isMain
-                    ? 'Your main bot coordinates the workspace.'
-                    : 'Give the bot a name; put its job title here.'}
-                </small>
-              </label>
-              <label>
-                Instructions
-                <textarea
-                  required
-                  rows={5}
-                  maxLength={12000}
-                  disabled={busy}
-                  value={value.instructions}
-                  onChange={(event) => setValue({ ...value, instructions: event.target.value })}
-                />
-                <small>Tell your bot how to help, what to focus on, and how to respond.</small>
-              </label>
-              {!providers.length && (
-                <p className="ai-caption">
-                  You can create this bot now. Add a provider in Settings before chatting.
-                </p>
-              )}
-              {!bot && !isFirst && (
-                <p className="ai-caption">
-                  Pursuits and bot management start unassigned. Change access in Tools → Workspace
-                  tools.
-                </p>
-              )}
-            </>
           )}
-        </div>
-        {!deleting && (
-          <div className="modal-footer">
-            <div>
-              {bot && (
+          <div className="bot-avatar-options" role="group" aria-label="Bot identity">
+            {botAvatarIds.map((avatar) => (
+              <button
+                type="button"
+                key={avatar}
+                aria-label={`Use ${botAvatarLabels[avatar]} mascot`}
+                title={botAvatarLabels[avatar]}
+                aria-pressed={value.avatar === avatar}
+                className={value.avatar === avatar ? 'is-selected' : ''}
+                disabled={busy}
+                onClick={() => setValue({ ...value, avatar })}
+              >
+                <Avatar person={avatar} />
+              </button>
+            ))}
+          </div>
+          <label>
+            Name
+            <input
+              required
+              maxLength={60}
+              disabled={busy}
+              value={value.name}
+              placeholder="What shall we call them?"
+              onChange={(event) => setValue({ ...value, name: event.target.value })}
+            />
+          </label>
+          {!bot && (
+            <div className="bot-name-suggestions" role="group" aria-label="Suggested bot names">
+              <span>Try a name</span>
+              {botNameSuggestions.map((name) => (
                 <button
                   type="button"
-                  className="text-button danger-text"
+                  key={name}
                   disabled={busy}
-                  onClick={() => setDeleting(true)}
+                  className={value.name === name ? 'is-selected' : ''}
+                  onClick={() => setValue({ ...value, name })}
                 >
-                  <Trash2 size={15} />
-                  Delete bot
+                  {name}
                 </button>
-              )}
+              ))}
             </div>
-            <div className="ai-form-actions">
-              <button type="button" className="button" disabled={busy} onClick={onClose}>
-                Cancel
-              </button>
+          )}
+          <label>
+            Role
+            <input
+              required
+              maxLength={120}
+              disabled={busy}
+              readOnly={isFirst || bot?.isMain}
+              value={value.role}
+              placeholder="e.g. Code architect"
+              onChange={(event) => setValue({ ...value, role: event.target.value })}
+            />
+            <small>
+              {isFirst || bot?.isMain
+                ? 'Your main bot coordinates the workspace.'
+                : 'Give the bot a name; put its job title here.'}
+            </small>
+          </label>
+          <label>
+            Instructions
+            <textarea
+              required
+              rows={5}
+              maxLength={12000}
+              disabled={busy}
+              value={value.instructions}
+              onChange={(event) => setValue({ ...value, instructions: event.target.value })}
+            />
+            <small>Tell your bot how to help, what to focus on, and how to respond.</small>
+          </label>
+          {!providers.length && (
+            <p className="ai-caption">
+              You can create this bot now. Add a provider in Settings before chatting.
+            </p>
+          )}
+          {!bot && !isFirst && (
+            <p className="ai-caption">
+              Pursuits and bot management start unassigned. Change access in Tools → Workspace
+              tools.
+            </p>
+          )}
+        </div>
+        <div className="modal-footer">
+          <div>
+            {bot && (
               <button
-                type="submit"
-                className="button button--primary"
-                disabled={
-                  busy || !value.name.trim() || !value.role.trim() || !value.instructions.trim()
-                }
+                type="button"
+                className="text-button danger-text"
+                disabled={busy}
+                onClick={() => {
+                  setError('');
+                  setDeleting(true);
+                }}
               >
-                {busy ? 'Saving…' : bot ? 'Save changes' : 'Create bot'}
+                <Trash2 size={15} />
+                Delete bot
               </button>
-            </div>
+            )}
           </div>
-        )}
+          <div className="ai-form-actions">
+            <button type="button" className="button" disabled={busy} onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="button button--primary"
+              disabled={
+                busy || !value.name.trim() || !value.role.trim() || !value.instructions.trim()
+              }
+            >
+              {busy ? 'Saving…' : bot ? 'Save changes' : 'Create bot'}
+            </button>
+          </div>
+        </div>
       </form>
+      {deleting && bot && (
+        <ConfirmationModal
+          title={`Delete ${bot.name}?`}
+          confirmLabel="Delete bot and chat"
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setDeleting(false);
+            setError('');
+          }}
+          onConfirm={() => void remove()}
+        >
+          <p>This permanently deletes this bot, its entire chat, and its attachments.</p>
+        </ConfirmationModal>
+      )}
     </Sheet>
   );
 }

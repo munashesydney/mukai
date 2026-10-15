@@ -5,6 +5,7 @@ import { errorText } from '../../utils/errors';
 import type { Bot } from '../../../../shared/ai';
 import { ToolAssignments } from './ToolAssignments';
 import { Dropdown } from '../../components/ui/Dropdown';
+import { copyText } from '../../services/clipboardService';
 import {
   customToolPermissionLabels,
   customToolPermissionModes,
@@ -204,9 +205,9 @@ export function CustomCapabilityPage({
                 <button
                   className="button"
                   onClick={() =>
-                    void navigator.clipboard
-                      .writeText(detail.registration.url || '')
-                      .catch(() => setError('Could not copy the URL.'))
+                    void copyText(detail.registration.url || '').catch(() =>
+                      setError('Could not copy the URL.'),
+                    )
                   }
                 >
                   Copy URL

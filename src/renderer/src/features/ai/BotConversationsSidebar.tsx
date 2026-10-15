@@ -90,20 +90,22 @@ export function BotConversationsSidebar({
                 }}
               >
                 <span className="bot-conversation-toggle">
-                  <Avatar person={bot.avatar} size="xs" />
+                  <Avatar person={bot.avatar} size="sm" />
                   {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </span>
                 <span>{bot.name}</span>
-                {bot.isMain && <MainBotBadge />}
               </button>
-              <IconButton
-                label={`New conversation with ${bot.name}`}
-                disabled={Boolean(creating)}
-                onClick={() => void create(bot.id)}
-              >
-                <MessageCirclePlus size={17} />
-              </IconButton>
               {!open && <BotConversationStatus conversations={chats} />}
+              <div className="bot-conversation-action">
+                {bot.isMain && <MainBotBadge />}
+                <IconButton
+                  label={`New conversation with ${bot.name}`}
+                  disabled={Boolean(creating)}
+                  onClick={() => void create(bot.id)}
+                >
+                  <MessageCirclePlus size={17} />
+                </IconButton>
+              </div>
             </div>
             {count > 0 && (
               <button
@@ -124,36 +126,52 @@ export function BotConversationsSidebar({
             )}
             {open && (
               <div className="bot-conversation-list">
-                {visibleChats.map((chat) => (
-                  <button
-                    key={chat.id}
-                    className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
-                    aria-current={
-                      !location.view && location.conversationId === chat.id ? 'page' : undefined
-                    }
-                    title={chat.name}
-                    onClick={() =>
-                      onSelect(
-                        chat.kind === 'bot'
-                          ? {
-                              section: 'spaces',
-                              item: 'bot-conversations',
-                              conversationId: chat.id,
-                            }
-                          : { section: 'bots', item: bot.id, conversationId: chat.id },
-                      )
-                    }
-                  >
-                    <span>{chat.name}</span>
-                    <ConversationStatus
-                      chatId={`${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`}
-                      updatedAt={chat.updatedAt}
-                      isWorking={chat.isWorking}
+                {visibleChats.map((chat) => {
+                  const sender =
+                    chat.kind === 'bot'
+                      ? bots.find((participant) => participant.id === chat.botIds[0])
+                      : undefined;
+                  return (
+                    <button
+                      key={chat.id}
+                      className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                      aria-current={
+                        !location.view && location.conversationId === chat.id ? 'page' : undefined
+                      }
+                      title={chat.name}
+                      onClick={() =>
+                        onSelect(
+                          chat.kind === 'bot'
+                            ? {
+                                section: 'spaces',
+                                item: 'bot-conversations',
+                                conversationId: chat.id,
+                              }
+                            : { section: 'bots', item: bot.id, conversationId: chat.id },
+                        )
+                      }
                     >
-                      {age(chat.updatedAt)}
-                    </ConversationStatus>
-                  </button>
-                ))}
+                      {sender && (
+                        <span
+                          className="bot-conversation-origin"
+                          title={`Started by ${sender.name}`}
+                          role="img"
+                          aria-label={`Started by ${sender.name}`}
+                        >
+                          <Avatar person={sender.avatar} size="xs" />
+                        </span>
+                      )}
+                      <span>{chat.name}</span>
+                      <ConversationStatus
+                        chatId={`${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`}
+                        updatedAt={chat.updatedAt}
+                        isWorking={chat.isWorking}
+                      >
+                        {age(chat.updatedAt)}
+                      </ConversationStatus>
+                    </button>
+                  );
+                })}
                 {chats.length > visibleChats.length && (
                   <button
                     className="bot-conversations-load-more"

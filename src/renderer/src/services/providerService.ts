@@ -2,6 +2,7 @@ import type {
   ChatGPTSignIn,
   ProviderModel,
   ProviderInput,
+  ProviderModelsInput,
   ProviderSettings,
   ProviderTestResult,
 } from '../../../shared/ai';
@@ -42,6 +43,8 @@ export const providerService = {
   create: (value: ProviderInput) => api<ProviderSettings>('/providers', 'POST', value),
   update: (id: string, value: ProviderInput) =>
     api<ProviderSettings>(`/providers/${encodeURIComponent(id)}`, 'PUT', value),
+  updateModels: (id: string, value: ProviderModelsInput) =>
+    api<ProviderSettings>(`/providers/${encodeURIComponent(id)}/models`, 'PUT', value),
   remove: (id: string) =>
     api<{ ok: boolean; message?: string }>(`/providers/${encodeURIComponent(id)}`, 'DELETE'),
   test: (id: string) =>

@@ -114,6 +114,44 @@ describe('Saved provider models', () => {
       'Choose a saved model',
     );
   });
+  it('updates only model settings, retaining credentials and connection configuration', () => {
+    const provider = service.save({
+      ...connection,
+      name: 'My provider',
+      apiKey: 'test-only-key',
+      models: [models[0]],
+      defaultModel: models[0].id,
+    });
+    const encryptedKey = new ProviderRepository(database).find(provider.id)?.encryptedKey;
+    const updated = service.saveModels(provider.id, { models, defaultModel: models[1].id });
+    expect(updated).toMatchObject({
+      name: 'My provider',
+      baseUrl: connection.baseUrl,
+      hasKey: true,
+      isDefault: true,
+      defaultModel: models[1].id,
+      contextWindowTokens: models[1].contextWindowTokens,
+      maxOutputTokens: models[1].maxOutputTokens,
+      supportsImages: true,
+    });
+    expect(new ProviderRepository(database).find(provider.id)?.encryptedKey).toBe(encryptedKey);
+    expect(() => service.saveModels(provider.id, { models, defaultModel: '' })).toThrow(
+      'Choose a saved model',
+    );
+    expect(service.list()[0].defaultModel).toBe(models[1].id);
+    expect(service.saveModels(provider.id, { models: [], defaultModel: '' }).models).toEqual([]);
+  });
+  it('starts custom compatible models with a 128K context and 32K output cap', () => {
+    const provider = service.save({ ...connection, defaultModel: 'custom-model' });
+    expect(provider.models?.[0]).toMatchObject({
+      contextWindowTokens: 128000,
+      maxOutputTokens: 32768,
+    });
+    expect(service.resolve(scoutBot())).toMatchObject({
+      contextWindow: 128000,
+      maxOutputTokens: 32768,
+    });
+  });
   it('migrates the default and existing bot-specific models without losing their limits', () => {
     seedTestWorkspace(database);
     const provider = service.save({

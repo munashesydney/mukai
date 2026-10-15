@@ -77,6 +77,13 @@ p {
   white-space: nowrap;
   border: 0;
 }
+.page-loader {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 240px;
+  color: var(--theme-text);
+}
 .app-shell {
   height: 100dvh;
   min-height: 560px;
@@ -142,6 +149,10 @@ p {
 }
 .title-bar button {
   -webkit-app-region: no-drag;
+}
+.title-bar.title-bar-mac {
+  /* Reserve the native traffic lights at x=20, vertically centered in the 58px header. */
+  padding-left: 96px;
 }
 .title-brand {
   width: 140px;
@@ -490,7 +501,6 @@ p {
 }
 .bot-pair-avatars > .avatar + .avatar {
   margin-left: -7px;
-  box-shadow: 0 0 0 2px var(--surface);
 }
 .bot-conversation-requests {
   padding: 12px 34px 20px;
@@ -509,6 +519,7 @@ p {
   min-width: 0;
   color: inherit;
   font-weight: 600;
+  min-height: 47px;
 }
 .bot-conversation-parent:hover {
   background: transparent;
@@ -518,35 +529,58 @@ p {
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 33px;
+  height: 33px;
+}
+.bot-conversation-toggle > .avatar {
+  width: 33px;
+  height: 33px;
 }
 .bot-conversation-toggle > svg {
   position: absolute;
   opacity: 0;
 }
-.bot-conversation-heading > .icon-button {
+.bot-conversation-action {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+}
+.bot-conversation-action > .main-bot-badge {
+  position: absolute;
+  margin-left: 0;
+  color: var(--theme-text);
+  pointer-events: none;
+}
+.bot-conversation-action > .icon-button {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   opacity: 0;
   pointer-events: none;
 }
-.bot-conversation-heading:hover > .icon-button,
-.bot-conversation-heading:has(:focus-visible) > .icon-button,
+.bot-conversation-heading:hover .bot-conversation-action > .icon-button,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-action > .icon-button,
 .bot-conversation-heading:hover .bot-conversation-toggle > svg,
 .bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > svg {
   opacity: 1;
   pointer-events: auto;
 }
 .bot-conversation-heading:hover .bot-conversation-toggle > .avatar,
-.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar {
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar,
+.bot-conversation-heading:hover .bot-conversation-action > .main-bot-badge,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-action > .main-bot-badge {
   opacity: 0;
 }
 @media (hover: none) {
-  .bot-conversation-heading > .icon-button {
+  .bot-conversation-action > .icon-button {
     opacity: 1;
     pointer-events: auto;
+  }
+  .bot-conversation-action > .main-bot-badge {
+    opacity: 0;
   }
 }
 .bot-conversation-list {
@@ -563,6 +597,16 @@ p {
 .bot-conversation-row > span {
   flex: 1;
   min-width: 0;
+}
+.bot-conversation-row > .bot-conversation-origin {
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  overflow: visible;
+}
+.bot-conversation-origin > .avatar {
+  width: 18px;
+  height: 18px;
 }
 .bot-conversation-row > time {
   flex-shrink: 0;

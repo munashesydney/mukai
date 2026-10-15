@@ -5,6 +5,7 @@ import type { Conversation } from '../../../../shared/conversations';
 import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { botHandle, mentionedBot } from '../../../../shared/mentions';
 import { Avatar } from '../../components/ui/Avatar';
+import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
 import { MessageActions } from './MessageActions';
 import { chatStore, useChat } from '../ai/chatStore';
 import { ResponseActivity } from '../ai/ResponseActivity';
@@ -375,6 +376,7 @@ const MessageRow = memo(function MessageRow({
             <strong>
               {message.role === 'user' ? 'You' : bot?.name || message.authorName || 'Bot'}
             </strong>
+            <TelegramSourceBadge message={message} />
             {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
             <time dateTime={message.createdAt}>
               {new Date(message.createdAt).toLocaleTimeString([], {

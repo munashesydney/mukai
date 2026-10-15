@@ -352,6 +352,86 @@ export const migrations = [
    CREATE TABLE web_sessions (
     token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
    CREATE INDEX web_session_expiry ON web_sessions(expires_at);`,
+  `CREATE TABLE telegram_connections (
+    id TEXT PRIMARY KEY, singleton INTEGER NOT NULL UNIQUE DEFAULT 1 CHECK(singleton=1),
+    encrypted_token TEXT NOT NULL, bot_json TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+    owner_json TEXT, owner_chat_id INTEGER, authorized_at INTEGER NOT NULL DEFAULT 0,
+    authorization_id TEXT NOT NULL DEFAULT '',
+    pairing_hash TEXT, pairing_expires_at INTEGER, pairing_candidate_json TEXT,
+    next_offset INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE telegram_access (
+    workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE);
+   CREATE TABLE telegram_sessions (
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    selected INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(connection_id,chat_id,workspace_id));
+   CREATE UNIQUE INDEX telegram_selected_session ON telegram_sessions(connection_id,chat_id) WHERE selected=1;
+   CREATE TABLE telegram_inbox (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    update_id INTEGER NOT NULL, payload TEXT NOT NULL,
+    UNIQUE(connection_id,update_id));
+   CREATE TABLE telegram_chat_jobs (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+    connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES telegram_sessions(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL, source_message_id INTEGER NOT NULL, text TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('queued','running','done','cancelled','interrupted')),
+    created_at INTEGER NOT NULL);
+   CREATE INDEX telegram_chat_queue ON telegram_chat_jobs(state,sequence);
+   CREATE TABLE telegram_outbox (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+    connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    chat_id INTEGER NOT NULL, text TEXT NOT NULL, markup_json TEXT, reply_to INTEGER,
+    workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT REFERENCES bots(id) ON DELETE CASCADE,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','sending','sent','uncertain','failed','cancelled')),
+    attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    telegram_message_id INTEGER, created_at INTEGER NOT NULL);
+   CREATE INDEX telegram_delivery_queue ON telegram_outbox(state,sequence);`,
+  `ALTER TABLE messages ADD COLUMN source TEXT CHECK(source IS NULL OR source='telegram');
+   -- Remove the old runtime label from stored user text; reconstruct it only in model context.
+   UPDATE messages SET source='telegram',
+     content=substr(content,length('Message coming from the Telegram integration by the user.')+3)
+   WHERE role='user' AND instr(content,'Message coming from the Telegram integration by the user.'||char(10)||char(10))=1;
+   UPDATE conversations SET name=COALESCE((
+     SELECT substr(trim(replace(replace(m.content,char(10),' '),char(13),' ')),1,60)
+     FROM messages m WHERE m.conversation_id=conversations.id AND m.role='user'
+     ORDER BY m.sequence LIMIT 1),name)
+   WHERE kind='private' AND instr(name,'Message coming from the Telegram integration by the user.')=1
+     AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=conversations.id AND m.source='telegram');`,
+  `CREATE TABLE telegram_events (
+    id TEXT PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES telegram_connections(id) ON DELETE CASCADE,
+    authorization_id TEXT NOT NULL, workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('approval','notification')), source_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','resolved')),
+    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    UNIQUE(connection_id,authorization_id,kind,source_id));
+   CREATE TABLE telegram_actions (
+    id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES telegram_events(id) ON DELETE CASCADE,
+    action TEXT NOT NULL, value TEXT, source_message_id INTEGER,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','done')),
+    created_at INTEGER NOT NULL);
+   CREATE INDEX telegram_pending_actions ON telegram_actions(state,created_at);
+   ALTER TABLE telegram_sessions ADD COLUMN notification_id TEXT REFERENCES bot_notifications(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_chat_jobs ADD COLUMN notification_id TEXT REFERENCES bot_notifications(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_outbox ADD COLUMN workspace_event INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE telegram_outbox ADD COLUMN event_id TEXT REFERENCES telegram_events(id) ON DELETE CASCADE;
+   ALTER TABLE telegram_outbox ADD COLUMN edit_message_id INTEGER;
+   CREATE INDEX telegram_event_deliveries ON telegram_outbox(event_id);`,
+  `ALTER TABLE telegram_events ADD COLUMN buttons_cleared INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE telegram_events ADD COLUMN continued INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE telegram_outbox ADD COLUMN reply_action TEXT CHECK(reply_action IS NULL OR reply_action='deny_reason');`,
+  `ALTER TABLE workspaces ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0 CHECK(memory_enabled IN (0,1));
+   UPDATE workspaces SET memory_enabled=1;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

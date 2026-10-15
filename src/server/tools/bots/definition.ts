@@ -17,7 +17,15 @@ export const botManagementDefinition = {
         .max(120)
         .optional()
         .describe('Required for create: the bot’s job, for example Code architect.'),
-      instructions: z.string().trim().min(1).max(12000).optional(),
+      instructions: z
+        .string()
+        .trim()
+        .min(1)
+        .max(12000)
+        .optional()
+        .describe(
+          'The bot’s persistent system prompt: its role, approach, and standards across conversations. Put the specific task and current context in send_message.message. For example, create a QA specialist with instructions to verify behavior, test edge cases, and report reproducible defects; then message it to QA the features screen.',
+        ),
       toolIds: z
         .array(z.string().min(1).max(100))
         .max(100)

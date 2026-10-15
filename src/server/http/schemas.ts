@@ -42,6 +42,11 @@ export const providerSchema = z.object({
   maxOutputTokens: z.number().int().min(256).max(262144).optional(),
 });
 
+export const providerModelsSchema = providerSchema
+  .pick({ models: true, defaultModel: true })
+  .extend({ models: providerSchema.shape.models.unwrap() })
+  .strict();
+
 export const chatSchema = z.object({
   requestId: z.string().uuid(),
   text: z.string().trim().max(16000),

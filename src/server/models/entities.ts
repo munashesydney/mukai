@@ -12,6 +12,7 @@ export interface AttachmentRecord extends Attachment {
 }
 export interface MessageRecord extends Omit<ChatMessage, 'attachments'> {
   sequence: number;
+  source?: 'telegram';
 }
 
 export function publicProvider(record: ProviderRecord): ProviderSettings {
@@ -28,6 +29,7 @@ export function publicMessage(record: MessageRecord, attachments: AttachmentReco
     requestId,
     botId,
     role,
+    source,
     content,
     status,
     error,
@@ -47,6 +49,7 @@ export function publicMessage(record: MessageRecord, attachments: AttachmentReco
     requestId,
     botId,
     role,
+    ...(role === 'user' && source === 'telegram' ? { source } : {}),
     content,
     status,
     error,

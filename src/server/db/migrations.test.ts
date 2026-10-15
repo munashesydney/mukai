@@ -8,6 +8,7 @@ import { startApiServer } from '../app';
 import type { Attachment, Bot, ChatMessage } from '../../shared/ai';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import { Database } from './database';
+import { seedTestBot } from '../testFixtures';
 
 let dir = '';
 afterEach(() => {
@@ -17,6 +18,40 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('moves legacy Telegram labels out of user text and titles into internal source metadata', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    const label = 'Message coming from the Telegram integration by the user.';
+    database.run(
+      `INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at)
+      VALUES('telegram-user','scout','bot-scout','legacy','user',?,'complete','2026-10-13')`,
+      label + '\n\nActual user text',
+    );
+    database.run('UPDATE conversations SET name=? WHERE id=?', label + ' Act', 'bot-scout');
+    // Recreate the preceding schema so reopening runs the actual append-only upgrade.
+    database.db.exec('ALTER TABLE messages DROP COLUMN source');
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE messages ADD COLUMN source')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get('SELECT content,source FROM messages WHERE id=?', 'telegram-user'),
+      ).toEqual({
+        content: 'Actual user text',
+        source: 'telegram',
+      });
+      expect(database.get('SELECT name FROM conversations WHERE id=?', 'bot-scout')?.name).toBe(
+        'Actual user text',
+      );
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('starts a fresh database without workspaces and stays empty after reopening', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);
@@ -52,7 +87,36 @@ describe('Existing database upgrades', () => {
         name: 'My existing workspace',
         createdAt: '2026-10-01',
       });
+      expect(
+        database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'default')?.memory_enabled,
+      ).toBe(1);
       expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+
+  it('starts newly created workspaces with memory off and preserves their choice on restart', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    new WorkspaceRepository(database).create({
+      id: 'new-memory',
+      name: 'New workspace',
+      folder: null,
+      createdAt: '2026-10-15',
+      computer: 'local',
+    });
+    expect(
+      database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'new-memory')
+        ?.memory_enabled,
+    ).toBe(0);
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'new-memory')
+          ?.memory_enabled,
+      ).toBe(0);
     } finally {
       database.db.close();
     }

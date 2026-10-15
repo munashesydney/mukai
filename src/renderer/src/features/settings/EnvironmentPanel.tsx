@@ -1,4 +1,5 @@
-import { KeyRound, Plus } from 'lucide-react';
+import { SettingsHeading } from './SettingsHeading';
+import { KeyRound, Plus, Trash2 } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
@@ -44,14 +45,36 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   }
   return (
     <section className="provider-panel capability-panel">
-      <div className="settings-section-header">
-        <span className="settings-eyebrow">WORKSPACE CONFIGURATION</span>
-        <h3>Environment variables</h3>
-        <p>
-          Private configuration for this workspace’s custom tools and routes. Values are encrypted
-          and never returned to bots.
-        </p>
-      </div>
+      <SettingsHeading
+        eyebrow="WORKSPACE CONFIGURATION"
+        title="Environment Variables"
+        description="Private configuration for this workspace’s custom tools and routes. Values are encrypted and never returned to bots."
+        actions={
+          <>
+            <button
+              className="button button--primary"
+              onClick={() => {
+                setName('');
+                setValue('');
+                setError('');
+                setEditor('variable');
+              }}
+            >
+              <Plus size={15} />
+              Add variable
+            </button>
+            <button
+              className="button"
+              onClick={() => {
+                setError('');
+                setEditor('import');
+              }}
+            >
+              Import .env
+            </button>
+          </>
+        }
+      />
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -62,29 +85,6 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           {notice}
         </p>
       )}
-      <div className="ai-form-actions">
-        <button
-          className="button button--primary"
-          onClick={() => {
-            setName('');
-            setValue('');
-            setError('');
-            setEditor('variable');
-          }}
-        >
-          <Plus size={15} />
-          Add variable
-        </button>
-        <button
-          className="button"
-          onClick={() => {
-            setError('');
-            setEditor('import');
-          }}
-        >
-          Import .env
-        </button>
-      </div>
       {editor === 'variable' && (
         <Sheet title="Environment variable" onClose={() => setEditor(null)}>
           <div className="bot-editor-body capability-sheet-body">
@@ -221,7 +221,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 Edit
               </button>
               <button
-                className="text-button"
+                className="text-button danger-text"
                 disabled={busy}
                 onClick={() =>
                   void perform(() =>
@@ -229,6 +229,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                   )
                 }
               >
+                <Trash2 size={14} aria-hidden="true" />
                 Delete
               </button>
             </div>

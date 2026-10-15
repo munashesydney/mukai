@@ -6,9 +6,11 @@ import { MessageMarkdown } from '../ai/MessageMarkdown';
 export function MemoryRuns({
   runs,
   onRetry,
+  disabled = false,
 }: {
   runs: MemoryReviewRun[];
   onRetry: (id: string) => void;
+  disabled?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = runs.find((run) => run.id === selectedId);
@@ -37,7 +39,11 @@ export function MemoryRuns({
           </div>
         )}
         {selected.status === 'failed' && (
-          <button className="button button--small" onClick={() => onRetry(selected.id)}>
+          <button
+            className="button button--small"
+            disabled={disabled}
+            onClick={() => onRetry(selected.id)}
+          >
             Retry review
           </button>
         )}

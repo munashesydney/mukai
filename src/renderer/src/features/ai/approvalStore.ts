@@ -67,13 +67,13 @@ export const approvalStore = {
       if (state.workspaceId === workspaceId && request === modeRequest) update({ saving: false });
     }
   },
-  async decide(id: string, approved: boolean) {
+  async decide(id: string, approved: boolean, reason?: string) {
     if (state.deciding.includes(id)) return;
     version++;
     update({ deciding: [...state.deciding, id], error: '' });
     const workspaceId = state.workspaceId;
     try {
-      const result = await approvalService.decide(id, approved, workspaceId);
+      const result = await approvalService.decide(id, approved, workspaceId, reason);
       if (state.workspaceId !== workspaceId) return;
       version++;
       update({ ...result, loaded: true });
