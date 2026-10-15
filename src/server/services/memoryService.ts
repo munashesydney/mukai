@@ -27,12 +27,14 @@ import { PROVIDER_MAX_RETRIES } from './responsePolicy';
 import { MemoryReviewService } from './memoryReviewService';
 
 export const memorySettingsSchema = z.object({
+  enabled: z.boolean(),
   automaticCapture: z.boolean(),
   automaticRecall: z.boolean(),
   semanticSearch: z.boolean(),
   contextTokens: z.number().int().min(256).max(4096),
 });
 const defaults: MemorySettings = {
+  enabled: false,
   automaticCapture: true,
   automaticRecall: true,
   semanticSearch: false,
@@ -71,6 +73,7 @@ export class MemoryService {
       this.store,
       async (request) => {
         this.workspaces.require(request.episode.workspaceId);
+        this.requireEnabled(request.episode.workspaceId);
         let controller = this.workspaceControllers.get(request.episode.workspaceId);
         if (!controller) {
           controller = new AbortController();
@@ -246,6 +249,7 @@ export class MemoryService {
       this.bots,
       (workspaceId) =>
         this.workspaces.list().some((w) => w.id === workspaceId && !w.deleting) &&
+        this.settings(workspaceId).enabled &&
         this.settings(workspaceId).automaticCapture,
       reviewIdleMs,
       (scope, query) => this.searchScope(scope, query, { limit: 12 }),
@@ -254,17 +258,43 @@ export class MemoryService {
   settings(workspaceId: string): MemorySettings {
     this.workspaces.require(workspaceId);
     const value = this.store.settingsValue(workspaceId);
-    return value ? memorySettingsSchema.parse(JSON.parse(value)) : { ...defaults };
+    return memorySettingsSchema.parse({
+      ...(value ? JSON.parse(value) : defaults),
+      enabled: Boolean(
+        this.store.get('SELECT memory_enabled FROM workspaces WHERE id=?', workspaceId)
+          ?.memory_enabled,
+      ),
+    });
   }
   saveSettings(workspaceId: string, value: MemorySettings) {
     this.workspaces.require(workspaceId);
     const settings = memorySettingsSchema.parse(value);
-    this.store.saveSettings(workspaceId, JSON.stringify(settings));
-    if (settings.semanticSearch && !this.embedding.ready) void this.initializeModel(false);
+    const previous = this.settings(workspaceId);
+    this.store.transaction(() => {
+      this.store.saveSettings(workspaceId, JSON.stringify(settings));
+      this.store.run(
+        'UPDATE workspaces SET memory_enabled=? WHERE id=?',
+        Number(settings.enabled),
+        workspaceId,
+      );
+      if (!previous.enabled && settings.enabled) this.reviews.skipHistory(workspaceId);
+    });
+    if (!settings.enabled) {
+      this.workspaceControllers.get(workspaceId)?.abort();
+      this.workspaceControllers.delete(workspaceId);
+    }
+    if (settings.enabled && settings.semanticSearch && !this.embedding.ready)
+      void this.initializeModel(false);
+    if (settings.enabled) this.kick();
     return settings;
+  }
+  private requireEnabled(workspaceId: string) {
+    if (!this.settings(workspaceId).enabled)
+      throw new ApiError(409, 'Memory is off for this workspace. Enable it in Settings → Memory.');
   }
   scope(bot: Bot): MemoryScope {
     this.workspaces.require(bot.workspaceId);
+    this.requireEnabled(bot.workspaceId);
     return {
       workspaceId: bot.workspaceId,
       // Historical bot-owned memories are shared too, without rewriting their provenance.
@@ -292,9 +322,11 @@ export class MemoryService {
   }
   async setupEmbeddings(workspaceId: string) {
     this.admin(workspaceId);
+    this.requireEnabled(workspaceId);
     await this.initializeModel(true);
     if (!this.embedding.ready)
       throw new ApiError(503, this.modelError || 'Embedding setup failed.');
+    this.requireEnabled(workspaceId);
     this.saveSettings(workspaceId, { ...this.settings(workspaceId), semanticSearch: true });
     await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
     return { ready: true };
@@ -303,12 +335,19 @@ export class MemoryService {
     this.reviews.recover();
     this.timer = setInterval(() => this.kick(), 3000);
     this.timer.unref();
-    if (this.store.settingsValues().some((value) => JSON.parse(value).semanticSearch))
+    if (
+      this.workspaces.list().some((workspace) => {
+        if (workspace.deleting) return false;
+        const settings = this.settings(workspace.id);
+        return settings.enabled && settings.semanticSearch;
+      })
+    )
       void this.initializeModel(false);
     this.kick();
   }
   capture(bot: Bot, conversationId: string, messageId: string) {
-    if (!this.settings(bot.workspaceId).automaticCapture || this.controller.signal.aborted) return;
+    const settings = this.settings(bot.workspaceId);
+    if (!settings.enabled || !settings.automaticCapture || this.controller.signal.aborted) return;
     const message = this.messages.message(messageId);
     if (message.role !== 'user') return;
     this.reviews.schedule(bot.workspaceId, conversationId, bot.id);
@@ -319,7 +358,11 @@ export class MemoryService {
     const updated = await this.reviews.drain(this.controller.signal);
     for (const workspaceId of updated) {
       if (!this.workspaces.list().some((w) => w.id === workspaceId && !w.deleting)) continue;
-      if (this.embedding.ready && this.settings(workspaceId).semanticSearch) {
+      if (
+        this.embedding.ready &&
+        this.settings(workspaceId).enabled &&
+        this.settings(workspaceId).semanticSearch
+      ) {
         try {
           await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
         } catch {
@@ -343,11 +386,17 @@ export class MemoryService {
     await this.drainReviews();
     const allowed = this.workspaces
       .list()
-      .filter((workspace) => !workspace.deleting && this.settings(workspace.id).automaticCapture)
+      .filter(
+        (workspace) =>
+          !workspace.deleting &&
+          this.settings(workspace.id).enabled &&
+          this.settings(workspace.id).automaticCapture,
+      )
       .map((workspace) => workspace.id);
     const rows = this.store
       .all(
         `SELECT * FROM memory_episodes WHERE status='pending' AND source_key NOT LIKE 'review:%'
+       AND workspace_id IN (SELECT id FROM workspaces WHERE memory_enabled=1 AND deleting=0)
        AND (source_type!='user'${allowed.length ? ` OR workspace_id IN (${allowed.map(() => '?').join(',')})` : ''})
        ORDER BY created_at LIMIT 8`,
         ...allowed,
@@ -362,13 +411,18 @@ export class MemoryService {
           .some((workspace) => workspace.id === workspaceId && !workspace.deleting)
       )
         continue;
+      if (!this.settings(workspaceId).enabled) continue;
       if (row.sourceType === 'user' && !this.settings(workspaceId).automaticCapture) continue;
       try {
         await this.engine.processEpisode(String(row.id), this.controller.signal);
       } catch {
         /* Persistent episode status contains a safe error; never log prompts. */
       }
-      if (this.embedding.ready && this.settings(workspaceId).semanticSearch) {
+      if (
+        this.embedding.ready &&
+        this.settings(workspaceId).enabled &&
+        this.settings(workspaceId).semanticSearch
+      ) {
         try {
           await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
         } catch {
@@ -428,7 +482,7 @@ export class MemoryService {
     maxBytes: number,
   ) {
     const settings = this.settings(bot.workspaceId);
-    if (!settings.automaticRecall) return '';
+    if (!settings.enabled || !settings.automaticRecall) return '';
     const latest = this.messages.message(userId);
     const recent = this.messages
       .context(conversationId, 4, this.messages.sequence(userId))
@@ -446,6 +500,7 @@ export class MemoryService {
       query,
       Math.min(maxBytes, settings.contextTokens * 3),
     );
+    if (!this.settings(bot.workspaceId).enabled) return '';
     this.store.recordRecall(scope, {
       id: assistantId,
       conversationId,
@@ -519,6 +574,7 @@ export class MemoryService {
   }
   retry(workspaceId: string, id: string) {
     this.admin(workspaceId);
+    this.requireEnabled(workspaceId);
     const run = this.store.get(
       "SELECT id FROM memory_review_runs WHERE workspace_id=? AND episode_id=? AND status='failed' ORDER BY started_at DESC LIMIT 1",
       workspaceId,
@@ -533,6 +589,7 @@ export class MemoryService {
   }
   retryRun(workspaceId: string, id: string) {
     this.admin(workspaceId);
+    this.requireEnabled(workspaceId);
     this.reviews.retry(workspaceId, id);
     this.kick();
   }

@@ -307,7 +307,10 @@ beforeEach(async () => {
                   empty || truncated
                     ? ''
                     : JSON.stringify(body.messages).includes('Summarize working memory')
-                      ? 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.' +
+                      ? (mode === 'oversized-results'
+                          ? // Leave the tight notebook budget for findings and omission notices.
+                            'Saved work. '
+                          : 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.') +
                         (mode === 'oversized-results'
                           ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED]
                               .filter((finding) => JSON.stringify(body.messages).includes(finding))
@@ -1627,6 +1630,7 @@ describe('Mukai bots and AI API', () => {
     expect(reply.status, readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toBe('complete');
     expect(reply.content).toContain('A real SDK response.');
     expect(calls).toHaveLength(2);
+    expect(calls[1].messages).toEqual(calls[0].messages);
     expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toContain('chat.provider_retry');
   });
 
@@ -1880,6 +1884,7 @@ describe('Mukai bots and AI API', () => {
       ).data;
       mode = 'checkpoint';
       const sent = await chat('Write once, then report.', randomUUID(), bot.id);
+      const savedMessages = structuredClone(calls.at(-1)!.messages);
       expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
       expect(api.store.get('SELECT in_flight FROM chat_jobs')?.in_flight).toBe(0);
       api.store.run(
@@ -1891,6 +1896,8 @@ describe('Mukai bots and AI API', () => {
       api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
       mode = 'normal';
       await chat('ignored', sent.requestId, bot.id);
+      expect(calls.at(-1)!.messages.slice(0, savedMessages.length)).toEqual(savedMessages);
+      expect(String(calls.at(-1)!.messages.at(-1)?.content)).toContain('Runtime notice: Resume');
       const history = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
       expect(history).toHaveLength(2);
       expect(history[1].status).toBe('complete');
@@ -2094,7 +2101,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls.length).toBe(count);
     const sent = await spaceChat(space.id, '@scout hello', 'scout');
     const serialized = JSON.stringify(calls.at(-1)!.messages);
-    expect(calls.at(-1)!.messages).toHaveLength(11);
+    expect(calls.at(-1)!.messages).toHaveLength(12);
     expect(serialized).toContain('Context 3');
     expect(serialized).not.toContain('Context 2');
     expect(serialized).toContain('[You] @scout hello');
@@ -2224,8 +2231,9 @@ describe('Mukai bots and AI API', () => {
       .data;
     mode = 'tool-limit';
     const sent = await chat('Work until the limit', randomUUID(), bot.id);
-    expect(calls).toHaveLength(10);
-    expect(JSON.stringify(calls.slice(5, 9))).toContain('Reassess the approach');
+    const steps = calls.filter((call) => call.stream);
+    expect(steps).toHaveLength(10);
+    expect(JSON.stringify(steps.slice(5, 9))).toContain('Reassess the approach');
     expect(calls.at(-1)).not.toHaveProperty('tools');
     expect(JSON.stringify(calls.at(-1))).toContain('Tools are now disabled');
     const message = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
@@ -2438,6 +2446,14 @@ describe('Mukai bots and AI API', () => {
       .data;
     mode = 'tools';
     const sent = await chat('Create a useful draft from my notes', randomUUID(), bot.id);
+    for (let index = 1; index < calls.length; index++) {
+      const previous = calls[index - 1].messages;
+      const current = calls[index].messages;
+      expect(current.slice(0, previous.length)).toEqual(previous);
+      expect(current.at(-2)?.role).toBe('tool');
+      expect(String(current.at(-1)?.content)).toContain('Runtime UTC now: ');
+      expect(String(current[0].content)).not.toMatch(/Current UTC time:|Runtime UTC now:/);
+    }
     expect(sent.events.some((event) => event.type === 'reasoning')).toBe(true);
     expect(sent.events.filter((event) => event.type === 'activity')).toHaveLength(10);
     expect(readFileSync(join(project, 'draft.md'), 'utf8')).toContain('A clearer second version.');
@@ -2605,7 +2621,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls[1].model).toBe('writer-model');
     expect(calls[1].messages[0]).toEqual({
       role: 'system',
-      content: expect.stringMatching(/^No current pursuits\n/),
+      content: expect.stringContaining(mukaiEnvironmentInstructions),
     });
     const writerSystem = String(calls[1].messages[0].content);
     expect(writerSystem).toContain(mukaiEnvironmentInstructions);
@@ -2619,7 +2635,8 @@ describe('Mukai bots and AI API', () => {
       }),
     );
     expect(writerSystem).toContain('Write in short sentences.');
-    expect(writerSystem).toContain('Current UTC time: ');
+    expect(writerSystem).not.toMatch(/Current UTC time:|Runtime UTC now:/);
+    expect(String(calls[1].messages.at(-1)?.content)).toContain('Runtime UTC now: ');
     expect(writerSystem).toContain('You are a workspace sub-bot.');
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
@@ -2646,8 +2663,8 @@ describe('Mukai bots and AI API', () => {
     await configure();
     for (let index = 0; index < 7; index++) await chat(`Prompt ${index}`);
     const latest = calls.at(-1)!;
-    expect(latest.messages).toHaveLength(14); // System instructions plus thirteen messages.
-    expect(latest.messages.at(-1)).toEqual({ role: 'user', content: 'Prompt 6' });
+    expect(latest.messages).toHaveLength(15); // System, thirteen chat messages, runtime context.
+    expect(latest.messages.at(-2)).toEqual({ role: 'user', content: 'Prompt 6' });
     expect(JSON.stringify(latest.messages)).toContain('Prompt 0');
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(14);
   });

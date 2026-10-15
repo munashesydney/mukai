@@ -18,6 +18,7 @@ export interface MemoryReviewRun {
 export type { Episode, MemoryFact, MemoryGraph, RecallTrace };
 
 export interface MemorySettings {
+  enabled: boolean;
   automaticCapture: boolean;
   automaticRecall: boolean;
   semanticSearch: boolean;

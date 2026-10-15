@@ -87,7 +87,36 @@ describe('Existing database upgrades', () => {
         name: 'My existing workspace',
         createdAt: '2026-10-01',
       });
+      expect(
+        database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'default')?.memory_enabled,
+      ).toBe(1);
       expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+
+  it('starts newly created workspaces with memory off and preserves their choice on restart', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    new WorkspaceRepository(database).create({
+      id: 'new-memory',
+      name: 'New workspace',
+      folder: null,
+      createdAt: '2026-10-15',
+      computer: 'local',
+    });
+    expect(
+      database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'new-memory')
+        ?.memory_enabled,
+    ).toBe(0);
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get('SELECT memory_enabled FROM workspaces WHERE id=?', 'new-memory')
+          ?.memory_enabled,
+      ).toBe(0);
     } finally {
       database.db.close();
     }

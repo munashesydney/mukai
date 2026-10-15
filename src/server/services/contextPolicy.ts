@@ -1,4 +1,5 @@
 import { asSchema, type ModelMessage, type ToolSet } from 'ai';
+import { isBotRuntimeContext } from '../../shared/botSystemPrompt';
 import { IMAGE_OMITTED, limitToolGroups, utf8Prefix } from './toolResultPolicy';
 
 export class ContextError extends Error {}
@@ -129,7 +130,9 @@ export class ContextManager {
   }
   toolAllowance(messages: ModelMessage[]) {
     const limits = contextLimits(this.window, this.maxOutput);
-    const latest = [...messages].reverse().find((message) => message.role === 'user');
+    const latest = [...messages]
+      .reverse()
+      .find((message) => message.role === 'user' && !isBotRuntimeContext(message.content));
     const available = (limits.input - this.estimate(latest ? [latest] : [])) / this.factor;
     return Math.max(
       256,
@@ -161,14 +164,19 @@ export class ContextManager {
     if (!force && this.estimate(messages) <= budget) return messages;
     const units = contextUnits(messages);
     let anchor = -1;
+    let runtime = -1;
     units.forEach((unit, index) => {
-      if (unit.some((item) => item.role === 'user')) anchor = index;
+      if (unit.some((item) => item.role === 'user' && !isBotRuntimeContext(item.content)))
+        anchor = index;
+      if (unit.some((item) => item.role === 'user' && isBotRuntimeContext(item.content)))
+        runtime = index;
     });
     // The exact request is mandatory; recent groups are retained only if they fit.
     // Dropped operation groups are summarized whole, never replayed as orphan results.
     let trimmedRecent = false;
     const reserve = Math.ceil((limits.summary * 1.5 + 128) * this.factor);
     const pinned = new Set<number>(anchor >= 0 ? [anchor] : []);
+    if (runtime >= 0) pinned.add(runtime);
     units.forEach((unit, index) => {
       if (unit.some((message) => this.pinnedRequests.includes(message))) pinned.add(index);
     });
@@ -215,13 +223,21 @@ export class ContextManager {
       if (this.estimate(candidate) + reserve <= budget) pinned.add(index);
     }
     const retained = units.filter((_unit, index) => pinned.has(index)).flat();
-    const removed = units.filter((_unit, index) => !pinned.has(index)).flat();
-    if (!removed.length) return trimmedRecent ? retained : messages;
+    // The newest snapshot fully replaces old runtime status. Expired snapshots
+    // need no notebook space and must not keep old recovery instructions alive.
+    const removed = units
+      .filter((_unit, index) => !pinned.has(index))
+      .flat()
+      .filter((message) => !isBotRuntimeContext(message.content));
+    if (!removed.length)
+      return trimmedRecent || retained.length !== messages.length ? retained : messages;
     const summaryRoom = Math.floor(
       (limits.hardInput - this.estimate(retained)) / this.factor - 128,
     );
     const summaryTarget = Math.min(limits.summary, Math.floor(summaryRoom / 1.5));
-    if (summaryTarget < 128)
+    // Required runtime status can leave room only for a short notebook. Its
+    // output and the final context still undergo the same strict budget checks.
+    if (summaryTarget < 64)
       throw new ContextError(
         'The current request leaves insufficient room for compaction. Increase its context-window setting or send a smaller request.',
       );

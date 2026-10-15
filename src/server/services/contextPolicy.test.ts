@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ModelMessage } from 'ai';
 import { ContextManager, contextLimits, contextUnits, estimateTokens } from './contextPolicy';
 import { IMAGE_OMITTED } from './toolResultPolicy';
+import { buildBotRuntimeContext } from '../../shared/botSystemPrompt';
 
 const pair = (id: string, text = 'result'): ModelMessage[] => [
   {
@@ -36,6 +37,53 @@ const history = (): ModelMessage[] => [
   ...pair('third'),
 ];
 describe('working context', () => {
+  it('drops superseded runtime snapshots while retaining the human request, latest status and tool pair', async () => {
+    const runtime = (now: string): ModelMessage => ({
+      role: 'user',
+      content: buildBotRuntimeContext({ now, pursuits: [], previousOperations: false }),
+    });
+    const old = runtime('2026-10-15T01:00:00Z');
+    const latest = runtime('2026-10-15T01:01:00Z');
+    const task: ModelMessage = { role: 'user', content: 'Preserve the exact task.' };
+    const summarize = vi.fn(async () => 'Earlier work completed.');
+    const manager = new ContextManager(16384, 2048, 100, summarize);
+    const compacted = await manager.prepare([task, old, ...pair('done'), latest], true);
+    expect(compacted).toContainEqual(task);
+    expect(compacted).toContainEqual(latest);
+    expect(compacted).not.toContainEqual(old);
+    expect(compacted.slice(-3)).toEqual([...pair('done'), latest]);
+    expect(contextUnits(compacted).at(-2)).toEqual(pair('done'));
+    expect(summarize).not.toHaveBeenCalled();
+    const oversized: ModelMessage = { role: 'user', content: 'x'.repeat(60000) };
+    await expect(manager.prepare([oversized, latest])).rejects.toThrow('current request');
+    expect(manager.toolAllowance([oversized, latest])).toBe(manager.toolAllowance([oversized]));
+  });
+  it('fits a short notebook alongside required runtime status when fixed instructions fill the window', async () => {
+    const task: ModelMessage = { role: 'user', content: 'Keep the task exact.' };
+    const runtime: ModelMessage = {
+      role: 'user',
+      content: buildBotRuntimeContext({
+        now: '2026-10-15T01:00:00Z',
+        pursuits: [],
+        previousOperations: false,
+      }),
+    };
+    const required = [task, runtime];
+    const overhead = contextLimits(10000, 2048).hardInput - estimateTokens(required) - 260;
+    const summarize = vi.fn<(data: string, maxOutputTokens: number) => Promise<string>>(
+      async () => 'Verified earlier work; continue from saved results.',
+    );
+    const manager = new ContextManager(10000, 2048, overhead, summarize);
+    const compacted = await manager.prepare(
+      [task, ...pair('old', 'large result '.repeat(400)), runtime],
+      true,
+    );
+    expect(summarize).toHaveBeenCalled();
+    expect(summarize.mock.calls[0][1]).toBeLessThan(128);
+    expect(compacted).toContainEqual(task);
+    expect(compacted).toContainEqual(runtime);
+    expect(manager.estimate(compacted)).toBeLessThanOrEqual(contextLimits(10000, 2048).hardInput);
+  });
   it('keeps the original task and all applied steering exact through compaction', async () => {
     const original = history();
     const first: ModelMessage = { role: 'user', content: 'Focus on mobile; preserve the API.' };

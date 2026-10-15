@@ -111,6 +111,26 @@ async function main() {
       );
     };
     assert.equal(await evaluate('document.querySelector(".memory-panel h3 svg")'), null);
+    await evaluate(`document.querySelector('#memory-tab-graph').click()`);
+    await wait('document.querySelectorAll(".memory-graph-edge").length===3');
+    await evaluate(
+      `document.querySelector('input[role="switch"][aria-label="Enable workspace memory"]').click()`,
+    );
+    await wait(
+      'Boolean(document.querySelector(".memory-off-notice")) && !document.querySelector("input[role=switch]").disabled',
+    );
+    assert.equal(api.memory.settings('default').enabled, false);
+    assert.equal(api.memory.snapshot('default').facts.length, 3);
+    await capture('memory-toggle-off.png');
+    await evaluate(`document.querySelector('input[role="switch"]').focus()`);
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+    await wait(
+      'document.querySelector("input[role=switch]").checked && !document.querySelector("input[role=switch]").disabled',
+    );
+    assert.equal(api.memory.settings('default').enabled, true);
+    await capture('memory-toggle-on.png');
+    await evaluate(`document.querySelector('#memory-tab-preferences').click()`);
     await capture('memory-preferences.png');
     const before = api.memory.settings('default').automaticRecall;
     await evaluate(
@@ -205,6 +225,7 @@ async function main() {
     console.log(
       'Memory graph, inspector, list, controls, and renderer passed. Screenshot: ' + path,
     );
+    if (process.env.MUKAI_MEMORY_UI_ONLY === '1') return;
     // Verify the native runtime under Electron, using the same cached model as Node.
     const embeddings = new BgeEmbedder(join(process.cwd(), 'artifacts', 'memory-models'));
     try {

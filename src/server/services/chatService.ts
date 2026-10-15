@@ -1,6 +1,6 @@
 import {
   buildBotSystemPrompt,
-  buildBotAttemptPrompt,
+  buildBotRuntimeContext,
   mukaiEnvironmentInstructions,
 } from '../../shared/botSystemPrompt';
 import { telegramUserMessagePrefix } from '../../shared/telegram';
@@ -828,12 +828,12 @@ export class ChatService {
       const buildSystem = () =>
         buildBotSystemPrompt({
           bot: botIdentity,
-          pursuits: this.tools.currentPursuits(bot),
           instructions: bot.instructions,
           workspaceFolder: scope.folder,
           computer: scope.computer,
           tools,
           delegated: Boolean(messageSender),
+          memoryEnabled: this.memory?.settings(bot.workspaceId).enabled ?? false,
           runtimeSystem:
             [
               runtime?.system,
@@ -848,7 +848,6 @@ export class ChatService {
             ]
               .filter(Boolean)
               .join('\n') || undefined,
-          previousOperations: Boolean(existingUser && generation.activity.length),
         });
       const system = buildSystem();
       let messages = this.context(
@@ -1404,6 +1403,7 @@ export class ChatService {
             : '',
         pausedReason = '';
       let continuationOf = '';
+      let pendingRuntime: { message: ModelMessage; state: string } | undefined;
       const applySteering = () => {
         const items = this.followups?.forMessage(assistantId, 'steering') || [];
         if (!items.length) return false;
@@ -1455,23 +1455,35 @@ export class ChatService {
         for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
         const skillContext = this.tools.skillContext(bot, conversationId);
         const currentSystem = buildSystem() + (skillContext ? '\n' + skillContext : '');
+        pausedReason ||= guard.paused
+          ? 'This run paused after repeated tool results without progress.'
+          : stepsUsed >= TOOL_STEP_LIMIT
+            ? 'This run reached its safety step ceiling.'
+            : '';
+        const runtimeState = {
+          pursuits: this.tools.currentPursuits(bot).map(({ name }) => ({ name })),
+          previousOperations: Boolean(existingUser && generation.activity.length),
+          notice,
+          progressNotice: guard.notice,
+          pausedReason,
+        };
+        const state = JSON.stringify(runtimeState);
+        // Transport retries reuse the exact pending snapshot. Completed steps,
+        // steering, and resumed jobs append a fresh one without rewriting history.
+        if (messages.at(-1) !== pendingRuntime?.message || state !== pendingRuntime?.state) {
+          const message: ModelMessage = {
+            role: 'user',
+            content: buildBotRuntimeContext({ ...runtimeState, now: new Date().toISOString() }),
+          };
+          messages.push(message);
+          pendingRuntime = { message, state };
+        }
         manager.setOverhead(
           estimateTokens(currentSystem) + (await toolTokens(tools)) + memoryOverhead,
         );
         const capacity = contextLimits(config.contextWindow, config.maxOutputTokens);
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();
-        pausedReason ||= guard.paused
-          ? 'This run paused after repeated tool results without progress.'
-          : stepsUsed >= TOOL_STEP_LIMIT
-            ? 'This run reached its safety step ceiling.'
-            : '';
-        const attemptSystem = buildBotAttemptPrompt({
-          system: currentSystem,
-          notice,
-          progressNotice: guard.notice,
-          pausedReason,
-        });
         const attemptMessages = finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages;
         usage.usedTokens = manager.estimate(attemptMessages);
         usage.estimated = true;
@@ -1497,14 +1509,14 @@ export class ChatService {
         };
         const result = streamText({
           model: config.model,
-          system: attemptSystem,
-          messages: memoryMessage ? [memoryMessage, ...attemptMessages] : attemptMessages,
+          system: currentSystem,
+          messages:
+            memoryMessage && this.memory?.settings(bot.workspaceId).enabled
+              ? [memoryMessage, ...attemptMessages]
+              : attemptMessages,
           maxRetries: PROVIDER_MAX_RETRIES,
           abortSignal: stepSignal,
-          maxOutputTokens: manager.outputAllowance(
-            attemptMessages,
-            Math.max(0, estimateTokens(attemptSystem) - estimateTokens(currentSystem)),
-          ),
+          maxOutputTokens: manager.outputAllowance(attemptMessages),
           providerOptions: config.options,
           tools: pausedReason || finalReplyOnly ? {} : tools,
           activeTools: pausedReason || finalReplyOnly ? [] : undefined,

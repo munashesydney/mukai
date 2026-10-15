@@ -169,6 +169,88 @@ afterEach(async () => {
 });
 
 describe('Mukai memory integration', () => {
+  it('aborts in-flight extraction when disabled and supports new work after re-enabling', async () => {
+    await close(api.server);
+    let release!: () => void;
+    let activeSignal: AbortSignal | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryExtractor: async ({ signal }) => {
+        activeSignal = signal;
+        await gate;
+        return { facts: [coffee] };
+      },
+    });
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    try {
+      await api.memory.add(
+        bot,
+        'bot-scout',
+        'in-flight',
+        'espresso',
+        'in-flight',
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(activeSignal).toBeDefined());
+      api.memory.saveSettings('default', { ...api.memory.settings('default'), enabled: false });
+      expect(activeSignal?.aborted).toBe(true);
+      release();
+      await vi.waitFor(() =>
+        expect(api.memory.snapshot('default').episodes[0].status).toBe('failed'),
+      );
+      expect(api.memory.snapshot('default').facts).toHaveLength(0);
+      api.memory.saveSettings('default', { ...api.memory.settings('default'), enabled: true });
+      await api.memory.add(
+        bot,
+        'bot-scout',
+        'after-enable',
+        'espresso',
+        'after-enable',
+        new AbortController().signal,
+      );
+      await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+      expect(activeSignal?.aborted).toBe(false);
+    } finally {
+      release();
+    }
+  });
+  it('turns off capture, recall, and bot memory access while keeping saved facts and preferences', async () => {
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const before = api.memory.settings('default');
+    const saved = await request('/memory/settings', 'PUT', { ...before, enabled: false });
+    expect(saved.response.status).toBe(200);
+    await chat('My off-period secret is marmalade.');
+    const last = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(last.messages)).not.toContain('Retrieved memory reference');
+    expect(last.tools?.some((entry) => entry.function.name === 'memory')).toBe(false);
+    const bot = (await request<Bot[]>('/bots')).data[0];
+    await expect(
+      api.memory.add(bot, 'bot-scout', 'off', 'espresso', 'off', new AbortController().signal),
+    ).rejects.toThrow('Memory is off');
+    await expect(api.memory.search(bot, 'espresso', {})).rejects.toThrow('Memory is off');
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect(api.memory.settings('default')).toEqual({ ...before, enabled: false });
+    await close(api.server);
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryExtractor: extractor,
+      memoryReviewIdleMs: 0,
+    });
+    expect(api.memory.settings('default').enabled).toBe(false);
+    await request('/memory/settings', 'PUT', before);
+    expect(api.memory.settings('default')).toEqual(before);
+    await chat('Continue with future exchanges.');
+    await api.memory.reviews.drain(new AbortController().signal);
+    expect(
+      api.memory
+        .snapshot('default')
+        .episodes.some((episode) => episode.content.includes('marmalade')),
+    ).toBe(false);
+  });
   it('serializes overlapping review requests across private and workspace conversations', async () => {
     api.memory.saveSettings('default', {
       ...api.memory.settings('default'),
@@ -596,6 +678,8 @@ describe('Mukai memory integration', () => {
     const snapshot = (await request<MemorySnapshot>('/memory?workspaceId=other')).data;
     expect(snapshot.facts).toHaveLength(0);
     expect(snapshot.recalls).toHaveLength(0);
+    expect(snapshot.settings.enabled).toBe(false);
+    api.memory.saveSettings('other', { ...snapshot.settings, enabled: true });
     expect(
       await api.memory.search({ ...otherBot, workspaceId: 'other' }, 'espresso', {}),
     ).toHaveLength(0);

@@ -343,11 +343,12 @@ it('applies steering after a running tool, preserving its result without replay 
     next.filter((message) => message.role === 'tool' && message.tool_call_id === 'slow-call'),
   ).toHaveLength(1);
   expect(JSON.stringify(next)).toContain('Saved tool result');
-  expect(next.at(-1)).toMatchObject({
+  expect(next.at(-2)).toMatchObject({
     role: 'user',
     content: 'Use the completed result and change direction',
   });
-  expect(next.at(-2)).toMatchObject({ role: 'user', content: 'A second correction' });
+  expect(next.at(-3)).toMatchObject({ role: 'user', content: 'A second correction' });
+  expect(String(next.at(-1)?.content)).toContain('[Mukai runtime context]');
   expect(JSON.stringify(next)).not.toContain('Cancelled correction');
 });
 

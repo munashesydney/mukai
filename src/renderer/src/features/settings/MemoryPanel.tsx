@@ -11,6 +11,7 @@ import { MemoryGraph } from './MemoryGraph';
 import { MemoryRuns } from './MemoryRuns';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { IconButton } from '../../components/ui/IconButton';
+import { Toggle } from '../../components/ui/Toggle';
 
 const memoryTabs = [
   ['graph', 'Graph'],
@@ -95,7 +96,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
     if (snapshot)
       void perform(
         () => memoryService.settings(workspaceId, { ...snapshot.settings, ...patch }),
-        'Memory preferences saved.',
+        patch.enabled === undefined ? 'Memory preferences saved.' : '',
       );
   };
   async function exportFile() {
@@ -118,6 +119,17 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
         eyebrow="WORKSPACE KNOWLEDGE"
         title="Memory"
         description="Explore what this workspace remembers and how it’s used in conversations."
+        actions={
+          <label className="memory-enabled-control">
+            <span>Memory {snapshot?.settings.enabled ? 'on' : 'off'}</span>
+            <Toggle
+              aria-label="Enable workspace memory"
+              checked={snapshot?.settings.enabled ?? false}
+              disabled={busy || !snapshot}
+              onChange={(event) => saveSettings({ enabled: event.target.checked })}
+            />
+          </label>
+        }
       />
       {error && (
         <div className="ai-alert" role="alert">
@@ -127,6 +139,11 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
       {notice && (
         <p className="ai-notice" role="status">
           {notice}
+        </p>
+      )}
+      {snapshot && !snapshot.settings.enabled && (
+        <p className="memory-off-notice">
+          Memory is off. Bots won’t save or recall memories. Your saved memories are kept.
         </p>
       )}
       {!snapshot ? (
@@ -414,6 +431,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
               <MemoryRuns
                 key={workspaceId}
                 runs={snapshot.runs}
+                disabled={busy || !snapshot.settings.enabled}
                 onRetry={(id) =>
                   void perform(
                     () => memoryService.retryRun(workspaceId, id),
@@ -450,7 +468,7 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                       {episode.status === 'failed' && (
                         <button
                           className="button button--ghost"
-                          disabled={busy}
+                          disabled={busy || !snapshot.settings.enabled}
                           onClick={() =>
                             void perform(
                               () => memoryService.retry(workspaceId, episode.id),
@@ -561,7 +579,11 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
                       </div>
                       <button
                         className="button button--secondary"
-                        disabled={busy || snapshot.embedding.status === 'loading'}
+                        disabled={
+                          busy ||
+                          !snapshot.settings.enabled ||
+                          snapshot.embedding.status === 'loading'
+                        }
                         onClick={() =>
                           void perform(
                             () => memoryService.embeddings(workspaceId),

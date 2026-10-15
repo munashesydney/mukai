@@ -590,6 +590,11 @@ describe('Bot architecture', () => {
   it('offers all tools to the main bot and ordinary tools to children, with live assignment enforcement', async () => {
     const main = await bot(),
       child = await bot('Scout');
+    expect(api.memory.settings(main.workspaceId).enabled).toBe(false);
+    api.memory.saveSettings(main.workspaceId, {
+      ...api.memory.settings(main.workspaceId),
+      enabled: true,
+    });
     await provider();
     await chat(main);
     await chat(child);

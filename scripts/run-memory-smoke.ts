@@ -23,6 +23,7 @@ async function main() {
       outfile: bundle,
     });
     const env: NodeJS.ProcessEnv = { ...process.env, MUKAI_MEMORY_SMOKE_DIR: dir };
+    if (process.argv.includes('--ui-only')) env.MUKAI_MEMORY_UI_ONLY = '1';
     delete env.ELECTRON_RUN_AS_NODE;
     process.exitCode = await new Promise<number>((resolve, reject) => {
       const child = spawn(require('electron') as string, [bundle], {

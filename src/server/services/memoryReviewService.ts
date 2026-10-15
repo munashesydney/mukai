@@ -34,6 +34,19 @@ export class MemoryReviewService {
       Date.now() + this.idleMs,
     );
   }
+  /** Enabling memory starts with future exchanges, not chats sent while it was off. */
+  skipHistory(workspaceId: string) {
+    this.store.run(
+      `INSERT INTO memory_review_jobs(conversation_id,workspace_id,actor_id,checkpoint,due_at)
+       SELECT c.id,c.workspace_id,COALESCE(c.owner_bot_id,
+         (SELECT id FROM bots WHERE workspace_id=c.workspace_id ORDER BY created_at,id LIMIT 1)),
+         COALESCE((SELECT MAX(sequence) FROM messages WHERE conversation_id=c.id),0),?
+       FROM conversations c WHERE c.workspace_id=? AND EXISTS(SELECT 1 FROM bots WHERE workspace_id=c.workspace_id)
+       ON CONFLICT(conversation_id) DO UPDATE SET checkpoint=MAX(checkpoint,excluded.checkpoint)`,
+      Date.now(),
+      workspaceId,
+    );
+  }
   recover() {
     this.store.run(
       "UPDATE memory_review_runs SET status='failed',error='Mukai stopped during this review. Retry to continue.',finished_at=? WHERE status='running'",
