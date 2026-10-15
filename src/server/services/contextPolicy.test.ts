@@ -58,32 +58,37 @@ describe('working context', () => {
     await expect(manager.prepare([oversized, latest])).rejects.toThrow('current request');
     expect(manager.toolAllowance([oversized, latest])).toBe(manager.toolAllowance([oversized]));
   });
-  it('fits a short notebook alongside required runtime status when fixed instructions fill the window', async () => {
-    const task: ModelMessage = { role: 'user', content: 'Keep the task exact.' };
-    const runtime: ModelMessage = {
-      role: 'user',
-      content: buildBotRuntimeContext({
-        now: '2026-10-15T01:00:00Z',
-        pursuits: [],
-        previousOperations: false,
-      }),
-    };
-    const required = [task, runtime];
-    const overhead = contextLimits(10000, 2048).hardInput - estimateTokens(required) - 260;
-    const summarize = vi.fn<(data: string, maxOutputTokens: number) => Promise<string>>(
-      async () => 'Verified earlier work; continue from saved results.',
-    );
-    const manager = new ContextManager(10000, 2048, overhead, summarize);
-    const compacted = await manager.prepare(
-      [task, ...pair('old', 'large result '.repeat(400)), runtime],
-      true,
-    );
-    expect(summarize).toHaveBeenCalled();
-    expect(summarize.mock.calls[0][1]).toBeLessThan(128);
-    expect(compacted).toContainEqual(task);
-    expect(compacted).toContainEqual(runtime);
-    expect(manager.estimate(compacted)).toBeLessThanOrEqual(contextLimits(10000, 2048).hardInput);
-  });
+  it.each([1, 1.5])(
+    'fits a short notebook alongside required runtime status with %fx calibration when instructions fill the window',
+    async (factor) => {
+      const task: ModelMessage = { role: 'user', content: 'Keep the task exact.' };
+      const runtime: ModelMessage = {
+        role: 'user',
+        content: buildBotRuntimeContext({
+          now: '2026-10-15T01:00:00Z',
+          pursuits: [],
+          previousOperations: false,
+        }),
+      };
+      const required = [task, runtime];
+      const overhead =
+        Math.floor(contextLimits(10000, 2048).hardInput / factor) - estimateTokens(required) - 210;
+      const summarize = vi.fn<(data: string, maxOutputTokens: number) => Promise<string>>(
+        async () => 'Verified earlier work; continue from saved results.',
+      );
+      const manager = new ContextManager(10000, 2048, overhead, summarize);
+      manager.calibrate([], overhead * factor);
+      const compacted = await manager.prepare(
+        [task, ...pair('old', 'large result '.repeat(400)), runtime],
+        true,
+      );
+      expect(summarize).toHaveBeenCalled();
+      expect(summarize.mock.calls[0][1]).toBeLessThan(128);
+      expect(compacted).toContainEqual(task);
+      expect(compacted).toContainEqual(runtime);
+      expect(manager.estimate(compacted)).toBeLessThanOrEqual(contextLimits(10000, 2048).hardInput);
+    },
+  );
   it('keeps the original task and all applied steering exact through compaction', async () => {
     const original = history();
     const first: ModelMessage = { role: 'user', content: 'Focus on mobile; preserve the API.' };
