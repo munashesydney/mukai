@@ -1,6 +1,7 @@
-import { Layers3, Target, Puzzle, Settings, Plus, Bell, Send } from 'lucide-react';
+import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { botAvatarSrc } from '../../../../shared/mascots';
+import { TelegramLogo } from '../ui/TelegramLogo';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
@@ -8,7 +9,7 @@ const items = [
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
-  { id: 'telegram', label: 'Telegram', icon: Send },
+  { id: 'telegram', label: 'Telegram', icon: null },
 ] as const;
 export function NavigationRail({
   section,
@@ -67,7 +68,9 @@ export function NavigationRail({
               aria-current={!disabled && section === id ? 'page' : undefined}
             >
               <span className="rail-icon">
-                {Icon ? (
+                {id === 'telegram' ? (
+                  <TelegramLogo size={22} />
+                ) : Icon ? (
                   <Icon size={22} strokeWidth={1.8} />
                 ) : (
                   <img className="rail-mascot" src={botAvatarSrc('mukai-logo')} alt="" />

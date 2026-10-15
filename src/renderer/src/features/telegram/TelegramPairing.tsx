@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Copy, ExternalLink, Loader2, Send, ShieldCheck, UserRound } from 'lucide-react';
+import { Copy, ExternalLink, Loader2, ShieldCheck, UserRound } from 'lucide-react';
 import type { TelegramStatus } from '../../../../shared/telegram';
 import { ExternalAnchor } from '../../components/ui/ExternalAnchor';
 import { copyText } from '../../services/clipboardService';
+import { TelegramLogo } from '../../components/ui/TelegramLogo';
 
 export function TelegramPairing({
   status,
@@ -57,7 +58,11 @@ export function TelegramPairing({
             disabled={pending || !status.enabled}
             onClick={onPair}
           >
-            {busy === 'pair' ? <Loader2 size={15} className="telegram-spin" /> : <Send size={15} />}
+            {busy === 'pair' ? (
+              <Loader2 size={15} className="telegram-spin" />
+            ) : (
+              <TelegramLogo size={15} />
+            )}
             {pairing ? 'Create a new pairing link' : 'Create pairing link'}
           </button>
           {!status.enabled && (

@@ -20,6 +20,7 @@ import { TelegramWorkspaceAccess } from './TelegramWorkspaceAccess';
 import { TelegramConnectionForm } from './TelegramConnectionForm';
 import { TelegramPairing } from './TelegramPairing';
 import { ExternalAnchor } from '../../components/ui/ExternalAnchor';
+import { TelegramLogo } from '../../components/ui/TelegramLogo';
 
 type Confirmation = 'disconnect' | 'revoke' | null;
 const accessFrom = (status: TelegramStatus) =>
@@ -223,7 +224,7 @@ export function TelegramPage() {
                 {ready && (
                   <section className="telegram-card telegram-overview">
                     <span className="telegram-feature-icon">
-                      <Send size={22} />
+                      <TelegramLogo size={22} />
                     </span>
                     <div>
                       <h2>

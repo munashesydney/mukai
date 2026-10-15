@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ArrowRight, ExternalLink, KeyRound, Loader2, Send, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ExternalLink, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { ExternalAnchor } from '../../components/ui/ExternalAnchor';
+import { TelegramLogo } from '../../components/ui/TelegramLogo';
 
 export function TelegramConnectionForm({
   pending,
@@ -18,7 +19,7 @@ export function TelegramConnectionForm({
     <div className="telegram-setup-grid">
       <section className="telegram-card telegram-connect">
         <span className="telegram-feature-icon">
-          <Send size={23} strokeWidth={1.6} />
+          <TelegramLogo size={23} />
         </span>
         <h2>Meet your bots in Telegram</h2>
         <p>
