@@ -74,7 +74,7 @@ export function buildBotSystemPrompt(input: {
               guidance
             : guidance,
       ),
-    `Memory ${input.memoryEnabled ? 'on' : 'off'} (User Controlled App Location: Settings -> Memory)`,
+    `Memory ${input.memoryEnabled ? 'on' : 'off'} (User Controlled App Location: Settings -> Memory). Conversation tool remains active if its available for the current instance.`,
   ].join('\n');
 }
 
