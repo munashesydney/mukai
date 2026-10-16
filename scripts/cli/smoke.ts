@@ -59,17 +59,26 @@ async function main() {
     });
     let state: { url: string; connectionUrl: string } | undefined;
     try {
-      for (let attempt = 0; attempt < 100; attempt++) {
+      // Allow slower cold starts on hosted runners without retrying failed processes.
+      const startupTimeout = 60000;
+      const deadline = Date.now() + startupTimeout;
+      while (Date.now() < deadline) {
         try {
           state = JSON.parse(await readFile(join(data, 'cli-server.json'), 'utf8')) as typeof state;
           if (state) break;
         } catch {
           /* Wait for startup. */
         }
-        if (child.exitCode !== null) throw new Error(output);
+        if (child.exitCode !== null || child.signalCode !== null)
+          throw new Error(
+            `CLI exited before startup (code: ${child.exitCode}, signal: ${child.signalCode}).\n${output || 'No CLI output was captured.'}`,
+          );
         await setTimeout(100);
       }
-      assert.ok(state, `CLI startup failed: ${output}`);
+      assert.ok(
+        state,
+        `CLI did not create ${join(data, 'cli-server.json')} within ${startupTimeout}ms (pid: ${child.pid}).\n${output || 'No CLI output was captured.'}`,
+      );
       assert.equal((await fetch(state.url)).status, 200);
       const proof = await fetch(state.url + '/api/auth/verify', {
         method: 'POST',
