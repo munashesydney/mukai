@@ -14,6 +14,7 @@ const bridge: DesktopBridge = {
   setBrowserBounds: (value) => ipcRenderer.invoke(IPC.browserBounds, value),
   getUpdateState: () => ipcRenderer.invoke(IPC.updateState),
   checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates),
+  setAutomaticUpdates: (enabled) => ipcRenderer.invoke(IPC.setAutomaticUpdates, enabled),
   restartToUpdate: () => ipcRenderer.invoke(IPC.restartToUpdate),
   onUpdateState: (listener) => {
     const receive = (_event: Electron.IpcRendererEvent, state: DesktopUpdateState) =>

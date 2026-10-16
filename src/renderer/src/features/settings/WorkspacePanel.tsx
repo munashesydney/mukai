@@ -22,7 +22,6 @@ import {
   type VmResources,
 } from '../../../../shared/computer';
 import { errorText } from '../../utils/errors';
-import { DesktopUpdateControl } from '../updates/DesktopUpdateControl';
 
 export function WorkspacePanel({
   workspace,
@@ -82,7 +81,6 @@ export function WorkspacePanel({
           )}
         </section>
       )}
-      <DesktopUpdateControl settings />
       <section className="settings-card">
         <div className="settings-card-heading">
           <span className="settings-card-icon">

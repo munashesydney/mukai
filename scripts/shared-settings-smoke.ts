@@ -4,10 +4,12 @@ import { chromium } from 'playwright-core';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { connect } from 'node:net';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { startApiServer } from '../src/server/app';
 import { defaultDataDir } from '../src/server/config';
 import { IPC } from '../src/shared/contracts';
+import { DesktopUpdater } from '../src/main/desktopUpdater';
+import type { AppUpdater, UpdateCheckResult } from 'electron-updater';
 
 const root = process.env.MUKAI_SETTINGS_SMOKE_DIR!;
 if (!root) throw new Error('Temporary settings smoke directory is required.');
@@ -45,7 +47,37 @@ async function main() {
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, async () => (await fetch(api.url + '/health')).json());
   ipcMain.handle(IPC.browserBounds, () => {});
-  ipcMain.handle(IPC.updateState, () => ({ status: 'disabled', currentVersion: '0.1.0' }));
+  let failUpdateSave = false;
+  let manualChecks = 0;
+  const updateEvents = new EventEmitter();
+  const nativeUpdater = Object.assign(updateEvents, {
+    checkForUpdates: async () => {
+      manualChecks++;
+      updateEvents.emit('update-not-available', {});
+      return {} as UpdateCheckResult;
+    },
+    quitAndInstall: () => {},
+  });
+  const createUpdater = () =>
+    new DesktopUpdater(nativeUpdater as unknown as AppUpdater, '0.1.0-build.32.1', {
+      automaticUpdates: api.settings.automaticUpdates(),
+      saveAutomaticUpdates: (enabled) => {
+        if (failUpdateSave) throw new Error('Temporary preference save failure');
+        api.settings.saveAutomaticUpdates(enabled);
+      },
+      notify: (state) => {
+        for (const window of BrowserWindow.getAllWindows())
+          window.webContents.send(IPC.updateState, state);
+      },
+      confirmRestart: async () => false,
+      prepareQuit: async () => {},
+    });
+  let updater = createUpdater();
+  ipcMain.handle(IPC.updateState, () => updater.getState());
+  ipcMain.handle(IPC.setAutomaticUpdates, (_event, enabled: boolean) =>
+    updater.setAutomaticUpdates(enabled),
+  );
+  ipcMain.handle(IPC.checkForUpdates, () => updater.check());
   const createDesktopWindow = () =>
     new BrowserWindow({
       show: false,
@@ -55,6 +87,7 @@ async function main() {
         preload: resolve('out/preload/index.js'),
         contextIsolation: true,
         sandbox: true,
+        backgroundThrottling: false,
       },
     });
   let desktopWindow = createDesktopWindow();
@@ -63,6 +96,10 @@ async function main() {
       if (await desktopWindow.webContents.executeJavaScript(expression)) return;
       await new Promise((done) => setTimeout(done, 100));
     }
+    await writeFile(
+      resolve('artifacts/settings-failure.png'),
+      (await desktopWindow.webContents.capturePage()).toPNG(),
+    );
     throw new Error(`Desktop condition did not settle: ${expression}`);
   };
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -196,6 +233,9 @@ async function main() {
       'Your profile: SY',
       'Dismissed drafts must not overwrite the saved profile.',
     );
+    await page.getByRole('tab', { name: 'Updates', exact: true }).click();
+    await page.getByText('Open Mukai on your desktop to manage app updates.').waitFor();
+    assert.equal(await page.getByRole('switch', { name: 'Automatic updates' }).isDisabled(), true);
     await page.getByRole('tab', { name: 'Appearance', exact: true }).click();
     await page.locator('label.mode-option:has(input[value="light"])').click();
     await page.locator('label.theme-option:has(input[value="iris"])').click();
@@ -257,14 +297,124 @@ async function main() {
       ).json(),
       { mode: 'letter', letter: 'SY', icon: 'rocket', background: '#438571' },
     );
+    await desktopWindow.webContents.executeJavaScript(
+      `document.getElementById('settings-tab-updates').click()`,
+    );
+    await wait(`Boolean(document.querySelector('#automatic-updates:not(:disabled)'))`);
+    assert.equal(
+      await desktopWindow.webContents.executeJavaScript(
+        `document.getElementById('settings-tab-updates').previousElementSibling.id`,
+      ),
+      'settings-tab-appearance',
+    );
+    assert.equal(
+      await desktopWindow.webContents.executeJavaScript(
+        `document.getElementById('automatic-updates').checked`,
+      ),
+      true,
+    );
+    await desktopWindow.webContents.executeJavaScript(
+      `document.getElementById('automatic-updates').click()`,
+    );
+    await wait(
+      `!document.getElementById('automatic-updates').checked && !document.getElementById('automatic-updates').disabled`,
+    );
+    assert.equal(api.settings.automaticUpdates(), false);
+    await desktopWindow.webContents.executeJavaScript(
+      `document.querySelector('.updates-release button').click()`,
+    );
+    await wait(
+      `document.querySelector('.updates-release-copy').textContent.includes('You’re up to date')`,
+    );
+    assert.equal(
+      manualChecks,
+      1,
+      'Manual checks must remain available with automatic updates off.',
+    );
+    failUpdateSave = true;
+    await desktopWindow.webContents.executeJavaScript(
+      `document.getElementById('automatic-updates').click()`,
+    );
+    await wait(
+      `Boolean(document.querySelector('.updates-save-error')) && !document.getElementById('automatic-updates').disabled`,
+    );
+    assert.equal(
+      await desktopWindow.webContents.executeJavaScript(
+        `document.getElementById('automatic-updates').checked`,
+      ),
+      false,
+    );
+    failUpdateSave = false;
+    desktopWindow.destroy();
+    await closeApi();
+    api = await startApiServer(0, { dataDir });
+    updater.stop();
+    updateEvents.removeAllListeners();
+    updater = createUpdater();
+    desktopWindow = createDesktopWindow();
+    await desktopWindow.loadFile(resolve('out/renderer/index.html'));
+    await wait(`document.body.textContent.includes('Shared settings workspace')`);
+    await desktopWindow.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Open settings"]').click()`,
+    );
+    await wait(`Boolean(document.getElementById('settings-tab-updates'))`);
+    await desktopWindow.webContents.executeJavaScript(
+      `document.getElementById('settings-tab-updates').click()`,
+    );
+    await wait(`Boolean(document.querySelector('#automatic-updates:not(:disabled)'))`);
+    assert.equal(
+      await desktopWindow.webContents.executeJavaScript(
+        `document.getElementById('automatic-updates').checked`,
+      ),
+      false,
+      'A restarted desktop must preserve the opt-out.',
+    );
+    await desktopWindow.webContents.executeJavaScript(
+      `document.getElementById('automatic-updates').click()`,
+    );
+    await wait(
+      `document.getElementById('automatic-updates').checked && !document.getElementById('automatic-updates').disabled`,
+    );
+    updateEvents.emit('update-available', { version: '0.1.0-build.33.1' });
+    updateEvents.emit('download-progress', { percent: 64 });
+    await wait(`document.querySelector('.updates-progress')?.value === 64`);
+    await desktopWindow.webContents.executeJavaScript(
+      `new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))`,
+    );
+    await writeFile(
+      resolve('artifacts/updates-downloading.png'),
+      (await desktopWindow.webContents.capturePage()).toPNG(),
+    );
+    updateEvents.emit('update-downloaded', { version: '0.1.0-build.33.1' });
+    await wait(
+      `document.querySelector('.updates-release button')?.textContent.includes('Restart to update')`,
+    );
+    await desktopWindow.webContents.executeJavaScript(
+      `new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))`,
+    );
+    await writeFile(
+      resolve('artifacts/updates-settings.png'),
+      (await desktopWindow.webContents.capturePage()).toPNG(),
+    );
+    api.settings.saveAppearance({ mode: 'light', theme: 'iris' });
+    await desktopWindow.webContents.executeJavaScript(`window.dispatchEvent(new Event('focus'))`);
+    await wait(`document.documentElement.dataset.mode === 'light'`);
+    await desktopWindow.webContents.executeJavaScript(
+      `new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))`,
+    );
+    await writeFile(
+      resolve('artifacts/updates-settings-light.png'),
+      (await desktopWindow.webContents.capturePage()).toPNG(),
+    );
   } finally {
+    updater.stop();
     console.log('Shared settings smoke: closing desktop, browser and backend.');
     if (!desktopWindow.isDestroyed()) desktopWindow.destroy();
     await browser?.close();
     await closeApi();
   }
   console.log(
-    'Shared settings smoke passed: appearance and profile UI, failed-save retry, keyboard navigation, reload, desktop/browser persistence, and connection cleanup.',
+    'Shared settings smoke passed: appearance, profile and update UI, failed-save retry, manual update checks, keyboard navigation, reload, persisted update opt-out, desktop/browser persistence, and connection cleanup.',
   );
 }
 void main()

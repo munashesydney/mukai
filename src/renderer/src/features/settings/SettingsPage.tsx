@@ -1,4 +1,5 @@
-import { Layers3, Palette, KeyRound, Brain, Globe, Gauge } from 'lucide-react';
+import { Layers3, Palette, KeyRound, Brain, Globe, Gauge, Download } from 'lucide-react';
+import { UpdatesPanel } from './UpdatesPanel';
 import { LimitsPanel } from './LimitsPanel';
 import { Brand } from '../../components/ui/Brand';
 import { AppearancePanel } from './AppearancePanel';
@@ -14,6 +15,7 @@ import { useDesktopUpdate } from '../updates/useDesktopUpdate';
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'updates', label: 'Updates', icon: Download },
   { id: 'routes', label: 'Domain', icon: Globe },
   { id: 'providers', label: 'Providers', icon: KeyRound },
   { id: 'environment', label: 'E Variables', icon: KeyRound },
@@ -92,6 +94,8 @@ export function SettingsPage({
             />
           ) : section === 'appearance' ? (
             <AppearancePanel />
+          ) : section === 'updates' ? (
+            <UpdatesPanel />
           ) : section === 'limits' ? (
             <LimitsPanel />
           ) : section === 'memory' ? (

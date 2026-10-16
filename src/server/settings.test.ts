@@ -98,3 +98,19 @@ it('validates and persists the user profile across backend restarts without chan
   expect(await (await request('/settings/profile')).json()).toEqual(profile);
   expect(await (await request('/settings/appearance')).json()).toEqual({ appearance: null });
 });
+
+it('defaults automatic updates on and persists a validated opt-out across restarts', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'mukai-update-settings-'));
+  api = await startApiServer(0, { dataDir: directory });
+  expect(api.settings.automaticUpdates()).toBe(true);
+  expect(() => api!.settings.saveAutomaticUpdates('false')).toThrow();
+  expect(api.settings.automaticUpdates()).toBe(true);
+  api.settings.saveAutomaticUpdates(false);
+  await close();
+  api = await startApiServer(0, { dataDir: directory });
+  expect(api.settings.automaticUpdates()).toBe(false);
+  api.settings.saveAutomaticUpdates(true);
+  await close();
+  api = await startApiServer(0, { dataDir: directory });
+  expect(api.settings.automaticUpdates()).toBe(true);
+});

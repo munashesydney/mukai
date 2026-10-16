@@ -28,11 +28,14 @@ export class DesktopUpdater {
       confirmRestart: () => Promise<boolean>;
       prepareQuit: () => Promise<void>;
       disabledReason?: string;
+      automaticUpdates?: boolean;
+      saveAutomaticUpdates: (enabled: boolean) => void;
     },
   ) {
     this.state = {
       status: updater ? 'idle' : 'disabled',
       currentVersion,
+      automaticUpdates: options.automaticUpdates ?? true,
       ...(updater ? {} : { message: options.disabledReason }),
     };
     if (!updater) return;
@@ -63,7 +66,7 @@ export class DesktopUpdater {
   }
 
   start() {
-    if (!this.updater || this.startup || this.interval) return;
+    if (!this.updater || !this.state.automaticUpdates || this.startup || this.interval) return;
     this.startup = setTimeout(() => this.check(), 15000);
     this.startup.unref();
     this.interval = setInterval(() => this.check(), 4 * 60 * 60 * 1000);
@@ -75,6 +78,16 @@ export class DesktopUpdater {
     clearInterval(this.interval);
     this.startup = undefined;
     this.interval = undefined;
+  }
+
+  setAutomaticUpdates(enabled: boolean) {
+    // Save first: a failed write must not change the running schedule or UI.
+    this.options.saveAutomaticUpdates(enabled);
+    this.set({ ...this.state, automaticUpdates: enabled });
+    if (enabled) this.start();
+    else this.stop();
+    // An existing download can finish; manual checks remain available.
+    return this.getState();
   }
 
   check() {
@@ -130,8 +143,16 @@ export class DesktopUpdater {
     });
   }
 
-  private set(next: Omit<DesktopUpdateState, 'currentVersion'>) {
-    this.state = { currentVersion: this.state.currentVersion, ...next };
+  private set(
+    next: Omit<DesktopUpdateState, 'currentVersion' | 'automaticUpdates'> & {
+      automaticUpdates?: boolean;
+    },
+  ) {
+    this.state = {
+      currentVersion: this.state.currentVersion,
+      automaticUpdates: this.state.automaticUpdates,
+      ...next,
+    };
     this.options.notify(this.getState());
   }
 }

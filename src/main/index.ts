@@ -156,6 +156,10 @@ else {
         updatesEnabled ? electronUpdater.autoUpdater : undefined,
         app.getVersion(),
         {
+          automaticUpdates: api.settings.automaticUpdates(),
+          saveAutomaticUpdates: (enabled) => {
+            api.settings.saveAutomaticUpdates(enabled);
+          },
           notify: (state) => {
             for (const window of BrowserWindow.getAllWindows())
               if (appWindows.has(window.webContents.id))
@@ -191,6 +195,10 @@ else {
       ipcMain.handle(IPC.checkForUpdates, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
         return desktopUpdater!.check();
+      });
+      ipcMain.handle(IPC.setAutomaticUpdates, (event, value: unknown) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        return desktopUpdater!.setAutomaticUpdates(z.boolean().parse(value));
       });
       ipcMain.handle(IPC.restartToUpdate, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');

@@ -13,7 +13,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function fixture(enabled = true) {
+function fixture(enabled = true, automaticUpdates = true) {
   const events = new EventEmitter();
   const download = deferred<string[]>();
   const checkForUpdates = vi.fn(async () => {
@@ -26,6 +26,8 @@ function fixture(enabled = true) {
     confirmRestart: vi.fn(async () => true),
     prepareQuit: vi.fn(async () => {}),
     disabledReason: 'Installed releases only.',
+    automaticUpdates,
+    saveAutomaticUpdates: vi.fn(),
   };
   const manager = new DesktopUpdater(
     enabled ? (native as unknown as AppUpdater) : undefined,
@@ -127,4 +129,46 @@ it('checks after startup and periodically, and cancels timers on shutdown', asyn
   manager.stop();
   await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
   expect(native.checkForUpdates).toHaveBeenCalledTimes(2);
+});
+
+it('honors a saved opt-out on startup while allowing a manual download', async () => {
+  vi.useFakeTimers();
+  const { manager, native, events, download } = fixture(true, false);
+  manager.start();
+  await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
+  expect(native.checkForUpdates).not.toHaveBeenCalled();
+  manager.check();
+  expect(native.checkForUpdates).toHaveBeenCalledTimes(1);
+  expect(manager.getState()).toMatchObject({ status: 'downloading', automaticUpdates: false });
+  events.emit('update-downloaded', { version: '0.1.0-build.13.1' });
+  download.resolve([]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(manager.getState()).toMatchObject({ status: 'ready', automaticUpdates: false });
+});
+
+it('cancels scheduled checks immediately and resumes them when enabled', async () => {
+  vi.useFakeTimers();
+  const { manager, native, events, options } = fixture();
+  native.checkForUpdates.mockImplementation(async () => {
+    events.emit('update-not-available', {});
+    return {} as UpdateCheckResult;
+  });
+  manager.start();
+  manager.setAutomaticUpdates(false);
+  expect(options.saveAutomaticUpdates).toHaveBeenLastCalledWith(false);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
+  expect(native.checkForUpdates).not.toHaveBeenCalled();
+  manager.setAutomaticUpdates(true);
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(native.checkForUpdates).toHaveBeenCalledTimes(1);
+  manager.setAutomaticUpdates(false);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 60 * 1000);
+  expect(native.checkForUpdates).toHaveBeenCalledTimes(1);
+  options.saveAutomaticUpdates.mockImplementationOnce(() => {
+    throw new Error('Disk full');
+  });
+  expect(() => manager.setAutomaticUpdates(true)).toThrow('Disk full');
+  expect(manager.getState().automaticUpdates).toBe(false);
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(native.checkForUpdates).toHaveBeenCalledTimes(1);
 });

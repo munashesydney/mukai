@@ -358,6 +358,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             <SettingsPage
               section={
                 location.item === 'appearance' ||
+                location.item === 'updates' ||
                 location.item === 'providers' ||
                 location.item === 'environment' ||
                 location.item === 'routes' ||

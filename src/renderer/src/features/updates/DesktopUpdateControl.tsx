@@ -44,23 +44,5 @@ export function DesktopUpdateControl({ settings = false }: { settings?: boolean 
       {error && <span role="alert">{error}</span>}
     </div>
   );
-  if (!settings) return control;
-  return (
-    <section className="settings-card desktop-update-settings">
-      <h4>Mukai updates</h4>
-      <p>Installed version {state.currentVersion}</p>
-      <p>
-        {state.status === 'disabled'
-          ? state.message
-          : state.status === 'idle'
-            ? state.message || 'Mukai checks for updates automatically. You choose when to restart.'
-            : state.status === 'ready'
-              ? `Version ${state.version} is ready. Restarting stops running bots and tools.`
-              : state.status === 'error'
-                ? state.message
-                : label}
-      </p>
-      {control}
-    </section>
-  );
+  return control;
 }

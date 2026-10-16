@@ -389,6 +389,7 @@ export function createApiServer(options: ApiOptions = {}) {
     });
     return {
       browserSession,
+      settings,
       ownerAuth,
       notifications,
       approvals,

@@ -230,9 +230,6 @@ p {
 .desktop-update-button:disabled {
   cursor: default;
 }
-.desktop-update-settings p {
-  margin: 8px 0 12px;
-}
 .update-spinner {
   animation: update-spin 1s linear infinite;
 }

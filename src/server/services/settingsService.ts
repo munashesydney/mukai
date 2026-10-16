@@ -1,10 +1,20 @@
 import { appearanceSchema, type AppearanceSettings } from '../../shared/appearance';
 import type { SettingsRepository } from '../repositories/settingsRepository';
 import { defaultUserProfile, userProfileSchema } from '../../shared/userProfile';
+import { z } from 'zod';
 
 const appearanceKey = 'appearance';
 export class SettingsService {
   constructor(private readonly repository: SettingsRepository) {}
+  automaticUpdates(): boolean {
+    const saved = this.repository.get('automatic-updates');
+    return saved === null ? true : z.boolean().parse(JSON.parse(saved));
+  }
+  saveAutomaticUpdates(value: unknown): boolean {
+    const enabled = z.boolean().parse(value);
+    this.repository.set('automatic-updates', JSON.stringify(enabled));
+    return enabled;
+  }
   userProfile() {
     const saved = this.repository.get('user-profile');
     return saved === null ? { ...defaultUserProfile } : userProfileSchema.parse(JSON.parse(saved));

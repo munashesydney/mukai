@@ -19,6 +19,7 @@ export interface DesktopBridge {
   setBrowserBounds: (value: import('./runtime').BrowserBounds | null) => Promise<void>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   checkForUpdates: () => Promise<DesktopUpdateState>;
+  setAutomaticUpdates: (enabled: boolean) => Promise<DesktopUpdateState>;
   restartToUpdate: () => Promise<void>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
 }
@@ -26,6 +27,7 @@ export interface DesktopBridge {
 export interface DesktopUpdateState {
   status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'error';
   currentVersion: string;
+  automaticUpdates: boolean;
   version?: string;
   percent?: number;
   message?: string;
@@ -43,5 +45,6 @@ export const IPC = {
   browserBounds: 'mukai:browser-bounds',
   updateState: 'mukai:update-state',
   checkForUpdates: 'mukai:check-for-updates',
+  setAutomaticUpdates: 'mukai:set-automatic-updates',
   restartToUpdate: 'mukai:restart-to-update',
 } as const;

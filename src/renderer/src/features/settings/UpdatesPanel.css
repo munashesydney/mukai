@@ -1,0 +1,112 @@
+.updates-panel-content {
+  max-width: 760px;
+}
+.updates-release,
+.updates-preferences {
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.updates-release-main {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 28px;
+}
+.updates-release-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--theme-border);
+  border-radius: 14px;
+  background: var(--theme-soft);
+  color: var(--theme-text);
+}
+.updates-release-copy h4 {
+  margin: 0 0 7px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+.updates-release-copy p,
+.updates-preference-row p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.updates-release-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 28px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+.updates-release-footer > span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.updates-release-footer strong {
+  margin-left: 5px;
+  color: var(--text-body);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.updates-progress {
+  display: block;
+  width: calc(100% - 56px);
+  height: 5px;
+  margin: 0 28px 24px;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  accent-color: var(--theme-accent);
+}
+.updates-progress::-webkit-progress-bar {
+  background: var(--line);
+}
+.updates-progress::-webkit-progress-value {
+  background: var(--theme-accent);
+}
+.updates-preferences {
+  margin-top: 20px;
+  padding: 24px 28px;
+}
+.updates-preference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.updates-preference-row label {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.updates-preference-note,
+.updates-restart-note,
+.updates-save-error {
+  margin: 16px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.updates-preference-note {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.updates-save-error {
+  color: var(--danger, #c75d5d);
+}
+.updates-restart-note {
+  padding: 0 4px;
+}
