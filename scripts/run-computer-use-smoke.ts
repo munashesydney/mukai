@@ -21,13 +21,15 @@ async function main() {
       });
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE;
+      const x11 = process.platform === 'linux' && env.XDG_SESSION_TYPE === 'x11';
+      if (x11) env.GDK_BACKEND = 'x11';
       const require = createRequire(resolve('package.json'));
       await new Promise<void>((done, reject) => {
-        // Select the display backend before Electron initializes.
-        const switches =
-          process.platform === 'linux' && env.XDG_SESSION_TYPE === 'x11'
-            ? ['--ozone-platform=x11']
-            : [];
+        // GTK initializes before the smoke script and GNOME can auto-select GTK4.
+        // Pin both toolkit and display backend so the disposable Xvfb receiver
+        // does not inherit a different input stack from each runner's desktop.
+        const switches = x11 ? ['--ozone-platform=x11', '--gtk-version=3'] : [];
+        if (x11) console.log('Native input smoke receiver: GTK3 / GDK X11 / Ozone X11.');
         const child = spawn(require('electron') as string, [...switches, bundle], {
           env,
           stdio: 'inherit',
