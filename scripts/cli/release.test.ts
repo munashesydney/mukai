@@ -6,13 +6,15 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { cliReleaseFiles } from './release';
 import { cliArchiveName, cliTargets } from './artifacts';
-import { installerNames, verifyInstallers } from '../release';
+import { verifyInstallers } from '../release';
+import { desktopUpdateNames } from '../desktop-updates';
+import { writeDesktopRelease } from '../fixtures/desktop-release';
 
 test('complete CLI and desktop release has verified manifest and unified checksums', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mukai-cli-release-'));
   const version = '0.1.0-build.12.1';
   try {
-    for (const name of installerNames(version)) await writeFile(join(directory, name), 'desktop');
+    await writeDesktopRelease(directory, version);
     for (const name of ['install.sh', 'install.ps1'])
       await writeFile(join(directory, name), 'installer');
     for (const target of cliTargets) {
@@ -29,7 +31,7 @@ test('complete CLI and desktop release has verified manifest and unified checksu
     };
     assert.equal(manifest.artifacts.length, 4);
     const files = await verifyInstallers(directory, version, 1, extra);
-    assert.equal(files.length, 16);
+    assert.equal(files.length, 16 + desktopUpdateNames(version).length);
     await writeFile(join(directory, cliArchiveName(version, 'win32', 'x64')), 'tampered');
     await assert.rejects(cliReleaseFiles(directory, version), /checksum/);
   } finally {

@@ -185,6 +185,9 @@ jobs:
           sudo chown root:root release/linux-unpacked/chrome-sandbox
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           xvfb-run -a dbus-run-session -- npm run test:packaged
+      - name: Keep macOS update metadata separate until both architectures are verified
+        if: runner.os == 'macOS'
+        run: npx tsx scripts/desktop-updates.ts ${{ matrix.arch }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installer-${{ matrix.platform }}-${{ matrix.arch }}
@@ -192,6 +195,9 @@ jobs:
             release/Mukai-Setup-*.exe
             release/Mukai-*.dmg
             release/Mukai-*.AppImage
+            release/Mukai-*-mac-*.zip
+            release/Mukai-*.blockmap
+            release/latest*.yml
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -228,6 +234,7 @@ jobs:
         run: cp installers/install.sh installers/install.ps1 release-artifacts/
       - name: Verify real installer filenames, sizes, and checksums
         run: |
+          npm ci
           node --experimental-strip-types --input-type=module -e '
             import { verifyInstallers } from "./scripts/release.ts";
             import { cliReleaseFiles } from "./scripts/cli/release.ts";

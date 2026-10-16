@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type DesktopBridge } from '../shared/contracts';
+import { IPC, type DesktopBridge, type DesktopUpdateState } from '../shared/contracts';
 
 const bridge: DesktopBridge = {
   platform: process.platform,
@@ -12,5 +12,14 @@ const bridge: DesktopBridge = {
   toggleMaximize: () => ipcRenderer.send(IPC.maximize),
   close: () => ipcRenderer.send(IPC.close),
   setBrowserBounds: (value) => ipcRenderer.invoke(IPC.browserBounds, value),
+  getUpdateState: () => ipcRenderer.invoke(IPC.updateState),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates),
+  restartToUpdate: () => ipcRenderer.invoke(IPC.restartToUpdate),
+  onUpdateState: (listener) => {
+    const receive = (_event: Electron.IpcRendererEvent, state: DesktopUpdateState) =>
+      listener(state);
+    ipcRenderer.on(IPC.updateState, receive);
+    return () => ipcRenderer.removeListener(IPC.updateState, receive);
+  },
 };
 contextBridge.exposeInMainWorld('mukai', bridge);

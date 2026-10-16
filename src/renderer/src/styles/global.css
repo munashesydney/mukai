@@ -173,6 +173,7 @@ p {
   color: #fff;
 }
 .workspace-search {
+  min-width: 0;
   height: 33px;
   display: flex;
   align-items: center;
@@ -185,6 +186,11 @@ p {
   padding: 0 12px;
   font-size: 13px;
   text-align: left;
+}
+.workspace-search span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .workspace-search:hover {
   background: #ffffff12;
@@ -200,10 +206,45 @@ p {
   font-family: inherit;
 }
 .title-right {
+  flex-shrink: 0;
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 20px;
+}
+.desktop-update-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--theme-border);
+  border-radius: 5px;
+  background: var(--theme-soft);
+  color: var(--theme-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.desktop-update-button:hover:not(:disabled) {
+  background: var(--theme-border);
+}
+.desktop-update-button:disabled {
+  cursor: default;
+}
+.desktop-update-settings p {
+  margin: 8px 0 12px;
+}
+.update-spinner {
+  animation: update-spin 1s linear infinite;
+}
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-spinner {
+    animation: none;
+  }
 }
 .workspace-state {
   display: flex;

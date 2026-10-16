@@ -17,6 +17,18 @@ export interface DesktopBridge {
   toggleMaximize: () => void;
   close: () => void;
   setBrowserBounds: (value: import('./runtime').BrowserBounds | null) => Promise<void>;
+  getUpdateState: () => Promise<DesktopUpdateState>;
+  checkForUpdates: () => Promise<DesktopUpdateState>;
+  restartToUpdate: () => Promise<void>;
+  onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+}
+
+export interface DesktopUpdateState {
+  status: 'disabled' | 'idle' | 'checking' | 'downloading' | 'ready' | 'installing' | 'error';
+  currentVersion: string;
+  version?: string;
+  percent?: number;
+  message?: string;
 }
 
 export const IPC = {
@@ -29,4 +41,7 @@ export const IPC = {
   maximize: 'mukai:maximize',
   close: 'mukai:close',
   browserBounds: 'mukai:browser-bounds',
+  updateState: 'mukai:update-state',
+  checkForUpdates: 'mukai:check-for-updates',
+  restartToUpdate: 'mukai:restart-to-update',
 } as const;

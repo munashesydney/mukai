@@ -23,6 +23,100 @@ async function workspaceRequest(page: Page, folder?: string) {
   }, folder);
 }
 
+async function verifyUpdater(desktop: ElectronApplication, page: Page, directory: string) {
+  const state = await page.evaluate(() =>
+    (window as unknown as { mukai: DesktopBridge }).mukai.getUpdateState(),
+  );
+  if (process.platform === 'linux') {
+    assert.equal(state.status, 'disabled', 'Unpacked Linux builds must not check for updates.');
+    return;
+  }
+  assert.equal(state.status, 'idle');
+  // Exercise the packaged updater and IPC without downloading or installing a
+  // public release. The native installation itself needs a two-build upgrade test.
+  await desktop.evaluate(({ app }) => {
+    const { createRequire } = process.getBuiltinModule(
+      'node:module',
+    ) as typeof import('node:module');
+    const { join } = process.getBuiltinModule('node:path') as typeof import('node:path');
+    const load = createRequire(join(app.getAppPath(), 'package.json'));
+    const updater = (load('electron-updater') as typeof import('electron-updater')).autoUpdater;
+    updater.checkForUpdates = async () => {
+      const info = {
+        version: '99.0.0',
+        files: [],
+        path: 'unused.exe',
+        sha512: 'unused',
+        releaseDate: new Date().toISOString(),
+      };
+      updater.emit('update-available', info);
+      return {
+        isUpdateAvailable: true,
+        updateInfo: info,
+        versionInfo: info,
+        downloadPromise: Promise.resolve([]),
+      };
+    };
+  });
+  await page.evaluate(() =>
+    (window as unknown as { mukai: DesktopBridge }).mukai.checkForUpdates(),
+  );
+  await page.getByRole('button', { name: 'Downloading update… 0%' }).waitFor();
+  const emit = (event: string, value: Record<string, unknown>) =>
+    desktop.evaluate(
+      ({ app }, data) => {
+        const { createRequire } = process.getBuiltinModule(
+          'node:module',
+        ) as typeof import('node:module');
+        const { join } = process.getBuiltinModule('node:path') as typeof import('node:path');
+        const load = createRequire(join(app.getAppPath(), 'package.json'));
+        const updater = (load('electron-updater') as typeof import('electron-updater')).autoUpdater;
+        (updater as NodeJS.EventEmitter).emit(
+          data.event,
+          data.event === 'error' ? new Error('Smoke download interrupted') : data.value,
+        );
+      },
+      { event, value },
+    );
+  await emit('download-progress', { percent: 42.8 });
+  await page.getByRole('button', { name: 'Downloading update… 42%' }).waitFor();
+  await page.screenshot({ path: join(directory, 'update-downloading.png') });
+  await emit('error', {});
+  await page.getByRole('button', { name: 'Update failed — Retry' }).click();
+  await page.getByRole('button', { name: 'Downloading update… 0%' }).waitFor();
+  await emit('update-downloaded', { version: '99.0.0' });
+  await page.getByRole('button', { name: 'Restart to update' }).waitFor();
+  await page.screenshot({ path: join(directory, 'update-ready.png') });
+  await desktop.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+  });
+  await page.getByRole('button', { name: 'Restart to update' }).click();
+  assert.equal(
+    (
+      await page.evaluate(() =>
+        (window as unknown as { mukai: DesktopBridge }).mukai.getUpdateState(),
+      )
+    ).status,
+    'ready',
+    'Declining restart must preserve the update and the running backend.',
+  );
+  await emit('update-not-available', { version: state.currentVersion });
+  await desktop.evaluate(({ app }) => {
+    const { createRequire } = process.getBuiltinModule(
+      'node:module',
+    ) as typeof import('node:module');
+    const { join } = process.getBuiltinModule('node:path') as typeof import('node:path');
+    const load = createRequire(join(app.getAppPath(), 'package.json'));
+    const updater = (load('electron-updater') as typeof import('electron-updater')).autoUpdater;
+    updater.checkForUpdates = async () => {
+      updater.emit('update-not-available', {
+        version: app.getVersion(),
+      } as import('electron-updater').UpdateInfo);
+      return {} as import('electron-updater').UpdateCheckResult;
+    };
+  });
+}
+
 async function main() {
   const defaultExecutable =
     process.platform === 'win32'
@@ -161,6 +255,7 @@ async function main() {
     });
     assert.equal(runtime.packaged, true);
     assert.equal(resolve(runtime.userData), join(directory, 'user-data'));
+    await verifyUpdater(desktop!, page, directory);
     await page.screenshot({ path: join(directory, 'first-launch.png') });
     const created = await workspaceRequest(page, folder);
     assert.ok(!Array.isArray(created));
@@ -180,7 +275,7 @@ async function main() {
       JSON.stringify({ status: 'passed', runtime }, null, 2) + '\n',
     );
     console.log(
-      'Packaged smoke passed: renderer, IPC/API, SQLite persistence, helpers, sharp, ONNX, esbuild.',
+      'Packaged smoke passed: renderer, updater IPC/progress/retry/restart cancellation, SQLite persistence, helpers, sharp, ONNX, esbuild.',
     );
     console.log(`Evidence: ${directory}`);
   } catch (error) {

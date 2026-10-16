@@ -68,6 +68,7 @@
     "ai": "^7.0.127",
     "ajv": "^8.20.0",
     "diff": "9.0.0",
+    "electron-updater": "^6.8.9",
     "esbuild": "^0.25.12",
     "lucide-react": "^1.49.0",
     "mammoth": "^1.13.0",
@@ -114,6 +115,15 @@
   "build": {
     "appId": "com.mukai.desktop",
     "productName": "Mukai",
+    "publish": {
+      "provider": "github",
+      "owner": "munashesydney",
+      "repo": "mukai",
+      "channel": "latest",
+      "releaseType": "release"
+    },
+    "detectUpdateChannel": false,
+    "electronUpdaterCompatibility": ">=2.16",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "icon": "src/renderer/public/mukai-logo.png",
     "directories": {
@@ -164,7 +174,10 @@
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.productivity",
       "binaries": [
         "Contents/Resources/computer_use/macos"

@@ -276,6 +276,37 @@ silently creating an unsigned Mac app. Manual runs on trusted feature branches
 can validate signing without publishing. Keep `.p12` files and private keys out
 of Git.
 
-Windows publisher signing and installed-app updates are still deferred.
+Installed desktop releases check GitHub's latest published release 15 seconds
+after launch and every four hours while open. Newer releases download in the
+background; the title bar shows download progress and **Restart to update**.
+Settings → Workspace also shows the installed version and **Check for updates**.
+Restart requires confirmation, stops active bots/tools/computer sessions through
+the normal shutdown path, and keeps the existing per-user data directory.
+Closing the app normally does not automatically install a pending update.
+
+Updates use `electron-updater` with the explicit `latest` channel. CI's
+`-build.<run>.<attempt>` versions are full published GitHub releases; drafts and
+GitHub prereleases are excluded, and downgrades are disabled. The first release
+containing this updater must be installed manually by users on older versions.
+Development runs and unpacked Linux apps do not check for updates. Standalone
+CLI installations continue to use the CLI installer rather than the desktop updater.
+
+The release includes Windows NSIS installers, Mac DMGs and update ZIPs, Linux
+AppImages, blockmaps, and platform update manifests. Mac runners stage separate
+architecture manifests; `scripts/desktop-updates.ts` verifies their versions,
+payload filenames, SHA-512 hashes, and sizes before merging them into
+`latest-mac.yml`. The release verifier requires the complete set before publishing.
+The feed is public and does not need a GitHub token on users' devices.
+
+Before shipping updater changes, test two installed CI-versioned builds on each
+platform: detection, background download, interrupted download/retry, declining
+restart, confirmed restart with active work, and retained chats/settings/workspaces.
+Also check current/equal/newer installed versions do not downgrade and that Linux
+AppImage and both Mac architectures select the correct payload. Unit and release
+fixture tests do not replace this installed upgrade check.
+
+Windows publisher signing is still deferred; the existing Windows release remains
+unsigned and updater downloads are checked against the release manifest's SHA-512.
+Mac releases retain Developer ID signing and notarization.
 Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
 runs while the local backend is running.
