@@ -13,6 +13,7 @@ export function PopupMenu({
   buttonClassName = '',
   disabled = false,
   role = 'menu',
+  width = 370,
 }: {
   label: string;
   title: string;
@@ -25,6 +26,7 @@ export function PopupMenu({
   buttonClassName?: string;
   disabled?: boolean;
   role?: 'menu' | 'dialog';
+  width?: number;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null),
@@ -46,10 +48,10 @@ export function PopupMenu({
         below = window.innerHeight - bounds.bottom - 16;
       const upward =
         placement === 'top' ? above >= 180 || above > below : below < 180 && above > below;
-      const width = Math.min(370, window.innerWidth - 24);
+      const popupWidth = Math.min(width, window.innerWidth - 24);
       Object.assign(element.style, {
-        width: `${width}px`,
-        left: `${Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12))}px`,
+        width: `${popupWidth}px`,
+        left: `${Math.max(12, Math.min(bounds.left, window.innerWidth - popupWidth - 12))}px`,
         top: upward ? 'auto' : `${bounds.bottom + 9}px`,
         bottom: upward ? `${window.innerHeight - bounds.top + 9}px` : 'auto',
         maxHeight: `${Math.max(80, upward ? above : below)}px`,
@@ -77,7 +79,7 @@ export function PopupMenu({
       document.removeEventListener('scroll', scroll, true);
       window.removeEventListener('resize', position);
     };
-  }, [expanded, placement]);
+  }, [expanded, placement, width]);
   return (
     <div
       ref={root}

@@ -36,6 +36,7 @@ export function ProfileIconChanger({
       label="Customize your profile icon"
       title="Make it yours"
       role="dialog"
+      width={300}
       className="user-avatar-picker"
       buttonClassName="user-avatar-trigger"
       menuClassName="profile-icon-menu"
@@ -91,31 +92,29 @@ function ProfileEditor({ profile, close }: { profile: UserProfile; close: () => 
         void submit();
       }}
     >
-      <div className="profile-preview">
-        <UserAvatar profile={draft} size="lg" />
-        <div>
-          <strong>Your profile icon</strong>
-          <small>A little personality in every conversation.</small>
-        </div>
-      </div>
       <fieldset disabled={saving}>
-        <legend>Style</legend>
-        <div className="profile-mode-options" role="group" aria-label="Profile icon style">
-          <button
-            type="button"
-            data-popup-autofocus
-            aria-pressed={draft.mode === 'icon'}
-            onClick={() => patch({ mode: 'icon' })}
-          >
-            Icon
-          </button>
-          <button
-            type="button"
-            aria-pressed={draft.mode === 'letter'}
-            onClick={() => patch({ mode: 'letter' })}
-          >
-            Letter
-          </button>
+        <legend className="profile-style-legend">Style</legend>
+        <div className="profile-style-row">
+          <div className="profile-preview">
+            <UserAvatar profile={draft} />
+          </div>
+          <div className="profile-mode-options" role="group" aria-label="Profile icon style">
+            <button
+              type="button"
+              data-popup-autofocus
+              aria-pressed={draft.mode === 'icon'}
+              onClick={() => patch({ mode: 'icon' })}
+            >
+              Icon
+            </button>
+            <button
+              type="button"
+              aria-pressed={draft.mode === 'letter'}
+              onClick={() => patch({ mode: 'letter' })}
+            >
+              Letter
+            </button>
+          </div>
         </div>
         {draft.mode === 'letter' ? (
           <div className="profile-letter-field">
@@ -143,7 +142,7 @@ function ProfileEditor({ profile, close }: { profile: UserProfile; close: () => 
                   aria-pressed={draft.icon === icon}
                   onClick={() => patch({ icon })}
                 >
-                  <Icon size={22} aria-hidden="true" />
+                  <Icon size={18} aria-hidden="true" />
                 </button>
               );
             })}
@@ -152,30 +151,31 @@ function ProfileEditor({ profile, close }: { profile: UserProfile; close: () => 
       </fieldset>
       <fieldset disabled={saving}>
         <legend>Background</legend>
-        <div className="profile-backgrounds" role="group" aria-label="Choose a background">
-          {backgrounds.map(({ name, color }) => (
-            <button
-              key={name}
-              type="button"
-              title={name}
-              aria-label={`${name} background`}
-              aria-pressed={draft.background.toLowerCase() === color}
-              style={{ background: color }}
-              onClick={() => patch({ background: color })}
-            >
-              {draft.background.toLowerCase() === color && <Check size={14} aria-hidden="true" />}
-            </button>
-          ))}
+        <div className="profile-background-row">
+          <div className="profile-backgrounds" role="group" aria-label="Choose a background">
+            {backgrounds.map(({ name, color }) => (
+              <button
+                key={name}
+                type="button"
+                title={name}
+                aria-label={`${name} background`}
+                aria-pressed={draft.background.toLowerCase() === color}
+                style={{ background: color }}
+                onClick={() => patch({ background: color })}
+              >
+                {draft.background.toLowerCase() === color && <Check size={14} aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+          <label className="profile-custom-color" title="Custom background color">
+            <input
+              type="color"
+              aria-label="Custom background color"
+              value={draft.background}
+              onChange={(event) => patch({ background: event.target.value })}
+            />
+          </label>
         </div>
-        <label className="profile-custom-color">
-          Custom color
-          <input
-            type="color"
-            aria-label="Custom background color"
-            value={draft.background}
-            onChange={(event) => patch({ background: event.target.value })}
-          />
-        </label>
       </fieldset>
       {error && (
         <p className="profile-save-error" role="alert">
@@ -193,10 +193,14 @@ function ProfileEditor({ profile, close }: { profile: UserProfile; close: () => 
           <RotateCcw size={13} />
           Reset
         </button>
-        <button className="button" type="button" disabled={saving} onClick={close}>
+        <button className="button button--small" type="button" disabled={saving} onClick={close}>
           Cancel
         </button>
-        <button className="button button--primary" type="submit" disabled={saving || !valid}>
+        <button
+          className="button button--small button--primary"
+          type="submit"
+          disabled={saving || !valid}
+        >
           {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
