@@ -6,6 +6,7 @@ import { executeRuntime } from '../tools/runtimeContext';
 import { terminalDefinition, processDefinition } from '../tools/terminal/definition';
 import { fileOperationsDefinition } from '../tools/file-operations/definition';
 import { browserDefinition } from '../tools/browser/definition';
+import { executeImage, type ImageSource } from '../tools/image/execute';
 import { imageDefinition } from '../tools/image/definition';
 import { resultPreview } from '../services/toolResultPolicy';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
@@ -15,9 +16,11 @@ export function computerTools(
   context: RuntimeToolContext & {
     computer: Computer;
     vision: boolean;
+    readImage?: ImageSource;
+    attachmentBytes?: (id: string) => Promise<Buffer>;
     fileBudget: { remaining: number };
     recordChange(snapshot: FileMutationSnapshot): void;
-    recordFile(path: string): void;
+    recordFile(path: string, metadata?: import('../../shared/fileMetadata').FileMetadata): void;
     saveScreenshot(
       image: string,
     ): Promise<{ artifactId: string; path: string; width: number; height: number }>;
@@ -40,7 +43,7 @@ export function computerTools(
           ? browserDefinition.description +
             ' In this VM workspace, all targets use Chrome inside the Linux guest, visible in View computer. mukai is an alias for chrome here (there is no embedded guest browser). chrome-default uses the guest desktop’s main Chrome profile and its logins, never the host browser. Enable and approve main Chrome connections inside the VM. Stopping the VM ends all guest browser sessions. screenshot artifacts use guest paths.'
           : name === 'image'
-            ? 'Read or view a PNG/JPEG/WebP inside the Linux VM. Absolute paths refer to the guest; relative paths resolve under /home/mukai/workspace. view requires a vision model. Limits: 10 MiB, 40 million pixels.'
+            ? 'Read or view a PNG/JPEG/WebP inside the Linux VM. Absolute paths refer to the guest; relative paths resolve under /home/mukai/workspace. attachmentId/artifactId reopen saved uploads or artifacts from this workspace without copying them into the VM. Supply exactly one source. view requires a vision model. Limits: 10 MiB, 40 million pixels.'
             : definition.description;
     output[name] = tool({
       description,
@@ -55,6 +58,12 @@ export function computerTools(
           signal,
           budget: name === 'file_operations' ? context.fileBudget : context.budget,
         };
+        if (name === 'image' && (value.attachmentId || value.artifactId))
+          return executeImage(
+            imageDefinition.inputSchema.parse(input),
+            { ...runtime, folder: null, vision: context.vision },
+            options.toolCallId,
+          );
         return executeRuntime(
           runtime,
           options.toolCallId,
@@ -68,12 +77,34 @@ export function computerTools(
               name === 'file_operations'
                 ? 'files'
                 : (name as 'terminal' | 'process' | 'browser' | 'image');
-            const result = await context.computer.request(method, input, context.owner, signal);
+            let requestInput = input;
+            if (name === 'file_operations' && value.action === 'copy_attachment') {
+              if (
+                typeof value.attachmentId !== 'string' ||
+                typeof value.path !== 'string' ||
+                !context.attachmentBytes
+              )
+                throw new Error('copy_attachment requires attachmentId and destination path.');
+              const bytes = await context.attachmentBytes(value.attachmentId);
+              requestInput = { ...value, bytes: bytes.toString('base64') };
+            }
+            const result = await context.computer.request(
+              method,
+              requestInput,
+              context.owner,
+              signal,
+            );
             if (name === 'file_operations') {
               const response = z
                 .object({
                   result: z
-                    .object({ path: z.string(), changed: z.boolean().optional() })
+                    .object({
+                      path: z.string(),
+                      changed: z.boolean().optional(),
+                      metadata: z
+                        .object({ mediaType: z.string(), size: z.number().int().nonnegative() })
+                        .optional(),
+                    })
                     .passthrough(),
                   changes: z.array(
                     z.object({
@@ -87,7 +118,12 @@ export function computerTools(
               const warnings: string[] = [];
               try {
                 for (const snapshot of response.changes) context.recordChange(snapshot);
-                if (response.result.changed) context.recordFile(response.result.path);
+                if (response.result.changed) {
+                  if (value.action !== 'copy_attachment')
+                    context.recordFile(response.result.path, response.result.metadata);
+                  else if (typeof response.result.artifactPath === 'string')
+                    context.recordFile(response.result.artifactPath, response.result.metadata);
+                }
               } catch {
                 warnings.push(
                   'The guest file was saved, but its history or artifact could not be recorded.',

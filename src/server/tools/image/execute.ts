@@ -9,40 +9,72 @@ import { imageDefinition, type ImageInput } from './definition';
 const FILE_LIMIT = 10 * 1024 * 1024;
 const PIXEL_LIMIT = 40_000_000;
 const OUTPUT_LIMIT = 10 * 1024 * 1024;
-type ImageContext = RuntimeToolContext & { folder: string | null; vision: boolean };
+export type ImageSource = (input: {
+  attachmentId?: string;
+  artifactId?: string;
+}) => Promise<{ bytes: Buffer; name: string }>;
+type ImageContext = RuntimeToolContext & {
+  folder: string | null;
+  vision: boolean;
+  readImage?: ImageSource;
+};
 
 export function executeImage(input: ImageInput, context: ImageContext, callId: string) {
-  return executeRuntime(context, callId, 'image', input.action, input.path, async () => {
+  let sourceName = input.path || input.attachmentId || input.artifactId || '';
+  const runtime = {
+    ...context,
+    onActivity: (activity: Parameters<ImageContext['onActivity']>[0]) =>
+      context.onActivity({
+        ...activity,
+        path: sourceName,
+        ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
+        ...(input.artifactId ? { artifactId: input.artifactId } : {}),
+      }),
+  };
+  return executeRuntime(runtime, callId, 'image', input.action, sourceName, async () => {
+    imageDefinition.inputSchema.parse(input);
     if (input.action === 'view' && !context.vision)
       throw new Error(
         'This model is configured for text only. Choose a vision model to view images; read returns metadata only.',
       );
-    if (input.path.includes('\0')) throw new Error('Choose a valid local file path.');
-    if (!isAbsolute(input.path) && !context.folder)
-      throw new Error('Use an absolute path when this workspace has no folder.');
-    const path = isAbsolute(input.path)
-      ? resolve(input.path)
-      : resolve(context.folder!, input.path);
-    const file = await open(path, 'r');
     let bytes: Buffer;
-    try {
-      const info = await file.stat();
-      if (!info.isFile() || info.size < 1 || info.size > FILE_LIMIT)
-        throw new Error('Read a regular image file between 1 byte and 10 MiB.');
-      // Bound the read even if the file grows between stat and read.
-      const buffer = Buffer.alloc(Math.min(info.size + 1, FILE_LIMIT + 1));
-      let length = 0;
-      while (length < buffer.length) {
-        context.signal.throwIfAborted();
-        const chunk = await file.read(buffer, length, buffer.length - length, null);
-        if (!chunk.bytesRead) break;
-        length += chunk.bytesRead;
+    let path: string | undefined;
+    if (input.attachmentId || input.artifactId) {
+      if (!context.readImage)
+        throw new Error('Saved image references are unavailable in this context.');
+      const source = await context.readImage(input);
+      bytes = source.bytes;
+      sourceName = source.name;
+      if (!bytes.length || bytes.length > FILE_LIMIT)
+        throw new Error('Read an image between 1 byte and 10 MiB.');
+    } else {
+      if (!input.path) throw new Error('Choose an image path.');
+      if (input.path.includes('\0')) throw new Error('Choose a valid local file path.');
+      if (!isAbsolute(input.path) && !context.folder)
+        throw new Error('Use an absolute path when this workspace has no folder.');
+      path = isAbsolute(input.path) ? resolve(input.path) : resolve(context.folder!, input.path);
+      const file = await open(path, 'r');
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.size < 1 || info.size > FILE_LIMIT)
+          throw new Error('Read a regular image file between 1 byte and 10 MiB.');
+        // Bound the read even if the file grows between stat and read.
+        const buffer = Buffer.alloc(Math.min(info.size + 1, FILE_LIMIT + 1));
+        let length = 0;
+        while (length < buffer.length) {
+          context.signal.throwIfAborted();
+          const chunk = await file.read(buffer, length, buffer.length - length, null);
+          if (!chunk.bytesRead) break;
+          length += chunk.bytesRead;
+        }
+        if (length > info.size || length > FILE_LIMIT)
+          throw new Error(
+            'The image changed while reading or exceeds the 10 MiB limit. Try again.',
+          );
+        bytes = buffer.subarray(0, length);
+      } finally {
+        await file.close();
       }
-      if (length > info.size || length > FILE_LIMIT)
-        throw new Error('The image changed while reading or exceeds the 10 MiB limit. Try again.');
-      bytes = buffer.subarray(0, length);
-    } finally {
-      await file.close();
     }
     context.signal.throwIfAborted();
     const decoder = sharp(bytes, { limitInputPixels: PIXEL_LIMIT, failOn: 'warning' });
@@ -67,7 +99,14 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
         'The decoded image exceeds the 10 MiB output limit. Use detail=high or a smaller image.',
       );
     return {
-      path,
+      ...(path
+        ? { path }
+        : {
+            name: sourceName,
+            ...(input.attachmentId
+              ? { attachmentId: input.attachmentId }
+              : { artifactId: input.artifactId }),
+          }),
       format: metadata.format,
       width: metadata.width,
       height: metadata.height,

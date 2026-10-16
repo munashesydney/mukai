@@ -18,6 +18,49 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('adds optional artifact metadata without losing existing file or screenshot records', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    database.run(
+      "INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at) VALUES('artifact-message','scout','bot-scout','legacy','assistant','','complete','2026-10-15')",
+    );
+    for (const [id, kind] of [
+      ['legacy-file', 'file'],
+      ['legacy-image', 'image'],
+    ]) {
+      database.run(
+        'INSERT INTO artifacts(id,bot_id,message_id,conversation_id,path,name,kind,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        id,
+        'scout',
+        'artifact-message',
+        'bot-scout',
+        id,
+        id,
+        kind,
+        '2026-10-15',
+      );
+    }
+    database.db.exec(
+      'ALTER TABLE artifacts DROP COLUMN media_type; ALTER TABLE artifacts DROP COLUMN size;',
+    );
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE artifacts ADD COLUMN media_type')) +
+        1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(database.all('SELECT id,kind,media_type,size FROM artifacts ORDER BY id')).toEqual([
+        { id: 'legacy-file', kind: 'file', media_type: null, size: null },
+        { id: 'legacy-image', kind: 'image', media_type: 'image/png', size: null },
+      ]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('moves legacy Telegram labels out of user text and titles into internal source metadata', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

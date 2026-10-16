@@ -10,6 +10,8 @@ import { BotRepository } from '../repositories/botRepository';
 import { WorkspaceService } from './workspaceService';
 import { WorkspaceFileService } from './workspaceFileService';
 import type { FileArtifact, Workspace } from '../../shared/ai';
+import type { FileMetadata } from '../../shared/fileMetadata';
+import { fileMetadata } from './fileMetadata';
 
 const SCREENSHOT_LIMIT = 16 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -74,7 +76,7 @@ export class ArtifactService {
       throw error;
     }
   }
-  record(botId: string, messageId: string, path: string) {
+  record(botId: string, messageId: string, path: string, metadata?: FileMetadata) {
     this.artifacts.save({
       id: randomUUID(),
       botId,
@@ -82,6 +84,7 @@ export class ArtifactService {
       path,
       name: basename(path),
       createdAt: new Date().toISOString(),
+      ...metadata,
     });
   }
   private screenshotFolder(workspaceId: string) {
@@ -143,6 +146,8 @@ export class ArtifactService {
         path,
         name,
         kind: 'image',
+        mediaType: 'image/png',
+        size: bytes.length,
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -157,7 +162,14 @@ export class ArtifactService {
     if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
     const workspace = this.workspaces.require(bot.workspaceId);
     try {
-      return await this.readFile(artifact, workspace);
+      const result = await this.readFile(artifact, workspace);
+      const metadata = fileMetadata(
+        result.bytes.subarray(0, 4096),
+        result.name,
+        result.bytes.length,
+      );
+      this.artifacts.updateMetadata(id, metadata);
+      return { ...result, mediaType: metadata.mediaType };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | null)?.code;
       const vmFile = workspace.computer === 'qemu' && artifact.kind !== 'image';
@@ -180,22 +192,72 @@ export class ArtifactService {
       throw error;
     }
   }
+  async inspect(id: string, signal = AbortSignal.timeout(5000)) {
+    signal.throwIfAborted();
+    const artifact = this.artifacts.find(id);
+    const bot = artifact && this.bots.find(artifact.botId);
+    if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
+    const workspace = this.workspaces.require(bot.workspaceId);
+    let metadata: FileMetadata;
+    if (artifact.kind === 'image') {
+      const file = await this.openScreenshot(artifact, workspace);
+      try {
+        metadata = { mediaType: 'image/png', size: (await file.stat()).size };
+      } finally {
+        await file.close();
+      }
+    } else if (workspace.computer === 'qemu') {
+      // Discovery must never start a stopped VM just to fill in optional metadata.
+      if (this.workspaces.computers?.status(workspace).state !== 'running') return null;
+      metadata = z
+        .object({ mediaType: z.string(), size: z.number().int().nonnegative() })
+        .parse(
+          await this.workspaces.computers
+            .guest(workspace)
+            .request(
+              'files',
+              { action: 'inspect_artifact', path: artifact.path },
+              { workspaceId: workspace.id, botId: bot.id, conversationId: 'artifact-inspect' },
+              signal,
+            ),
+        );
+    } else {
+      if (!workspace.folder) return null;
+      metadata = await new WorkspaceFileService(workspace.folder, this.dataDir).inspect(
+        artifact.path,
+      );
+    }
+    this.artifacts.updateMetadata(id, metadata);
+    return metadata;
+  }
+  private async openScreenshot(artifact: FileArtifact, workspace: Workspace) {
+    const name = artifact.id + '.png';
+    const folders = [
+      this.screenshotFolder(workspace.id),
+      join(this.dataDir, 'artifacts', 'screenshots', workspace.id),
+    ].map((folder) => resolve(folder));
+    const folder = folders.find(
+      (candidate) => resolve(join(candidate, name)) === resolve(artifact.path),
+    );
+    if (!folder || !samePath(await realpath(folder), folder))
+      throw new ApiError(400, 'The screenshot artifact is outside its managed storage.');
+    const info = await lstat(artifact.path);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > SCREENSHOT_LIMIT)
+      throw new ApiError(400, 'The screenshot artifact is unavailable.');
+    const file = await open(artifact.path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    const opened = await file.stat().catch(async (error) => {
+      await file.close();
+      throw error;
+    });
+    if (!opened.isFile() || opened.nlink > 1 || opened.size > SCREENSHOT_LIMIT) {
+      await file.close();
+      throw new ApiError(400, 'The screenshot artifact is unavailable.');
+    }
+    return file;
+  }
   private async readFile(artifact: FileArtifact, workspace: Workspace) {
     if (artifact.kind === 'image') {
-      const name = artifact.id + '.png';
-      const folders = [
-        this.screenshotFolder(workspace.id),
-        join(this.dataDir, 'artifacts', 'screenshots', workspace.id),
-      ].map((folder) => resolve(folder));
-      const folder = folders.find(
-        (candidate) => resolve(join(candidate, name)) === resolve(artifact.path),
-      );
-      if (!folder || !samePath(await realpath(folder), folder))
-        throw new ApiError(400, 'The screenshot artifact is outside its managed storage.');
-      const info = await lstat(artifact.path);
-      if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > SCREENSHOT_LIMIT)
-        throw new ApiError(400, 'The screenshot artifact is unavailable.');
-      const file = await open(artifact.path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      const file = await this.openScreenshot(artifact, workspace);
       try {
         const opened = await file.stat();
         if (!opened.isFile() || opened.nlink > 1 || opened.size > SCREENSHOT_LIMIT)
@@ -219,7 +281,7 @@ export class ArtifactService {
         .computers!.guest(workspace)
         .request(
           'download',
-          { path: artifact.path },
+          { path: artifact.path, maxBytes: 10 * 1024 * 1024 },
           { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
           AbortSignal.timeout(45000),
         )) as { name: string; bytes: string };
@@ -231,7 +293,10 @@ export class ArtifactService {
     }
     if (!workspace.folder) throw new ApiError(400, 'This workspace has no folder.');
     return {
-      ...(await new WorkspaceFileService(workspace.folder, this.dataDir).download(artifact.path)),
+      ...(await new WorkspaceFileService(workspace.folder, this.dataDir).download(
+        artifact.path,
+        10 * 1024 * 1024,
+      )),
       mediaType: 'text/plain; charset=utf-8',
     };
   }

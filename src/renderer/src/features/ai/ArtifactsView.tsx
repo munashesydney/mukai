@@ -3,8 +3,9 @@ import { Download, Eye, FileText, Image, LoaderCircle } from 'lucide-react';
 import type { Attachment, FileArtifact, ChatMessage } from '../../../../shared/ai';
 import { artifactService } from '../../services/artifactService';
 import { errorText } from '../../utils/errors';
-import { Modal } from '../../components/ui/Modal';
 import { AttachmentCard } from './AttachmentCard';
+import { ArtifactPreview } from './ArtifactPreview';
+import { artifactIsImage } from './artifactPreviewContent';
 
 export function ArtifactsView({
   botId,
@@ -26,7 +27,7 @@ export function ArtifactsView({
         .filter(
           (activity) =>
             activity.status === 'complete' &&
-            ['screenshot', 'write_file', 'patch'].includes(activity.action),
+            ['screenshot', 'write_file', 'patch', 'copy_attachment'].includes(activity.action),
         )
         .map((activity) => activity.id),
     )
@@ -97,17 +98,18 @@ export function ArtifactCard({
   artifact: FileArtifact;
   compact?: boolean;
 }) {
-  const [preview, setPreview] = useState<string | null>(null),
+  const [preview, setPreview] = useState(false),
     [imageUrl, setImageUrl] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const isImage = artifact.kind === 'image';
+  const isImage = artifactIsImage(artifact);
   useEffect(() => {
-    if (!isImage) return;
+    if (compact || artifact.kind !== 'image') return;
+    const controller = new AbortController();
     let disposed = false,
       url = '';
     void artifactService
-      .blob(artifact.id)
+      .blob(artifact.id, controller.signal)
       .then((blob) => {
         if (disposed) return;
         url = URL.createObjectURL(blob);
@@ -118,12 +120,13 @@ export function ArtifactCard({
       });
     return () => {
       disposed = true;
+      controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [artifact.id, isImage]);
+  }, [artifact.id, artifact.kind, compact]);
   async function open(download = false) {
-    if (!download && isImage) {
-      setPreview(imageUrl);
+    if (!download) {
+      setPreview(true);
       return;
     }
     setBusy(true);
@@ -137,7 +140,7 @@ export function ArtifactCard({
         link.download = artifact.name;
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      } else setPreview(await blob.text());
+      }
     } catch (error) {
       setError(errorText(error));
     } finally {
@@ -149,7 +152,7 @@ export function ArtifactCard({
       {compact ? (
         <button
           className="chat-activity-row"
-          disabled={busy || (isImage && !imageUrl)}
+          disabled={busy}
           title={artifact.path}
           aria-label={`Preview ${artifact.name}`}
           onClick={() => void open()}
@@ -160,7 +163,9 @@ export function ArtifactCard({
             <small>
               {artifact.path === artifact.name
                 ? isImage
-                  ? 'Saved screenshot'
+                  ? artifact.kind === 'image'
+                    ? 'Saved screenshot'
+                    : 'Workspace image'
                   : 'Workspace file'
                 : artifact.path}
             </small>
@@ -177,7 +182,7 @@ export function ArtifactCard({
             <button
               className="artifact-thumbnail"
               aria-label={`Preview ${artifact.name}`}
-              onClick={() => setPreview(imageUrl)}
+              onClick={() => setPreview(true)}
             >
               <img src={imageUrl} alt={artifact.name} />
             </button>
@@ -189,13 +194,13 @@ export function ArtifactCard({
           <div className="artifact-row-name">
             <strong>{artifact.name}</strong>
             <small title={artifact.path}>
-              {artifact.path} · {isImage ? 'Screenshot' : 'Workspace file'}
+              {artifact.path} · {artifact.kind === 'image' ? 'Screenshot' : 'Workspace file'}
             </small>
           </div>
           <button
             className="icon-button"
             aria-label={`Preview ${artifact.name}`}
-            disabled={busy || (isImage && !imageUrl)}
+            disabled={busy}
             onClick={() => void open()}
           >
             <Eye size={17} />
@@ -215,25 +220,7 @@ export function ArtifactCard({
           {error}
         </p>
       )}
-      {preview !== null && (
-        <Modal title={artifact.name} onClose={() => setPreview(null)}>
-          <div className="artifact-preview">
-            <p>{artifact.path}</p>
-            {isImage ? (
-              <img className="artifact-image-preview" src={preview} alt={artifact.name} />
-            ) : (
-              <pre>{preview}</pre>
-            )}
-          </div>
-          <div className="modal-footer">
-            <span>{isImage ? 'Saved screenshot' : 'Current workspace file'}</span>
-            <button className="button" disabled={busy} onClick={() => void open(true)}>
-              <Download size={15} />
-              Download
-            </button>
-          </div>
-        </Modal>
-      )}
+      {preview && <ArtifactPreview artifact={artifact} onClose={() => setPreview(false)} />}
     </>
   );
 }

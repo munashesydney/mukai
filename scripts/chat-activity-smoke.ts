@@ -1,9 +1,9 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createServer, type ServerResponse } from 'node:http';
 import sharp from 'sharp';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { startApiServer } from '../src/server/app';
 import { seedTestWorkspace } from '../src/server/testFixtures';
@@ -134,7 +134,14 @@ async function main() {
   })
     .png()
     .toBuffer();
-  writeFileSync(join(dir, 'render.png'), png);
+  const upload = await fetch(api.url + `/conversations/${conversation.id}/attachments`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + api.token, 'X-Filename': 'render.png' },
+    body: new Uint8Array(png),
+  });
+  assert.equal(upload.status, 201);
+  const attachment = (await upload.json()) as { id: string };
+  api.store.run('UPDATE attachments SET message_id=? WHERE id=?', telegramMessageId, attachment.id);
   const screenshotId = randomUUID();
   const screenshotFolder = join(dir, '.mukai', 'artifacts', 'screenshots');
   mkdirSync(screenshotFolder, { recursive: true });
@@ -146,7 +153,8 @@ async function main() {
       tool: 'image',
       action: 'view',
       status: 'complete',
-      path: join(dir, 'render.png'),
+      path: 'render.png',
+      attachmentId: attachment.id,
       summary: '{}',
     },
     {
@@ -204,6 +212,27 @@ async function main() {
     path: screenshotPath,
     createdAt: new Date().toISOString(),
   });
+  const copiedPng = await sharp(randomBytes(600 * 600 * 3), {
+    raw: { width: 600, height: 600, channels: 3 },
+  })
+    .png()
+    .toBuffer();
+  assert(copiedPng.length > 256 * 1024);
+  for (const [name, metadata] of [
+    ['copied-image.png', { mediaType: 'image/png', size: copiedPng.length }],
+    ['legacy-copy.png', {}],
+  ] as const) {
+    writeFileSync(join(dir, name), copiedPng);
+    new ArtifactRepository(api.store).save({
+      id: randomUUID(),
+      botId: 'scout',
+      messageId,
+      path: name,
+      name,
+      createdAt: new Date().toISOString(),
+      ...metadata,
+    });
+  }
   const changes = new FileChangeRepository(api.store);
   changes.record('scout', messageId, {
     path: 'src/Project.tsx',
@@ -230,6 +259,11 @@ async function main() {
   host.attach(window);
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, () => ({ status: 'ok' }));
+  ipcMain.handle(IPC.updateState, () => ({
+    status: 'disabled',
+    currentVersion: app.getVersion(),
+    automaticUpdates: false,
+  }));
   ipcMain.handle(IPC.browserBounds, (_event, bounds: BrowserBounds | null) => host.bounds(bounds));
   const evaluate = async <T>(code: string): Promise<T> => {
     try {
@@ -248,8 +282,10 @@ async function main() {
       'Activity UI did not settle: ' + code + '\n' + (await evaluate('document.body.innerText')),
     );
   };
-  const click = (selector: string) =>
-    evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const click = async (selector: string) => {
+    await wait(`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+    await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  };
   const capture = async (name: string) => {
     await evaluate(
       'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
@@ -270,7 +306,7 @@ async function main() {
       `localStorage.setItem('mukai.active-conversation.scout',${JSON.stringify(conversation.id)});`,
     );
     await window.reload();
-    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    await wait('document.querySelectorAll(".chat-activity-row").length===8');
     assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
     assert(
       await evaluate(
@@ -337,10 +373,58 @@ async function main() {
       ),
     );
     await click('dialog button[aria-label="Close dialog"]');
+    for (const name of ['copied-image.png', 'legacy-copy.png']) {
+      await click(`button[aria-label="Preview ${name}"]`);
+      await wait('Boolean(document.querySelector("dialog")?.open)');
+      await wait('document.querySelector("dialog .artifact-image-preview")?.naturalWidth===600');
+      assert.equal(await evaluate('document.querySelector("dialog pre")'), null);
+      await capture('chat-activity-' + name.replace('.png', ''));
+      await click('dialog button[aria-label="Close dialog"]');
+    }
+    // A missing file reports its error inside a dismissible modal.
+    unlinkSync(join(dir, 'legacy-copy.png'));
+    await click('button[aria-label="Preview legacy-copy.png"]');
+    await wait('Boolean(document.querySelector("dialog [role=alert]"))');
+    assert(
+      await evaluate(
+        'document.querySelector("dialog [role=alert]").textContent.includes("no longer available")',
+      ),
+    );
+    await click('dialog button[aria-label="Close dialog"]');
+    writeFileSync(join(dir, 'legacy-copy.png'), copiedPng);
+    // Keep a guest download pending and prove its loading modal can be closed.
+    const guest = api.computers.guest;
+    let finishDownload: ((value: unknown) => void) | undefined;
+    api.computers.guest = () =>
+      ({
+        request: async () =>
+          new Promise((done) => {
+            finishDownload = done;
+          }),
+      }) as unknown as ReturnType<typeof guest>;
+    api.store.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+    try {
+      await click('button[aria-label="Preview legacy-copy.png"]');
+      await wait('Boolean(document.querySelector("dialog [role=status]"))');
+      assert(
+        await evaluate(
+          'document.querySelector("dialog [role=status]").textContent.includes("Loading file")',
+        ),
+      );
+      for (let attempt = 0; !finishDownload && attempt < 100; attempt++)
+        await new Promise((done) => setTimeout(done, 20));
+      assert(finishDownload);
+      await click('dialog button[aria-label="Close dialog"]');
+      assert.equal(await evaluate('document.querySelector("dialog")'), null);
+    } finally {
+      finishDownload?.({ name: 'legacy-copy.png', bytes: copiedPng.toString('base64') });
+      api.computers.guest = guest;
+      api.store.run("UPDATE workspaces SET computer='local' WHERE id='default'");
+    }
     await click('.chat-activity-section[aria-label="Bots"] button');
     await wait('document.body.textContent.includes("Nova review complete")');
     await click('button[aria-label="Go back"]');
-    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    await wait('document.querySelectorAll(".chat-activity-row").length===8');
     await click('.chat-activity-section[aria-label="Bots"] button:last-child');
     await wait('document.body.textContent.includes("Atlas existing conversation")');
     assert.equal(
@@ -365,7 +449,7 @@ async function main() {
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
-    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    await wait('document.querySelectorAll(".chat-activity-row").length===8');
     const appearance = await fetch(api.url + '/settings/appearance', {
       method: 'PUT',
       headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
@@ -374,20 +458,22 @@ async function main() {
     assert(appearance.ok, await appearance.clone().text());
     await window.reload();
     await wait(
-      'document.querySelectorAll(".chat-activity-row").length===6 && document.documentElement.dataset.mode==="dark"',
+      'document.querySelectorAll(".chat-activity-row").length===8 && document.documentElement.dataset.mode==="dark"',
     );
     await capture('chat-activity-dark');
     window.setSize(740, 880);
     await wait('document.querySelector(".workspace-navigation").getBoundingClientRect().width<=77');
     await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
+    await wait('!document.querySelector(".chat-activity-drawer")');
+    // A saved desktop-open preference must not cover the chat on a narrow reload.
+    await window.reload();
+    await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
+    assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+    await click('button[aria-label="Show chat activity"]');
+    await wait('getComputedStyle(document.querySelector(".conversation")).display==="none"');
     assert(
       await evaluate(
-        `document.querySelector('.conversation').getBoundingClientRect().height > document.querySelector('.conversation-layout').getBoundingClientRect().height * .65`,
-      ),
-    );
-    assert(
-      await evaluate(
-        `document.querySelector('.conversation').getBoundingClientRect().bottom <= document.querySelector('.chat-activity-drawer').getBoundingClientRect().top + 1`,
+        `document.querySelector('.chat-activity-drawer').getBoundingClientRect().height > document.querySelector('.conversation-layout').getBoundingClientRect().height * .95`,
       ),
     );
     await capture('chat-activity-narrow');
@@ -413,11 +499,16 @@ async function main() {
     await evaluate(
       `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
     );
-    await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
-    await click('button[aria-label="Show chat activity"]');
-    await wait('document.querySelectorAll(".chat-activity-row").length===6');
+    await wait('document.querySelectorAll(".chat-activity-row").length===8');
     await click('button[aria-label="Close chat activity"]');
     let finalResponse: ServerResponse | undefined;
+    let liveRun = 0;
+    const waitForFinalResponse = async () => {
+      for (let attempt = 0; !finalResponse && attempt < 100; attempt++)
+        await new Promise((done) => setTimeout(done, 50));
+      assert(finalResponse);
+      return finalResponse;
+    };
     const fixture = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk);
@@ -425,7 +516,7 @@ async function main() {
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
       if (
         body.messages.some(
-          (message: { tool_call_id?: string }) => message.tool_call_id === 'live-write',
+          (message: { tool_call_id?: string }) => message.tool_call_id === `live-write-${liveRun}`,
         )
       ) {
         finalResponse = response;
@@ -443,13 +534,13 @@ async function main() {
                   tool_calls: [
                     {
                       index: 0,
-                      id: 'live-write',
+                      id: `live-write-${liveRun}`,
                       type: 'function',
                       function: {
                         name: 'file_operations',
                         arguments: JSON.stringify({
                           action: 'write_file',
-                          path: 'live-draft.md',
+                          path: liveRun ? `live-draft-${liveRun}.md` : 'live-draft.md',
                           content: '# Live draft',
                         }),
                       },
@@ -517,10 +608,7 @@ async function main() {
       await click('button[aria-label="Close chat activity"]');
       await new Promise((done) => setTimeout(done, 150));
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
-      for (let attempt = 0; !finalResponse && attempt < 100; attempt++)
-        await new Promise((done) => setTimeout(done, 50));
-      assert(finalResponse);
-      finalResponse.end(
+      (await waitForFinalResponse()).end(
         'data: ' +
           JSON.stringify({
             id: 'live',
@@ -533,6 +621,53 @@ async function main() {
       );
       await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      // The same live tool run on a small screen must never open activity itself.
+      liveRun = 1;
+      finalResponse = undefined;
+      window.setSize(740, 880);
+      await wait('document.querySelector(".conversation-layout").clientWidth<=700');
+      await evaluate(
+        `(() => { const input = document.querySelector('.ai-composer-area .composer > textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Create another live draft.'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
+      );
+      await click('button[aria-label="Send message"]');
+      const narrowResponse = await waitForFinalResponse();
+      assert(
+        await evaluate(`Boolean(document.querySelector('button[aria-label="Stop generation"]'))`),
+      );
+      assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      assert(
+        await evaluate(
+          'getComputedStyle(document.querySelector(".conversation")).display!=="none"',
+        ),
+      );
+      await click('button[aria-label="Show chat activity"]');
+      await wait('getComputedStyle(document.querySelector(".conversation")).display==="none"');
+      await wait(`Boolean(document.querySelector('button[aria-label="Preview live-draft-1.md"]'))`);
+      await click('button[aria-label="Close chat activity"]');
+      await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
+      narrowResponse.end(
+        'data: ' +
+          JSON.stringify({
+            id: 'live',
+            model: 'fixture',
+            choices: [
+              { index: 0, delta: { content: 'The second draft is ready.' }, finish_reason: 'stop' },
+            ],
+          }) +
+          '\n\ndata: [DONE]\n\n',
+      );
+      await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
+      assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      // Space chats share the same manual full-area activity view.
+      await evaluate(
+        `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,
+      );
+      await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
+      assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      await click('button[aria-label="Show chat activity"]');
+      await wait('getComputedStyle(document.querySelector(".conversation")).display==="none"');
+      await click('button[aria-label="Close chat activity"]');
+      await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
     } finally {
       fixture.closeAllConnections();
       await new Promise<void>((done) => fixture.close(() => done()));

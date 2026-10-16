@@ -76,6 +76,8 @@ let mode:
   | 'oversized-results'
   | 'runtime-tools'
   | 'image-view'
+  | 'attachment-tools'
+  | 'artifact-feedback'
   | 'screenshot-artifact'
   | 'approval-custom'
   | 'approval-parallel'
@@ -86,6 +88,7 @@ let mode:
   | 'approval-memory' = 'normal';
 let endpoint = '';
 let project = '';
+let artifactFeedbackId = '';
 async function close(server: Server) {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -445,6 +448,85 @@ beforeEach(async () => {
       };
       res.write(
         `data: ${JSON.stringify({ id: 'notify', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: 'tool_calls' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    if (mode === 'artifact-feedback') {
+      const invalid = body.messages.some(
+        (message: { tool_call_id?: string }) => message.tool_call_id === 'invalid-artifact-kind',
+      );
+      const refused = body.messages.some(
+        (message: { tool_call_id?: string }) => message.tool_call_id === 'read-image-text',
+      );
+      const delta = refused
+        ? { content: 'Use image.view to inspect the image pixels.' }
+        : {
+            tool_calls: [
+              {
+                index: 0,
+                id: invalid ? 'read-image-text' : 'invalid-artifact-kind',
+                type: 'function',
+                function: {
+                  name: 'conversations',
+                  arguments: JSON.stringify(
+                    invalid
+                      ? { action: 'read_artifact', attachmentId: artifactFeedbackId }
+                      : { action: 'list_artifacts', kind: 'image' },
+                  ),
+                },
+              },
+            ],
+          };
+      res.write(
+        `data: ${JSON.stringify({ id: 'feedback', model: body.model, choices: [{ index: 0, delta, finish_reason: refused ? 'stop' : 'tool_calls' }] })}\n\n`,
+      );
+      res.end('data: [DONE]\n\n');
+      return;
+    }
+    if (mode === 'attachment-tools') {
+      const discovery = body.messages.find(
+        (message: { tool_call_id?: string }) => message.tool_call_id === 'discover-upload',
+      );
+      const viewed = body.messages.some(
+        (message: { tool_call_id?: string }) => message.tool_call_id === 'reopen-upload',
+      );
+      const copied = body.messages.some(
+        (message: { tool_call_id?: string }) => message.tool_call_id === 'copy-upload',
+      );
+      const attachmentId = discovery ? JSON.parse(discovery.content).results[0].id : undefined;
+      const delta = copied
+        ? { content: 'Reopened and copied the saved upload.' }
+        : {
+            tool_calls: [
+              {
+                index: 0,
+                id: !discovery ? 'discover-upload' : !viewed ? 'reopen-upload' : 'copy-upload',
+                type: 'function',
+                function: {
+                  name: !discovery ? 'conversations' : !viewed ? 'image' : 'file_operations',
+                  arguments: JSON.stringify(
+                    !discovery
+                      ? {
+                          action: 'search_artifacts',
+                          source: 'attachment',
+                          query: 'reference.png',
+                          limit: 1,
+                        }
+                      : !viewed
+                        ? { action: 'view', attachmentId }
+                        : {
+                            action: 'copy_attachment',
+                            attachmentId,
+                            path: join(project, 'copied.png'),
+                          },
+                  ),
+                },
+              },
+            ],
+          };
+      res.write(
+        `data: ${JSON.stringify({ id: 'attachments', model: body.model, choices: [{ index: 0, delta, finish_reason: copied ? 'stop' : 'tool_calls' }] })}\n\n`,
       );
       res.end('data: [DONE]\n\n');
       return;
@@ -1046,6 +1128,87 @@ describe('Mukai bots and AI API', () => {
     },
   );
 
+  it('rediscovers an attached image after compaction, reopens its pixels and copies its original bytes without a workspace folder', async () => {
+    await configure(true);
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const png = await sharp({
+      create: { width: 25, height: 15, channels: 3, background: '#0088cc' },
+    })
+      .png()
+      .toBuffer();
+    const attachment = (await upload('reference.png', png)).data;
+    await chat('Keep this image for later.', randomUUID(), 'scout', [attachment.id]);
+    expect(JSON.stringify(calls[0].messages)).toContain(attachment.id);
+    // Model context no longer contains the original message or its pixels, but
+    // the conversation and upload remain saved and discoverable by the tool.
+    const through = Number(
+      api.store.get('SELECT MAX(sequence) AS sequence FROM messages')!.sequence,
+    );
+    api.store.run(
+      'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+      'bot-scout',
+      'scout',
+      'The user previously supplied a reference image.',
+      through,
+    );
+    calls = [];
+    mode = 'attachment-tools';
+    await chat('Find the reference image again and copy it to the requested destination.');
+    const current = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+    expect(current.status, current.error || JSON.stringify(current.activity)).toBe('complete');
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(calls[0].messages)).not.toContain('data:image/png;base64');
+    expect(JSON.stringify(calls[2].messages)).toContain('data:image/png;base64');
+    expect(readFileSync(join(project, 'copied.png'))).toEqual(png);
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+    expect(reply.status, reply.error || '').toBe('complete');
+    expect(reply.activity).toMatchObject([
+      { tool: 'conversations', action: 'search_artifacts', status: 'complete' },
+      {
+        tool: 'image',
+        action: 'view',
+        attachmentId: attachment.id,
+        path: 'reference.png',
+        status: 'complete',
+      },
+      { tool: 'file_operations', action: 'copy_attachment', status: 'complete' },
+    ]);
+    const preview = await fetch(api.url + '/conversations/bot-scout/activity-image', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId: reply.id, activityId: reply.activity![1].id }),
+    });
+    expect(preview.status).toBe(200);
+    expect((await sharp(Buffer.from(await preview.arrayBuffer())).metadata()).width).toBe(25);
+  });
+  it('returns expected artifact guidance through the SDK without an error stack or false correction diagnostic', async () => {
+    await configure(true);
+    const png = await sharp({
+      create: { width: 25, height: 15, channels: 3, background: '#0088cc' },
+    })
+      .png()
+      .toBuffer();
+    artifactFeedbackId = (await upload('reference.png', png)).data.id;
+    mode = 'artifact-feedback';
+    await chat('Inspect my image.', randomUUID(), 'scout', [artifactFeedbackId]);
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+    expect(reply.status, reply.error || '').toBe('complete');
+    expect(reply.activity).toMatchObject([
+      { tool: 'conversations', status: 'failed' },
+      {
+        tool: 'conversations',
+        action: 'read_artifact',
+        status: 'failed',
+        summary: expect.stringContaining('Use image.view'),
+      },
+    ]);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('image_requires_view');
+    const diagnostics = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(diagnostics).toContain('chat.tool_input_invalid');
+    expect(diagnostics).toContain('chat.tool_feedback');
+    expect(diagnostics).not.toContain('chat.tool_failed');
+    expect(diagnostics).not.toContain('chat.tool_input_corrected');
+  });
   it('lists image tools without a workspace folder and honors bot assignment', async () => {
     const tools = (await request<ToolInfo[]>('/tools?workspaceId=default')).data;
     expect(tools).toContainEqual(
@@ -1989,7 +2152,7 @@ describe('Mukai bots and AI API', () => {
   });
   it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
     await configure(false, {
-      contextWindowTokens: 24000,
+      contextWindowTokens: 26000,
       maxOutputTokens: 1024,
     });
     await chat('Short request fits');
@@ -2298,8 +2461,9 @@ describe('Mukai bots and AI API', () => {
     });
   });
   // Leave room for current instructions and tool schemas. The fixture results
-  // still greatly exceed both context windows and must be bounded.
-  it.each([24000, 28000])(
+  // still greatly exceed both context windows and must be bounded. The lower
+  // fixture leaves room for the expanded attachment discovery/copy schemas.
+  it.each([26000, 28000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
       await configure(true, {

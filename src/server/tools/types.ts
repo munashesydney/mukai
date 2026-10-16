@@ -6,7 +6,12 @@ export interface ToolContext {
   signal: AbortSignal;
   files: WorkspaceFileService;
   onActivity: (activity: ChatActivity) => void;
-  onFileChanged: (path: string) => void;
+  onFileChanged: (
+    path: string,
+    metadata?: import('../../shared/fileMetadata').FileMetadata,
+  ) => void;
+  copyOnly?: boolean;
+  attachmentBytes?: (id: string) => Promise<Buffer>;
   callBudget: { remaining: number };
 }
 export type ToolScope = { type: 'all-bots' } | { type: 'selected-bots'; botIds: readonly string[] };

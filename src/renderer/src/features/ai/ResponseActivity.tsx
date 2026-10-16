@@ -23,6 +23,7 @@ import { ToolImagePreview } from './ToolImagePreview';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
+  copy_attachment: 'Copied attachment to',
   write_file: 'Wrote',
   read_file: 'Read',
   patch: 'Edited',

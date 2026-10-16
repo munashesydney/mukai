@@ -311,6 +311,88 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it('gives only the main bot deletion access and preserves hierarchy and workspace boundaries', async () => {
+    const main = await bot(),
+      child = await bot('Ada'),
+      peer = await bot('Nova');
+    const context = (caller: Bot) => ({
+      bot: caller,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    });
+    expect(api.botManagement.actionsFor(main)).toContain('delete');
+    expect(api.botManagement.actionsFor(child)).not.toContain('delete');
+    expect(
+      await executeBotManagement(
+        { action: 'delete', botId: peer.id },
+        context(child),
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Only the workspace main bot') });
+    expect(
+      await executeBotManagement({ action: 'delete', botId: main.id }, context(main), randomUUID()),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('cannot delete itself') });
+    api.store.run('UPDATE bots SET created_by=? WHERE id=?', child.id, peer.id);
+    expect(
+      await executeBotManagement(
+        { action: 'delete', botId: child.id },
+        context(main),
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('child bots first') });
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other-delete','Other',NULL,'now')",
+    );
+    api.store.run('UPDATE bots SET workspace_id=? WHERE id=?', 'other-delete', peer.id);
+    expect(
+      await executeBotManagement({ action: 'delete', botId: peer.id }, context(main), randomUUID()),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('another workspace') });
+    api.store.run(
+      'UPDATE bots SET workspace_id=?,created_by=? WHERE id=?',
+      'default',
+      main.id,
+      peer.id,
+    );
+    const removed = await executeBotManagement(
+      { action: 'delete', botId: child.id },
+      context(main),
+      randomUUID(),
+    );
+    expect(removed).toMatchObject({ ok: true, result: { deleted: true, botId: child.id } });
+    expect((await request<Bot[]>('/bots')).data.map((item) => item.id)).toEqual(
+      expect.arrayContaining([main.id, peer.id]),
+    );
+    expect((await request<Bot[]>('/bots')).data.map((item) => item.id)).not.toContain(child.id);
+  });
+  it('refuses to delete a bot while its response is active', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    await provider();
+    mode = 'slow';
+    const running = chat(child);
+    await waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data.some(
+          (item) => item.status === 'streaming',
+        ),
+      ).toBe(true),
+    );
+    const result = await executeBotManagement(
+      { action: 'delete', botId: child.id },
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('Stop this bot') });
+    await request(`/bots/${child.id}/stop`, 'POST');
+    await running;
+  });
+
   it('assigns unused random mascots to AI-created bots without exposing mascots to the AI', async () => {
     const mascots = botAvatarIds.filter((avatar) => avatar !== 'mukai-logo');
     const main = (await request<Bot>('/bots', 'POST', { ...input(), avatar: mascots[0] })).data;
@@ -615,7 +697,7 @@ describe('Bot architecture', () => {
     expect(
       calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['create', 'update', 'list', 'get', 'send_message', 'get_last_message']);
+    ).toEqual(['create', 'update', 'delete', 'list', 'get', 'send_message', 'get_last_message']);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,

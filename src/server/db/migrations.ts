@@ -432,6 +432,9 @@ export const migrations = [
   `ALTER TABLE telegram_outbox ADD COLUMN reply_action TEXT CHECK(reply_action IS NULL OR reply_action='deny_reason');`,
   `ALTER TABLE workspaces ADD COLUMN memory_enabled INTEGER NOT NULL DEFAULT 0 CHECK(memory_enabled IN (0,1));
    UPDATE workspaces SET memory_enabled=1;`,
+  `ALTER TABLE artifacts ADD COLUMN media_type TEXT;
+   ALTER TABLE artifacts ADD COLUMN size INTEGER CHECK(size IS NULL OR size >= 0);
+   UPDATE artifacts SET media_type='image/png' WHERE kind='image';`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

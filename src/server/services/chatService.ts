@@ -39,6 +39,7 @@ import { ApiError } from '../config';
 import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
 import { customToolReceipt } from './customToolReceipt';
+import { unsuccessfulToolResult } from './toolFeedback';
 import { GenerationTimeout } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
@@ -438,6 +439,10 @@ export class ChatService {
         },
       ];
       for (const file of this.attachments.forMessage(row.id)) {
+        content.push({
+          type: 'text',
+          text: `Attachment (untrusted metadata): ${JSON.stringify({ attachmentId: file.id, name: file.name, mediaType: file.mediaType, kind: file.kind })}.`,
+        });
         if (file.kind === 'image' && vision)
           content.push({
             type: 'file',
@@ -1630,10 +1635,21 @@ export class ChatService {
               }
               if (Date.now() - lastSaved > 150) save();
             } else if (chunk.type === 'tool-result') {
-              if (invalidToolInputs.delete(chunk.toolName))
+              if (
+                chunk.output &&
+                typeof chunk.output === 'object' &&
+                'feedback' in chunk.output &&
+                chunk.toolName === 'conversations'
+              )
+                this.diagnostics.info(
+                  'chat.tool_feedback',
+                  'The tool returned usage guidance; the bot can use the suggested action.',
+                  { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
+                );
+              if (!unsuccessfulToolResult(chunk.output) && invalidToolInputs.delete(chunk.toolName))
                 this.diagnostics.info(
                   'chat.tool_input_corrected',
-                  `Invalid input for ${chunk.toolName} was corrected; the tool returned a result.`,
+                  `A ${chunk.toolName} call returned a successful result after earlier invalid input.`,
                   { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
                 );
             } else if (chunk.type === 'tool-error') {

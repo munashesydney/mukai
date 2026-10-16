@@ -29,6 +29,7 @@ import type { AskHandler } from '../tools/ask/execute';
 import { communicateTools } from '../tools/communicate/execute';
 import { conversationTools } from '../tools/conversations/execute';
 import type { NotificationService } from './notificationService';
+import type { ConversationArtifactService } from './conversationArtifactService';
 import type { ConversationHistoryService } from './conversationHistoryService';
 import { computerTools } from '../computer/tools';
 import { executeWebSearch } from '../tools/web-search/execute';
@@ -39,6 +40,10 @@ import { ComputerUseService } from './computerUseService';
 export class ToolService {
   private notifications?: NotificationService;
   private history?: ConversationHistoryService;
+  private conversationArtifacts?: ConversationArtifactService;
+  attachArtifacts(service: ConversationArtifactService) {
+    this.conversationArtifacts = service;
+  }
   attachCommunication(notifications: NotificationService, history: ConversationHistoryService) {
     this.notifications = notifications;
     this.history = history;
@@ -180,6 +185,7 @@ export class ToolService {
   ) {}
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
+    const canCopyAttachments = this.conversationArtifacts?.hasAttachments(workspaceId);
     const counts = this.messages.toolCounts(workspaceId);
     const memoryCounts = Object.fromEntries(
       // Include activities saved before the three tools became one family.
@@ -190,6 +196,15 @@ export class ToolService {
     );
     return toolCatalog().map((tool) => ({
       ...tool,
+      ...(tool.id === 'file_operations' &&
+      workspace.computer !== 'qemu' &&
+      !workspace.folder &&
+      canCopyAttachments
+        ? {
+            actions: ['copy_attachment'],
+            description: 'Copy a saved upload to an absolute path on the local computer.',
+          }
+        : {}),
       ...(workspace.computer === 'qemu' &&
       ['terminal', 'image', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
         ? {
@@ -226,6 +241,7 @@ export class ToolService {
                         'web_search',
                         'communicate',
                         'conversations',
+                        ...(canCopyAttachments ? ['file_operations'] : []),
                       ].includes(tool.id)
                     ? true
                     : workspace.computer === 'qemu' || Boolean(workspace.folder),
@@ -276,7 +292,17 @@ export class ToolService {
       budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
       vision,
       resultBytes,
+      readImage: this.conversationArtifacts
+        ? async (input: { attachmentId?: string; artifactId?: string }) => {
+            const source = await this.conversationArtifacts!.bytes(bot.workspaceId, input);
+            return { bytes: source.bytes, name: source.metadata.name };
+          }
+        : undefined,
     };
+    const attachmentBytes = this.conversationArtifacts
+      ? async (id: string) =>
+          (await this.conversationArtifacts!.bytes(bot.workspaceId, { attachmentId: id })).bytes
+      : undefined;
     return this.assigned(
       bot,
       {
@@ -292,6 +318,7 @@ export class ToolService {
         ...(this.history
           ? conversationTools({
               history: this.history,
+              artifacts: this.conversationArtifacts,
               workspaceId: bot.workspaceId,
               signal,
               onActivity,
@@ -323,9 +350,11 @@ export class ToolService {
               ...computerTools({
                 ...runtime,
                 computer: this.workspaces.computers!.guest(workspace),
+                attachmentBytes,
                 fileBudget: { remaining: FILE_TOOL_CALL_LIMIT },
                 recordChange: (snapshot) => this.changes.record(bot.id, messageId, snapshot),
-                recordFile: (path) => this.artifacts.record(bot.id, messageId, path),
+                recordFile: (path, metadata) =>
+                  this.artifacts.record(bot.id, messageId, path, metadata),
                 saveScreenshot: (image) =>
                   this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
               }),
@@ -356,18 +385,23 @@ export class ToolService {
               folder: workspace.folder,
               vision,
               resultBytes,
+              readImage: runtime.readImage,
               saveScreenshot: (image) =>
                 this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
             })),
-        ...(workspace.computer !== 'qemu' && workspace.folder
+        ...(workspace.computer !== 'qemu' &&
+        (workspace.folder || this.conversationArtifacts?.hasAttachments(bot.workspaceId))
           ? toolsForBot({
               botId: bot.id,
               signal,
-              files: new WorkspaceFileService(workspace.folder, this.dataDir, (snapshot) =>
+              files: new WorkspaceFileService(workspace.folder || '', this.dataDir, (snapshot) =>
                 this.changes.record(bot.id, messageId, snapshot),
               ),
               onActivity,
-              onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
+              onFileChanged: (path, metadata) =>
+                this.artifacts.record(bot.id, messageId, path, metadata),
+              attachmentBytes,
+              copyOnly: !workspace.folder,
               callBudget: { remaining: FILE_TOOL_CALL_LIMIT },
             })
           : {}),

@@ -1,5 +1,6 @@
 import type { SkillService } from '../skills/service';
 import type { ChatOutputService } from '../services/chatOutputService';
+import type { ConversationArtifactService } from '../services/conversationArtifactService';
 import type { DesktopTransport } from '../computer/desktopTransport';
 import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -74,6 +75,7 @@ export function createRoutes({
   browserMode = false,
   version = '0.1.0',
   chatOutputs,
+  conversationArtifacts,
   notifications,
   desktops,
   approvals,
@@ -99,6 +101,7 @@ export function createRoutes({
   browserMode?: boolean;
   version?: string;
   chatOutputs: ChatOutputService;
+  conversationArtifacts: ConversationArtifactService;
   notifications: NotificationService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
@@ -586,7 +589,13 @@ export function createRoutes({
             activity.action !== 'view'
           )
             throw new ApiError(404, 'Viewed image not found in this conversation.');
-          const bytes = await artifacts.previewImage(message.botId, id, activity.path);
+          const bytes =
+            activity.attachmentId || activity.artifactId
+              ? await conversationArtifacts.image(conversation.workspaceId, {
+                  attachmentId: activity.attachmentId,
+                  artifactId: activity.artifactId,
+                })
+              : await artifacts.previewImage(message.botId, id, activity.path);
           response.setHeader('Content-Type', 'image/png');
           response.setHeader('X-Content-Type-Options', 'nosniff');
           response.setHeader('Cache-Control', 'no-store');

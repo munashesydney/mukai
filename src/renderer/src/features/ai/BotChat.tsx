@@ -143,6 +143,7 @@ export function BotChat({
   );
   return (
     <div
+      ref={activity.layoutRef}
       className={`conversation-layout ${activity.open && !detailsOpen ? 'has-chat-activity' : ''}`}
     >
       <div className="conversation-panels">

@@ -218,7 +218,12 @@ describe('VM tools', () => {
   });
   it('routes calls exclusively through the computer and preserves file bookkeeping', async () => {
     const request = vi.fn().mockResolvedValue({
-      result: { path: 'test.txt', changed: true, summary: 'Saved' },
+      result: {
+        path: 'test.txt',
+        changed: true,
+        summary: 'Saved',
+        metadata: { mediaType: 'text/plain', size: 5 },
+      },
       changes: [{ path: 'test.txt', before: null, after: 'hello' }],
     });
     const recordChange = vi.fn(),
@@ -243,7 +248,7 @@ describe('VM tools', () => {
       ),
     ).toMatchObject({ ok: true });
     expect(recordChange).toHaveBeenCalledWith({ path: 'test.txt', before: null, after: 'hello' });
-    expect(recordFile).toHaveBeenCalledWith('test.txt');
+    expect(recordFile).toHaveBeenCalledWith('test.txt', { mediaType: 'text/plain', size: 5 });
     request.mockRejectedValue(new Error('VM offline'));
     expect(
       await tools.terminal.execute!({ command: 'echo should-not-run' }, options),

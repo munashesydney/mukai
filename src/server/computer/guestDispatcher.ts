@@ -92,6 +92,36 @@ export class GuestDispatcher implements Computer {
         const files = new WorkspaceFileService(this.folder, this.dataDir, (snapshot) =>
           changes.push(snapshot),
         );
+        if (
+          input &&
+          typeof input === 'object' &&
+          'action' in input &&
+          input.action === 'inspect_artifact'
+        ) {
+          const value = z.object({ path: z.string().min(1).max(4000) }).parse(input);
+          return files.inspect(value.path);
+        }
+        if (
+          input &&
+          typeof input === 'object' &&
+          'action' in input &&
+          input.action === 'copy_attachment'
+        ) {
+          const value = z
+            .object({
+              path: z.string().min(1).max(4000),
+              bytes: z.string().max(14 * 1024 * 1024),
+              overwrite: z.boolean().optional(),
+            })
+            .parse(input);
+          const result = await files.copyAttachment(
+            value.path,
+            Buffer.from(value.bytes, 'base64'),
+            value.overwrite === true,
+            signal,
+          );
+          return { result, changes };
+        }
         const result = await files.execute(
           fileOperationsDefinition.inputSchema.parse(input),
           signal,
@@ -145,8 +175,21 @@ export class GuestDispatcher implements Computer {
         return result;
       }
       case 'download': {
-        const { path } = z.object({ path: z.string().min(1).max(4000) }).parse(input);
-        const file = await new WorkspaceFileService(this.folder, this.dataDir).download(path);
+        const { path, maxBytes } = z
+          .object({
+            path: z.string().min(1).max(4000),
+            maxBytes: z
+              .number()
+              .int()
+              .min(1)
+              .max(10 * 1024 * 1024)
+              .optional(),
+          })
+          .parse(input);
+        const file = await new WorkspaceFileService(this.folder, this.dataDir).download(
+          path,
+          maxBytes,
+        );
         return { name: file.name, bytes: file.bytes.toString('base64') };
       }
     }

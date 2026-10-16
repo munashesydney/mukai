@@ -111,12 +111,15 @@ export interface ChatActivity {
   summary: string;
   delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
   createdBotId?: string;
+  attachmentId?: string;
+  artifactId?: string;
   processSessionId?: string;
   serverUrls?: string[];
 }
 export interface FileArtifact {
   kind?: 'file' | 'image';
   mediaType?: string;
+  size?: number;
   id: string;
   botId: string;
   messageId: string;

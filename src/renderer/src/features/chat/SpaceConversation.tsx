@@ -71,7 +71,10 @@ export function SpaceConversation({
     [],
   );
   return (
-    <div className={`conversation-layout ${activityOpen ? 'has-chat-activity' : ''}`}>
+    <div
+      ref={activity.layoutRef}
+      className={`conversation-layout ${activityOpen ? 'has-chat-activity' : ''}`}
+    >
       <div className="conversation-panels">
         <main className="conversation">
           <ConversationHeader
