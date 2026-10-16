@@ -12,6 +12,7 @@ export function PopupMenu({
   menuClassName = '',
   buttonClassName = '',
   disabled = false,
+  role = 'menu',
 }: {
   label: string;
   title: string;
@@ -23,6 +24,7 @@ export function PopupMenu({
   menuClassName?: string;
   buttonClassName?: string;
   disabled?: boolean;
+  role?: 'menu' | 'dialog';
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null),
@@ -56,6 +58,7 @@ export function PopupMenu({
     position();
     element.showPopover();
     (
+      element.querySelector<HTMLElement>('[data-popup-autofocus]') ||
       element.querySelector<HTMLButtonElement>('[aria-checked="true"]') ||
       element.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
     )?.focus();
@@ -80,6 +83,9 @@ export function PopupMenu({
       ref={root}
       className={className}
       onBlur={(event) => {
+        // Disabling a focused Save button can blur it to the document body.
+        // Keep rich editors open while their asynchronous save settles.
+        if (role === 'dialog' && !event.relatedTarget) return;
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
       onKeyDown={(event) => {
@@ -87,7 +93,11 @@ export function PopupMenu({
           event.preventDefault();
           event.stopPropagation();
           close();
-        } else if (expanded && ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        } else if (
+          role === 'menu' &&
+          expanded &&
+          ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+        ) {
           event.preventDefault();
           const items = [
             ...(popup.current?.querySelectorAll<HTMLButtonElement>(
@@ -110,7 +120,7 @@ export function PopupMenu({
         type="button"
         className={buttonClassName}
         aria-label={label}
-        aria-haspopup="menu"
+        aria-haspopup={role}
         aria-expanded={expanded}
         aria-controls={expanded ? id : undefined}
         disabled={disabled}
@@ -129,7 +139,7 @@ export function PopupMenu({
         <div
           ref={popup}
           id={id}
-          role="menu"
+          role={role}
           aria-label={title}
           popover="manual"
           className={`popup-menu ${menuClassName}`}
