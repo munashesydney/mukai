@@ -6,13 +6,32 @@ import type { Server } from 'node:http';
 import { MukaiBrowserHost } from './embeddedBrowserHost';
 import { z } from 'zod';
 import { registerDesktopActions } from './desktopActions';
+import electronUpdater from 'electron-updater';
+import { DesktopUpdater } from './desktopUpdater';
 
 let apiServer: Server | undefined;
 let apiUrl = '';
 let shutdownApi: (() => Promise<void>) | undefined;
 let quitting = false;
+let shutdownPromise: Promise<void> | undefined;
+let desktopUpdater: DesktopUpdater | undefined;
 const embeddedBrowser = new MukaiBrowserHost();
 const appWindows = new Set<number>();
+
+function shutdownDesktop() {
+  return (shutdownPromise ??= (async () => {
+    desktopUpdater?.stop();
+    await shutdownApi?.();
+    if (apiServer) {
+      const server = apiServer;
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      });
+      apiServer = undefined;
+    }
+  })());
+}
 
 if (process.platform === 'win32') app.setAppUserModelId('com.mukai.desktop');
 
@@ -63,6 +82,7 @@ else {
     .whenReady()
     .then(async () => {
       const api = await startApiServer(47831, {
+        version: app.getVersion(),
         dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
         embeddedBrowser,
         desktopHelperDir: app.isPackaged
@@ -127,6 +147,55 @@ else {
         return result.canceled ? null : result.filePaths[0] || null;
       });
       registerDesktopActions((event) => Boolean(senderWindow(event)));
+      const updatesEnabled =
+        app.isPackaged &&
+        (process.platform === 'win32' ||
+          process.platform === 'darwin' ||
+          (process.platform === 'linux' && Boolean(process.env.APPIMAGE)));
+      desktopUpdater = new DesktopUpdater(
+        updatesEnabled ? electronUpdater.autoUpdater : undefined,
+        app.getVersion(),
+        {
+          notify: (state) => {
+            for (const window of BrowserWindow.getAllWindows())
+              if (appWindows.has(window.webContents.id))
+                window.webContents.send(IPC.updateState, state);
+          },
+          confirmRestart: async () => {
+            const result = await dialog.showMessageBox({
+              type: 'question',
+              title: 'Restart to update Mukai?',
+              message: 'Mukai will restart to install the downloaded update.',
+              detail:
+                'Running bots, tools, and computer sessions will stop. Your saved data stays on this device.',
+              buttons: ['Restart and update', 'Later'],
+              defaultId: 1,
+              cancelId: 1,
+              noLink: true,
+            });
+            return result.response === 0;
+          },
+          prepareQuit: async () => {
+            await shutdownDesktop();
+            quitting = true;
+          },
+          disabledReason: app.isPackaged
+            ? 'Automatic updates require an installed Windows app, Mac app, or Linux AppImage.'
+            : 'Automatic updates are available in installed releases.',
+        },
+      );
+      ipcMain.handle(IPC.updateState, (event) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        return desktopUpdater!.getState();
+      });
+      ipcMain.handle(IPC.checkForUpdates, (event) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        return desktopUpdater!.check();
+      });
+      ipcMain.handle(IPC.restartToUpdate, (event) => {
+        if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
+        return desktopUpdater!.restart();
+      });
       ipcMain.on(IPC.maximize, (event) => {
         const window = senderWindow(event);
         if (window?.isMaximized()) window.unmaximize();
@@ -134,6 +203,7 @@ else {
       });
       ipcMain.on(IPC.close, (event) => senderWindow(event)?.close());
       createWindow();
+      desktopUpdater.start();
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
       });
@@ -148,12 +218,12 @@ else {
   app.on('before-quit', (event) => {
     if (!quitting && apiServer) {
       event.preventDefault();
-      quitting = true;
-      void shutdownApi?.().finally(() => {
-        apiServer?.close();
-        apiServer?.closeAllConnections();
-        app.quit();
-      });
+      void shutdownDesktop()
+        .catch(console.error)
+        .finally(() => {
+          quitting = true;
+          app.quit();
+        });
     }
   });
 }

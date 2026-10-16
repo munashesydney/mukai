@@ -9,6 +9,7 @@ import { MemoryPanel } from './MemoryPanel';
 import { CustomRoutesPanel } from './CustomRoutesPanel';
 import type { Workspace } from '../../../../shared/ai';
 import type { SettingsSection } from '../workspace/types';
+import { useDesktopUpdate } from '../updates/useDesktopUpdate';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
@@ -35,6 +36,7 @@ export function SettingsPage({
   onConnectFolder?: () => void;
   onDeleteWorkspace?: (id: string, name: string) => Promise<void>;
 }) {
+  const update = useDesktopUpdate();
   return (
     <main className="settings-page" aria-label="Settings">
       <div className="settings-layout">
@@ -72,7 +74,7 @@ export function SettingsPage({
           <div className="settings-nav-footer">
             <Brand />
             <span>Your ideas. Your pace.</span>
-            <small>Version 0.1.0</small>
+            <small>Version {update?.currentVersion || '0.1.0'}</small>
           </div>
         </aside>
         <div

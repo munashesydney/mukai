@@ -5,6 +5,7 @@ import { readdir, stat, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { cliReleaseFiles } from './cli/release.ts';
+import { desktopUpdateNames, prepareDesktopUpdates } from './desktop-updates.ts';
 
 export const installerNames = (version: string) => [
   `Mukai-Setup-${version}-x64.exe`,
@@ -20,15 +21,18 @@ export async function verifyInstallers(
   additionalFiles: string[] = [],
 ) {
   if (!/^\d+\.\d+\.\d+-build\.\d+\.\d+$/.test(version)) throw new Error('Invalid build version.');
-  const names = [...installerNames(version), ...additionalFiles];
+  const names = [...installerNames(version), ...desktopUpdateNames(version), ...additionalFiles];
+  const incomingNames = names.filter((name) => name !== 'latest-mac.yml');
+  incomingNames.push('latest-mac-x64.yml', 'latest-mac-arm64.yml');
   const actual = (await readdir(directory)).sort();
-  if (JSON.stringify(actual) !== JSON.stringify([...names].sort()))
+  if (JSON.stringify(actual) !== JSON.stringify(incomingNames.sort()))
     throw new Error('Release must contain exactly the expected release assets.');
+  await prepareDesktopUpdates(directory, version);
   const sums: string[] = [];
   for (const name of names) {
     const path = join(directory, name);
     const info = await stat(path);
-    const minimum = /\.(sh|ps1|json|sha256)$/.test(name) ? 1 : minimumBytes;
+    const minimum = /\.(sh|ps1|json|sha256|yml|blockmap)$/.test(name) ? 1 : minimumBytes;
     if (!info.isFile() || info.size < minimum) throw new Error(`Invalid installer: ${name}`);
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(path)) hash.update(chunk);

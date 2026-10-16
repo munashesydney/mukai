@@ -14,6 +14,7 @@ import { IconButton } from '../ui/IconButton';
 import { useEffect, useState } from 'react';
 import { getHealth } from '../../services/healthService';
 import { signOut } from '../../services/ownerAuthService';
+import { DesktopUpdateControl } from '../../features/updates/DesktopUpdateControl';
 
 export function TitleBar({
   onSearch,
@@ -83,6 +84,7 @@ export function TitleBar({
         <kbd>Ctrl K</kbd>
       </button>
       <div className="title-right">
+        <DesktopUpdateControl />
         {onComputer && (
           <button
             className={`computer-toggle ${computerOpen ? 'is-active' : ''}`}
