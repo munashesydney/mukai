@@ -179,6 +179,11 @@ export function createRoutes({
       if (method === 'PUT')
         return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
     }
+    if (resource === 'settings' && id === 'profile' && !action) {
+      if (method === 'GET') return send(response, settings.userProfile());
+      if (method === 'PUT')
+        return send(response, settings.saveUserProfile(await jsonBody(request)));
+    }
     if (resource === 'settings' && id === 'appearance' && !action) {
       if (method === 'GET') return send(response, settings.appearance());
       if (method === 'PUT') return send(response, settings.saveAppearance(await jsonBody(request)));

@@ -92,6 +92,12 @@ Desktop and CLI use the same per-user data directory: `%APPDATA%/mukai/data` on 
 
 Appearance is saved in the existing `app_settings` table, alongside the public custom-route URL. The Limits tab's pursuit concurrency is also saved in SQLite. On the first updated desktop launch, its previous appearance preference is imported from local storage only if no shared appearance exists. Browser local storage is only a startup cache; shared preferences override it across browser ports and desktop launches.
 
+Click your profile icon in a conversation or Workspace settings to customize it.
+The default is a user icon in a brown circle. The picker supports icons, letters
+or initials, background presets, and a custom color, with a preview before saving.
+Your saved profile lives in `app_settings` and is reused across conversations,
+desktop launches, and browser connections to the same data directory.
+
 Failure diagnostics are written as one JSON record per line in `<data directory>/logs/errors.log` and printed in the backend terminal with `[mukai diagnostic]`. They include timestamps, a diagnostic ID, model/provider and conversation/message IDs, failure phase, HTTP status, provider error type/code/message, nested network causes, and filtered stack frames when available. API keys and the local API token are redacted; request bodies, prompts, tool arguments, raw validation payloads, full response bodies, and authorization headers are not serialized. The current file rotates at 2 MiB, keeping `errors.1.log` and `errors.2.log`. If writing fails, terminal diagnostics remain available and chat handling continues. Logging covers chat/provider exceptions, compaction recovery errors, SDK tool failures, provider connection tests, unexpected HTTP errors, and checkpoint/response-save failures. Earlier failures cannot be reconstructed retroactively.
 
 The directory holds `mukai.sqlite`, its WAL files, durable `uploads/`, `credentials.key`, and `api.token`. Credentials use AES-256-GCM with a local random encryption key. Files use private permissions where the OS supports them and inherit the current user’s directory permissions on Windows. This is a single-user local app, not a remotely hosted multi-user service. The encryption key lives beside the database; anyone with access to the complete data directory can decrypt saved credentials. Protect that directory and back up the whole directory after shutting down the server.

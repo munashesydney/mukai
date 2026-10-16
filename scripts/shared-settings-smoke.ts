@@ -45,6 +45,7 @@ async function main() {
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, async () => (await fetch(api.url + '/health')).json());
   ipcMain.handle(IPC.browserBounds, () => {});
+  ipcMain.handle(IPC.updateState, () => ({ status: 'disabled', currentVersion: '0.1.0' }));
   const createDesktopWindow = () =>
     new BrowserWindow({
       show: false,
@@ -138,6 +139,63 @@ async function main() {
     );
     await page.reload();
     await page.getByRole('button', { name: 'Open settings' }).click();
+    // The user avatar opens the same shared floating surface as composer pickers.
+    const profileTrigger = page
+      .getByRole('button', { name: 'Customize your profile icon' })
+      .first();
+    await profileTrigger.click();
+    const profileCard = page.getByRole('dialog', { name: 'Make it yours' });
+    await profileCard.getByRole('button', { name: 'Rocket', exact: true }).click();
+    await profileCard.getByRole('button', { name: 'Forest background' }).click();
+    await writeFile(resolve('artifacts/profile-customizer.png'), await page.screenshot());
+    await profileCard.getByRole('button', { name: 'Save', exact: true }).click();
+    await profileCard.waitFor({ state: 'detached' });
+    assert.equal(
+      await profileTrigger.getByRole('img').getAttribute('aria-label'),
+      'Your profile: Rocket',
+    );
+    await profileTrigger.click();
+    await profileCard.getByRole('button', { name: 'Letter', exact: true }).click();
+    const initials = profileCard.getByLabel('Letter or initials');
+    await initials.fill('SY');
+    await initials.press('Home');
+    assert.equal(
+      await initials.evaluate((input: HTMLInputElement) => input.selectionStart),
+      0,
+      'The shared popup must preserve text-input navigation in dialog mode.',
+    );
+    await page.route('**/api/settings/profile', async (route) => {
+      if (route.request().method() === 'PUT')
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Temporary profile failure' }),
+        });
+      else await route.continue();
+    });
+    await profileCard.getByRole('button', { name: 'Save', exact: true }).click();
+    await profileCard.getByRole('alert').waitFor();
+    assert.equal(await initials.inputValue(), 'SY');
+    assert.equal(
+      await profileTrigger.getByRole('img').getAttribute('aria-label'),
+      'Your profile: Rocket',
+    );
+    await page.unroute('**/api/settings/profile');
+    await profileCard.getByRole('button', { name: 'Save', exact: true }).click();
+    await profileCard.waitFor({ state: 'detached' });
+    await page.reload();
+    await page.getByRole('button', { name: 'Open settings' }).click();
+    await profileTrigger.getByRole('img', { name: 'Your profile: SY', exact: true }).waitFor();
+    await profileTrigger.click();
+    await profileCard.getByRole('button', { name: 'Reset', exact: true }).click();
+    await profileCard.getByRole('img', { name: 'Your profile: User', exact: true }).waitFor();
+    await profileCard.press('Escape');
+    await profileCard.waitFor({ state: 'detached' });
+    assert.equal(
+      await profileTrigger.getByRole('img').getAttribute('aria-label'),
+      'Your profile: SY',
+      'Dismissed drafts must not overwrite the saved profile.',
+    );
     await page.getByRole('tab', { name: 'Appearance', exact: true }).click();
     await page.locator('label.mode-option:has(input[value="light"])').click();
     await page.locator('label.theme-option:has(input[value="iris"])').click();
@@ -185,6 +243,20 @@ async function main() {
     await wait(
       `document.documentElement.dataset.theme === 'graphite' && document.documentElement.dataset.mode === 'dark'`,
     );
+    await desktopWindow.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="Open settings"]')?.click()`,
+    );
+    await wait(
+      `Boolean(document.querySelector('.user-avatar-trigger [aria-label="Your profile: SY"]'))`,
+    );
+    assert.deepEqual(
+      await (
+        await fetch(api.url + '/settings/profile', {
+          headers: { Authorization: `Bearer ${api.token}` },
+        })
+      ).json(),
+      { mode: 'letter', letter: 'SY', icon: 'rocket', background: '#438571' },
+    );
   } finally {
     console.log('Shared settings smoke: closing desktop, browser and backend.');
     if (!desktopWindow.isDestroyed()) desktopWindow.destroy();
@@ -192,7 +264,7 @@ async function main() {
     await closeApi();
   }
   console.log(
-    'Shared settings smoke passed: native path, desktop migration, browser cache override, UI saving and rollback, focus sync, reload, desktop round trip, and connection cleanup.',
+    'Shared settings smoke passed: appearance and profile UI, failed-save retry, keyboard navigation, reload, desktop/browser persistence, and connection cleanup.',
   );
 }
 void main()

@@ -1,9 +1,19 @@
 import { appearanceSchema, type AppearanceSettings } from '../../shared/appearance';
 import type { SettingsRepository } from '../repositories/settingsRepository';
+import { defaultUserProfile, userProfileSchema } from '../../shared/userProfile';
 
 const appearanceKey = 'appearance';
 export class SettingsService {
   constructor(private readonly repository: SettingsRepository) {}
+  userProfile() {
+    const saved = this.repository.get('user-profile');
+    return saved === null ? { ...defaultUserProfile } : userProfileSchema.parse(JSON.parse(saved));
+  }
+  saveUserProfile(value: unknown) {
+    const profile = userProfileSchema.parse(value);
+    this.repository.set('user-profile', JSON.stringify(profile));
+    return profile;
+  }
   appearance(): AppearanceSettings {
     const saved = this.repository.get(appearanceKey);
     if (saved === null) return { appearance: null };

@@ -31,7 +31,8 @@ describe('bot mascots', () => {
   it('falls back to the logo for unknown saved values and keeps the user avatar', () => {
     expect(botAvatarSrc('missing-mascot')).toBe('./mascots/mukai-logo.webp');
     const user = renderToStaticMarkup(createElement(Avatar, { person: 'munashe', status: true }));
-    expect(user).toContain('user-initials');
+    expect(user).toContain('user-profile-icon');
+    expect(user).not.toContain('user-initials');
     expect(user).toContain('presence-dot');
     expect(user).not.toContain('avatar-mascot');
     expect(botSchema.shape.avatar.safeParse('missing-mascot').success).toBe(false);

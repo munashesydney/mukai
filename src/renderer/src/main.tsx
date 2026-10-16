@@ -9,6 +9,8 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ThemeProvider } from './features/appearance/ThemeProvider';
 import { applyTheme, readPreferences } from './features/appearance/themes';
 import { BrowserAuthGate } from './features/auth/BrowserAuthGate';
+import { UserProfileProvider } from './features/profile/UserProfileProvider';
+import './styles/profile.css';
 import './styles/auth.css';
 import './styles/tokens.css';
 import './styles/global.css';
@@ -31,7 +33,9 @@ root.render(
     <ErrorBoundary>
       <BrowserAuthGate>
         <ThemeProvider>
-          <App />
+          <UserProfileProvider>
+            <App />
+          </UserProfileProvider>
         </ThemeProvider>
       </BrowserAuthGate>
     </ErrorBoundary>

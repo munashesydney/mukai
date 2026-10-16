@@ -12,6 +12,8 @@ export function PopupMenu({
   menuClassName = '',
   buttonClassName = '',
   disabled = false,
+  role = 'menu',
+  width = 370,
 }: {
   label: string;
   title: string;
@@ -23,6 +25,8 @@ export function PopupMenu({
   menuClassName?: string;
   buttonClassName?: string;
   disabled?: boolean;
+  role?: 'menu' | 'dialog';
+  width?: number;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null),
@@ -44,10 +48,10 @@ export function PopupMenu({
         below = window.innerHeight - bounds.bottom - 16;
       const upward =
         placement === 'top' ? above >= 180 || above > below : below < 180 && above > below;
-      const width = Math.min(370, window.innerWidth - 24);
+      const popupWidth = Math.min(width, window.innerWidth - 24);
       Object.assign(element.style, {
-        width: `${width}px`,
-        left: `${Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12))}px`,
+        width: `${popupWidth}px`,
+        left: `${Math.max(12, Math.min(bounds.left, window.innerWidth - popupWidth - 12))}px`,
         top: upward ? 'auto' : `${bounds.bottom + 9}px`,
         bottom: upward ? `${window.innerHeight - bounds.top + 9}px` : 'auto',
         maxHeight: `${Math.max(80, upward ? above : below)}px`,
@@ -56,6 +60,7 @@ export function PopupMenu({
     position();
     element.showPopover();
     (
+      element.querySelector<HTMLElement>('[data-popup-autofocus]') ||
       element.querySelector<HTMLButtonElement>('[aria-checked="true"]') ||
       element.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
     )?.focus();
@@ -74,12 +79,15 @@ export function PopupMenu({
       document.removeEventListener('scroll', scroll, true);
       window.removeEventListener('resize', position);
     };
-  }, [expanded, placement]);
+  }, [expanded, placement, width]);
   return (
     <div
       ref={root}
       className={className}
       onBlur={(event) => {
+        // Disabling a focused Save button can blur it to the document body.
+        // Keep rich editors open while their asynchronous save settles.
+        if (role === 'dialog' && !event.relatedTarget) return;
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
       onKeyDown={(event) => {
@@ -87,7 +95,11 @@ export function PopupMenu({
           event.preventDefault();
           event.stopPropagation();
           close();
-        } else if (expanded && ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        } else if (
+          role === 'menu' &&
+          expanded &&
+          ['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+        ) {
           event.preventDefault();
           const items = [
             ...(popup.current?.querySelectorAll<HTMLButtonElement>(
@@ -110,7 +122,7 @@ export function PopupMenu({
         type="button"
         className={buttonClassName}
         aria-label={label}
-        aria-haspopup="menu"
+        aria-haspopup={role}
         aria-expanded={expanded}
         aria-controls={expanded ? id : undefined}
         disabled={disabled}
@@ -129,7 +141,7 @@ export function PopupMenu({
         <div
           ref={popup}
           id={id}
-          role="menu"
+          role={role}
           aria-label={title}
           popover="manual"
           className={`popup-menu ${menuClassName}`}

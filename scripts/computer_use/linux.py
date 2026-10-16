@@ -75,6 +75,8 @@ class X11Desktop:
         self.bind(self.x, "XDisplayHeight", C.c_int, C.c_void_p, C.c_int)
         self.bind(self.x, "XFlush", C.c_int, C.c_void_p)
         self.bind(self.x, "XSync", C.c_int, C.c_void_p, C.c_int)
+        self.bind(self.x, "XGrabServer", C.c_int, C.c_void_p)
+        self.bind(self.x, "XUngrabServer", C.c_int, C.c_void_p)
         self.bind(self.x, "XCloseDisplay", C.c_int, C.c_void_p)
         self.bind(self.x, "XFree", C.c_int, C.c_void_p)
         self.bind(self.x, "XGetAtomName", C.c_void_p, C.c_void_p, C.c_ulong)
@@ -180,7 +182,22 @@ class X11Desktop:
         if not down:
             self.held.discard(name)
 
+    def change_keymap(self, changes, per):
+        # Chromium refreshes its map from another X connection. Do not let that
+        # connection observe only some of this batch's glyphs. Keep the server
+        # grab strictly around the mapping writes, never sleeps or key delivery.
+        self.x.XGrabServer(self.display)
+        try:
+            for code, values in changes.items():
+                symbols = (C.c_ulong * per)(*values)
+                self.x.XChangeKeyboardMapping(self.display, code, per, symbols, 1)
+        finally:
+            self.x.XUngrabServer(self.display)
+            self.x.XSync(self.display, 0)
+
     def type(self, text):
+        if not text:
+            return
         minimum, maximum, per = C.c_int(), C.c_int(), C.c_int()
         self.x.XDisplayKeycodes(self.display, C.byref(minimum), C.byref(maximum))
         count = maximum.value - minimum.value + 1
@@ -206,27 +223,25 @@ class X11Desktop:
                     assigned[symbol] = spare[len(assigned)]
                 end += 1
             try:
-                # Keep every glyph's mapping stable throughout the batch. Rebinding
-                # one code per character races the application's keyboard-map cache.
-                for symbol, code in assigned.items():
-                    symbols = (C.c_ulong * per.value)(*[symbol] * per.value)
-                    self.x.XChangeKeyboardMapping(self.display, code, per.value, symbols, 1)
-                self.x.XSync(self.display, 0)
-                time.sleep(0.01)
+                self.change_keymap({code: [symbol] * per.value
+                                    for symbol, code in assigned.items()}, per.value)
+                # XSync waits for the server, not the application's event loop.
+                # Allow it to process MappingNotify before the first key arrives.
+                time.sleep(0.05)
                 for character in text[offset:end]:
                     code = assigned[text_keysym(character)]
-                    self.test.XTestFakeKeyEvent(self.display, code, 1, 0)
-                    self.test.XTestFakeKeyEvent(self.display, code, 0, 0)
+                    if not self.test.XTestFakeKeyEvent(self.display, code, 1, 0):
+                        raise RuntimeError("X11 text key press failed.")
+                    if not self.test.XTestFakeKeyEvent(self.display, code, 0, 0):
+                        raise RuntimeError("X11 text key release failed.")
                     self.x.XFlush(self.display)
                     time.sleep(0.001)
                 self.x.XSync(self.display, 0)
                 time.sleep(0.1)
             finally:
-                original = (C.c_ulong * per.value)(*[0] * per.value)
                 for code in assigned.values():
                     self.test.XTestFakeKeyEvent(self.display, code, 0, 0)
-                    self.x.XChangeKeyboardMapping(self.display, code, per.value, original, 1)
-                self.x.XSync(self.display, 0)
+                self.change_keymap({code: [0] * per.value for code in assigned.values()}, per.value)
             offset = end
 
     def button(self, name, down):
