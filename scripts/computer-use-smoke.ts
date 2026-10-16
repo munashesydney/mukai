@@ -131,6 +131,22 @@ void app.whenReady().then(async () => {
     await run({ action: 'type', text: 'replaced' });
     await delay(100);
     assert.equal(await evaluate("document.getElementById('text').value"), 'replaced');
+    if (process.platform === 'linux') {
+      // Rebind/restore repeatedly in one Chromium process as well as across the
+      // fresh Xvfb sessions in CI. Verify every character; never retry bad input.
+      for (let round = 0; round < 10; round++) {
+        const sample = round % 2 ? '🌱 世界 café Mukai Ωαβ你好再见 ' + text : text;
+        await run({ action: 'press', key: 'CMD+A' });
+        await run({ action: 'type', text: sample });
+        await delay(200);
+        assert.equal(
+          await evaluate("document.getElementById('text').value"),
+          sample,
+          `Unicode text differed after X11 remapping round ${round + 1}.`,
+        );
+      }
+      console.log('Ten consecutive X11 Unicode remapping rounds passed.');
+    }
     await run({ action: 'key_down', key: 'SHIFT' });
     await run({ action: 'key_up', key: 'SHIFT' });
     await gestures('after typing');

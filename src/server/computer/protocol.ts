@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { RuntimeOwner } from '../../shared/runtime';
 
 export const PROTOCOL_VERSION = 1;
-export const GUEST_REVISION = 11;
+export const GUEST_REVISION = 12;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',
