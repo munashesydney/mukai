@@ -1,4 +1,3 @@
-import { Check, Download, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { Toggle } from '../../components/ui/Toggle';
 import { DesktopUpdateControl } from '../updates/DesktopUpdateControl';
@@ -11,7 +10,6 @@ export function UpdatesPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const available = state && state.status !== 'disabled';
-  const busy = state && ['checking', 'downloading', 'installing'].includes(state.status);
   const ready = state?.status === 'ready';
   const title = !state
     ? window.mukai
@@ -72,15 +70,6 @@ export function UpdatesPanel() {
       <div className="updates-panel-content">
         <section className="updates-release" aria-labelledby="updates-release-title">
           <div className="updates-release-main">
-            <span className="updates-release-icon" aria-hidden="true">
-              {busy ? (
-                <RefreshCw size={22} className="update-spinner" />
-              ) : ready || (state?.message && state.status === 'idle') ? (
-                <Check size={22} />
-              ) : (
-                <Download size={22} />
-              )}
-            </span>
             <div className="updates-release-copy" role="status">
               <h4 id="updates-release-title">{title}</h4>
               <p>{description}</p>
