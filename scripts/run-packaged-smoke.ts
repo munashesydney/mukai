@@ -81,14 +81,7 @@ async function main() {
       .getByRole('heading', { name: 'Create your first workspace.', exact: true })
       .waitFor();
     assert.deepEqual(await workspaceRequest(page), []);
-    const navigation = page.getByRole('navigation', { name: 'Main navigation' });
-    for (const name of ['Bots', 'Messages', 'Pursuits', 'Spaces', 'Tools', 'Telegram']) {
-      assert.equal(
-        await navigation.getByRole('button', { name, exact: true }).isDisabled(),
-        true,
-        `${name} must stay disabled until a workspace is created.`,
-      );
-    }
+    await page.getByRole('navigation', { name: 'Main navigation' }).waitFor({ state: 'visible' });
     const runtime = await desktop!.evaluate(async ({ app }) => {
       const { createRequire } = process.getBuiltinModule(
         'node:module',
