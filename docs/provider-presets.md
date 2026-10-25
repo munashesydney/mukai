@@ -2,6 +2,8 @@
 
 Official API documentation checked October 13, 2026. The built-in catalog is in `src/shared/providerPresets.ts`. Users choose a preset and supply their own credentials; presets do not create authenticated connections or replace existing configurations.
 
+Audio and video input capabilities were checked separately on October 25, 2026. See [media attachments](media-attachments.md) for the per-model capability table, official sources, supported formats, and model-switch handling.
+
 All new compatible models start with a **32,768-token per-response cap**. This is an adjustable Mukai default, not the provider's advertised maximum. Custom compatible models start with a **128,000-token context window**, which users should adjust to the actual served model. Named presets use documented capacities; where documentation says only 1M or 256K, the catalog uses conservative decimal capacities of 1,000,000 and 256,000 tokens.
 
 | Provider    | OpenAI-compatible base URL                               | Included model IDs                                                   | Context            | Documented output capacity                                                                  |

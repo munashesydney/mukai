@@ -22,6 +22,8 @@ export const providerSchema = z.object({
         contextWindowTokens: z.number().int().min(4096).max(10000000).nullable(),
         maxOutputTokens: z.number().int().min(256).max(262144),
         supportsImages: z.boolean(),
+        supportsAudio: z.boolean().optional(),
+        supportsVideo: z.boolean().optional(),
       }),
     )
     .max(200)
@@ -35,6 +37,8 @@ export const providerSchema = z.object({
   baseUrl: z.string().trim().max(500),
   defaultModel: z.string().trim().max(150),
   supportsImages: z.boolean(),
+  supportsAudio: z.boolean().optional(),
+  supportsVideo: z.boolean().optional(),
   isDefault: z.boolean(),
   apiKey: z.string().trim().max(4096).optional(),
   clearKey: z.boolean().optional(),

@@ -34,8 +34,10 @@ export class ProviderRepository {
         provider.maxOutputTokens ?? 8192,
       );
       this.database.run(
-        'UPDATE providers SET models_json = ? WHERE id = ?',
+        'UPDATE providers SET models_json = ?, supports_audio = ?, supports_video = ? WHERE id = ?',
         JSON.stringify(provider.models ?? []),
+        Number(provider.supportsAudio ?? false),
+        Number(provider.supportsVideo ?? false),
         provider.id,
       );
     });

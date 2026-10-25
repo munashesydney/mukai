@@ -3,6 +3,15 @@ import { ApiError } from '../config';
 import { safeProviderError } from './providerService';
 
 describe('Provider error messages', () => {
+  it('explains media and request-size rejections without exposing request content', () => {
+    expect(safeProviderError({ statusCode: 413 })).toContain('smaller or shorter');
+    const message = safeProviderError({
+      statusCode: 400,
+      responseBody: 'unsupported audio codec PRIVATE_MEDIA_DATA',
+    });
+    expect(message).toContain('attached media');
+    expect(message).not.toContain('PRIVATE_MEDIA_DATA');
+  });
   const socket = Object.assign(new Error('other side closed PRIVATE_REQUEST_DATA'), {
     name: 'SocketError',
     code: 'UND_ERR_SOCKET',

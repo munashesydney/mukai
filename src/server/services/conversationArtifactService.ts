@@ -146,6 +146,11 @@ export class ConversationArtifactService {
       const file = this.attachments
         .forMessage(metadata.messageId)
         .find((item) => item.id === metadata.id)!;
+      if (file.kind === 'audio' || file.kind === 'video')
+        throw new ToolFeedbackError(
+          'media_requires_capable_model',
+          `This is a ${file.kind} attachment, not a text document. Its bytes are supplied directly in the original chat to models with ${file.kind} input support. No transcript is available from read_artifact.`,
+        );
       content = file.extractedText || '';
       warning = file.warning;
     } else {

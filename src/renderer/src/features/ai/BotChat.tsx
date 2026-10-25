@@ -15,7 +15,12 @@ import {
   ListTree,
 } from 'lucide-react';
 import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
-import { ACCEPTED_FILES } from '../../../../shared/ai';
+import {
+  acceptedAttachments,
+  inputCapabilityLabel,
+  modelInputCapabilities,
+  supportsAttachment,
+} from '../../../../shared/modelCapabilities';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { AttachmentCard } from './AttachmentCard';
@@ -106,12 +111,15 @@ export function BotChat({
     bot.providerId ? provider.id === bot.providerId : provider.isDefault,
   );
   const model = bot.model || provider?.defaultModel;
-  const vision =
-    provider?.models?.find((item) => item.id === model)?.supportsImages ??
-    bot.supportsImages ??
-    provider?.supportsImages ??
-    false;
-  const blocked = state.files.some((file) => file.kind === 'image') && !vision;
+  const capabilities = modelInputCapabilities(bot, provider);
+  const blocked = state.files.some((file) => !supportsAttachment(file.kind, capabilities));
+  const blockedKinds = [
+    ...new Set(
+      state.files
+        .filter((file) => !supportsAttachment(file.kind, capabilities))
+        .map((file) => file.kind),
+    ),
+  ].join(', ');
   const files = state.messages.flatMap((message) => message.attachments);
   const latestAssistant = [...state.messages]
     .reverse()
@@ -319,8 +327,8 @@ export function BotChat({
                   )}
                   {blocked && (
                     <div className="ai-alert" role="alert">
-                      This model is configured for text only. Remove the image or choose a vision
-                      model before sending.
+                      This model does not support {blockedKinds} input. Remove these attachments or
+                      choose a model that supports them before sending.
                       <button className="text-button" onClick={onProviders}>
                         Configure models
                       </button>
@@ -444,7 +452,7 @@ export function BotChat({
                         className="visually-hidden"
                         type="file"
                         multiple
-                        accept={ACCEPTED_FILES}
+                        accept={acceptedAttachments(capabilities)}
                         tabIndex={-1}
                         aria-label="Upload chat attachments"
                         onChange={(event) => {
@@ -457,7 +465,7 @@ export function BotChat({
                       <span>Enter to send · Shift + Enter for a new line</span>
                       <span>
                         Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
-                        {vision ? 'Images enabled' : 'Text only'}
+                        {inputCapabilityLabel(capabilities)}
                       </span>
                     </div>
                     {!provider && (
@@ -514,8 +522,8 @@ export function BotChat({
               <dd>{provider?.name || 'Not configured'}</dd>
               <dt>Model</dt>
               <dd>{model || 'Workspace default'}</dd>
-              <dt>Images</dt>
-              <dd>{vision ? 'Enabled' : 'Text only'}</dd>
+              <dt>Model inputs</dt>
+              <dd>{inputCapabilityLabel(capabilities)}</dd>
               <dt>Model context</dt>
               <dd>
                 Messages from this conversation, within the model context limits. Other chats stay

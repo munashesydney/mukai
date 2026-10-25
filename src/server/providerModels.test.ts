@@ -106,6 +106,32 @@ describe('Saved provider models', () => {
         .contextWindow,
     ).toBe(262144);
   });
+  it('persists separate audio and video flags and changes capabilities with the selected model', () => {
+    const provider = service.save({
+      ...connection,
+      defaultModel: 'media',
+      models: [
+        { ...models[0], id: 'media', supportsAudio: true, supportsVideo: true },
+        { ...models[0], id: 'text', supportsAudio: false, supportsVideo: false },
+      ],
+    });
+    expect(service.resolve({ ...scoutBot(), model: 'media' })).toMatchObject({
+      supportsAudio: true,
+      supportsVideo: true,
+    });
+    expect(service.resolve({ ...scoutBot(), model: 'text' })).toMatchObject({
+      supportsAudio: false,
+      supportsVideo: false,
+    });
+    const saved = new ProviderRepository(database).find(provider.id)!;
+    expect(saved).toMatchObject({ supportsAudio: true, supportsVideo: true });
+    expect(saved.models?.[1]).toMatchObject({ supportsAudio: false, supportsVideo: false });
+    service.saveModels(provider.id, { models: saved.models!, defaultModel: 'text' });
+    expect(new ProviderRepository(database).find(provider.id)).toMatchObject({
+      supportsAudio: false,
+      supportsVideo: false,
+    });
+  });
   it('validates model IDs and requires a saved default', () => {
     expect(
       providerSchema.safeParse({ ...connection, models: [models[0], models[0]] }).success,

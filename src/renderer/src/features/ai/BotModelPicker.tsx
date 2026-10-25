@@ -5,6 +5,7 @@ import { PopupMenu } from '../../components/ui/PopupMenu';
 import { botService } from '../../services/botService';
 import { providerService } from '../../services/providerService';
 import { errorText } from '../../utils/errors';
+import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 
 export function BotModelPicker({
   bot,
@@ -139,6 +140,9 @@ export function BotModelPicker({
                     key={model.id}
                     type="button"
                     role="menuitemradio"
+                    title={inputCapabilityLabel(
+                      modelInputCapabilities({ model: model.id, supportsImages: null }, item),
+                    )}
                     aria-checked={bot.providerId === item.id && active === model.id}
                     disabled={
                       saving ||

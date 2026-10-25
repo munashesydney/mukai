@@ -33,6 +33,7 @@ import { errorText } from '../../utils/errors';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { ProviderModels } from './ProviderModels';
+import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 
 type View = 'list' | 'choose' | 'connection' | 'models';
 const empty = () => providerPresetInput(providerPresets[0]);
@@ -862,7 +863,10 @@ export function ProvidersPanel({ onChanged }: { onChanged: () => void }) {
                       : provider.hasKey
                         ? 'API key saved'
                         : 'No API key'}{' '}
-                    · {provider.supportsImages ? 'Text & images' : 'Text only'}
+                    ·{' '}
+                    {inputCapabilityLabel(
+                      modelInputCapabilities({ model: null, supportsImages: null }, provider),
+                    )}
                   </p>
                   <div className="ai-form-actions">
                     <button

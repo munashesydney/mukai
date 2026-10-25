@@ -10,6 +10,8 @@ export interface ChatGPTAccount {
   planEnabled: boolean;
 }
 export interface ProviderModel {
+  supportsAudio?: boolean | null;
+  supportsVideo?: boolean | null;
   id: string;
   name: string;
   category: 'GPT' | 'Codex' | 'Reasoning' | 'Other';
@@ -17,6 +19,8 @@ export interface ProviderModel {
   supportsImages: boolean | null;
 }
 export interface SavedProviderModel {
+  supportsAudio?: boolean;
+  supportsVideo?: boolean;
   id: string;
   name: string;
   contextWindowTokens: number | null;
@@ -31,6 +35,8 @@ export interface ChatGPTSignIn {
   message?: string;
 }
 export interface ProviderSettings {
+  supportsAudio?: boolean;
+  supportsVideo?: boolean;
   models?: SavedProviderModel[];
   id: string;
   name: string;
@@ -45,6 +51,8 @@ export interface ProviderSettings {
   maxOutputTokens?: number;
 }
 export interface ProviderInput {
+  supportsAudio?: boolean;
+  supportsVideo?: boolean;
   models?: SavedProviderModel[];
   name: string;
   kind: ProviderKind;
@@ -143,7 +151,7 @@ export interface Attachment {
   name: string;
   mediaType: string;
   size: number;
-  kind: 'image' | 'text';
+  kind: 'image' | 'text' | 'audio' | 'video';
   warning: string | null;
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
@@ -230,4 +238,4 @@ export interface ProviderTestResult {
 export const UPLOAD_LIMIT = 10 * 1024 * 1024;
 export const ATTACHMENT_LIMIT = 4;
 export const ACCEPTED_FILES =
-  '.png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.ts,.js,.py,.css,.yaml,.yml,.log';
+  '.png,.jpg,.jpeg,.webp,.pdf,.docx,.txt,.md,.csv,.json,.html,.xml,.ts,.js,.py,.css,.yaml,.yml,.log,.wav,.mp3,.mp4,.mov';

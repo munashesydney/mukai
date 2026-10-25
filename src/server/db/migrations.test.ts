@@ -18,6 +18,37 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('adds disabled audio/video defaults without changing saved credentials or models', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    database.run(
+      "INSERT INTO providers(id,name,kind,base_url,default_model,supports_images,is_default,encrypted_key,models_json) VALUES('legacy','Legacy','compatible','http://localhost/v1','text',0,1,'encrypted-value','[]')",
+    );
+    database.db.exec(
+      'ALTER TABLE providers DROP COLUMN supports_audio; ALTER TABLE providers DROP COLUMN supports_video;',
+    );
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ADD COLUMN supports_audio')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get(
+          "SELECT supports_audio,supports_video,encrypted_key,models_json FROM providers WHERE id='legacy'",
+        ),
+      ).toEqual({
+        supports_audio: 0,
+        supports_video: 0,
+        encrypted_key: 'encrypted-value',
+        models_json: '[]',
+      });
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('adds optional artifact metadata without losing existing file or screenshot records', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

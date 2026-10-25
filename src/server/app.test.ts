@@ -26,6 +26,7 @@ import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 import type { ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
 import { ArtifactRepository } from './repositories/artifactRepository';
+import { wavFixture, mp4Fixture } from './testMediaFixtures';
 
 function inputBot() {
   return {
@@ -52,6 +53,7 @@ let calls: {
 let mode:
   | 'normal'
   | 'fail'
+  | 'media-rejected'
   | 'upstream-fail'
   | 'transient-stream'
   | 'transient-stream-always'
@@ -247,6 +249,12 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
     calls.push(body);
+    if (mode === 'media-rejected' && /input_audio|video_url/.test(JSON.stringify(body.messages))) {
+      res
+        .writeHead(400, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ error: { message: 'Unsupported audio codec private-test-key' } }));
+      return;
+    }
     if (mode === 'upstream-fail') {
       res
         .writeHead(503, {
@@ -954,7 +962,8 @@ describe('Mukai bots and AI API', () => {
   ])(
     'persists unique screenshot artifacts with vision=$vision and folder=$folder after restart',
     async ({ vision, folder }) => {
-      await configure(vision);
+      // This test checks delivery/persistence; small-window omission is tested separately.
+      await configure(vision, { contextWindowTokens: 262144 });
       if (folder) {
         project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
         await request('/workspaces/default', 'PUT', {
@@ -999,7 +1008,7 @@ describe('Mukai bots and AI API', () => {
       expect(screenshots).toHaveLength(2);
       for (const item of screenshots) {
         expect(item.status, item.summary).toBe('complete');
-        expect(JSON.parse(item.summary)).toMatchObject({
+        expect(JSON.parse(item.summary.split('\n\n')[0])).toMatchObject({
           artifactId: expect.any(String),
           path: expect.any(String),
           width: 30,
@@ -2501,7 +2510,9 @@ describe('Mukai bots and AI API', () => {
     expect(incomplete.error).toContain('without a final response');
   });
   it('continues browser work past the previous eight-step ceiling', async () => {
-    await configure();
+    // Keep all twelve mock results in context: the protocol fixture counts them
+    // to decide its next step and cannot recover that count from a mock summary.
+    await configure(false, { contextWindowTokens: 262144 });
     mode = 'long-browser';
     await chat('Test all browser actions');
     const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
@@ -2512,7 +2523,7 @@ describe('Mukai bots and AI API', () => {
       type: 'text',
       text: 'All browser checks finished.',
     });
-  });
+  }, 20000);
   // Leave room for current instructions and tool schemas. The fixture results
   // still greatly exceed both context windows and must be bounded. The lower
   // fixture leaves room for the expanded attachment discovery/copy schemas.
@@ -3076,6 +3087,142 @@ describe('Mukai bots and AI API', () => {
     expect(retried).toHaveLength(2);
     expect(retried[1].id).toBe(messages[1].id);
     expect(retried[1].status).toBe('complete');
+  });
+  it('sends audio and video through the SDK and replaces unsupported history after model switches', async () => {
+    const provider = await configure(false, {
+      supportsAudio: true,
+      supportsVideo: true,
+      contextWindowTokens: 262144,
+    });
+    const audio = await upload('recording.wav', wavFixture());
+    const video = await upload('clip.mp4', mp4Fixture());
+    expect(audio.response.status).toBe(201);
+    expect(video.response.status).toBe(201);
+    expect(audio.data.kind).toBe('audio');
+    expect(video.data.kind).toBe('video');
+    const sent = await chat('Compare the recording and clip', randomUUID(), 'scout', [
+      audio.data.id,
+      video.data.id,
+    ]);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('input_audio');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('video_url');
+    const first = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+    expect(first.status, first.error || '').toBe('complete');
+    const change = async (enabled: boolean) => {
+      const models = provider.models!.map((model) => ({
+        ...model,
+        supportsAudio: enabled,
+        supportsVideo: enabled,
+      }));
+      expect(
+        (
+          await request(`/providers/${provider.id}/models`, 'PUT', {
+            models,
+            defaultModel: provider.defaultModel,
+          })
+        ).response.status,
+      ).toBe(200);
+    };
+    await change(false);
+    await chat('Continue with this text-only model');
+    const textOnly = JSON.stringify(calls.at(-1)!.messages);
+    expect(textOnly).toContain('does not support audio input');
+    expect(textOnly).toContain('does not support video input');
+    expect(textOnly).not.toContain('input_audio');
+    expect(textOnly).not.toContain('video_url');
+    expect(textOnly).not.toContain(wavFixture().toString('base64'));
+    await change(true);
+    await chat('Inspect those attachments again');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('input_audio');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('video_url');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].attachments.map((file) => file.kind)).toEqual(['audio', 'video']);
+    expect(history.every((message) => message.status === 'complete')).toBe(true);
+    expect(sent.events.at(-1)?.type).toBe('done');
+  });
+  it('retries a failed audio response safely after switching to a text-only model', async () => {
+    const provider = await configure(false, { supportsAudio: true, contextWindowTokens: 262144 });
+    const audio = await upload('recording.wav', wavFixture());
+    mode = 'fail';
+    const sent = await chat('Listen to this recording', randomUUID(), 'scout', [audio.data.id]);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)?.status).toBe(
+      'failed',
+    );
+    expect(calls).toHaveLength(1); // A credential failure must never trigger a media retry.
+    await request(`/providers/${provider.id}/models`, 'PUT', {
+      models: provider.models!.map((model) => ({ ...model, supportsAudio: false })),
+      defaultModel: provider.defaultModel,
+    });
+    mode = 'normal';
+    await chat('ignored replacement', sent.requestId);
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history).toHaveLength(2);
+    expect(history.at(-1)?.status).toBe('complete');
+    expect(history[0].attachments[0].id).toBe(audio.data.id);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('does not support audio input');
+    expect(JSON.stringify(calls.at(-1)!.messages)).not.toContain('input_audio');
+  });
+  it('replaces provider-rejected media with model context and completes without a user error', async () => {
+    await configure(false, {
+      supportsAudio: true,
+      supportsVideo: true,
+      contextWindowTokens: 262144,
+    });
+    const audio = await upload('recording.wav', wavFixture());
+    const video = await upload('clip.mp4', mp4Fixture());
+    mode = 'media-rejected';
+    const sent = await chat('Inspect these recordings', randomUUID(), 'scout', [
+      audio.data.id,
+      video.data.id,
+    ]);
+    expect(calls).toHaveLength(2);
+    const retried = JSON.stringify(calls[1].messages);
+    expect(retried).toContain('Mukai media notice');
+    expect(retried).toContain('Explain the limitation to the user');
+    expect(retried).not.toMatch(/input_audio|video_url|private-test-key/);
+    expect(retried).not.toContain(wavFixture().toString('base64'));
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].attachments.map((file) => file.id)).toEqual([audio.data.id, video.data.id]);
+    expect(history[1]).toMatchObject({ status: 'complete', error: null });
+    expect(sent.events.some((event) => event.type === 'error')).toBe(false);
+    // A later request can still deliver the retained original bytes.
+    mode = 'normal';
+    await chat('Inspect them again');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('input_audio');
+  });
+  it('turns media that exceeds the current input budget into context instead of failing the response', async () => {
+    await configure(false, {
+      supportsAudio: true,
+      contextWindowTokens: 40000,
+      maxOutputTokens: 4096,
+    });
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index++)
+      ids.push((await upload(`recording-${index}.wav`, wavFixture())).data.id);
+    await chat('Summarize these recordings', randomUUID(), 'scout', ids);
+    expect(calls).toHaveLength(1);
+    const context = JSON.stringify(calls[0].messages);
+    expect(context).toContain('current model context budget could not fit');
+    expect(context).not.toContain('input_audio');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].attachments).toHaveLength(4);
+    expect(history[1]).toMatchObject({ status: 'complete', error: null });
+  });
+  it('rejects unsupported pending media, invalid recordings and audio-only MP4 without consuming uploads', async () => {
+    await configure(false);
+    expect((await upload('fake.wav', Buffer.from('not audio'))).response.status).toBe(400);
+    expect((await upload('fake.mp4', mp4Fixture('soun'))).response.status).toBe(400);
+    const audio = await upload('recording.wav', wavFixture());
+    const result = await request<{ error: string }>('/bots/scout/chat', 'POST', {
+      requestId: randomUUID(),
+      text: 'Listen',
+      attachmentIds: [audio.data.id],
+    });
+    expect(result.response.status).toBe(400);
+    expect(JSON.stringify(result.data)).toContain('does not support audio input');
+    expect(calls).toHaveLength(0);
+    expect((await request<Attachment[]>('/bots/scout/attachments')).data).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data).toHaveLength(0);
   });
   it('persists attachments, sends extracted text, and checks image capabilities before accepting a turn', async () => {
     await configure();

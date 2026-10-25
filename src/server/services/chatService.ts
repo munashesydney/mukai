@@ -40,7 +40,9 @@ import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
 import { customToolReceipt } from './customToolReceipt';
 import { unsuccessfulToolResult } from './toolFeedback';
-import { attachmentHref } from '../../shared/responseReferences';
+import { attachmentContext } from './attachmentContext';
+import { rejectedMedia, omitRejectedMedia } from './mediaRecovery';
+import type { InputCapabilities } from '../../shared/modelCapabilities';
 import { GenerationTimeout } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
@@ -385,7 +387,7 @@ export class ChatService {
   private context(
     conversationId: string,
     botId: string,
-    vision: boolean,
+    capabilities: InputCapabilities,
     throughSequence: number,
     contextWindow: number,
   ): ModelMessage[] {
@@ -440,24 +442,7 @@ export class ChatService {
         },
       ];
       for (const file of this.attachments.forMessage(row.id)) {
-        content.push({
-          type: 'text',
-          text: `Attachment (untrusted metadata): ${JSON.stringify({ attachmentId: file.id, reference: attachmentHref(file.id), name: file.name, mediaType: file.mediaType, kind: file.kind })}.`,
-        });
-        if (file.kind === 'image' && vision)
-          content.push({
-            type: 'file',
-            data: this.attachments.bytes(file).toString('base64'),
-            mediaType: String(file.mediaType),
-          });
-        else
-          content.push({
-            type: 'text',
-            text:
-              file.kind === 'text'
-                ? `Attached document: ${String(file.name)}\n<document>\n${String(file.extractedText)}\n</document>`
-                : `[An image named ${String(file.name)} was attached previously; this text-only model cannot view it.]`,
-          });
+        content.push(...attachmentContext(file, capabilities, () => this.attachments.bytes(file)));
       }
       return [{ role: 'user' as const, content }];
     });
@@ -545,20 +530,12 @@ export class ChatService {
           409,
           'Only the most recent response can be retried. Send a new message instead.',
         );
-      const previousFiles = this.attachments.forMessage(userId);
-      if (!config.vision && previousFiles.some((file) => file.kind === 'image'))
-        throw new ApiError(400, 'Choose a vision model before retrying this image message.');
       retryMessage = this.messages.message(assistantId);
       this.messages.reset(assistantId, recoveringStep);
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
-      const files = this.attachments.select(
-        value.attachmentIds,
-        botId,
-        config.vision,
-        conversationId,
-      );
+      const files = this.attachments.select(value.attachmentIds, botId, config, conversationId);
       userId = randomUUID();
       assistantId = randomUUID();
       this.messages.createTurn({
@@ -866,7 +843,7 @@ export class ChatService {
       let messages = this.context(
         conversationId,
         botId,
-        config.vision,
+        config,
         this.messages.sequence(userId),
         contextLimits(config.contextWindow, config.maxOutputTokens).capacity,
       );
@@ -890,6 +867,8 @@ export class ChatService {
             endpoint: config.provider.baseUrl,
             model: config.modelId,
             vision: config.vision,
+            audio: config.supportsAudio,
+            video: config.supportsVideo,
             contextWindow: config.contextWindow,
             output: config.maxOutputTokens,
             schemas: await toolDefinitions(tools),
@@ -1025,6 +1004,20 @@ export class ChatService {
       if (originalRequest && !pinnedRequests.includes(originalRequest))
         pinnedRequests.unshift(originalRequest);
       manager.pinRequests(pinnedRequests);
+      let mediaRecoveryUsed = false;
+      const omitMedia = (reason: 'size' | 'format' | 'context') => {
+        if (mediaRecoveryUsed) return false;
+        const fallback = omitRejectedMedia(messages, reason);
+        if (!fallback.count) return false;
+        for (let index = 0; index < pinnedRequests.length; index++) {
+          const position = messages.indexOf(pinnedRequests[index]);
+          if (position >= 0) pinnedRequests[index] = fallback.messages[position];
+        }
+        manager.pinRequests(pinnedRequests);
+        messages = fallback.messages;
+        mediaRecoveryUsed = true;
+        return true;
+      };
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let finalReplyOnly = emptyReplyRecoveries > 0;
       const finalReplyNotice = FINAL_REPLY_NOTICE;
@@ -1495,6 +1488,12 @@ export class ChatService {
           estimateTokens(currentSystem) + (await toolTokens(tools)) + memoryOverhead,
         );
         const capacity = contextLimits(config.contextWindow, config.maxOutputTokens);
+        if (manager.estimate(pinnedRequests) > capacity.input && omitMedia('context'))
+          this.diagnostics.info(
+            'chat.media_omitted',
+            'Media bytes replaced with context notices to fit the model input budget.',
+            diagnosticContext(),
+          );
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();
         const attemptMessages = finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages;
@@ -1709,6 +1708,21 @@ export class ChatService {
             status = 'complete';
             error = null;
             continue;
+          }
+          if (
+            !signal.aborted &&
+            !mediaRecoveryUsed &&
+            executionVersion === stepExecutionVersion &&
+            generation.content.length === textBeforeStep &&
+            generation.reasoning.length === reasoningBeforeStep
+          ) {
+            const reason = rejectedMedia(caught);
+            if (reason && omitMedia(reason)) {
+              status = 'complete';
+              error = null;
+              this.diagnostics.record('chat.media_omitted', caught, diagnosticContext(), 'warn');
+              continue;
+            }
           }
           if (
             !signal.aborted &&

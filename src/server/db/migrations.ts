@@ -435,6 +435,8 @@ export const migrations = [
   `ALTER TABLE artifacts ADD COLUMN media_type TEXT;
    ALTER TABLE artifacts ADD COLUMN size INTEGER CHECK(size IS NULL OR size >= 0);
    UPDATE artifacts SET media_type='image/png' WHERE kind='image';`,
+  `ALTER TABLE providers ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0 CHECK(supports_audio IN (0,1));
+   ALTER TABLE providers ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0 CHECK(supports_video IN (0,1));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

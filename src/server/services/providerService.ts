@@ -4,12 +4,20 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, wrapLanguageModel } from 'ai';
-import { compatibleImageMiddleware } from './compatibleImageMiddleware';
+import {
+  compatibleImageMiddleware,
+  compatibleAudioDataUrlMiddleware,
+} from './compatibleImageMiddleware';
+import { modelInputCapabilities } from '../../shared/modelCapabilities';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
 import type { ProviderInput, ProviderModelsInput } from '../../shared/ai';
-import { defaultCompatibleContext, defaultCompatibleOutput } from '../../shared/providerPresets';
+import {
+  defaultCompatibleContext,
+  defaultCompatibleOutput,
+  findProviderPreset,
+} from '../../shared/providerPresets';
 import { ProviderRepository } from '../repositories/providerRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { modelContextWindow } from '../../shared/modelLimits';
@@ -107,6 +115,19 @@ export function safeProviderError(error: unknown) {
     return 'The provider rate limit or quota was reached. Check your account, then retry.';
   if (status === 404)
     return 'The model or endpoint was not found. Check the model ID and base URL.';
+  if (status === 413)
+    return 'The provider rejected the media or request size. Try a smaller or shorter recording, or send fewer attachments.';
+  if (
+    ((error as Error)?.name === 'AI_UnsupportedFunctionalityError' &&
+      /audio|video|file|media/i.test(
+        String((error as { functionality?: string }).functionality || ''),
+      )) ||
+    ([400, 415, 422].includes(status ?? 0) &&
+      /audio|video|codec|mime|media.?type|file.?format/i.test(
+        `${(error as Error)?.message || ''} ${detail.responseBody || ''}`,
+      ))
+  )
+    return 'The provider could not process the attached media. Check this model’s audio/video input settings and try a shorter recording or a supported format (WAV/MP3 audio or MP4/MOV video). Your saved attachments are preserved.';
   if (status === 400 || status === 422)
     return 'The provider rejected this request. Check the model’s capabilities and settings.';
   if ((error as Error)?.name === 'TimeoutError')
@@ -224,6 +245,8 @@ export class ProviderService {
                     : fallbackContext,
                 maxOutputTokens: value.maxOutputTokens ?? fallbackOutput,
                 supportsImages: value.supportsImages,
+                supportsAudio: value.supportsAudio,
+                supportsVideo: value.supportsVideo,
               },
             ]
           : []),
@@ -233,6 +256,8 @@ export class ProviderService {
       baseUrl: value.baseUrl,
       defaultModel: value.defaultModel,
       supportsImages: value.supportsImages,
+      supportsAudio: value.supportsAudio ?? existing?.supportsAudio ?? false,
+      supportsVideo: value.supportsVideo ?? existing?.supportsVideo ?? false,
       // A saved default remains default until another provider is selected.
       isDefault: value.isDefault || Boolean(existing?.isDefault),
       encryptedKey,
@@ -252,6 +277,12 @@ export class ProviderService {
         provider.contextWindowTokens = selected.contextWindowTokens;
         provider.maxOutputTokens = selected.maxOutputTokens;
         provider.supportsImages = selected.supportsImages;
+        const capabilities = modelInputCapabilities(
+          { model: selected.id, supportsImages: null },
+          provider,
+        );
+        provider.supportsAudio = capabilities.supportsAudio;
+        provider.supportsVideo = capabilities.supportsVideo;
       }
     }
     this.providers.save(provider);
@@ -301,6 +332,8 @@ export class ProviderService {
         contextWindowTokens: model.contextWindowTokens,
         maxOutputTokens: provider.maxOutputTokens ?? 8192,
         supportsImages: model.supportsImages ?? false,
+        supportsAudio: model.supportsAudio ?? false,
+        supportsVideo: model.supportsVideo ?? false,
       }));
     if (added.length) this.providers.save({ ...provider, models: [...saved, ...added] });
     return models;
@@ -314,17 +347,15 @@ export class ProviderService {
     if (!modelId.trim())
       throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
     const configured = provider.models?.find((model) => model.id === modelId);
+    const capabilities = modelInputCapabilities(bot, provider);
     return {
       provider,
       modelId,
       contextWindow: modelContextWindow(bot, provider),
       maxOutputTokens:
         configured?.maxOutputTokens ?? bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
-      vision:
-        configured?.supportsImages ??
-        (bot.supportsImages === null
-          ? Boolean(provider.supportsImages)
-          : Boolean(bot.supportsImages)),
+      ...capabilities,
+      vision: capabilities.supportsImages,
       model: this.model(provider, modelId),
       options: this.reasoningOptions(provider, modelId),
     };
@@ -360,6 +391,8 @@ export class ProviderService {
     const secureFetch: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' });
     switch (provider.kind) {
       case 'openai':
+        if (modelInputCapabilities({ model: id, supportsImages: null }, provider).supportsAudio)
+          return createOpenAI({ apiKey, fetch: secureFetch }).chat(id);
         return createOpenAI({ apiKey, fetch: secureFetch }).responses(id);
       case 'anthropic':
         return createAnthropic({ apiKey, fetch: secureFetch })(id);
@@ -373,7 +406,12 @@ export class ProviderService {
             apiKey,
             fetch: secureFetch,
           })(id),
-          middleware: compatibleImageMiddleware,
+          middleware: [
+            compatibleImageMiddleware,
+            ...(findProviderPreset(provider)?.id === 'mimo'
+              ? [compatibleAudioDataUrlMiddleware]
+              : []),
+          ],
         });
     }
   }

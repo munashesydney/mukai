@@ -20,15 +20,20 @@ const model = (
   name: string,
   contextWindowTokens: number,
   supportsImages: boolean,
+  supportsAudio = false,
+  supportsVideo = false,
 ): SavedProviderModel => ({
   id,
   name,
   contextWindowTokens,
   maxOutputTokens: defaultCompatibleOutput,
   supportsImages,
+  supportsAudio,
+  supportsVideo,
 });
 
-// Official API catalogs checked October 13, 2026. Response caps are Mukai defaults,
+// Catalog IDs/limits checked October 13, 2026; audio/video inputs October 25.
+// Response caps are Mukai defaults,
 // not claims about a model's maximum output capacity. See docs/provider-presets.md.
 export const providerPresets: ProviderPreset[] = [
   {
@@ -89,8 +94,8 @@ export const providerPresets: ProviderPreset[] = [
     ],
     models: [
       model('glm-5.3', 'GLM 5.3', 1000000, false),
-      model('glm-5.3-flash', 'GLM 5.3 Flash', 1000000, true),
-      model('glm-5.3-flashx', 'GLM 5.3 FlashX', 1000000, true),
+      model('glm-5.3-flash', 'GLM 5.3 Flash', 1000000, true, false, true),
+      model('glm-5.3-flashx', 'GLM 5.3 FlashX', 1000000, true, false, true),
     ],
   },
   {
@@ -102,8 +107,8 @@ export const providerPresets: ProviderPreset[] = [
     docsUrl: 'https://mimo.mi.com/models/en-US/mimo-v2.6-pro',
     note: 'Uses the pay-as-you-go API. Token Plan subscriptions use a separate key and endpoint.',
     models: [
-      model('mimo-v2.6-pro', 'MiMo V2.6 Pro', 1000000, true),
-      model('mimo-v2.6-flash', 'MiMo V2.6 Flash', 1000000, true),
+      model('mimo-v2.6-pro', 'MiMo V2.6 Pro', 1000000, true, true, true),
+      model('mimo-v2.6-flash', 'MiMo V2.6 Flash', 1000000, true, true, true),
     ],
   },
   {
@@ -121,8 +126,8 @@ export const providerPresets: ProviderPreset[] = [
       { name: 'China (Beijing)', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
     ],
     models: [
-      model('qwen3.8-max', 'Qwen 3.8 Max', 1000000, true),
-      model('qwen3.8-flash', 'Qwen 3.8 Flash', 1000000, true),
+      model('qwen3.8-max', 'Qwen 3.8 Max', 1000000, true, false, true),
+      model('qwen3.8-flash', 'Qwen 3.8 Flash', 1000000, true, false, true),
     ],
   },
   {
@@ -133,10 +138,10 @@ export const providerPresets: ProviderPreset[] = [
     baseUrl: 'https://api.moonshot.ai/v1',
     docsUrl: 'https://platform.kimi.ai/docs/api/models-overview',
     models: [
-      model('kimi-k3', 'Kimi K3', 1000000, true),
-      model('kimi-k2.7-code', 'Kimi K2.7 Code', 256000, true),
-      model('kimi-k2.7-code-highspeed', 'Kimi K2.7 Code Highspeed', 256000, true),
-      model('kimi-k2.6', 'Kimi K2.6', 256000, true),
+      model('kimi-k3', 'Kimi K3', 1000000, true, false, true),
+      model('kimi-k2.7-code', 'Kimi K2.7 Code', 256000, true, false, true),
+      model('kimi-k2.7-code-highspeed', 'Kimi K2.7 Code Highspeed', 256000, true, false, true),
+      model('kimi-k2.6', 'Kimi K2.6', 256000, true, false, true),
     ],
   },
   {
@@ -174,6 +179,8 @@ export function providerPresetInput(preset: ProviderPreset, isDefault = false): 
     maxOutputTokens:
       selected?.maxOutputTokens ?? (preset.kind === 'compatible' ? defaultCompatibleOutput : 8192),
     supportsImages: selected?.supportsImages ?? preset.kind !== 'compatible',
+    supportsAudio: selected?.supportsAudio ?? false,
+    supportsVideo: selected?.supportsVideo ?? false,
     isDefault,
     apiKey: '',
   };

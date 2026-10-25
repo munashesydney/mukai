@@ -223,6 +223,8 @@ async function main() {
     await editor.getByLabel('Context window (tokens)').fill('131072');
     await editor.getByLabel('Maximum output (tokens)').fill('16384');
     await editor.getByLabel('Supports images').check();
+    await editor.getByLabel('Supports audio input (WAV, MP3)').check();
+    await editor.getByLabel('Supports video input (MP4, MOV)').check();
     // A failed write retains the editor and draft; retry persists the same values.
     await page.route('**/api/providers/*/models', async (route) => {
       if (route.request().method() === 'PUT')
@@ -254,6 +256,8 @@ async function main() {
     assert.equal(updated.contextWindowTokens, 131072);
     assert.equal(updated.maxOutputTokens, 16384);
     assert.equal(updated.supportsImages, true);
+    assert.equal(updated.supportsAudio, true);
+    assert.equal(updated.supportsVideo, true);
     assert.equal(
       api.store.get('SELECT encrypted_key FROM providers WHERE id=?', provider.id)?.encrypted_key,
       encrypted,
