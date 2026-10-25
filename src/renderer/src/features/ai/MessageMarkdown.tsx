@@ -1,4 +1,14 @@
-import { createContext, memo, useContext, useMemo, type ReactNode } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Bot } from '../../../../shared/ai';
@@ -7,6 +17,10 @@ import { parseResponseReference } from '../../../../shared/responseReferences';
 import { closedChartFence } from '../../../../shared/responseCharts';
 import { ResponseReference } from './ResponseReference';
 import { ChartLoading, ResponseChartBlock } from './ResponseChart';
+import { responseImages } from './responseImages';
+import { ResponseImageContext } from './responseImageContext';
+import { ResponseReferenceContext } from './responseReferenceContext';
+import { ResponseImageGallery } from './ResponseImageGallery';
 import '../../styles/responseRichContent.css';
 
 const mentionHref = '#mukai-mention-';
@@ -50,13 +64,43 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   mentionBots = noMentionBots,
   onMention,
   streaming = false,
+  imageGallery = false,
 }: {
   text: string;
   mentionBots?: Bot[];
   onMention?: (bot: Bot) => void;
   streaming?: boolean;
+  imageGallery?: boolean;
 }) {
   const renderedText = linkMentions(text, mentionBots);
+  const conversationId = useContext(ResponseReferenceContext);
+  const images = useMemo(
+    () => (imageGallery && conversationId ? responseImages(renderedText) : []),
+    [imageGallery, conversationId, renderedText],
+  );
+  const galleryRef = useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  useEffect(() => {
+    if (!highlight) return;
+    const timer = window.setTimeout(() => setHighlight(0), 1500);
+    return () => window.clearTimeout(timer);
+  }, [highlight]);
+  const reveal = useCallback((key: string) => {
+    setSelected(key);
+    setHighlight((previous) => previous + 1);
+    galleryRef.current?.focus({ preventScroll: true });
+    galleryRef.current?.scrollIntoView({
+      block: 'center',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
+    });
+  }, []);
+  const gallery = useMemo(
+    () => (imageGallery && conversationId ? { images, reveal } : null),
+    [imageGallery, conversationId, images, reveal],
+  );
   const components = useMemo(
     () => ({
       a: ({ href, children }: { href?: string; children?: ReactNode }) => {
@@ -111,15 +155,23 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   );
   return (
     <div className="ai-markdown">
-      <MarkdownSource.Provider value={{ text: renderedText, streaming }}>
-        <ReactMarkdown
-          remarkPlugins={remarkPlugins}
-          components={components}
-          urlTransform={(url) => (parseResponseReference(url) ? url : defaultUrlTransform(url))}
-        >
-          {renderedText}
-        </ReactMarkdown>
-      </MarkdownSource.Provider>
+      <ResponseImageContext.Provider value={gallery}>
+        <MarkdownSource.Provider value={{ text: renderedText, streaming }}>
+          <ReactMarkdown
+            remarkPlugins={remarkPlugins}
+            components={components}
+            urlTransform={(url) => (parseResponseReference(url) ? url : defaultUrlTransform(url))}
+          >
+            {renderedText}
+          </ReactMarkdown>
+        </MarkdownSource.Provider>
+        <ResponseImageGallery
+          selected={selected}
+          onSelect={setSelected}
+          galleryRef={galleryRef}
+          highlighted={!!highlight}
+        />
+      </ResponseImageContext.Provider>
     </div>
   );
 });

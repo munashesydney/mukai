@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ResponseReferenceContext } from './responseReferenceContext';
-const render = (text: string, streaming = false) =>
+const render = (text: string, streaming = false, imageGallery = false) =>
   renderToStaticMarkup(
     createElement(
       ResponseReferenceContext.Provider,
       { value: 'conversation' },
-      createElement(MessageMarkdown, { text, streaming }),
+      createElement(MessageMarkdown, { text, streaming, imageGallery }),
     ),
   );
 const json = JSON.stringify({
@@ -51,4 +51,27 @@ it('renders complete charts as SVG with accessible data and keeps incomplete blo
   expect(partial).not.toContain('response-chart-plot');
   expect(render('```mukai-chart\n' + json)).not.toContain('is-spinning');
   expect(render('```mukai-chart\n{"version":1,"type":"execute"}\n```')).toContain('invalid format');
+});
+it('puts a single image below the reply and keeps its inline reference', () => {
+  const html = render('Look at ![Chair](renders/chair.png).\n\nThe final paragraph.', false, true);
+  expect(html).toContain('response-gallery-link');
+  expect(html).toContain('aria-label="Images in this reply"');
+  expect(html.indexOf('response-image-gallery')).toBeGreaterThan(
+    html.indexOf('The final paragraph.'),
+  );
+  expect(html).not.toContain('aria-label="Next image"');
+  expect(html).toContain('aria-label="Preview Chair"');
+});
+it('renders only explicitly referenced images in a deduplicated carousel', () => {
+  const html = render(
+    '[First](mukai://artifact/one) ![First image](mukai://artifact/one) ![Second](mukai://attachment/two) ![Repeated](mukai://attachment/two) [Notes](notes.md)',
+    false,
+    true,
+  );
+  expect(html.match(/class="response-gallery-slide"/g)).toHaveLength(2);
+  expect(html.match(/response-gallery-link/g)).toHaveLength(4);
+  expect(html).toContain('aria-roledescription="carousel"');
+  expect(html).toContain('aria-label="Next image"');
+  expect(html).toContain('1 / 2');
+  expect(html).not.toContain('<img');
 });

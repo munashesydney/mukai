@@ -1,11 +1,13 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { FileText, LoaderCircle } from 'lucide-react';
+import { FileText, Image, LoaderCircle } from 'lucide-react';
 import { parseResponseReference } from '../../../../shared/responseReferences';
 import { artifactService } from '../../services/artifactService';
 import { ArtifactPreview } from './ArtifactPreview';
 import { errorText } from '../../utils/errors';
 
 import { ResponseReferenceContext } from './responseReferenceContext';
+import { ResponseImageContext } from './responseImageContext';
+import { responseImageKey } from './responseImages';
 
 export function ResponseReference({
   href,
@@ -19,13 +21,15 @@ export function ResponseReference({
   label?: string;
 }) {
   const conversationId = useContext(ResponseReferenceContext);
+  const gallery = useContext(ResponseImageContext);
+  const galleryImage = gallery?.images.find((entry) => entry.key === responseImageKey(href));
   const target = parseResponseReference(href);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const anchor = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!image || !conversationId || !anchor.current) return;
+    if (!image || galleryImage || !conversationId || !anchor.current) return;
     const controller = new AbortController();
     let objectUrl = '',
       started = false;
@@ -58,7 +62,7 @@ export function ResponseReference({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [conversationId, href, image]);
+  }, [conversationId, href, image, galleryImage]);
   if (!conversationId || !target)
     return <span>{children || label} (file preview unavailable here)</span>;
   const name =
@@ -67,6 +71,19 @@ export function ResponseReference({
       : target.type === 'file'
         ? target.path.split(/[\\/]/).at(-1)!
         : 'File';
+  if (galleryImage && gallery)
+    return (
+      <span className="response-reference">
+        <button
+          type="button"
+          className="response-file-link response-gallery-link"
+          onClick={() => gallery.reveal(galleryImage.key)}
+        >
+          <Image size={14} aria-hidden="true" />
+          {children || label}
+        </button>
+      </span>
+    );
   return (
     <span ref={anchor} className={image ? 'response-reference-image' : 'response-reference'}>
       <button

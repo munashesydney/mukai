@@ -30,6 +30,12 @@ async function main() {
     memoryReviewIdleMs: 0,
   });
   seedTestWorkspace(api.store);
+  const imageRequests: string[] = [];
+  const originalReference = api.conversationArtifacts.reference.bind(api.conversationArtifacts);
+  api.conversationArtifacts.reference = (...args) => {
+    if (args[2]) imageRequests.push(args[1]);
+    return originalReference(...args);
+  };
   const bots = new BotRepository(api.store);
   bots.create(scoutBot());
   for (const [id, name, avatar] of [
@@ -257,6 +263,7 @@ async function main() {
       `[Saved notes](mukai://artifact/${notesArtifact.id}#L2) · [Relative notes](project-notes.md#L2)`,
       `![Uploaded preview](mukai://attachment/${attachment.id})`,
       '![Workspace preview](copied-image.png)',
+      `[Upload again](mukai://attachment/${attachment.id}) · [Workspace again](./copied-image.png)`,
       '```mukai-chart\n' + JSON.stringify(chart) + '\n```',
       '```mukai-chart\n' +
         JSON.stringify({ ...chart, type: 'line', title: 'Revenue trend' }) +
@@ -446,15 +453,39 @@ async function main() {
     );
     await wait('Boolean(document.querySelector("dialog .artifact-preview pre"))');
     await click('dialog button[aria-label="Close dialog"]');
+    const galleryHeight = await evaluate<number>(
+      `document.querySelector('.response-image-gallery').getBoundingClientRect().height`,
+    );
     for (const [alt, width] of [
       ['Uploaded preview', 320],
       ['Workspace preview', 600],
     ] as const) {
       await evaluate(
-        `document.querySelector('.response-image-button[aria-label="Preview ${alt}"]').scrollIntoView({block:'center'})`,
+        `Array.from(document.querySelectorAll('.response-gallery-link')).find(link=>link.textContent.includes('${alt}')).scrollIntoView({block:'center',behavior:'instant'})`,
+      );
+      await evaluate(
+        `Array.from(document.querySelectorAll('.response-gallery-link')).find(link=>link.textContent.includes('${alt}')).click()`,
+      );
+      await wait(`Boolean(document.querySelector('.response-image-gallery[data-highlighted]'))`);
+      assert.equal(await evaluate('document.querySelector("dialog")'), null);
+      assert.equal(
+        await evaluate('document.querySelectorAll(".response-gallery-slide").length'),
+        2,
+      );
+      await wait(
+        `document.querySelector('.response-gallery-slide[data-position="active"] .response-image-button')?.getAttribute('aria-label')==='Preview ${alt}'`,
+      );
+      await wait(
+        `(() => {const gallery=document.querySelector('.response-image-gallery').getBoundingClientRect(),feed=document.querySelector('.ai-message-feed').getBoundingClientRect();return gallery.top>=feed.top-1 && gallery.bottom<=feed.bottom+1;})()`,
       );
       await wait(
         `document.querySelector('.response-image-button img[alt="${alt}"]')?.naturalWidth===${width}`,
+      );
+      assert(
+        await evaluate(
+          `Math.abs(document.querySelector('.response-image-gallery').getBoundingClientRect().height-${galleryHeight})<=1`,
+        ),
+        'Carousel height should stay stable between images',
       );
       await click(`.response-image-button[aria-label="Preview ${alt}"]`);
       await wait(
@@ -462,6 +493,84 @@ async function main() {
       );
       await click('dialog button[aria-label="Close dialog"]');
     }
+    // Repeated references target the same slide; carousel controls and keyboard agree.
+    await evaluate(
+      `Array.from(document.querySelectorAll('.response-gallery-link')).find(link=>link.textContent.includes('Upload again')).click()`,
+    );
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='1 / 2'`,
+    );
+    assert(
+      await evaluate(`document.querySelector('button[aria-label="Previous image"]').disabled`),
+    );
+    // Carousel navigation changes pictures without initiating another chat scroll.
+    await wait(
+      `(() => {const gallery=document.querySelector('.response-image-gallery').getBoundingClientRect(),feed=document.querySelector('.ai-message-feed').getBoundingClientRect();return gallery.top>=feed.top-1 && gallery.bottom<=feed.bottom+1;})()`,
+    );
+    await evaluate(`new Promise(resolve => {
+      const feed=document.querySelector('.ai-message-feed');
+      let previous=feed.scrollTop,stable=0;
+      function frame() {
+        const current=feed.scrollTop;
+        stable=current===previous?stable+1:0;
+        previous=current;
+        if(stable>=4) resolve(); else requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    })`);
+    const navigationScroll = await evaluate<number>(
+      `document.querySelector('.ai-message-feed').scrollTop`,
+    );
+    await click('button[aria-label="Next image"]');
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='2 / 2'`,
+    );
+    assert(await evaluate(`document.querySelector('button[aria-label="Next image"]').disabled`));
+    assert.equal(
+      await evaluate(`document.querySelector('.ai-message-feed').scrollTop`),
+      navigationScroll,
+    );
+    await click('.response-gallery-slide[data-position="previous"] button');
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='1 / 2'`,
+    );
+    await click('.response-gallery-thumbnails button:last-child');
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='2 / 2'`,
+    );
+    assert.equal(
+      await evaluate('document.querySelector("dialog")'),
+      null,
+      'Neighbor and thumbnail clicks should select without opening the modal',
+    );
+    await evaluate(
+      `document.querySelector('.response-image-gallery').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}))`,
+    );
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='1 / 2'`,
+    );
+    assert.equal(await evaluate('document.querySelector("dialog")'), null);
+    assert.equal(await evaluate('document.querySelector(".response-gallery-caption")'), null);
+    assert.equal(
+      await evaluate('document.querySelectorAll(".response-gallery-thumbnails button").length'),
+      2,
+    );
+    assert(
+      await evaluate(
+        `document.querySelector('.response-gallery-dots button:first-child').getAttribute('aria-current')==='true'`,
+      ),
+    );
+    assert.equal(
+      imageRequests.filter((href) => href === `mukai://attachment/${attachment.id}`).length,
+      1,
+      'Revisiting an upload should reuse its preview',
+    );
+    assert.equal(
+      imageRequests.filter((href) => href === 'copied-image.png').length,
+      1,
+      'Revisiting a file should reuse its preview',
+    );
+    await capture('response-image-gallery');
     await wait('!document.querySelector("dialog")');
     await evaluate(
       `(() => { const point = document.querySelector('.response-chart svg [tabindex]'); point.focus(); point.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); })()`,
@@ -707,6 +816,43 @@ async function main() {
     ])
       await checkChartTooltip(1, x, y);
     await capture('rich-response-tooltip-narrow');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.response-gallery-link')).find(link=>link.textContent.includes('Upload again')).click()`,
+    );
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='1 / 2'`,
+    );
+    await evaluate(
+      `document.querySelector('.response-image-gallery').scrollIntoView({block:'center',behavior:'instant'})`,
+    );
+    await evaluate(`(() => {
+      const gallery=document.querySelector('.response-image-gallery');
+      const start=new Touch({identifier:1,target:gallery,clientX:350,clientY:400});
+      const end=new Touch({identifier:1,target:gallery,clientX:150,clientY:405});
+      gallery.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,touches:[start]}));
+      gallery.dispatchEvent(new TouchEvent('touchend',{bubbles:true,changedTouches:[end]}));
+      gallery.querySelector('.response-image-button').click();
+    })()`);
+    await wait(
+      `document.querySelector('.response-gallery-controls [role="status"]').textContent==='2 / 2'`,
+    );
+    assert.equal(
+      await evaluate('document.querySelector("dialog")'),
+      null,
+      'Swiping must not open the image modal',
+    );
+    await wait(
+      `document.querySelector('.response-gallery-slide[data-position="active"] img')?.naturalWidth===600`,
+    );
+    assert(
+      await evaluate(
+        `(() => {const gallery=document.querySelector('.response-image-gallery'),image=gallery.querySelector('.response-gallery-slide[data-position="active"] img').getBoundingClientRect(),stage=gallery.querySelector('.response-gallery-stage').getBoundingClientRect();return gallery.scrollWidth<=gallery.clientWidth+2 && image.width<=gallery.clientWidth && image.top>=stage.top && image.bottom<=stage.bottom && Math.abs((image.left+image.right)/2-(stage.left+stage.right)/2)<1;})()`,
+      ),
+    );
+    await wait(
+      `(() => {const gallery=document.querySelector('.response-image-gallery').getBoundingClientRect(),feed=document.querySelector('.ai-message-feed').getBoundingClientRect();return gallery.top>=feed.top-1 && gallery.bottom<=feed.bottom+1;})()`,
+    );
+    await capture('response-image-gallery-narrow');
     window.setSize(1480, 980);
     await evaluate(
       `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,

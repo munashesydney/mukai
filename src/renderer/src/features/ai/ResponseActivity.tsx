@@ -421,7 +421,9 @@ export const ResponseActivity = memo(function ResponseActivity({
           onExpandedChange={onWorkExpandedChange}
         />
       )}
-      {!!answer && <MessageMarkdown text={answer} streaming={message.status === 'streaming'} />}
+      {!!answer && (
+        <MessageMarkdown text={answer} streaming={message.status === 'streaming'} imageGallery />
+      )}
     </ResponseReferenceContext.Provider>
   );
 });
