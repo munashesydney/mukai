@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createServer, type ServerResponse } from 'node:http';
 import sharp from 'sharp';
-import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID, randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -181,7 +181,8 @@ async function main() {
     'Thanks, keep that handy for the next turn.',
     null,
   );
-  addMessage(randomUUID(), conversation.id, 'assistant', 'Ready whenever you are.', 'scout');
+  const richMessageId = randomUUID();
+  addMessage(richMessageId, conversation.id, 'assistant', 'Ready whenever you are.', 'scout');
   addMessage(
     randomUUID(),
     pair.id,
@@ -195,7 +196,7 @@ async function main() {
     activity[1],
   ]);
   writeFileSync(join(dir, 'project-notes.md'), '# Project notes\nThe preview is ready.');
-  new ArtifactRepository(api.store).save({
+  const notesArtifact = new ArtifactRepository(api.store).save({
     id: randomUUID(),
     botId: 'scout',
     messageId,
@@ -233,6 +234,37 @@ async function main() {
       ...metadata,
     });
   }
+  const chart = {
+    version: 1,
+    type: 'bar',
+    title: 'Example revenue',
+    xKey: 'month',
+    series: [{ key: 'revenue', label: 'Revenue' }],
+    data: [
+      { month: 'Jan', revenue: 9 },
+      { month: 'Feb', revenue: -2 },
+      { month: 'Mar', revenue: 14 },
+    ],
+  };
+  writeFileSync(
+    join(dir, 'chart.json'),
+    JSON.stringify({ ...chart, type: 'line', title: 'Saved revenue' }),
+  );
+  api.store.run(
+    'UPDATE messages SET content=? WHERE id=?',
+    [
+      'Ready whenever you are. The following charts use illustrative data.',
+      `[Saved notes](mukai://artifact/${notesArtifact.id}#L2) · [Relative notes](project-notes.md#L2)`,
+      `![Uploaded preview](mukai://attachment/${attachment.id})`,
+      '![Workspace preview](copied-image.png)',
+      '```mukai-chart\n' + JSON.stringify(chart) + '\n```',
+      '```mukai-chart\n' +
+        JSON.stringify({ ...chart, type: 'line', title: 'Revenue trend' }) +
+        '\n```',
+      '```mukai-chart\n{"version":1,"source":"chart.json"}\n```',
+    ].join('\n\n'),
+    richMessageId,
+  );
   const changes = new FileChangeRepository(api.store);
   changes.record('scout', messageId, {
     path: 'src/Project.tsx',
@@ -341,6 +373,130 @@ async function main() {
       ),
       ['Bots', 'Links', 'Outputs', 'Changes'],
     );
+    await wait('document.querySelectorAll(".response-chart").length===3');
+    assert(
+      await evaluate(
+        'document.querySelector(".response-chart-heading button svg").getBoundingClientRect().width<=18',
+      ),
+    );
+    const linkPoint = await evaluate<{ x: number; y: number }>(`(() => {
+      const link=Array.from(document.querySelectorAll('.response-file-link')).find(b=>b.textContent.includes('Saved notes'));
+      link.scrollIntoView({block:'center'});
+      const bounds=link.getBoundingClientRect();
+      return {x:Math.round(bounds.left+bounds.width/2),y:Math.round(bounds.top+bounds.height/2)};
+    })()`);
+    window.webContents.sendInputEvent({ type: 'mouseMove', ...linkPoint });
+    await wait(`(() => {
+      const link=Array.from(document.querySelectorAll('.response-file-link')).find(b=>b.textContent.includes('Saved notes'));
+      return link.matches(':hover') && getComputedStyle(link).textDecorationColor===getComputedStyle(link).color;
+    })()`);
+    await evaluate(
+      `Array.from(document.querySelectorAll('.response-file-link')).find(b=>b.textContent.includes('Saved notes')).click()`,
+    );
+    await wait(
+      `document.querySelector('dialog .reference-selected-line')?.textContent.includes('The preview is ready')`,
+    );
+    await click('dialog button[aria-label="Close dialog"]');
+    await evaluate(
+      `Array.from(document.querySelectorAll('.response-file-link')).find(b=>b.textContent.includes('Relative notes')).click()`,
+    );
+    await wait('Boolean(document.querySelector("dialog .artifact-preview pre"))');
+    await click('dialog button[aria-label="Close dialog"]');
+    for (const [alt, width] of [
+      ['Uploaded preview', 320],
+      ['Workspace preview', 600],
+    ] as const) {
+      await evaluate(
+        `document.querySelector('.response-image-button[aria-label="Preview ${alt}"]').scrollIntoView({block:'center'})`,
+      );
+      await wait(
+        `document.querySelector('.response-image-button img[alt="${alt}"]')?.naturalWidth===${width}`,
+      );
+      await click(`.response-image-button[aria-label="Preview ${alt}"]`);
+      await wait(
+        `document.querySelector('dialog .artifact-image-preview')?.naturalWidth===${width}`,
+      );
+      await click('dialog button[aria-label="Close dialog"]');
+    }
+    await wait('!document.querySelector("dialog")');
+    await evaluate(
+      `(() => { const point = document.querySelector('.response-chart svg [tabindex]'); point.focus(); point.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); })()`,
+    );
+    await wait(
+      `document.querySelector('.response-chart-tooltip').textContent.includes('Jan · Revenue: 9')`,
+    );
+    await wait(
+      `document.querySelector('.response-chart [role="tooltip"]')?.textContent.includes('Jan')`,
+    );
+    await evaluate(`(() => {
+      const chart=document.querySelector('.response-chart');
+      chart.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    })()`);
+    await wait(`!document.querySelector('.response-chart [role="tooltip"]')`);
+    // Inspect empty plot space as well as marks, including touch and narrow edge placement.
+    for (const [row, label, value] of [
+      [0, 'Jan', '9'],
+      [1, 'Feb', '-2'],
+      [2, 'Mar', '14'],
+    ] as const) {
+      await evaluate(`(() => {
+        const svg=document.querySelector('.response-chart-plot > svg');
+        const point=new DOMPoint(62+(${row}+.5)/3*560,138).matrixTransform(svg.getScreenCTM());
+        svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'mouse',clientX:point.x,clientY:point.y}));
+      })()`);
+      await wait(
+        `document.querySelector('.response-chart [role="tooltip"]')?.textContent.includes('${label}')`,
+      );
+      assert(
+        await evaluate(`(() => {
+        const chart=document.querySelector('.response-chart');
+        const card=chart.querySelector('[role="tooltip"]');
+        const bounds=card.getBoundingClientRect(),plot=chart.querySelector('.response-chart-plot').getBoundingClientRect();
+        return card.textContent.includes('${value}') && bounds.left>=plot.left && bounds.right<=plot.right && chart.querySelectorAll('.response-chart-mark.is-active').length===1 && Boolean(chart.querySelector('.response-chart-crosshair'));
+      })()`),
+      );
+    }
+    await evaluate(`(() => {
+      const svg=document.querySelector('.response-chart-plot > svg');
+      svg.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,pointerType:'mouse',relatedTarget:document.body}));
+    })()`);
+    await wait(`!document.querySelector('.response-chart [role="tooltip"]')`);
+    for (const visible of [true, false]) {
+      await evaluate(`(() => {
+        const svg=document.querySelector('.response-chart-plot > svg');
+        const point=new DOMPoint(342,138).matrixTransform(svg.getScreenCTM());
+        svg.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'touch',clientX:point.x,clientY:point.y}));
+      })()`);
+      await wait(`${visible ? '' : '!'}document.querySelector('.response-chart [role="tooltip"]')`);
+    }
+    await click('.response-chart details summary');
+    assert.equal(
+      await evaluate(
+        'document.querySelectorAll(".response-chart:first-of-type tbody tr").length || document.querySelector(".response-chart tbody").children.length',
+      ),
+      3,
+    );
+    const csvDownload = new Promise<void>((done, reject) => {
+      window.webContents.session.once('will-download', (_event, item) => {
+        item.setSavePath(join(dir, 'chart-data.csv'));
+        item.once('done', (_event, state) =>
+          state === 'completed' ? done() : reject(new Error('CSV download failed: ' + state)),
+        );
+      });
+    });
+    await click('.response-chart-heading button');
+    await csvDownload;
+    assert(readFileSync(join(dir, 'chart-data.csv'), 'utf8').includes('"Feb","-2"'));
+    await evaluate(`document.querySelector('.response-chart').scrollIntoView({block:'start'})`);
+    await evaluate(`(() => {
+      const svg=document.querySelector('.response-chart-plot > svg');
+      const point=new DOMPoint(342,138).matrixTransform(svg.getScreenCTM());
+      svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'mouse',clientX:point.x,clientY:point.y}));
+    })()`);
+    await wait(
+      `document.querySelector('.response-chart [role="tooltip"]')?.textContent.includes('Feb')`,
+    );
+    await capture('rich-response-charts');
     await capture('chat-activity-light');
     // Both image actions use the shared modal rather than a JSON disclosure.
     await click('.response-work > summary');
@@ -608,18 +764,44 @@ async function main() {
       await click('button[aria-label="Close chat activity"]');
       await new Promise((done) => setTimeout(done, 150));
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
-      (await waitForFinalResponse()).end(
+      const streamedResponse = await waitForFinalResponse();
+      streamedResponse.write(
         'data: ' +
           JSON.stringify({
             id: 'live',
             model: 'fixture',
             choices: [
-              { index: 0, delta: { content: 'The live draft is ready.' }, finish_reason: 'stop' },
+              {
+                index: 0,
+                delta: { content: '```mukai-chart\n' + JSON.stringify(chart) },
+                finish_reason: null,
+              },
+            ],
+          }) +
+          '\n\n',
+      );
+      await wait('document.body.textContent.includes("Reviewing chart…")');
+      assert(
+        await evaluate('Boolean(document.querySelector(".response-chart-loading .is-spinning"))'),
+      );
+      assert.equal(await evaluate('document.querySelectorAll(".response-chart").length'), 3);
+      streamedResponse.end(
+        'data: ' +
+          JSON.stringify({
+            id: 'live',
+            model: 'fixture',
+            choices: [
+              {
+                index: 0,
+                delta: { content: '\n```\n\nThe live draft is ready.' },
+                finish_reason: 'stop',
+              },
             ],
           }) +
           '\n\ndata: [DONE]\n\n',
       );
       await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
+      await wait('document.querySelectorAll(".response-chart").length===4');
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
       // The same live tool run on a small screen must never open activity itself.
       liveRun = 1;

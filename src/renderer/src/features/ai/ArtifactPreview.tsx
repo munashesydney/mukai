@@ -16,21 +16,36 @@ type Preview =
 
 export function ArtifactPreview({
   artifact,
+  reference,
   onClose,
 }: {
-  artifact: FileArtifact;
+  artifact?: FileArtifact;
+  reference?: { conversationId: string; href: string; name: string; line?: number };
   onClose: () => void;
 }) {
   const [preview, setPreview] = useState<Preview>({ kind: 'loading' });
-  const { id, name, kind, mediaType } = artifact;
+  const { id, name, kind, mediaType } = artifact || {
+    id: '',
+    name: reference?.name || 'File',
+    kind: undefined,
+    mediaType: undefined,
+  };
+  const conversationId = reference?.conversationId,
+    href = reference?.href;
+  const [fileName, setFileName] = useState(name);
   useEffect(() => {
     const controller = new AbortController();
     let url = '';
     void (async () => {
       try {
-        const blob = await artifactService.blob(id, controller.signal);
-        const result = await artifactPreview(blob, { name, kind, mediaType });
+        const source =
+          href && conversationId
+            ? await artifactService.reference(conversationId, href, false, controller.signal)
+            : { blob: await artifactService.blob(id, controller.signal), name };
+        const { blob } = source;
+        const result = await artifactPreview(blob, { name: source.name, kind, mediaType });
         if (controller.signal.aborted) return;
+        setFileName(source.name);
         url = URL.createObjectURL(
           result.kind === 'image' ? new Blob([blob], { type: result.mediaType }) : blob,
         );
@@ -43,11 +58,17 @@ export function ArtifactPreview({
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [id, name, kind, mediaType]);
+  }, [id, name, kind, mediaType, conversationId, href]);
+  useEffect(() => {
+    if (preview.kind === 'text' && reference?.line)
+      document
+        .getElementById(`reference-line-${reference.line}`)
+        ?.scrollIntoView({ block: 'center' });
+  }, [preview, reference?.line]);
   return createPortal(
-    <Modal title={artifact.name} onClose={onClose}>
+    <Modal title={fileName} onClose={onClose}>
       <div className="artifact-preview">
-        <p>{artifact.path}</p>
+        <p>{artifact?.path || reference?.href}</p>
         {preview.kind === 'loading' ? (
           <p role="status">
             <LoaderCircle size={18} className="is-spinning" /> Loading file…
@@ -62,7 +83,7 @@ export function ArtifactPreview({
           <img
             className="artifact-image-preview"
             src={preview.url}
-            alt={artifact.name}
+            alt={fileName}
             onError={() =>
               setPreview({
                 kind: 'error',
@@ -72,13 +93,26 @@ export function ArtifactPreview({
             }
           />
         ) : (
-          <pre>{preview.content}</pre>
+          <pre>
+            {reference?.line
+              ? preview.content.split('\n').map((line, index) => (
+                  <span
+                    className={index + 1 === reference.line ? 'reference-selected-line' : undefined}
+                    id={`reference-line-${index + 1}`}
+                    key={index}
+                  >
+                    {line}
+                    {'\n'}
+                  </span>
+                ))
+              : preview.content}
+          </pre>
         )}
       </div>
       {'url' in preview && (
         <div className="modal-footer">
-          <span>{artifact.kind === 'image' ? 'Saved screenshot' : 'Workspace file'}</span>
-          <a className="button" href={preview.url} download={artifact.name}>
+          <span>{kind === 'image' ? 'Saved screenshot' : 'File'}</span>
+          <a className="button" href={preview.url} download={fileName}>
             <Download size={15} /> Download
           </a>
         </div>

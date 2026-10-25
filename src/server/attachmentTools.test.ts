@@ -117,6 +117,78 @@ function imageContext() {
   };
 }
 describe('Saved uploads and artifact tools', () => {
+  it('resolves file references in the active local workspace and rejects escapes', async () => {
+    const id = await upload('reference.png', png);
+    expect(
+      (
+        await api.conversationArtifacts.reference(
+          'default',
+          `mukai://attachment/${id}`,
+          true,
+          signal(),
+        )
+      ).mediaType,
+    ).toBe('image/png');
+    await writeFile(join(folder, 'notes.md'), '# Notes\nSecond line');
+    for (const href of [
+      'notes.md#L2',
+      join(folder, 'notes.md'),
+      `mukai://file/${encodeURIComponent(join(folder, 'notes.md'))}`,
+    ]) {
+      expect(
+        (
+          await api.conversationArtifacts.reference('default', href, false, signal())
+        ).bytes.toString(),
+      ).toContain('Second line');
+    }
+    for (const href of [
+      '../private/credentials.key',
+      '.env',
+      join(dir, 'outside.txt'),
+      'mukai://file/%00bad',
+    ]) {
+      await expect(
+        api.conversationArtifacts.reference('default', href, false, signal()),
+      ).rejects.toThrow();
+    }
+    await expect(
+      api.conversationArtifacts.reference('default', 'missing.txt', false, signal()),
+    ).rejects.toThrow('no longer available');
+  });
+  it('resolves VM paths in the guest and preserves canonical IDs across file updates', async () => {
+    const id = await upload('source.txt', Buffer.from('Source'));
+    const messageId = api.conversationArtifacts.metadata('default', { attachmentId: id }).messageId;
+    const first = artifactService.record('scout', messageId, 'draft.md');
+    const next = artifactService.record('scout', messageId, 'draft.md');
+    expect(next).toEqual(first);
+    expect(
+      (await query({ action: 'list_artifacts', source: 'artifact' })).results[0],
+    ).toMatchObject({ reference: first.reference });
+    api.store.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+    const request = vi
+      .fn()
+      .mockResolvedValue({ name: 'draft.md', bytes: Buffer.from('# Guest').toString('base64') });
+    vi.spyOn(api.computers, 'guest').mockReturnValue({ request } as unknown as ReturnType<
+      typeof api.computers.guest
+    >);
+    expect(
+      (
+        await api.conversationArtifacts.reference(
+          'default',
+          '/home/mukai/workspace/draft.md',
+          false,
+          signal(),
+        )
+      ).bytes.toString(),
+    ).toBe('# Guest');
+    expect(request.mock.calls[0][1]).toEqual({ path: 'draft.md', maxBytes: 10 * 1024 * 1024 });
+    await expect(
+      api.conversationArtifacts.reference('default', '/etc/passwd', false, signal()),
+    ).rejects.toThrow('inside this workspace');
+    await expect(
+      api.conversationArtifacts.reference('default', 'C:\\host\\file.txt', false, signal()),
+    ).rejects.toThrow('workspace VM');
+  });
   it('filters artifact kinds separately from conversation types and normalizes text uploads to files', async () => {
     const image = await upload('reference.png', png);
     const text = await upload('notes.txt', Buffer.from('Notes'));

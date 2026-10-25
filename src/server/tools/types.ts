@@ -9,7 +9,7 @@ export interface ToolContext {
   onFileChanged: (
     path: string,
     metadata?: import('../../shared/fileMetadata').FileMetadata,
-  ) => void;
+  ) => import('../../shared/responseReferences').SavedFileReference | void;
   copyOnly?: boolean;
   attachmentBytes?: (id: string) => Promise<Buffer>;
   callBudget: { remaining: number };

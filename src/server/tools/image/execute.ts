@@ -5,6 +5,7 @@ import { tool, type ToolSet } from 'ai';
 import { executeRuntime, type RuntimeToolContext } from '../runtimeContext';
 import { resultPreview } from '../../services/toolResultPolicy';
 import { imageDefinition, type ImageInput } from './definition';
+import { artifactHref, attachmentHref } from '../../../shared/responseReferences';
 
 const FILE_LIMIT = 10 * 1024 * 1024;
 const PIXEL_LIMIT = 40_000_000;
@@ -99,6 +100,11 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
         'The decoded image exceeds the 10 MiB output limit. Use detail=high or a smaller image.',
       );
     return {
+      reference: input.artifactId
+        ? artifactHref(input.artifactId)
+        : input.attachmentId
+          ? attachmentHref(input.attachmentId)
+          : `mukai://file/${encodeURIComponent(input.path!)}`,
       ...(path
         ? { path }
         : {

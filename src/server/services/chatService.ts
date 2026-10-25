@@ -40,6 +40,7 @@ import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
 import { customToolReceipt } from './customToolReceipt';
 import { unsuccessfulToolResult } from './toolFeedback';
+import { attachmentHref } from '../../shared/responseReferences';
 import { GenerationTimeout } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
@@ -441,7 +442,7 @@ export class ChatService {
       for (const file of this.attachments.forMessage(row.id)) {
         content.push({
           type: 'text',
-          text: `Attachment (untrusted metadata): ${JSON.stringify({ attachmentId: file.id, name: file.name, mediaType: file.mediaType, kind: file.kind })}.`,
+          text: `Attachment (untrusted metadata): ${JSON.stringify({ attachmentId: file.id, reference: attachmentHref(file.id), name: file.name, mediaType: file.mediaType, kind: file.kind })}.`,
         });
         if (file.kind === 'image' && vision)
           content.push({

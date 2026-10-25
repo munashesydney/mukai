@@ -11,6 +11,7 @@ import { imageDefinition } from '../tools/image/definition';
 import { resultPreview } from '../services/toolResultPolicy';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import { computerUseTools } from '../tools/computer_use/execute';
+import { artifactHref, type SavedFileReference } from '../../shared/responseReferences';
 
 export function computerTools(
   context: RuntimeToolContext & {
@@ -20,7 +21,10 @@ export function computerTools(
     attachmentBytes?: (id: string) => Promise<Buffer>;
     fileBudget: { remaining: number };
     recordChange(snapshot: FileMutationSnapshot): void;
-    recordFile(path: string, metadata?: import('../../shared/fileMetadata').FileMetadata): void;
+    recordFile(
+      path: string,
+      metadata?: import('../../shared/fileMetadata').FileMetadata,
+    ): SavedFileReference | void;
     saveScreenshot(
       image: string,
     ): Promise<{ artifactId: string; path: string; width: number; height: number }>;
@@ -116,20 +120,24 @@ export function computerTools(
                 })
                 .parse(result);
               const warnings: string[] = [];
+              let reference: SavedFileReference | void = undefined;
               try {
                 for (const snapshot of response.changes) context.recordChange(snapshot);
                 if (response.result.changed) {
                   if (value.action !== 'copy_attachment')
-                    context.recordFile(response.result.path, response.result.metadata);
+                    reference = context.recordFile(response.result.path, response.result.metadata);
                   else if (typeof response.result.artifactPath === 'string')
-                    context.recordFile(response.result.artifactPath, response.result.metadata);
+                    reference = context.recordFile(
+                      response.result.artifactPath,
+                      response.result.metadata,
+                    );
                 }
               } catch {
                 warnings.push(
                   'The guest file was saved, but its history or artifact could not be recorded.',
                 );
               }
-              return { ...response.result, warnings };
+              return { ...response.result, ...reference, warnings };
             }
             if (name === 'browser' && value.action === 'screenshot') {
               const screenshot = z
@@ -140,6 +148,7 @@ export function computerTools(
               return {
                 ...screenshot,
                 artifactId: saved.artifactId,
+                reference: artifactHref(saved.artifactId),
                 width: saved.width,
                 height: saved.height,
                 screenshotUrl: '/artifacts/' + saved.artifactId,

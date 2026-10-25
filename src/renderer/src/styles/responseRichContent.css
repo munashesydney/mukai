@@ -1,0 +1,234 @@
+.response-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--theme-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.ai-markdown .response-file-link,
+.ai-markdown a[href] {
+  border-radius: 3px;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  transition:
+    text-decoration-color 120ms ease,
+    background-color 120ms ease;
+}
+.ai-markdown .response-file-link:hover,
+.ai-markdown a[href]:hover {
+  text-decoration-color: currentColor;
+  background-color: color-mix(in srgb, var(--theme-accent) 9%, transparent);
+}
+.ai-markdown .response-file-link:focus-visible,
+.ai-markdown a[href]:focus-visible,
+.response-image-button:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 3px;
+}
+.response-file-link svg {
+  flex-shrink: 0;
+}
+.response-reference-image {
+  display: inline-flex;
+  flex-direction: column;
+  max-width: 100%;
+  margin: 8px 0;
+}
+.response-image-button {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  max-width: 100%;
+}
+.response-image-button > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.response-image-button img {
+  display: block;
+  max-width: min(100%, 600px);
+  max-height: 420px;
+  object-fit: contain;
+}
+.reference-selected-line {
+  display: block;
+  background: var(--surface-muted);
+  outline: 1px solid var(--theme-accent);
+}
+.response-chart {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 760px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.response-chart-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.response-chart-heading .text-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.response-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 14px 0 0;
+  font-size: 12px;
+}
+.response-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.response-chart-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.response-chart-plot {
+  position: relative;
+  min-width: 0;
+}
+.response-chart-plot > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: pan-y;
+}
+.response-chart-plot > svg text {
+  fill: var(--text-muted);
+  font-size: 11px;
+}
+.response-chart-plot > svg [tabindex]:focus-visible {
+  outline: 2px solid var(--ink);
+}
+.response-chart-hit-area {
+  pointer-events: all;
+}
+.response-chart-hover-band {
+  fill: var(--theme-accent);
+  opacity: 0.07;
+}
+.response-chart-crosshair {
+  stroke: var(--text-muted);
+  stroke-dasharray: 4 4;
+  stroke-opacity: 0.6;
+}
+.response-chart-mark {
+  transition: opacity 140ms ease;
+}
+.response-chart[data-inspecting] .response-chart-mark:not(.is-active) {
+  opacity: 0.4;
+}
+circle.response-chart-mark.is-active {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.response-chart-hover-card {
+  position: absolute;
+  top: 12px;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 220px;
+  max-width: calc(100% - 16px);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 6px 22px rgb(0 0 0 / 14%);
+  font-size: 12px;
+  pointer-events: none;
+}
+.response-chart-hover-card > strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.response-chart-hover-card > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+.response-chart-hover-card span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.response-chart-hover-card i {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.response-chart-hover-card b {
+  font-variant-numeric: tabular-nums;
+}
+.response-chart-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.response-chart-loading svg {
+  flex-shrink: 0;
+}
+.response-chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.response-chart-tooltip {
+  min-height: 1.5em;
+  margin: 0 0 12px !important;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.response-chart details {
+  font-size: 12px;
+}
+.response-chart summary {
+  cursor: pointer;
+}
+.response-chart-table {
+  overflow-x: auto;
+  max-height: 320px;
+  margin-top: 12px;
+}
+.response-chart-table table {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-markdown .response-file-link,
+  .ai-markdown a[href],
+  .response-chart-mark {
+    transition: none;
+  }
+}

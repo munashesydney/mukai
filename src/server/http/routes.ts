@@ -545,6 +545,35 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
+        if (action === 'reference' && method === 'POST') {
+          const input = z
+            .object({ href: z.string().min(1).max(4500), image: z.boolean().default(false) })
+            .strict()
+            .parse(await jsonBody(request));
+          const controller = new AbortController();
+          const cancel = () => controller.abort();
+          response.once('close', cancel);
+          try {
+            const file = await conversationArtifacts.reference(
+              conversation.workspaceId,
+              input.href,
+              input.image,
+              AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+            );
+            response.setHeader('Content-Type', file.mediaType);
+            response.setHeader(
+              'Content-Disposition',
+              `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+            );
+            response.setHeader('X-Content-Type-Options', 'nosniff');
+            response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+            response.setHeader('Cache-Control', 'no-store');
+            response.writeHead(200).end(file.bytes);
+          } finally {
+            response.off('close', cancel);
+          }
+          return;
+        }
         if (action === 'followups') {
           if (method === 'GET') return send(response, chats.listFollowups(id));
           if (conversation.kind === 'bot')

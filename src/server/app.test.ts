@@ -25,6 +25,7 @@ import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 import type { ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
+import { ArtifactRepository } from './repositories/artifactRepository';
 
 function inputBot() {
   return {
@@ -1128,6 +1129,57 @@ describe('Mukai bots and AI API', () => {
     },
   );
 
+  it('serves response references through authenticated conversation-scoped routes', async () => {
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    api.store.run('UPDATE workspaces SET folder=? WHERE id=?', project, 'default');
+    writeFileSync(join(project, 'notes.md'), '# Notes\nSecond line');
+    const png = await sharp({
+      create: { width: 25, height: 15, channels: 3, background: '#0088cc' },
+    })
+      .png()
+      .toBuffer();
+    const attachment = (await upload('reference.png', png)).data;
+    const preview = (href: string, image = false) =>
+      fetch(api.url + '/conversations/bot-scout/reference', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ href, image }),
+      });
+    expect((await preview(`mukai://attachment/${attachment.id}`)).status).toBe(404);
+    api.store.run(
+      "INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at) VALUES('reference-message','scout','bot-scout','reference','user','','complete','2026-10-24')",
+    );
+    api.store.run(
+      'UPDATE attachments SET message_id=? WHERE id=?',
+      'reference-message',
+      attachment.id,
+    );
+    const file = new ArtifactRepository(api.store).save({
+      id: 'notes-artifact',
+      botId: 'scout',
+      messageId: 'reference-message',
+      path: 'notes.md',
+      name: 'notes.md',
+      createdAt: new Date().toISOString(),
+    });
+    for (const href of [`mukai://artifact/${file.id}#L2`, 'notes.md', join(project, 'notes.md')]) {
+      const response = await preview(href);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(await response.text()).toBe('# Notes\nSecond line');
+    }
+    const image = await preview(`mukai://attachment/${attachment.id}`, true);
+    expect(image.status).toBe(200);
+    expect(image.headers.get('Content-Type')).toBe('image/png');
+    expect((await sharp(Buffer.from(await image.arrayBuffer())).metadata()).width).toBe(25);
+    expect((await preview('../outside.txt')).status).toBe(400);
+    expect((await preview('https://example.com/secret')).status).toBe(400);
+    expect((await preview('missing.md')).status).toBe(404);
+    expect(
+      (await fetch(api.url + '/conversations/bot-scout/reference', { method: 'POST' })).status,
+    ).toBe(401);
+    expect((await preview('notes.md', true)).status).toBe(400);
+  });
   it('rediscovers an attached image after compaction, reopens its pixels and copies its original bytes without a workspace folder', async () => {
     await configure(true);
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
@@ -1507,7 +1559,8 @@ describe('Mukai bots and AI API', () => {
   });
 
   it('pauses before every workspace call, resumes one at a time and never writes before approval', async () => {
-    await configure();
+    // This fixture counts tool messages; keep compaction out of the approval-only scenario.
+    await configure(false, { contextWindowTokens: 65536 });
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
     writeFileSync(join(project, 'notes.txt'), 'Useful notes.');
     await request('/workspaces/default', 'PUT', { name: 'Approval workspace', folder: project });

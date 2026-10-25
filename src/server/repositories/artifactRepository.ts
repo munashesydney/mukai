@@ -33,8 +33,8 @@ export class ArtifactRepository {
       .map(artifactRecord);
   }
   save(file: FileArtifact) {
-    this.database.run(
-      'INSERT INTO artifacts(id,bot_id,message_id,path,name,created_at,conversation_id,kind,media_type,size) VALUES (?,?,?,?,?,?,(SELECT conversation_id FROM messages WHERE id=?),?,?,?) ON CONFLICT(conversation_id,path) DO UPDATE SET bot_id=excluded.bot_id,message_id=excluded.message_id,created_at=excluded.created_at,kind=excluded.kind,media_type=excluded.media_type,size=excluded.size',
+    const row = this.database.get(
+      'INSERT INTO artifacts(id,bot_id,message_id,path,name,created_at,conversation_id,kind,media_type,size) VALUES (?,?,?,?,?,?,(SELECT conversation_id FROM messages WHERE id=?),?,?,?) ON CONFLICT(conversation_id,path) DO UPDATE SET bot_id=excluded.bot_id,message_id=excluded.message_id,created_at=excluded.created_at,kind=excluded.kind,media_type=excluded.media_type,size=excluded.size RETURNING *',
       file.id,
       file.botId,
       file.messageId,
@@ -46,6 +46,7 @@ export class ArtifactRepository {
       file.mediaType || (file.kind === 'image' ? 'image/png' : null),
       file.size ?? null,
     );
+    return artifactRecord(row!);
   }
   updateMetadata(id: string, metadata: FileMetadata) {
     this.database.run(

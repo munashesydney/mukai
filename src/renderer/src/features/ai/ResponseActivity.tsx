@@ -20,6 +20,7 @@ import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ToolImagePreview } from './ToolImagePreview';
+import { ResponseReferenceContext } from './responseReferenceContext';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
@@ -252,7 +253,7 @@ function ReasoningPart({
         <ChevronDown size={13} className="response-chevron" />
       </summary>
       <div className="response-reasoning-detail">
-        <MessageMarkdown text={part.text} />
+        <MessageMarkdown text={part.text} streaming={active} />
       </div>
     </details>
   );
@@ -318,7 +319,14 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
               <p>{part.text}</p>
             </div>
           );
-        if (part.type === 'text') return <MessageMarkdown key={part.id} text={part.text} />;
+        if (part.type === 'text')
+          return (
+            <MessageMarkdown
+              key={part.id}
+              text={part.text}
+              streaming={message.status === 'streaming'}
+            />
+          );
         if (part.type === 'compaction')
           return (
             <CompactionPart key={part.id} part={part} streaming={message.status === 'streaming'} />
@@ -403,7 +411,7 @@ export const ResponseActivity = memo(function ResponseActivity({
 }) {
   const { process, answer } = responsePresentation(message);
   return (
-    <>
+    <ResponseReferenceContext.Provider value={message.conversationId || 'bot-' + message.botId}>
       {(!!process.length || message.status === 'streaming') && (
         <WorkProcess
           key={`${message.id}:${message.startedAt || ''}`}
@@ -413,7 +421,7 @@ export const ResponseActivity = memo(function ResponseActivity({
           onExpandedChange={onWorkExpandedChange}
         />
       )}
-      {!!answer && <MessageMarkdown text={answer} />}
-    </>
+      {!!answer && <MessageMarkdown text={answer} streaming={message.status === 'streaming'} />}
+    </ResponseReferenceContext.Provider>
   );
 });

@@ -1,6 +1,7 @@
 import type { Database, Row } from '../db/database';
 import type { ConversationQuery } from '../tools/conversations/definition';
 import { ApiError } from '../config';
+import { artifactHref, attachmentHref } from '../../shared/responseReferences';
 
 // Filename inference keeps legacy, unavailable files discoverable without opening a VM.
 const generatedMediaType = `COALESCE(a.media_type,CASE
@@ -24,6 +25,8 @@ const sources = `SELECT a.id,'attachment' AS source,a.name,NULL AS path,
 function record(row: Row) {
   return {
     id: String(row.id),
+    reference:
+      row.source === 'artifact' ? artifactHref(String(row.id)) : attachmentHref(String(row.id)),
     source: String(row.source) as 'attachment' | 'artifact',
     name: String(row.name),
     path: row.path === null ? null : String(row.path),

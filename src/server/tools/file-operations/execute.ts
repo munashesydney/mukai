@@ -35,12 +35,15 @@ export async function executeFileOperations(
       );
     } else result = await context.files.execute(input, context.signal);
     const warnings = 'warnings' in result ? [...(result.warnings || [])] : [];
+    let reference: import('../../../shared/responseReferences').SavedFileReference | void =
+      undefined;
     try {
       if ('changed' in result && result.changed) {
         const metadata = 'metadata' in result ? result.metadata : undefined;
-        if (input.action !== 'copy_attachment') context.onFileChanged(result.path, metadata);
+        if (input.action !== 'copy_attachment')
+          reference = context.onFileChanged(result.path, metadata);
         else if ('artifactPath' in result && result.artifactPath)
-          context.onFileChanged(result.artifactPath, metadata);
+          reference = context.onFileChanged(result.artifactPath, metadata);
       }
     } catch (error) {
       console.error('[mukai artifact recording]', error);
@@ -57,7 +60,7 @@ export async function executeFileOperations(
       console.error('[mukai file activity recording]', error);
       warnings.push('The operation completed, but its activity could not be recorded.');
     }
-    return { ok: true, action: input.action, ...result, warnings };
+    return { ok: true, action: input.action, ...result, ...reference, warnings };
   } catch (error) {
     const summary = context.signal.aborted
       ? 'File operation interrupted.'

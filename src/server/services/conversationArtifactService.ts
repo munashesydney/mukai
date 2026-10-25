@@ -5,6 +5,7 @@ import type { ArtifactService } from './artifactService';
 import type { ConversationQuery } from '../tools/conversations/definition';
 import { executeImage } from '../tools/image/execute';
 import { ToolFeedbackError } from './toolFeedback';
+import { parseResponseReference } from '../../shared/responseReferences';
 
 export type ArtifactReference = { attachmentId?: string; artifactId?: string };
 
@@ -16,6 +17,48 @@ export class ConversationArtifactService {
   ) {}
   hasAttachments(workspaceId: string) {
     return this.repository.hasAttachments(workspaceId);
+  }
+  async reference(workspaceId: string, href: string, imageOnly: boolean, signal: AbortSignal) {
+    const reference = parseResponseReference(href);
+    if (!reference) throw new ApiError(400, 'Invalid file reference.');
+    const load = async () => {
+      if (reference.type === 'file')
+        return this.artifacts.readPath(workspaceId, reference.path, signal);
+      const source = await this.bytes(
+        workspaceId,
+        reference.type === 'artifact'
+          ? { artifactId: reference.id }
+          : { attachmentId: reference.id },
+        signal,
+      );
+      return {
+        name: source.metadata.name,
+        bytes: source.bytes,
+        mediaType: source.metadata.mediaType || 'application/octet-stream',
+      };
+    };
+    if (!imageOnly) return load();
+    const output = await executeImage(
+      { action: 'view', artifactId: 'reference-preview' },
+      {
+        owner: { workspaceId, botId: 'reference-preview', conversationId: 'reference-preview' },
+        folder: null,
+        vision: true,
+        signal,
+        budget: { remaining: 1 },
+        onActivity: () => {},
+        readImage: load,
+      },
+      'reference-preview',
+    );
+    // ID loading uses the image tool's byte-source route (no filesystem access by the renderer).
+    if (!output.ok || !output.result || !('image' in output.result))
+      throw new ApiError(400, output.error || 'This image cannot be displayed.');
+    return {
+      name: reference.type === 'file' ? reference.path.split(/[\\/]/).at(-1)! : 'image.png',
+      bytes: Buffer.from(output.result.image!, 'base64'),
+      mediaType: 'image/png',
+    };
   }
   async list(workspaceId: string, input: ConversationQuery) {
     const page = this.repository.list(workspaceId, input);
@@ -41,7 +84,8 @@ export class ConversationArtifactService {
       input.attachmentId || input.artifactId!,
     );
   }
-  async bytes(workspaceId: string, input: ArtifactReference) {
+  async bytes(workspaceId: string, input: ArtifactReference, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const metadata = this.metadata(workspaceId, input);
     if (metadata.source === 'attachment') {
       const file = this.attachments
@@ -55,7 +99,7 @@ export class ConversationArtifactService {
         throw error;
       }
     }
-    const { bytes } = await this.artifacts.read(metadata.id);
+    const { bytes } = await this.artifacts.read(metadata.id, signal);
     return { metadata: this.metadata(workspaceId, input), bytes };
   }
   async image(workspaceId: string, input: ArtifactReference) {
