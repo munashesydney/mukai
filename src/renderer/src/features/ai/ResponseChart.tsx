@@ -1,4 +1,14 @@
-import { useContext, useEffect, useId, useMemo, useState, type PointerEvent } from 'react';
+import {
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 import { Download, LoaderCircle } from 'lucide-react';
 import {
   inlineChartSchema,
@@ -24,12 +34,94 @@ function csvCell(value: unknown) {
   );
 }
 
+function ChartTooltip({
+  id,
+  x,
+  y,
+  children,
+}: {
+  id: string;
+  x: number;
+  y: number;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const card = ref.current;
+    const plot = card?.parentElement;
+    if (!card || !plot) return;
+    function position() {
+      if (!card || !plot) return;
+      const bounds = plot.getBoundingClientRect();
+      const size = card.getBoundingClientRect();
+      const padding = 8,
+        gap = 12;
+      const minX = Math.max(padding, padding - bounds.left);
+      const minY = Math.max(padding, padding - bounds.top);
+      const maxX = Math.max(
+        minX,
+        Math.min(bounds.width - padding, window.innerWidth - bounds.left - padding) - size.width,
+      );
+      const maxY = Math.max(
+        minY,
+        Math.min(bounds.height - padding, window.innerHeight - bounds.top - padding) - size.height,
+      );
+      const anchorX = x * bounds.width,
+        anchorY = y * bounds.height;
+      const clamp = (value: number, min: number, max: number) =>
+        Math.max(min, Math.min(value, max));
+      // Try each side of the pointer before clamping to the visible chart bounds.
+      const candidates = [
+        [anchorX + gap, anchorY + gap],
+        [anchorX - size.width - gap, anchorY + gap],
+        [anchorX + gap, anchorY - size.height - gap],
+        [anchorX - size.width - gap, anchorY - size.height - gap],
+      ].map(([left, top]) => ({ left, top }));
+      const clamped = candidates.map(({ left, top }) => ({
+        left: clamp(left, minX, maxX),
+        top: clamp(top, minY, maxY),
+      }));
+      const chosen =
+        candidates.find(
+          ({ left, top }) => left >= minX && left <= maxX && top >= minY && top <= maxY,
+        ) ??
+        clamped.find(
+          ({ left, top }) =>
+            anchorX <= left - gap ||
+            anchorX >= left + size.width + gap ||
+            anchorY <= top - gap ||
+            anchorY >= top + size.height + gap,
+        ) ??
+        clamped[0];
+      card.style.left = `${chosen.left}px`;
+      card.style.top = `${chosen.top}px`;
+      card.style.visibility = 'visible';
+    }
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(plot);
+    observer.observe(card);
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+    };
+  }, [x, y]);
+  return (
+    <div ref={ref} id={id} role="tooltip" className="response-chart-hover-card">
+      {children}
+    </div>
+  );
+}
+
 export function ResponseChartView({ chart }: { chart: ResponseChart }) {
   const titleId = useId();
   const tooltipId = useId();
-  const [hovered, setHovered] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<{ row: number; x: number; y: number } | null>(null);
   const [focused, setFocused] = useState<{ row: number; series: number } | null>(null);
-  const selectedRow = hovered ?? focused?.row ?? null;
+  const selectedRow = hovered?.row ?? focused?.row ?? null;
   const activeRow = selectedRow !== null && chart.data[selectedRow] ? selectedRow : null;
   const width = 640,
     height = 310,
@@ -64,7 +156,11 @@ export function ResponseChartView({ chart }: { chart: ResponseChart }) {
             chart.data.length - 1,
             Math.floor(((point.x - left) / plotWidth) * chart.data.length),
           );
-    setHovered((previous) => (toggle && previous === index ? null : index));
+    setHovered((previous) =>
+      index === null || (toggle && previous?.row === index)
+        ? null
+        : { row: index, x: point.x / width, y: point.y / height },
+    );
   }
   function download() {
     const csv = [
@@ -197,7 +293,10 @@ export function ResponseChartView({ chart }: { chart: ResponseChart }) {
                     tabIndex: 0,
                     'aria-label': label,
                     'aria-describedby': activeRow === index ? tooltipId : undefined,
-                    onFocus: () => setFocused({ row: index, series: seriesIndex }),
+                    onFocus: () => {
+                      setHovered(null);
+                      setFocused({ row: index, series: seriesIndex });
+                    },
                     onBlur: () => setFocused(null),
                   };
                   const barWidth = ((plotWidth / chart.data.length) * 0.75) / chart.series.length;
@@ -229,13 +328,13 @@ export function ResponseChartView({ chart }: { chart: ResponseChart }) {
           })}
         </svg>
         {activeRow !== null && (
-          <div
+          <ChartTooltip
             id={tooltipId}
-            role="tooltip"
-            className="response-chart-hover-card"
-            style={{
-              left: `clamp(8px, calc(${(x(activeRow) / width) * 100}% - 110px), calc(100% - 228px))`,
-            }}
+            x={hovered?.x ?? x(activeRow) / width}
+            y={
+              hovered?.y ??
+              y(Number(chart.data[activeRow][chart.series[focused?.series ?? 0].key] ?? 0)) / height
+            }
           >
             <strong>{String(chart.data[activeRow][chart.xKey])}</strong>
             {chart.series.map((series, index) => (
@@ -253,7 +352,7 @@ export function ResponseChartView({ chart }: { chart: ResponseChart }) {
                 </b>
               </div>
             ))}
-          </div>
+          </ChartTooltip>
         )}
       </div>
       <p className="response-chart-tooltip" role="status">

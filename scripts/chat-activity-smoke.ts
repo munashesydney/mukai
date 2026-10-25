@@ -318,6 +318,50 @@ async function main() {
     await wait(`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
   };
+  const checkChartTooltip = async (chartIndex: number, x: number, y: number) => {
+    const pointer = await evaluate<{ x: number; y: number }>(`(() => {
+      const svg=document.querySelectorAll('.response-chart-plot > svg')[${chartIndex}];
+      svg.scrollIntoView({block:'center'});
+      const point=new DOMPoint(${x},${y}).matrixTransform(svg.getScreenCTM());
+      svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerType:'mouse',clientX:point.x,clientY:point.y}));
+      return {x:point.x,y:point.y};
+    })()`);
+    await wait(
+      `Boolean(document.querySelectorAll('.response-chart')[${chartIndex}].querySelector('[role="tooltip"]'))`,
+    );
+    const bounds = await evaluate<{
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+      width: number;
+      plotLeft: number;
+      plotRight: number;
+      plotTop: number;
+      plotBottom: number;
+    }>(`(() => {
+      const plot=document.querySelectorAll('.response-chart-plot')[${chartIndex}];
+      const card=plot.querySelector('[role="tooltip"]').getBoundingClientRect(),bounds=plot.getBoundingClientRect();
+      return {left:card.left,top:card.top,right:card.right,bottom:card.bottom,width:card.width,plotLeft:bounds.left,plotRight:bounds.right,plotTop:bounds.top,plotBottom:bounds.bottom};
+    })()`);
+    assert(bounds.width <= 181, 'Chart tooltip should be compact');
+    assert(
+      bounds.left >= bounds.plotLeft && bounds.right <= bounds.plotRight + 1,
+      'Tooltip must stay inside chart horizontally',
+    );
+    assert(
+      bounds.top >= bounds.plotTop && bounds.bottom <= bounds.plotBottom + 1,
+      'Tooltip must stay inside chart vertically',
+    );
+    assert(
+      pointer.x <= bounds.left - 10 ||
+        pointer.x >= bounds.right + 10 ||
+        pointer.y <= bounds.top - 10 ||
+        pointer.y >= bounds.bottom + 10,
+      'Tooltip must leave a gap around the pointer',
+    );
+    return bounds;
+  };
   const capture = async (name: string) => {
     await evaluate(
       'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
@@ -469,6 +513,21 @@ async function main() {
       })()`);
       await wait(`${visible ? '' : '!'}document.querySelector('.response-chart [role="tooltip"]')`);
     }
+    const firstPosition = await checkChartTooltip(0, 320, 60);
+    const movedPosition = await checkChartTooltip(0, 360, 110);
+    assert(
+      Math.abs(firstPosition.left - movedPosition.left) > 10 &&
+        Math.abs(firstPosition.top - movedPosition.top) > 10,
+      'Tooltip should follow the pointer within the same category',
+    );
+    for (const [x, y] of [
+      [63, 19],
+      [621, 19],
+      [63, 257],
+      [621, 257],
+    ])
+      await checkChartTooltip(0, x, y);
+    await checkChartTooltip(1, 342, 138);
     await click('.response-chart details summary');
     assert.equal(
       await evaluate(
@@ -640,6 +699,14 @@ async function main() {
     );
     await click('button[aria-label="Close chat activity"]');
     await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
+    for (const [x, y] of [
+      [63, 19],
+      [621, 19],
+      [63, 257],
+      [621, 257],
+    ])
+      await checkChartTooltip(1, x, y);
+    await capture('rich-response-tooltip-narrow');
     window.setSize(1480, 980);
     await evaluate(
       `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,

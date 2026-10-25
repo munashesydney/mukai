@@ -16,14 +16,11 @@
   text-decoration-color: transparent;
   text-underline-offset: 3px;
   text-decoration-thickness: 1.5px;
-  transition:
-    text-decoration-color 120ms ease,
-    background-color 120ms ease;
+  transition: text-decoration-color 120ms ease;
 }
 .ai-markdown .response-file-link:hover,
 .ai-markdown a[href]:hover {
   text-decoration-color: currentColor;
-  background-color: color-mix(in srgb, var(--theme-accent) 9%, transparent);
 }
 .ai-markdown .response-file-link:focus-visible,
 .ai-markdown a[href]:focus-visible,
@@ -150,30 +147,31 @@ circle.response-chart-mark.is-active {
 }
 .response-chart-hover-card {
   position: absolute;
-  top: 12px;
+  visibility: hidden;
   z-index: 1;
   box-sizing: border-box;
-  width: 220px;
-  max-width: calc(100% - 16px);
-  padding: 12px;
+  width: max-content;
+  min-width: min(140px, calc(100% - 16px));
+  max-width: min(180px, calc(100% - 16px));
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--ink);
   box-shadow: 0 6px 22px rgb(0 0 0 / 14%);
-  font-size: 12px;
+  font-size: 11px;
   pointer-events: none;
 }
 .response-chart-hover-card > strong {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 .response-chart-hover-card > div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 6px;
+  gap: 10px;
+  margin-top: 4px;
 }
 .response-chart-hover-card span {
   display: inline-flex;
