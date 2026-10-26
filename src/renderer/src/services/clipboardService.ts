@@ -7,3 +7,13 @@ export async function copyText(text: string): Promise<void> {
     await navigator.clipboard.writeText(text);
   }
 }
+
+/** Read only in response to a paste action; never poll the host clipboard. */
+export async function readClipboardText(): Promise<string> {
+  if (window.mukai) return window.mukai.readClipboardText();
+  if (!navigator.clipboard?.readText)
+    throw new Error(
+      'Clipboard access requires HTTPS or localhost. Use the Clipboard panel to paste text.',
+    );
+  return navigator.clipboard.readText();
+}

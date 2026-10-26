@@ -10,7 +10,8 @@ User=mukai
 Group=mukai
 Environment=HOME=/home/mukai
 ExecStartPre=+/bin/sh /opt/mukai-guest/bridge/desktop-prepare.sh
-ExecStart=/usr/bin/Xtigervnc :0 -desktop Mukai -geometry 1280x800 -depth 24 -rfbport 5901 -localhost no -SecurityTypes VncAuth -PasswordFile /run/mukai-desktop/passwd -AlwaysShared -AcceptSetDesktopSize -nolisten tcp -ac
+# Extended clipboard adds a NUL and expands LF to CRLF before compression.
+ExecStart=/usr/bin/Xtigervnc :0 -desktop Mukai -geometry 1280x800 -depth 24 -rfbport 5901 -localhost no -SecurityTypes VncAuth -PasswordFile /run/mukai-desktop/passwd -AlwaysShared -AcceptSetDesktopSize -AcceptCutText -SendCutText -SendPrimary=0 -MaxCutText 2097168 -nolisten tcp -ac
 Restart=on-failure
 RestartSec=2
 

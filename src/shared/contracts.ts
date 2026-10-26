@@ -12,6 +12,7 @@ export interface DesktopBridge {
   getApiConnection: () => Promise<{ url: string; token: string }>;
   openExternal: (url: string) => Promise<void>;
   writeClipboardText: (text: string) => Promise<void>;
+  readClipboardText: () => Promise<string>;
   chooseWorkspaceFolder: () => Promise<string | null>;
   minimize: () => void;
   toggleMaximize: () => void;
@@ -38,6 +39,7 @@ export const IPC = {
   apiConnection: 'mukai:api-connection',
   openExternal: 'mukai:open-external',
   writeClipboardText: 'mukai:write-clipboard-text',
+  readClipboardText: 'mukai:read-clipboard-text',
   chooseWorkspaceFolder: 'mukai:choose-workspace-folder',
   minimize: 'mukai:minimize',
   maximize: 'mukai:maximize',

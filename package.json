@@ -25,6 +25,7 @@
     "test:computer-use": "tsx scripts/run-computer-use-smoke.ts",
     "test:computer-use:windows-search": "tsx scripts/run-computer-use-windows-search-smoke.ts",
     "test:computer-use:vm": "tsx scripts/run-computer-use-vm-smoke.ts",
+    "test:clipboard:vm": "npm run build:guest && tsx scripts/run-clipboard-vm-smoke.ts",
     "predev": "npm run build:computer-use && npm run build:guest",
     "predev:server": "npm run build:computer-use && npm run build:guest",
     "dev": "electron-vite dev",

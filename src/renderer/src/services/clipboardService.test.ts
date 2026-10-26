@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { copyText } from './clipboardService';
+import { copyText, readClipboardText } from './clipboardService';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -26,4 +26,24 @@ it('reports a native clipboard failure instead of falling back to a denied brows
     mukai: { writeClipboardText: vi.fn().mockRejectedValue(new Error('Clipboard unavailable')) },
   });
   await expect(copyText('text')).rejects.toThrow('Clipboard unavailable');
+});
+
+it('reads through the desktop bridge without requesting browser clipboard permission', async () => {
+  const native = vi.fn().mockResolvedValue('café 世界 🌱\nsecond line');
+  const browser = vi.fn().mockRejectedValue(new Error('Denied'));
+  vi.stubGlobal('window', { mukai: { readClipboardText: native } });
+  vi.stubGlobal('navigator', { clipboard: { readText: browser } });
+  await expect(readClipboardText()).resolves.toBe('café 世界 🌱\nsecond line');
+  expect(browser).not.toHaveBeenCalled();
+});
+
+it('uses browser clipboard reads and surfaces permission failures for the manual fallback', async () => {
+  const browser = vi.fn().mockResolvedValue('browser text');
+  vi.stubGlobal('window', {});
+  vi.stubGlobal('navigator', { clipboard: { readText: browser } });
+  await expect(readClipboardText()).resolves.toBe('browser text');
+  browser.mockRejectedValue(new Error('Denied'));
+  await expect(readClipboardText()).rejects.toThrow('Denied');
+  vi.stubGlobal('navigator', {});
+  await expect(readClipboardText()).rejects.toThrow('Clipboard panel');
 });

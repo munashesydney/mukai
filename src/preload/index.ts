@@ -7,6 +7,7 @@ const bridge: DesktopBridge = {
   getApiConnection: () => ipcRenderer.invoke(IPC.apiConnection),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   writeClipboardText: (text) => ipcRenderer.invoke(IPC.writeClipboardText, text),
+  readClipboardText: () => ipcRenderer.invoke(IPC.readClipboardText),
   chooseWorkspaceFolder: () => ipcRenderer.invoke(IPC.chooseWorkspaceFolder),
   minimize: () => ipcRenderer.send(IPC.minimize),
   toggleMaximize: () => ipcRenderer.send(IPC.maximize),

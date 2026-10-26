@@ -97,6 +97,7 @@ async function main() {
         if (failCopy) throw new Error('Fixture clipboard failure');
         copied.push(text);
       },
+      readClipboardText: async () => copied.at(-1) ?? '',
     },
   );
   const evaluate = <T>(code: string): Promise<T> => window.webContents.executeJavaScript(code);

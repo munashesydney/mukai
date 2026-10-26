@@ -87,6 +87,26 @@ it('expires unused viewer tickets', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31000);
   await denied(session.path, 'file://');
 });
+it('carries a full 1 MiB clipboard update with its RFB headers', async () => {
+  const session = await transport.session(computer);
+  const viewer = new WebSocket(url + session.path, { origin: 'file://' });
+  const received: Buffer[] = [];
+  viewer.on('message', (bytes) => received.push(Buffer.from(bytes as Buffer)));
+  await new Promise<void>((done, reject) => {
+    viewer.once('open', done);
+    viewer.once('error', reject);
+  });
+  try {
+    await expect.poll(() => Buffer.concat(received).toString()).toBe('RFB fixture');
+    received.length = 0;
+    const payload = Buffer.alloc(1024 * 1024 + 8, 65);
+    viewer.send(payload);
+    await expect.poll(() => Buffer.concat(received).length).toBe(payload.length);
+    expect(Buffer.concat(received).equals(payload)).toBe(true);
+  } finally {
+    viewer.terminate();
+  }
+});
 it('browser mode streams the API websocket on its selected origin and rejects the dev origin', async () => {
   transport.shutdown();
   server.removeAllListeners('upgrade');
