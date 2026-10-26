@@ -16,6 +16,7 @@ import { executeFileOperations } from './tools/file-operations/execute';
 import { conversationsDefinition } from './tools/conversations/definition';
 import { conversationTools } from './tools/conversations/execute';
 import { imageTools } from './tools/image/execute';
+import { mediaTools } from './tools/media/execute';
 import { imageDefinition } from './tools/image/definition';
 import { computerTools } from './computer/tools';
 import { GuestDispatcher } from './computer/guestDispatcher';
@@ -409,9 +410,9 @@ describe('Saved uploads and artifact tools', () => {
       name: 'large-copy.png',
       createdAt: new Date().toISOString(),
     });
-    const tools = imageTools(imageContext());
-    const result = await tools.image.execute!(
-      { action: 'view', artifactId: 'large-copy' },
+    const tools = mediaTools(imageContext());
+    const result = await tools.media.execute!(
+      { action: 'view_image', artifactId: 'large-copy' },
       options('large-view'),
     );
     expect(result).toMatchObject({
@@ -541,8 +542,8 @@ describe('Saved uploads and artifact tools', () => {
       nextOffset: null,
       feedback: {
         code: 'image_requires_view',
-        message: expect.stringContaining('image.view'),
-        nextAction: { tool: 'image', input: { action: 'view', attachmentId: id } },
+        message: expect.stringContaining('media.view_image'),
+        nextAction: { tool: 'media', input: { action: 'view_image', attachmentId: id } },
       },
     });
   });
@@ -654,8 +655,8 @@ describe('Saved uploads and artifact tools', () => {
         bytes: png.toString('base64'),
       });
       request.mockClear();
-      const viewed = await tools.image.execute!(
-        { action: 'view', attachmentId: id },
+      const viewed = await tools.media.execute!(
+        { action: 'view_image', attachmentId: id },
         options('view'),
       );
       expect(viewed).toMatchObject({ ok: true, result: { width: 25, height: 15 } });

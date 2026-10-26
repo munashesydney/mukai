@@ -128,11 +128,11 @@ export class ConversationArtifactService {
     const imageFeedback = () =>
       new ToolFeedbackError(
         'image_requires_view',
-        'Use image.view with this attachmentId or artifactId to inspect image pixels.',
+        'Image pixels are not text. media.view_image accepts this attachmentId or artifactId.',
         {
-          tool: 'image',
+          tool: 'media',
           input: {
-            action: 'view',
+            action: 'view_image',
             ...(input.attachmentId
               ? { attachmentId: input.attachmentId }
               : { artifactId: input.artifactId }),
@@ -149,7 +149,14 @@ export class ConversationArtifactService {
       if (file.kind === 'audio' || file.kind === 'video')
         throw new ToolFeedbackError(
           'media_requires_capable_model',
-          `This is a ${file.kind} attachment, not a text document. Its bytes are supplied directly in the original chat to models with ${file.kind} input support. No transcript is available from read_artifact.`,
+          `This is a ${file.kind} attachment, not a text document. No transcript is available from read_artifact. media.${file.kind === 'audio' ? 'listen_audio' : 'view_video'} accepts this attachmentId when that model input capability is enabled.`,
+          {
+            tool: 'media',
+            input: {
+              action: file.kind === 'audio' ? 'listen_audio' : 'view_video',
+              attachmentId: input.attachmentId,
+            },
+          },
         );
       content = file.extractedText || '';
       warning = file.warning;
@@ -164,7 +171,7 @@ export class ConversationArtifactService {
       } catch {
         throw new ToolFeedbackError(
           'not_readable_text',
-          'This artifact is not readable UTF-8 text. Use image.view for images.',
+          'This artifact is not readable UTF-8 text. Image, audio and video input is available through media when supported by the current model.',
         );
       }
     }

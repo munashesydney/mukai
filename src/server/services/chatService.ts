@@ -42,6 +42,8 @@ import { customToolReceipt } from './customToolReceipt';
 import { unsuccessfulToolResult } from './toolFeedback';
 import { attachmentContext } from './attachmentContext';
 import { rejectedMedia, omitRejectedMedia } from './mediaRecovery';
+import { imageDefinition } from '../tools/image/definition';
+import { mediaDefinition } from '../tools/media/definition';
 import type { InputCapabilities } from '../../shared/modelCapabilities';
 import { GenerationTimeout } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
@@ -66,6 +68,7 @@ import {
   limitResultText,
   ACTIVITY_TRUNCATED,
   imageDeliveryState,
+  mediaDeliveryState,
 } from './toolResultPolicy';
 import {
   assistantContextText,
@@ -655,7 +658,7 @@ export class ChatService {
           assistantId,
           generation.controller.signal,
           onActivity,
-          config.vision,
+          config,
           Math.floor(
             contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.45 * 3,
           ),
@@ -880,6 +883,25 @@ export class ChatService {
       // Old pending questions retain their recorded tool name after the family rename.
       if (recoveryCalls.some((call) => call.toolName === 'ask') && tools.communicate)
         tools.ask = tools.communicate;
+      const legacyImageRecovery =
+        recoveryCalls.some((call) => call.toolName === 'image') && !!tools.media;
+      if (legacyImageRecovery) {
+        const media = tools.media;
+        tools.image = {
+          ...media,
+          inputSchema: imageDefinition.inputSchema,
+          execute: (input, options) => {
+            const legacy = imageDefinition.inputSchema.parse(input);
+            return media.execute!(
+              mediaDefinition.inputSchema.parse({
+                ...legacy,
+                action: legacy.action === 'view' ? 'view_image' : 'read_image',
+              }),
+              options,
+            );
+          },
+        };
+      }
       const checkpoint =
         existingUser && (!runtime || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
@@ -1015,6 +1037,10 @@ export class ChatService {
         }
         manager.pinRequests(pinnedRequests);
         messages = fallback.messages;
+        for (const message of messages)
+          if (message.role === 'tool')
+            for (const part of message.content)
+              if (part.type === 'tool-result') reportTruncation(part.toolCallId, part.output);
         mediaRecoveryUsed = true;
         return true;
       };
@@ -1102,20 +1128,28 @@ export class ChatService {
         }
       };
       const reportTruncation = (callId: string, output: unknown) => {
-        const delivery = imageDeliveryState(output);
+        const delivery = imageDeliveryState(output),
+          mediaDelivery = mediaDeliveryState(output);
         const observation = generation.activity.find((item) => item.id === callId);
         if (
-          delivery &&
+          (delivery || mediaDelivery) &&
           observation &&
           ((['browser', 'computer_use'].includes(observation.tool) &&
             observation.action === 'screenshot') ||
-            (observation.tool === 'image' && observation.action === 'view'))
+            (observation.tool === 'image' && observation.action === 'view') ||
+            (observation.tool === 'media' &&
+              ['view_image', 'listen_audio', 'view_video'].includes(observation.action)))
         ) {
           try {
             const [json, ...notices] = observation.summary.split('\n\n');
             const summary = JSON.parse(json);
-            summary.imageIncluded = delivery === 'included';
-            summary.imageDelivery = delivery;
+            if (observation.tool === 'media' && observation.action !== 'view_image') {
+              summary.mediaIncluded = mediaDelivery === 'included';
+              summary.mediaDelivery = mediaDelivery;
+            } else {
+              summary.imageIncluded = delivery === 'included';
+              summary.imageDelivery = delivery;
+            }
             onActivity({
               ...observation,
               summary: [JSON.stringify(summary), ...notices].join('\n\n'),
@@ -1126,7 +1160,7 @@ export class ChatService {
         }
         const preview = JSON.stringify(output, (_key, value: unknown) => {
           if (value && typeof value === 'object' && 'type' in value && value.type === 'file')
-            return '[image]';
+            return '[media]';
           return value;
         });
         if (
@@ -1396,6 +1430,9 @@ export class ChatService {
         save();
         saveCheckpoint();
       }
+      // The alias exists only for resuming old approved calls, never as a second
+      // tool family in a new model request. Historical call/result names remain intact.
+      if (legacyImageRecovery) delete tools.image;
       let customNames = Object.keys(this.tools.customForBot(bot, signal, onActivity));
       let malformedRecoveries = 0,
         completionRecoveries = 0,

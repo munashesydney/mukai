@@ -54,6 +54,8 @@ let mode:
   | 'normal'
   | 'fail'
   | 'media-rejected'
+  | 'media-tools'
+  | 'media-tools-rejected'
   | 'upstream-fail'
   | 'transient-stream'
   | 'transient-stream-always'
@@ -249,6 +251,39 @@ beforeEach(async () => {
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString());
     calls.push(body);
+    if (mode === 'media-tools' || mode === 'media-tools-rejected') {
+      const completed = body.messages.some((message: { role: string }) => message.role === 'tool');
+      if (
+        mode === 'media-tools-rejected' &&
+        /input_audio|video_url/.test(JSON.stringify(body.messages))
+      ) {
+        res
+          .writeHead(415, { 'Content-Type': 'application/json' })
+          .end(JSON.stringify({ error: { message: 'Unsupported media codec private-test-key' } }));
+        return;
+      }
+      const delta = completed
+        ? { content: 'Media inspection finished.' }
+        : {
+            tool_calls: ['audio', 'video'].map((kind, index) => ({
+              index,
+              id: 'inspect-' + kind,
+              type: 'function',
+              function: {
+                name: 'media',
+                arguments: JSON.stringify({
+                  action: kind === 'audio' ? 'listen_audio' : 'view_video',
+                  path: join(dir, kind === 'audio' ? 'outside.wav' : 'outside.mp4'),
+                }),
+              },
+            })),
+          };
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(
+        `data: ${JSON.stringify({ id: 'media-tools', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: completed ? 'stop' : 'tool_calls' }] })}\n\ndata: [DONE]\n\n`,
+      );
+      return;
+    }
     if (mode === 'media-rejected' && /input_audio|video_url/.test(JSON.stringify(body.messages))) {
       res
         .writeHead(400, { 'Content-Type': 'application/json' })
@@ -406,9 +441,9 @@ beforeEach(async () => {
         { name: 'browser', input: { action: 'screenshot', sessionId } },
         { name: 'browser', input: { action: 'close', sessionId } },
         {
-          name: 'image',
+          name: 'media',
           input: {
-            action: 'view',
+            action: 'view_image',
             path:
               api.store.get('SELECT path FROM artifacts ORDER BY created_at DESC LIMIT 1')?.path ||
               '',
@@ -469,7 +504,7 @@ beforeEach(async () => {
         (message: { tool_call_id?: string }) => message.tool_call_id === 'read-image-text',
       );
       const delta = refused
-        ? { content: 'Use image.view to inspect the image pixels.' }
+        ? { content: 'Use media.view_image to inspect the image pixels.' }
         : {
             tool_calls: [
               {
@@ -513,7 +548,7 @@ beforeEach(async () => {
                 id: !discovery ? 'discover-upload' : !viewed ? 'reopen-upload' : 'copy-upload',
                 type: 'function',
                 function: {
-                  name: !discovery ? 'conversations' : !viewed ? 'image' : 'file_operations',
+                  name: !discovery ? 'conversations' : !viewed ? 'media' : 'file_operations',
                   arguments: JSON.stringify(
                     !discovery
                       ? {
@@ -523,7 +558,7 @@ beforeEach(async () => {
                           limit: 1,
                         }
                       : !viewed
-                        ? { action: 'view', attachmentId }
+                        ? { action: 'view_image', attachmentId }
                         : {
                             action: 'copy_attachment',
                             attachmentId,
@@ -551,8 +586,11 @@ beforeEach(async () => {
                 id: 'image-view',
                 type: 'function',
                 function: {
-                  name: 'image',
-                  arguments: JSON.stringify({ action: 'view', path: join(dir, 'outside.png') }),
+                  name: 'media',
+                  arguments: JSON.stringify({
+                    action: 'view_image',
+                    path: join(dir, 'outside.png'),
+                  }),
                 },
               },
             ],
@@ -951,7 +989,7 @@ describe('Mukai bots and AI API', () => {
       { action: 'screenshot', status: 'complete' },
       { action: 'rejected', status: 'failed' },
       { action: 'close', status: 'complete' },
-      { tool: 'image', action: 'view', status: 'complete' },
+      { tool: 'media', action: 'view_image', status: 'complete' },
     ]);
   });
 
@@ -1028,7 +1066,7 @@ describe('Mukai bots and AI API', () => {
         ),
       ).toBe(vision);
       expect(reply.activity!.at(-1)).toMatchObject({
-        tool: 'image',
+        tool: 'media',
         status: vision ? 'complete' : 'failed',
       });
       await api.shutdown();
@@ -1065,7 +1103,7 @@ describe('Mukai bots and AI API', () => {
       const running = chat('Inspect a local image outside the workspace');
       if (approvalMode === 'ask-for-approval') {
         const item = await pendingApproval('image-view');
-        expect(item).toMatchObject({ toolName: 'image', input: { action: 'view', path } });
+        expect(item).toMatchObject({ toolName: 'media', input: { action: 'view_image', path } });
         // The file does not exist while the gate is waiting: no read has occurred.
         expect(
           (await request<ChatMessage[]>('/bots/scout/messages')).data[1].activity || [],
@@ -1105,8 +1143,8 @@ describe('Mukai bots and AI API', () => {
       expect(JSON.stringify(activities)).not.toContain('iVBOR');
       expect(activities).toMatchObject([
         {
-          tool: 'image',
-          action: approved ? 'view' : 'rejected',
+          tool: 'media',
+          action: approved ? 'view_image' : 'rejected',
           status: approved ? 'complete' : 'failed',
         },
       ]);
@@ -1226,8 +1264,8 @@ describe('Mukai bots and AI API', () => {
     expect(reply.activity).toMatchObject([
       { tool: 'conversations', action: 'search_artifacts', status: 'complete' },
       {
-        tool: 'image',
-        action: 'view',
+        tool: 'media',
+        action: 'view_image',
         attachmentId: attachment.id,
         path: 'reference.png',
         status: 'complete',
@@ -1260,7 +1298,7 @@ describe('Mukai bots and AI API', () => {
         tool: 'conversations',
         action: 'read_artifact',
         status: 'failed',
-        summary: expect.stringContaining('Use image.view'),
+        summary: expect.stringContaining('media.view_image'),
       },
     ]);
     expect(JSON.stringify(calls.at(-1)!.messages)).toContain('image_requires_view');
@@ -1273,7 +1311,18 @@ describe('Mukai bots and AI API', () => {
   it('lists image tools without a workspace folder and honors bot assignment', async () => {
     const tools = (await request<ToolInfo[]>('/tools?workspaceId=default')).data;
     expect(tools).toContainEqual(
-      expect.objectContaining({ id: 'image', available: true, actions: ['read', 'view'] }),
+      expect.objectContaining({
+        id: 'media',
+        available: true,
+        actions: [
+          'read_image',
+          'view_image',
+          'read_audio',
+          'listen_audio',
+          'read_video',
+          'view_video',
+        ],
+      }),
     );
     await request('/tools/assignments?workspaceId=default', 'PUT', {
       botId: 'scout',
@@ -1282,7 +1331,7 @@ describe('Mukai bots and AI API', () => {
     });
     expect((await request('/tools/assignments?workspaceId=default')).data).toContainEqual({
       botId: 'scout',
-      toolId: 'image',
+      toolId: 'media',
       enabled: false,
     });
   });
@@ -1648,7 +1697,8 @@ describe('Mukai bots and AI API', () => {
   it.each(['complete', 'uncertain'] as const)(
     'restores parallel approvals with a %s sibling result and bulk approves only a validated snapshot',
     async (savedState) => {
-      await configure();
+      // Retain the whole saved parallel step; compaction is covered separately.
+      await configure(false, { contextWindowTokens: 262144 });
       project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
       await request('/workspaces/default', 'PUT', { name: 'Parallel approvals', folder: project });
       writeFileSync(
@@ -3140,6 +3190,46 @@ describe('Mukai bots and AI API', () => {
     expect(history.every((message) => message.status === 'complete')).toBe(true);
     expect(sent.events.at(-1)?.type).toBe('done');
   });
+  it.each([false, true])(
+    'inspects local media through tools and handles provider rejection=%s without repeating calls',
+    async (rejected) => {
+      await configure(false, {
+        supportsAudio: true,
+        supportsVideo: true,
+        contextWindowTokens: 262144,
+      });
+      writeFileSync(join(dir, 'outside.wav'), wavFixture());
+      writeFileSync(join(dir, 'outside.mp4'), mp4Fixture());
+      mode = rejected ? 'media-tools-rejected' : 'media-tools';
+      await chat('Inspect the existing audio and video files');
+      const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+      expect(reply).toMatchObject({
+        status: 'complete',
+        error: null,
+        content: 'Media inspection finished.',
+      });
+      expect(calls).toHaveLength(rejected ? 3 : 2);
+      expect(JSON.stringify(calls[0].messages)).not.toMatch(/input_audio|video_url/);
+      expect(JSON.stringify(calls[1].messages)).toContain('input_audio');
+      expect(JSON.stringify(calls[1].messages)).toContain('video_url');
+      expect(reply.activity).toHaveLength(2);
+      for (const activity of reply.activity!) {
+        expect(activity).toMatchObject({ tool: 'media', status: 'complete' });
+        expect(JSON.parse(activity.summary.split('\n\n')[0])).toMatchObject({
+          mediaIncluded: !rejected,
+          mediaDelivery: rejected ? 'omitted' : 'included',
+        });
+        expect(activity.summary).not.toContain(wavFixture().toString('base64'));
+      }
+      if (rejected) {
+        const fallback = JSON.stringify(calls[2].messages);
+        expect(fallback).toContain('Mukai media notice');
+        expect(fallback).not.toMatch(
+          /input_audio|video_url|tell the user|private-test-key|Explain the limitation/i,
+        );
+      }
+    },
+  );
   it('retries a failed audio response safely after switching to a text-only model', async () => {
     const provider = await configure(false, { supportsAudio: true, contextWindowTokens: 262144 });
     const audio = await upload('recording.wav', wavFixture());
@@ -3178,7 +3268,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls).toHaveLength(2);
     const retried = JSON.stringify(calls[1].messages);
     expect(retried).toContain('Mukai media notice');
-    expect(retried).toContain('Explain the limitation to the user');
+    expect(retried).not.toMatch(/tell the user|explain the limitation|do not claim/i);
     expect(retried).not.toMatch(/input_audio|video_url|private-test-key/);
     expect(retried).not.toContain(wavFixture().toString('base64'));
     const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
@@ -3202,7 +3292,7 @@ describe('Mukai bots and AI API', () => {
     await chat('Summarize these recordings', randomUUID(), 'scout', ids);
     expect(calls).toHaveLength(1);
     const context = JSON.stringify(calls[0].messages);
-    expect(context).toContain('current model context budget could not fit');
+    expect(context).toContain('current model input budget could not fit');
     expect(context).not.toContain('input_audio');
     const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
     expect(history[0].attachments).toHaveLength(4);

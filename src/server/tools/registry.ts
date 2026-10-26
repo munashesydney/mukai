@@ -31,8 +31,9 @@ import { executeBotManagement } from './bots/execute';
 import { webSearchDefinition } from './web-search/definition';
 import { executeWebSearch } from './web-search/execute';
 import type { WebSearchService } from '../services/webSearchService';
-import { imageDefinition } from './image/definition';
-import { imageTools, type ImageSource } from './image/execute';
+import type { ImageSource } from './image/execute';
+import { mediaDefinition } from './media/definition';
+import { mediaTools } from './media/execute';
 import { computerUseDefinition } from './computer_use/definition';
 import { computerUseTools, type ComputerUseContext } from './computer_use/execute';
 
@@ -74,12 +75,14 @@ export function runtimeTools(
     folder: string | null;
     readImage?: ImageSource;
     vision: boolean;
+    supportsAudio?: boolean;
+    supportsVideo?: boolean;
     desktop: ComputerUseContext['desktop'];
     saveScreenshot: NonNullable<Parameters<typeof executeBrowser>[1]['saveScreenshot']>;
   },
 ): ToolSet {
   return {
-    ...imageTools(context),
+    ...mediaTools(context),
     ...computerUseTools(context),
     web_search: tool({
       description: webSearchDefinition.description,
@@ -235,7 +238,7 @@ export function toolCatalog() {
       botManagementDefinition,
       browserDefinition,
       computerUseDefinition,
-      imageDefinition,
+      mediaDefinition,
       webSearchDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,

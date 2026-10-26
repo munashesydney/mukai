@@ -259,9 +259,9 @@ describe('VM tools', () => {
       owner,
     ]);
     const calls = request.mock.calls.length;
-    expect(await tools.image.execute!({ action: 'view', path: 'test.png' }, options)).toMatchObject(
-      { ok: false },
-    );
+    expect(
+      await tools.media.execute!({ action: 'view_image', path: 'test.png' }, options),
+    ).toMatchObject({ ok: false });
     expect(request).toHaveBeenCalledTimes(calls);
   });
 });

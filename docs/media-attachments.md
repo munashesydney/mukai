@@ -2,6 +2,27 @@
 
 Model settings have independent image, audio-input, and video-input switches. Mukai sends supported media as SDK file parts with its verified MIME type; it does not silently replace audio with a transcript or video with sampled screenshots.
 
+## Media tool
+
+The former Image tool is now **Media**, with six actions:
+
+| Action         | Result                                  |
+| -------------- | --------------------------------------- |
+| `read_image`   | Image metadata only                     |
+| `view_image`   | Image pixels for the next model step    |
+| `read_audio`   | Audio container type and byte size only |
+| `listen_audio` | Original audio for the next model step  |
+| `read_video`   | Video container type and byte size only |
+| `view_video`   | Original video for the next model step  |
+
+Each action takes exactly one `path`, `attachmentId`, or `artifactId`. Paths target the active local computer or VM; saved IDs are resolved by the host without a copy. Inspection requires that model input capability; metadata reads do not. `copy_attachment` preserves original bytes for images, audio, video and documents in both local and VM modes.
+
+Inspection tool results carry file parts rather than base64 JSON. The transport places audio/video after the complete tool result group as model input. Context and transport limits update `mediaIncluded` and `mediaDelivery`; metadata reads report `metadata_only`. Container checks do not certify a codec or imply model comprehension. The tool does not produce a transcript, sample frames, fetch remote URLs or play media in the UI.
+
+Capability failures, unavailable files, size limits and provider rejections return factual context. Notices contain what happened and whether content is present, with no instructions about what to tell the user. Existing Image assignments migrate to Media, including disabled assignments. Historical Image activity and image previews remain readable.
+
+## Attachment handling
+
 The initial formats are **PCM/float WAV, MP3, MP4, and MOV**, with the existing **10 MB per-file and four-attachment limits**. The file picker reflects the selected model. Container/signature checks reject empty, disguised, truncated, and audio-only video containers. Providers perform final codec, duration, and decoding validation, so a valid container is not a guarantee that a particular model can decode it.
 
 New unsupported attachments are blocked before a chat turn is created, and pending uploads remain available when changing models. Historical unsupported attachments become a text notice identifying the media and its capability mismatch; no bytes or invented transcript are sent. Retrying with a different model uses the same policy. Switching back to a capable model restores the original bytes for history that remains in the model context. Missing media produces an explicit unavailable-content notice. Saved uploads are not changed by these conversions.

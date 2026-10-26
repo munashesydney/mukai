@@ -9,6 +9,7 @@ import {
   compatibleAudioDataUrlMiddleware,
 } from './compatibleImageMiddleware';
 import { modelInputCapabilities } from '../../shared/modelCapabilities';
+import { toolMediaMiddleware } from './toolMediaMiddleware';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
@@ -356,7 +357,10 @@ export class ProviderService {
         configured?.maxOutputTokens ?? bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
       ...capabilities,
       vision: capabilities.supportsImages,
-      model: this.model(provider, modelId),
+      model: wrapLanguageModel({
+        model: this.model(provider, modelId),
+        middleware: toolMediaMiddleware,
+      }),
       options: this.reasoningOptions(provider, modelId),
     };
   }

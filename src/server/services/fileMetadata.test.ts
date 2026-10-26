@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { fileMetadata } from './fileMetadata';
+import { wavFixture, mp3Fixture, mp4Fixture } from '../testMediaFixtures';
 
 describe('Artifact file metadata', () => {
   it.each([
+    ['recording.bin', wavFixture(), 'audio/wav'],
+    ['recording.bin', mp3Fixture(), 'audio/mpeg'],
+    ['clip.bin', mp4Fixture(), 'video/mp4'],
+    ['clip.bin', Buffer.from('\0\0\0\x18ftypqt  '), 'video/quicktime'],
     ['photo.bin', Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), 'image/png'],
     ['photo.bin', Buffer.from([255, 216, 255]), 'image/jpeg'],
     ['photo.bin', Buffer.from('RIFFxxxxWEBP'), 'image/webp'],

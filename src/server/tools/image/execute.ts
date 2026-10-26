@@ -36,7 +36,7 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
     imageDefinition.inputSchema.parse(input);
     if (input.action === 'view' && !context.vision)
       throw new Error(
-        'This model is configured for text only. Choose a vision model to view images; read returns metadata only.',
+        'The current model has image input disabled. A vision model is required for pixel delivery; no image pixels were delivered.',
       );
     let bytes: Buffer;
     let path: string | undefined;
@@ -47,18 +47,20 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
       bytes = source.bytes;
       sourceName = source.name;
       if (!bytes.length || bytes.length > FILE_LIMIT)
-        throw new Error('Read an image between 1 byte and 10 MiB.');
+        throw new Error('The image is empty or exceeds the 10 MiB limit.');
     } else {
-      if (!input.path) throw new Error('Choose an image path.');
-      if (input.path.includes('\0')) throw new Error('Choose a valid local file path.');
+      if (!input.path) throw new Error('No image path was supplied.');
+      if (input.path.includes('\0')) throw new Error('The image path contains a null character.');
       if (!isAbsolute(input.path) && !context.folder)
-        throw new Error('Use an absolute path when this workspace has no folder.');
+        throw new Error(
+          'A relative image path requires a workspace folder; an absolute path does not.',
+        );
       path = isAbsolute(input.path) ? resolve(input.path) : resolve(context.folder!, input.path);
       const file = await open(path, 'r');
       try {
         const info = await file.stat();
         if (!info.isFile() || info.size < 1 || info.size > FILE_LIMIT)
-          throw new Error('Read a regular image file between 1 byte and 10 MiB.');
+          throw new Error('The source is not a regular image file between 1 byte and 10 MiB.');
         // Bound the read even if the file grows between stat and read.
         const buffer = Buffer.alloc(Math.min(info.size + 1, FILE_LIMIT + 1));
         let length = 0;
@@ -69,9 +71,7 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
           length += chunk.bytesRead;
         }
         if (length > info.size || length > FILE_LIMIT)
-          throw new Error(
-            'The image changed while reading or exceeds the 10 MiB limit. Try again.',
-          );
+          throw new Error('The image changed while reading or exceeds the 10 MiB limit. ');
         bytes = buffer.subarray(0, length);
       } finally {
         await file.close();
@@ -85,9 +85,8 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
       !metadata.width ||
       !metadata.height
     )
-      throw new Error('Choose a supported PNG, JPEG, or WebP image.');
-    if ((metadata.pages || 1) > 1)
-      throw new Error('Animated images are unsupported. Choose a still image.');
+      throw new Error('The image format is not supported; PNG, JPEG and WebP are accepted.');
+    if ((metadata.pages || 1) > 1) throw new Error('Animated images are unsupported.');
     const pipeline = decoder.rotate();
     if (input.detail !== 'original')
       pipeline.resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true });
@@ -96,9 +95,7 @@ export function executeImage(input: ImageInput, context: ImageContext, callId: s
     const normalized = await pipeline.png().toBuffer({ resolveWithObject: true });
     context.signal.throwIfAborted();
     if (normalized.data.length > OUTPUT_LIMIT)
-      throw new Error(
-        'The decoded image exceeds the 10 MiB output limit. Use detail=high or a smaller image.',
-      );
+      throw new Error('The decoded image exceeds the 10 MiB output limit.');
     return {
       reference: input.artifactId
         ? artifactHref(input.artifactId)

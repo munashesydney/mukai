@@ -1,5 +1,9 @@
 import type { Bot } from '../../shared/ai';
-import { workspaceToolIds, type ToolAssignment } from '../../shared/toolAssignments';
+import {
+  workspaceToolIds,
+  canonicalToolId,
+  type ToolAssignment,
+} from '../../shared/toolAssignments';
 import type { ToolAssignmentRepository } from '../repositories/toolAssignmentRepository';
 import { ApiError } from '../config';
 
@@ -11,7 +15,7 @@ export class ToolAccessService {
     return bot;
   }
   private valid(workspaceId: string, toolId: string) {
-    toolId = toolId === 'process' ? 'terminal' : toolId;
+    toolId = canonicalToolId(toolId);
     if ((workspaceToolIds as readonly string[]).includes(toolId)) return;
     if (
       toolId.startsWith('custom:') &&
@@ -23,7 +27,7 @@ export class ToolAccessService {
   allowed(bot: Bot, toolId: string) {
     if (toolId === 'ask') toolId = 'communicate';
     if (toolId === 'skills' || toolId === 'register_custom_route') return true;
-    if (toolId === 'process') toolId = 'terminal';
+    toolId = canonicalToolId(toolId);
     const current = this.bot(bot.id);
     if (toolId === 'manage_bot') return true;
     const override = this.repository.override(bot.id, toolId);
@@ -49,7 +53,7 @@ export class ToolAccessService {
     });
   }
   set(workspaceId: string, botId: string, toolId: string, enabled: boolean) {
-    toolId = toolId === 'process' ? 'terminal' : toolId;
+    toolId = canonicalToolId(toolId);
     if (this.bot(botId).workspaceId !== workspaceId)
       throw new ApiError(403, 'Bot belongs to another workspace.');
     this.valid(workspaceId, toolId);
@@ -73,7 +77,7 @@ export class ToolAccessService {
       }
   }
   initializeChild(caller: Bot, child: Bot, selected?: string[]) {
-    selected = selected?.map((id) => (id === 'process' ? 'terminal' : id));
+    selected = selected?.map(canonicalToolId);
     const ids = [
       ...workspaceToolIds,
       ...this.repository.customTools(caller.workspaceId).map((tool) => 'custom:' + tool.id),

@@ -42,21 +42,58 @@ export function rejectedMedia(error: unknown): 'size' | 'format' | undefined {
 /** Keep stored uploads and completed tool steps intact; omit bytes from this model request only. */
 export function omitRejectedMedia(messages: ModelMessage[], reason: 'size' | 'format' | 'context') {
   let count = 0;
-  const result = messages.map((message): ModelMessage => {
-    if (message.role !== 'user' || !Array.isArray(message.content)) return message;
-    const before = count;
-    const replaced: ModelMessage = {
-      ...message,
-      content: message.content.map((part) => {
-        if (part.type !== 'file' || !/^(audio|video)\//i.test(part.mediaType)) return part;
-        count++;
-        return {
-          type: 'text',
-          text: `[Mukai media notice: ${reason === 'context' ? 'The current model context budget could not fit this' : 'The provider could not process this'} ${part.mediaType.startsWith('audio/') ? 'audio' : 'video'} attachment${part.filename ? ` (untrusted filename: ${JSON.stringify(part.filename)})` : ''}${reason === 'context' ? '' : reason === 'size' ? ' because of its request/media size limit' : ' because its input format, codec, or modality was rejected'}. Its bytes have been omitted from this request so you can still respond. The original attachment is retained. This notice provides no transcript or description; do not claim to have inspected the omitted media. Explain the limitation to the user and suggest ${reason === 'context' ? 'a shorter recording or a model with more input capacity' : reason === 'size' ? 'a smaller or shorter recording' : 'a supported format or a model that accepts this media'} when relevant. Use any earlier recorded observations accurately.]`,
-        };
-      }),
+  function omit<T extends { type: string; mediaType?: string; filename?: string }>(
+    part: T,
+  ): T | { type: 'text'; text: string } {
+    if (part.type !== 'file' || !/^(audio|video)\//i.test(part.mediaType || '')) return part;
+    count++;
+    const failure =
+      reason === 'context'
+        ? 'The current model input budget could not fit this media'
+        : reason === 'size'
+          ? 'The request/media exceeded the provider size limit'
+          : 'The provider rejected the media input (format, codec, or modality)';
+    return {
+      type: 'text',
+      text: `[Mukai media notice: ${failure}. Media type: ${part.mediaType}${part.filename ? `; untrusted filename: ${JSON.stringify(part.filename)}` : ''}. The bytes are omitted from this request. The original file is retained. This notice contains no transcript or description.]`,
     };
-    return count === before ? message : replaced;
+  }
+  const result = messages.map((message): ModelMessage => {
+    const before = count;
+    if (message.role === 'user' && Array.isArray(message.content)) {
+      const content = message.content.map(omit);
+      return count === before ? message : { ...message, content };
+    }
+    if (message.role === 'tool') {
+      const content = message.content.map((part) => {
+        if (part.type !== 'tool-result' || part.output.type !== 'content') return part;
+        const previous = count;
+        const value = part.output.value.map(omit);
+        if (count === previous) return part;
+        return {
+          ...part,
+          output: {
+            ...part.output,
+            value: value.map((block) => {
+              if (block.type !== 'text') return block;
+              try {
+                const data = JSON.parse(block.text);
+                if (data?.result && typeof data.result.mediaIncluded === 'boolean') {
+                  data.result.mediaIncluded = false;
+                  data.result.mediaDelivery = 'omitted';
+                  return { ...block, text: JSON.stringify(data) };
+                }
+              } catch {
+                /* Notices and non-JSON text remain intact. */
+              }
+              return block;
+            }),
+          },
+        };
+      });
+      return count === before ? message : { ...message, content };
+    }
+    return message;
   });
   return { messages: result, count };
 }

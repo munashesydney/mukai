@@ -3,7 +3,7 @@ export const workspaceToolIds = [
   'terminal',
   'browser',
   'computer_use',
-  'image',
+  'media',
   'web_search',
   'memory',
   'communicate',
@@ -13,4 +13,6 @@ export const workspaceToolIds = [
   'register_custom_tool',
 ] as const;
 export type ToolAssignment = { toolId: string; botId: string; enabled: boolean };
+export const canonicalToolId = (id: string) =>
+  id === 'image' ? 'media' : id === 'process' ? 'terminal' : id;
 export const botNameSuggestions = ['Mukai', 'Scout', 'Nova', 'Atlas'];

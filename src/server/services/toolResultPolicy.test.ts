@@ -8,9 +8,63 @@ import {
   limitToolGroups,
   limitToolOutput,
   resultPreview,
+  mediaDeliveryState,
 } from './toolResultPolicy';
 
 describe('bounded tool results', () => {
+  it('reports audio/video delivery truthfully after individual and shared context limits', () => {
+    const output = (type: string) => ({
+      type: 'content' as const,
+      value: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            ok: true,
+            result: { mediaType: type, mediaIncluded: true, mediaDelivery: 'included' },
+          }),
+        },
+        {
+          type: 'file' as const,
+          mediaType: type,
+          data: { type: 'data' as const, data: 'a'.repeat(1500000) },
+        },
+      ],
+    });
+    const audio = output('audio/wav');
+    expect(mediaDeliveryState(limitToolOutput(audio, 40000, estimateTokens))).toBe('included');
+    const omitted = limitToolOutput(audio, 512, estimateTokens);
+    expect(mediaDeliveryState(omitted)).toBe('omitted');
+    const text =
+      omitted.type === 'content'
+        ? omitted.value
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join('\n')
+        : omitted.type === 'text'
+          ? omitted.value
+          : '';
+    expect(text).toContain('"mediaIncluded":false');
+    expect(JSON.stringify(omitted)).not.toContain('a'.repeat(100));
+    const messages: ModelMessage[] = [
+      {
+        role: 'tool',
+        content: ['audio/wav', 'video/mp4'].map((type, index) => ({
+          type: 'tool-result',
+          toolCallId: String(index),
+          toolName: 'media',
+          output: output(type),
+        })),
+      },
+    ];
+    const bounded = limitToolGroups(messages, 40000, estimateTokens);
+    const results = bounded[0];
+    if (results.role !== 'tool') throw new Error('Expected tools');
+    expect(
+      results.content
+        .filter((part) => part.type === 'tool-result')
+        .map((part) => mediaDeliveryState(part.output)),
+    ).toEqual(['included', 'omitted']);
+  });
   it('reports actual image delivery after pixel and shared binary limits', () => {
     const header = Buffer.alloc(24);
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);

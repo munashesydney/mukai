@@ -614,8 +614,10 @@ export function createRoutes({
             message?.role !== 'assistant' ||
             !activity ||
             activity.status !== 'complete' ||
-            activity.tool !== 'image' ||
-            activity.action !== 'view'
+            !(
+              (activity.tool === 'image' && activity.action === 'view') ||
+              (activity.tool === 'media' && activity.action === 'view_image')
+            )
           )
             throw new ApiError(404, 'Viewed image not found in this conversation.');
           const bytes =

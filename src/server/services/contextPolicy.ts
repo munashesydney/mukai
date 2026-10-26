@@ -13,11 +13,15 @@ export function estimateTokens(value: unknown): number {
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
     if (item.type === 'file' && /^(audio|video)\//.test(String(item.mediaType))) {
+      const data =
+        item.data && typeof item.data === 'object' && 'data' in item.data
+          ? item.data.data
+          : item.data;
       const size =
-        typeof item.data === 'string'
-          ? item.data.length * 0.75
-          : item.data instanceof Uint8Array
-            ? item.data.byteLength
+        typeof data === 'string'
+          ? data.length * 0.75
+          : data instanceof Uint8Array
+            ? data.byteLength
             : 0;
       // Encoded media is not text. Usage feedback calibrates these conservative estimates.
       return Math.max(

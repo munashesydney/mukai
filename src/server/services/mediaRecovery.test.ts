@@ -69,3 +69,52 @@ it('replaces only audio/video bytes, preserves tool pairs and does not mutate or
   expect(omitRejectedMedia(fallback.messages, 'format').count).toBe(0);
   expect(JSON.stringify(omitRejectedMedia(messages, 'size'))).toContain('size limit');
 });
+it('omits provider-rejected tool media while retaining completed operations and factual metadata', () => {
+  const messages: ModelMessage[] = [
+    {
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolName: 'media',
+          toolCallId: 'completed',
+          output: {
+            type: 'content',
+            value: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  ok: true,
+                  result: { name: 'recording.wav', mediaIncluded: true, mediaDelivery: 'included' },
+                }),
+              },
+              {
+                type: 'file',
+                mediaType: 'audio/wav',
+                data: { type: 'data', data: 'PRIVATE_BYTES' },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+  const fallback = omitRejectedMedia(messages, 'format');
+  expect(fallback.count).toBe(1);
+  expect(JSON.stringify(fallback)).toContain('recording.wav');
+  expect(JSON.stringify(fallback)).toContain('completed');
+  expect(JSON.stringify(fallback)).not.toMatch(
+    /PRIVATE_BYTES|tell the user|explain|suggest|do not claim/i,
+  );
+  const message = fallback.messages[0];
+  if (
+    message.role !== 'tool' ||
+    message.content[0].type !== 'tool-result' ||
+    message.content[0].output.type !== 'content'
+  )
+    throw new Error('Expected a tool result');
+  expect(message.content[0].output.value[0]).toMatchObject({
+    type: 'text',
+    text: expect.stringContaining('"mediaIncluded":false'),
+  });
+});

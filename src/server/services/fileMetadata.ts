@@ -9,7 +9,18 @@ export function fileMetadata(header: Buffer, name: string, size = header.length)
   else if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) mediaType = 'image/jpeg';
   else if (header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WEBP')
     mediaType = 'image/webp';
-  else if (header.toString('ascii', 0, 5) === '%PDF-') mediaType = 'application/pdf';
+  else if (header.toString('ascii', 0, 4) === 'RIFF' && header.toString('ascii', 8, 12) === 'WAVE')
+    mediaType = 'audio/wav';
+  else if (
+    header.toString('ascii', 0, 3) === 'ID3' ||
+    (header[0] === 255 && (header[1] & 0xe0) === 0xe0 && ((header[1] >> 1) & 3) === 1)
+  )
+    mediaType = 'audio/mpeg';
+  else if (header.toString('ascii', 4, 8) === 'ftyp') {
+    const brand = header.toString('ascii', 8, 12);
+    mediaType =
+      brand === 'qt  ' ? 'video/quicktime' : /^M4[ABP]/.test(brand) ? 'audio/mp4' : 'video/mp4';
+  } else if (header.toString('ascii', 0, 5) === '%PDF-') mediaType = 'application/pdf';
   else if (header[0] === 0x50 && header[1] === 0x4b && extname(name).toLowerCase() === '.docx')
     mediaType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   else if (header[0] === 0x50 && header[1] === 0x4b) mediaType = 'application/zip';

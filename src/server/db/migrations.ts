@@ -437,6 +437,10 @@ export const migrations = [
    UPDATE artifacts SET media_type='image/png' WHERE kind='image';`,
   `ALTER TABLE providers ADD COLUMN supports_audio INTEGER NOT NULL DEFAULT 0 CHECK(supports_audio IN (0,1));
    ALTER TABLE providers ADD COLUMN supports_video INTEGER NOT NULL DEFAULT 0 CHECK(supports_video IN (0,1));`,
+  `INSERT INTO bot_tool_assignments(bot_id,tool_id,enabled)
+     SELECT bot_id,'media',enabled FROM bot_tool_assignments WHERE tool_id='image'
+     ON CONFLICT(bot_id,tool_id) DO UPDATE SET enabled=MIN(bot_tool_assignments.enabled,excluded.enabled);
+   DELETE FROM bot_tool_assignments WHERE tool_id='image';`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

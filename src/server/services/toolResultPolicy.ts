@@ -3,7 +3,7 @@ import type { ModelMessage } from 'ai';
 export const RESULT_TRUNCATED =
   '[The end was truncated because this tool result was too long for the configured context. Request a smaller range or a more specific result if needed.]';
 export const IMAGE_OMITTED =
-  '[An image or file was omitted from this tool result because it exceeded the configured context allowance. Use a page snapshot or a smaller result; do not claim to have inspected omitted content.]';
+  '[Media content was omitted from this tool result because it exceeded the configured context or transport allowance.]';
 export const ACTIVITY_TRUNCATED =
   '[Activity preview shortened; the model result is limited separately.]';
 type ToolOutput = Extract<
@@ -127,18 +127,44 @@ export function imageDeliveryState(
 
 // Delivery metadata describes the bounded result, not the original capture.
 // Reapply after group transport limits as well as individual result limits.
+export function mediaDeliveryState(
+  output: unknown,
+): 'included' | 'omitted' | 'unsupported' | undefined {
+  const item = output as { type?: string; value?: unknown } | null;
+  if (!item) return;
+  const blocks = item.type === 'content' && Array.isArray(item.value) ? item.value : [];
+  if (
+    blocks.some(
+      (block) => block.type === 'file' && /^(audio|video)\//.test(String(block.mediaType)),
+    )
+  )
+    return 'included';
+  const text =
+    blocks
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n') || (typeof item.value === 'string' ? item.value : '');
+  if (text.includes('"mediaDelivery":"unsupported"')) return 'unsupported';
+  if (text.includes('"mediaDelivery":"included"') || text.includes('"mediaDelivery":"omitted"'))
+    return 'omitted';
+}
 function syncImageDelivery(output: ToolOutput): ToolOutput {
-  const state = imageDeliveryState(output);
-  if (!state) return output;
+  const state = imageDeliveryState(output),
+    mediaState = mediaDeliveryState(output);
+  if (!state && !mediaState) return output;
   const sync = (text: string) => {
     const [json, ...notices] = text.split('\n\n');
     try {
       const value = JSON.parse(json);
-      if (value?.result && typeof value.result.imageIncluded === 'boolean') {
+      if (value?.result && state && typeof value.result.imageIncluded === 'boolean') {
         value.result.imageIncluded = state === 'included';
         value.result.imageDelivery = state;
-        return [JSON.stringify(value), ...notices].join('\n\n');
       }
+      if (value?.result && mediaState && typeof value.result.mediaIncluded === 'boolean') {
+        value.result.mediaIncluded = mediaState === 'included';
+        value.result.mediaDelivery = mediaState;
+      }
+      return [JSON.stringify(value), ...notices].join('\n\n');
     } catch {
       /* Truncated metadata retains its explicit omission notice. */
     }
@@ -215,11 +241,7 @@ function limitToolOutputValue(
       return {
         type: 'text',
         value: limitResultText(
-          value
-            .map((block) =>
-              block.type === 'text' ? block.text : '[Image omitted to fit the configured context.]',
-            )
-            .join('\n'),
+          value.map((block) => (block.type === 'text' ? block.text : IMAGE_OMITTED)).join('\n'),
           bytes,
         ),
       };

@@ -10,6 +10,8 @@ import { terminalDefinition, processDefinition } from '../tools/terminal/definit
 import { fileOperationsDefinition } from '../tools/file-operations/definition';
 import { browserDefinition } from '../tools/browser/definition';
 import { imageDefinition } from '../tools/image/definition';
+import { mediaDefinition } from '../tools/media/definition';
+import { executeMedia } from '../tools/media/execute';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import type { Computer, ComputerHelper } from './protocol';
 import { GuestCapabilities } from './guestCapabilities';
@@ -127,6 +129,24 @@ export class GuestDispatcher implements Computer {
           signal,
         );
         return { result, changes };
+      }
+      case 'media': {
+        const output = await executeMedia(
+          mediaDefinition.inputSchema.parse(input),
+          {
+            owner,
+            signal,
+            folder: this.folder,
+            vision: true,
+            supportsAudio: true,
+            supportsVideo: true,
+            budget: { remaining: 1 },
+            onActivity: () => {},
+          },
+          'guest-media',
+        );
+        if (!output.ok) throw new Error('error' in output ? output.error : 'Media read failed.');
+        return output.result;
       }
       case 'image': {
         const output = await executeImage(

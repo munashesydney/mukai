@@ -179,7 +179,7 @@ describe('workspace computer choice', () => {
       computer: 'qemu',
     });
     const { data: tools } = await request<ToolInfo[]>(`/tools?workspaceId=${workspace.id}`);
-    for (const id of ['terminal', 'file_operations', 'image', 'browser'])
+    for (const id of ['terminal', 'file_operations', 'media', 'browser'])
       expect(tools.find((tool) => tool.id === id)?.available).toBe(true);
     for (const id of ['register_custom_tool', 'register_custom_route'])
       expect(tools.find((tool) => tool.id === id)?.available).toBe(true);

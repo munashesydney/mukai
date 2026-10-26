@@ -22,7 +22,7 @@ export function attachmentContext(
   else if (!supportsAttachment(file.kind, capabilities))
     content.push({
       type: 'text',
-      text: `[A ${file.kind} attachment ${JSON.stringify(file.name)} is present here, but the current model does not support ${file.kind} input. Its media bytes are not included. No transcript or description has been supplied by this notice. Do not claim to have viewed or listened to it. Explain this limitation when relevant to the user's request. The original attachment is retained; switch to a capable model to inspect it.]`,
+      text: `[A ${file.kind} attachment ${JSON.stringify(file.name)} is present here, but the current model does not support ${file.kind} input. Its media bytes are not included. This notice contains no transcript or description. The original attachment is retained.]`,
     });
   else {
     try {
@@ -37,7 +37,7 @@ export function attachmentContext(
         throw error;
       content.push({
         type: 'text',
-        text: `[The ${file.kind} attachment ${JSON.stringify(file.name)} could not be loaded from storage. Its contents are unavailable in this request. Do not claim to have inspected it.]`,
+        text: `[The ${file.kind} attachment ${JSON.stringify(file.name)} could not be loaded from storage. Its contents are unavailable in this request.]`,
       });
     }
   }

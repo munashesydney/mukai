@@ -32,6 +32,12 @@ const actionLabels: Record<string, string> = {
   search_files: 'Searched',
   clarification: 'Answered question',
   approval: 'Reviewed approval',
+  read_image: 'Read image metadata',
+  view_image: 'Viewed image',
+  read_audio: 'Read audio metadata',
+  listen_audio: 'Listened to audio',
+  read_video: 'Read video metadata',
+  view_video: 'Viewed video',
 };
 
 function ActivitySpinner() {
@@ -55,7 +61,9 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
   }
   const isImage =
     activity.status === 'complete' &&
-    (Boolean(artifactId) || (activity.tool === 'image' && activity.action === 'view'));
+    (Boolean(artifactId) ||
+      (activity.tool === 'image' && activity.action === 'view') ||
+      (activity.tool === 'media' && activity.action === 'view_image'));
 
   const openConversation = useContext(ConversationNavigation);
   const pursuitLabels: Record<string, string> = {
@@ -69,7 +77,7 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
   const Icon =
     activity.tool === 'ask'
       ? MessageCircleQuestion
-      : activity.tool === 'image'
+      : activity.tool === 'image' || activity.tool === 'media'
         ? Image
         : activity.tool === 'terminal'
           ? Terminal
@@ -170,27 +178,29 @@ function ToolGroup({
       labels.add(
         activity.status !== 'complete'
           ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
-          : activity.tool === 'image'
-            ? activity.action === 'view'
-              ? 'Viewed images'
-              : 'Read image metadata'
-            : activity.tool === 'manage_pursuit'
-              ? 'Managed pursuits'
-              : activity.tool === 'terminal'
-                ? 'Ran commands'
-                : activity.tool === 'browser'
-                  ? 'Used browser'
-                  : ['write_file', 'patch'].includes(activity.action)
-                    ? 'Edited files'
-                    : activity.action === 'search_files'
-                      ? 'Searched files'
-                      : activity.action === 'read_file'
-                        ? 'Read files'
-                        : activity.action === 'create_directory'
-                          ? 'Created folders'
-                          : activity.action === 'list'
-                            ? 'Listed folders'
-                            : 'Used tools',
+          : activity.tool === 'media'
+            ? actionLabels[activity.action] || 'Inspected media'
+            : activity.tool === 'image'
+              ? activity.action === 'view'
+                ? 'Viewed images'
+                : 'Read image metadata'
+              : activity.tool === 'manage_pursuit'
+                ? 'Managed pursuits'
+                : activity.tool === 'terminal'
+                  ? 'Ran commands'
+                  : activity.tool === 'browser'
+                    ? 'Used browser'
+                    : ['write_file', 'patch'].includes(activity.action)
+                      ? 'Edited files'
+                      : activity.action === 'search_files'
+                        ? 'Searched files'
+                        : activity.action === 'read_file'
+                          ? 'Read files'
+                          : activity.action === 'create_directory'
+                            ? 'Created folders'
+                            : activity.action === 'list'
+                              ? 'Listed folders'
+                              : 'Used tools',
       );
   }
   return (

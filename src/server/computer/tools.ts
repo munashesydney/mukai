@@ -6,8 +6,9 @@ import { executeRuntime } from '../tools/runtimeContext';
 import { terminalDefinition, processDefinition } from '../tools/terminal/definition';
 import { fileOperationsDefinition } from '../tools/file-operations/definition';
 import { browserDefinition } from '../tools/browser/definition';
-import { executeImage, type ImageSource } from '../tools/image/execute';
-import { imageDefinition } from '../tools/image/definition';
+import type { ImageSource } from '../tools/image/execute';
+import { executeMedia, mediaModelOutput } from '../tools/media/execute';
+import { mediaDefinition } from '../tools/media/definition';
 import { resultPreview } from '../services/toolResultPolicy';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import { computerUseTools } from '../tools/computer_use/execute';
@@ -17,6 +18,8 @@ export function computerTools(
   context: RuntimeToolContext & {
     computer: Computer;
     vision: boolean;
+    supportsAudio?: boolean;
+    supportsVideo?: boolean;
     readImage?: ImageSource;
     attachmentBytes?: (id: string) => Promise<Buffer>;
     fileBudget: { remaining: number };
@@ -36,7 +39,7 @@ export function computerTools(
     processDefinition,
     fileOperationsDefinition,
     browserDefinition,
-    imageDefinition,
+    mediaDefinition,
   ];
   for (const definition of definitions) {
     const name = definition.name;
@@ -46,8 +49,9 @@ export function computerTools(
         : name === 'browser'
           ? browserDefinition.description +
             ' In this VM workspace, all targets use Chrome inside the Linux guest, visible in View computer. mukai is an alias for chrome here (there is no embedded guest browser). chrome-default uses the guest desktop’s main Chrome profile and its logins, never the host browser. Enable and approve main Chrome connections inside the VM. Stopping the VM ends all guest browser sessions. screenshot artifacts use guest paths.'
-          : name === 'image'
-            ? 'Read or view a PNG/JPEG/WebP inside the Linux VM. Absolute paths refer to the guest; relative paths resolve under /home/mukai/workspace. attachmentId/artifactId reopen saved uploads or artifacts from this workspace without copying them into the VM. Supply exactly one source. view requires a vision model. Limits: 10 MiB, 40 million pixels.'
+          : name === 'media'
+            ? mediaDefinition.description +
+              ' Paths refer to the Linux guest, relative to /home/mukai/workspace. IDs reopen saved uploads or artifacts without copying them into the VM.'
             : definition.description;
     output[name] = tool({
       description,
@@ -62,9 +66,9 @@ export function computerTools(
           signal,
           budget: name === 'file_operations' ? context.fileBudget : context.budget,
         };
-        if (name === 'image' && (value.attachmentId || value.artifactId))
-          return executeImage(
-            imageDefinition.inputSchema.parse(input),
+        if (name === 'media' && (value.attachmentId || value.artifactId))
+          return executeMedia(
+            mediaDefinition.inputSchema.parse(input),
             { ...runtime, folder: null, vision: context.vision },
             options.toolCallId,
           );
@@ -75,12 +79,24 @@ export function computerTools(
           String(value.action || 'run'),
           String(value.path || value.command || value.sessionId || value.url || ''),
           async () => {
-            if (name === 'image' && value.action === 'view' && !context.vision)
-              throw new Error('Choose a vision model to view images.');
+            if (name === 'media') {
+              const capability =
+                value.action === 'view_image'
+                  ? context.vision
+                  : value.action === 'listen_audio'
+                    ? context.supportsAudio
+                    : value.action === 'view_video'
+                      ? context.supportsVideo
+                      : true;
+              if (!capability)
+                throw new Error(
+                  `The current model has ${value.action === 'listen_audio' ? 'audio' : value.action === 'view_video' ? 'video' : 'image'} input disabled. No media content was delivered.`,
+                );
+            }
             const method =
               name === 'file_operations'
                 ? 'files'
-                : (name as 'terminal' | 'process' | 'browser' | 'image');
+                : (name as 'terminal' | 'process' | 'browser' | 'media');
             let requestInput = input;
             if (name === 'file_operations' && value.action === 'copy_attachment') {
               if (
@@ -161,6 +177,7 @@ export function computerTools(
         );
       },
       toModelOutput: ({ output: result }) => {
+        if (name === 'media') return mediaModelOutput(result, context.resultBytes);
         const value = result as { result?: Record<string, unknown> };
         const picture = value.result;
         if (picture && typeof picture.image === 'string') {

@@ -18,6 +18,27 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('migrates image assignments into Media while preserving denials and saved activity', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    database.run("INSERT INTO bot_tool_assignments VALUES('scout','image',0)");
+    database.run("INSERT INTO bot_tool_assignments VALUES('scout','media',1)");
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes("SELECT bot_id,'media'")) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.all("SELECT tool_id,enabled FROM bot_tool_assignments WHERE bot_id='scout'"),
+      ).toEqual([{ tool_id: 'media', enabled: 0 }]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('adds disabled audio/video defaults without changing saved credentials or models', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

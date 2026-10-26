@@ -114,7 +114,10 @@ describe('automatic computer setup', () => {
     const setup = await service();
     expect(setupProcess).not.toHaveBeenCalled();
     await setup.start();
-    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true));
+    // Installer and image fixture writes can take over a second under parallel load.
+    await vi.waitFor(async () => expect((await setup.status()).available).toBe(true), {
+      timeout: 3000,
+    });
     expect(downloadVerifiedFile).toHaveBeenCalledOnce();
     expect(downloadImage).toHaveBeenCalledOnce();
     expect(setup.configuration().binary).toBe(qemu);

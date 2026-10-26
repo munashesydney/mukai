@@ -156,8 +156,8 @@ async function main() {
   activity.push(
     {
       id: randomUUID(),
-      tool: 'image',
-      action: 'view',
+      tool: 'media',
+      action: 'view_image',
       status: 'complete',
       path: 'render.png',
       attachmentId: attachment.id,

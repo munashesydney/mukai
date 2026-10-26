@@ -36,6 +36,7 @@ import { executeWebSearch } from '../tools/web-search/execute';
 import { webSearchDefinition } from '../tools/web-search/definition';
 import { tool } from 'ai';
 import { ComputerUseService } from './computerUseService';
+import type { InputCapabilities } from '../../shared/modelCapabilities';
 
 export class ToolService {
   private notifications?: NotificationService;
@@ -206,15 +207,15 @@ export class ToolService {
           }
         : {}),
       ...(workspace.computer === 'qemu' &&
-      ['terminal', 'image', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
+      ['terminal', 'media', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
         ? {
             description:
               tool.id === 'computer_use'
                 ? 'See and control the workspace Linux VM desktop, mouse, and keyboard.'
                 : tool.id === 'browser'
                   ? 'Control workspace or main Chrome on the Linux VM desktop.'
-                  : tool.id === 'image'
-                    ? 'Read and view guest images inside the Linux VM.'
+                  : tool.id === 'media'
+                    ? 'Read and inspect images, audio and video on the Linux VM or by saved reference.'
                     : tool.id === 'terminal'
                       ? 'Run Linux commands and manage guest processes.'
                       : 'Read, write and organize files inside the workspace Linux VM.',
@@ -237,7 +238,7 @@ export class ToolService {
                   : [
                         'browser',
                         'computer_use',
-                        'image',
+                        'media',
                         'web_search',
                         'communicate',
                         'conversations',
@@ -255,7 +256,13 @@ export class ToolService {
                   (counts.communicate?.[action] || 0) + (counts.ask?.[action] || 0),
                 ]),
               )
-            : counts[tool.id] || {},
+            : tool.id === 'media'
+              ? {
+                  ...counts.media,
+                  read_image: (counts.media?.read_image || 0) + (counts.image?.read || 0),
+                  view_image: (counts.media?.view_image || 0) + (counts.image?.view || 0),
+                }
+              : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {
@@ -266,7 +273,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Reach Mukai on the host at http://10.0.2.2:47831; send Host: localhost:47831 when testing custom routes. Direct HTTP requests to auth=mukai routes require a bearer token; custom modules can use context.callRoute instead without handling the token. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, media, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Reach Mukai on the host at http://10.0.2.2:47831; send Host: localhost:47831 when testing custom routes. Direct HTTP requests to auth=mukai routes require a bearer token; custom modules can use context.callRoute instead without handling the token. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }
@@ -275,11 +282,16 @@ export class ToolService {
     messageId: string,
     signal: AbortSignal,
     onActivity: (activity: ChatActivity) => void,
-    vision = false,
+    inputs: boolean | InputCapabilities = false,
     resultBytes?: number,
     skillContextBytes?: number,
     ask?: AskHandler,
   ) {
+    const capabilities =
+      typeof inputs === 'boolean'
+        ? { supportsImages: inputs, supportsAudio: false, supportsVideo: false }
+        : inputs;
+    const vision = capabilities.supportsImages;
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
     const scheduledRun = Boolean(
@@ -291,6 +303,8 @@ export class ToolService {
       onActivity,
       budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
       vision,
+      supportsAudio: capabilities.supportsAudio,
+      supportsVideo: capabilities.supportsVideo,
       resultBytes,
       readImage: this.conversationArtifacts
         ? async (input: { attachmentId?: string; artifactId?: string }) => {
@@ -384,6 +398,8 @@ export class ToolService {
               webSearch: this.webSearch,
               folder: workspace.folder,
               vision,
+              supportsAudio: capabilities.supportsAudio,
+              supportsVideo: capabilities.supportsVideo,
               resultBytes,
               readImage: runtime.readImage,
               saveScreenshot: (image) =>
@@ -421,7 +437,11 @@ export class ToolService {
       },
       Object.fromEntries(
         (this.capabilities?.list(bot.workspaceId) || [])
-          .filter((item) => item.kind === 'tool')
+          .filter(
+            (item) =>
+              item.kind === 'tool' &&
+              !toolCatalog().some((builtin) => builtin.id === item.definition.name),
+          )
           .map((item) => [item.definition.name, 'custom:' + item.id]),
       ),
     );
