@@ -25,7 +25,7 @@ describe('sidebar navigation', () => {
   it('shows all tabs disabled before the first workspace is created', () => {
     const links = renderLinks({ disabled: true, hasBots: false, section: 'bots' });
     expect(links).toEqual(
-      ['Bots', 'Messages', 'Pursuits', 'Spaces', 'Tools', 'Telegram'].map((label) => ({
+      ['Bots', 'Updates', 'Pursuits', 'Spaces', 'Tools', 'Telegram'].map((label) => ({
         label,
         disabled: true,
         current: false,
@@ -33,7 +33,7 @@ describe('sidebar navigation', () => {
     );
   });
 
-  it('allows Bots and Telegram before adding a bot and hides empty Messages', () => {
+  it('allows Bots and Telegram before adding a bot and hides empty Updates', () => {
     expect(renderLinks({ hasBots: false, section: 'bots' })).toEqual([
       { label: 'Bots', disabled: false, current: true },
       { label: 'Pursuits', disabled: true, current: false },
@@ -43,14 +43,22 @@ describe('sidebar navigation', () => {
     ]);
   });
 
-  it('unlocks tabs with a bot, shows available Messages, and marks the current tab', () => {
+  it('unlocks tabs with a bot, shows available Updates, and marks the current tab', () => {
     const links = renderLinks({ hasBots: true, notificationCount: 1, section: 'telegram' });
     expect(links).toEqual(
-      ['Bots', 'Messages', 'Pursuits', 'Spaces', 'Tools', 'Telegram'].map((label) => ({
+      ['Bots', 'Updates', 'Pursuits', 'Spaces', 'Tools', 'Telegram'].map((label) => ({
         label,
         disabled: false,
         current: label === 'Telegram',
       })),
     );
+  });
+
+  it('marks Updates active when viewing the bot inbox', () => {
+    expect(renderLinks({ notificationCount: 1, section: 'notifications' })).toContainEqual({
+      label: 'Updates',
+      disabled: false,
+      current: true,
+    });
   });
 });

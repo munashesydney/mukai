@@ -12,6 +12,7 @@ import type { useNotifications } from './useNotifications';
 import { notificationService } from '../../services/notificationService';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
 import { errorText } from '../../utils/errors';
+import { Tooltip } from '../../components/ui/Tooltip';
 
 function notificationPreview(message: string) {
   return message
@@ -28,11 +29,13 @@ export function NotificationsPage({
   inbox,
   onOpen,
   onGoToBots,
+  onOpenSoftwareUpdates,
 }: {
   workspaceId: string;
   inbox: ReturnType<typeof useNotifications>;
   onOpen: (conversation: Conversation) => void;
   onGoToBots: () => void;
+  onOpenSoftwareUpdates: () => void;
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -70,9 +73,24 @@ export function NotificationsPage({
       <header className="notifications-heading">
         <div>
           <span className="settings-eyebrow">BOT UPDATES</span>
-          <h1>
-            Messages<span>{inbox.unread || inbox.total}</span>
-          </h1>
+          <div className="notifications-title">
+            <h1>
+              Updates<span>{inbox.unread || inbox.total}</span>
+            </h1>
+            <Tooltip
+              label="About bot updates"
+              content={
+                <>
+                  Findings, news, and results from your bots’ autonomous work and pursuits appear
+                  here. These are not software updates. For Mukai software updates, open{' '}
+                  <button type="button" className="text-button" onClick={onOpenSoftwareUpdates}>
+                    Settings → Updates
+                  </button>
+                  .
+                </>
+              }
+            />
+          </div>
           <p>Findings and news from your bots’ autonomous work.</p>
         </div>
         {inbox.total > 0 && (

@@ -296,7 +296,7 @@ describe('Custom capabilities', () => {
     expect(await running).toEqual({ value: 'old' });
     expect(await api.capabilities.invoke(item.id, { value: 'x' })).toEqual({ value: 'new' });
   });
-  it('rejects collisions, built-ins, invalid schemas, missing packages, and ownership changes', async () => {
+  it('rejects collisions, built-ins, invalid schemas, and missing packages', async () => {
     const item = await register('tool', toolSource(), 'first.ts', 'scout');
     writeFileSync(join(folder, 'duplicate.ts'), toolSource());
     expect(
@@ -308,12 +308,6 @@ describe('Custom capabilities', () => {
         })
       ).status,
     ).toBe(409);
-    await expect(
-      api.capabilities.manage('default', 'another-bot', 'tool', {
-        operation: 'disable',
-        id: item.id,
-      }),
-    ).rejects.toThrow('Only the owner');
     for (const source of [
       toolSource('terminal'),
       toolSource('invalid').replace("type:'object'", "type:'impossible'"),
@@ -331,6 +325,114 @@ describe('Custom capabilities', () => {
     await expect(api.capabilities.invoke(item.id, { value: 'x' })).rejects.toThrow('disabled');
     await request('/capabilities', 'POST', { kind: 'tool', operation: 'remove', id: item.id });
     expect(api.capabilities.list('default')).toHaveLength(0);
+  });
+  it.each([
+    ['tool', 'scout'],
+    ['tool', undefined],
+    ['route', 'scout'],
+    ['route', undefined],
+  ] as const)('lets a peer bot manage a %s registered by %s', async (kind, creator) => {
+    const peer = {
+      ...scoutBot('default', 'peer'),
+      name: 'Peer',
+      isMain: false,
+      createdBy: 'scout',
+    };
+    new BotRepository(api.store).create(peer);
+    const source = (value: string) =>
+      kind === 'tool'
+        ? toolSource('shared_tool', `return {value:${JSON.stringify(value)}};`)
+        : `export default {name:'shared_route',method:'GET',path:'/custom/shared-route',auth:'public',handle(){return {status:200,body:{value:${JSON.stringify(value)}}};}};`;
+    const item = await register(kind, source('original'), 'shared.ts', creator);
+    const registrationTool = api.capabilities.forBot(peer, new AbortController().signal, () => {})[
+      kind === 'tool' ? 'register_custom_tool' : 'register_custom_route'
+    ];
+    expect(registrationTool).toBeDefined();
+    const call = (input: object) =>
+      registrationTool.execute!(input, { toolCallId: randomUUID(), messages: [], context: {} });
+    const inspected = (await call({ operation: 'inspect', id: item.id })) as {
+      registration: CapabilityRegistration;
+    };
+    expect(inspected.registration.id).toBe(item.id);
+    writeFileSync(join(folder, 'shared.ts'), 'export default {name:"broken"};');
+    await expect(call({ operation: 'update', id: item.id })).rejects.toThrow();
+    expect(api.capabilities.detail(item.id, 'default').registration.version).toBe(item.version);
+    writeFileSync(join(folder, 'shared.ts'), source('updated by peer'));
+    const updated = (await call({ operation: 'update', id: item.id })) as CapabilityRegistration;
+    expect(updated.version).not.toBe(item.version);
+    expect(updated.ownerBotId).toBe(creator ?? null);
+    if (kind === 'tool') {
+      expect(api.access.allowed(peer, 'custom:' + item.id)).toBe(true);
+      const shared = api.capabilities.forBot(
+        peer,
+        new AbortController().signal,
+        () => {},
+      ).shared_tool;
+      expect(
+        await shared.execute!(
+          { value: 'input' },
+          { toolCallId: randomUUID(), messages: [], context: {} },
+        ),
+      ).toEqual({ value: 'updated by peer' });
+      expect(updated.definition.permissionMode).toBe('auto_approve');
+      const changed = (await call({
+        operation: 'set_permission',
+        id: item.id,
+        permissionMode: 'user_approval',
+      })) as CapabilityRegistration;
+      expect(changed.definition.permissionMode).toBe('user_approval');
+    } else {
+      expect(await (await fetch(api.url + '/custom/shared-route')).json()).toEqual({
+        value: 'updated by peer',
+      });
+    }
+    const disabled = (await call({ operation: 'disable', id: item.id })) as CapabilityRegistration;
+    expect(disabled.status).toBe('disabled');
+    await expect(
+      api.capabilities.invoke(
+        item.id,
+        kind === 'tool' ? { value: 'input' } : {},
+        kind === 'tool' ? 'execute' : 'handle',
+      ),
+    ).rejects.toThrow('disabled');
+    const enabled = (await call({ operation: 'enable', id: item.id })) as CapabilityRegistration;
+    expect(enabled.status).toBe('ready');
+    await expect(
+      api.capabilities.manage('default', peer.id, kind === 'tool' ? 'route' : 'tool', {
+        operation: 'remove',
+        id: item.id,
+      }),
+    ).rejects.toThrow('Registration kind');
+    expect(await call({ operation: 'remove', id: item.id })).toEqual({ removed: true });
+    expect(api.capabilities.list('default')).toHaveLength(0);
+  });
+  it('keeps shared registrations and custom tool access confined to their workspace', async () => {
+    const item = await register('tool', toolSource('shared_tool'), 'shared.ts', 'scout');
+    const otherFolder = join(root, 'other-workspace');
+    mkdirSync(otherFolder);
+    const other = (await request('/workspaces', 'POST', { name: 'Other', folder: otherFolder }))
+      .value as { id: string };
+    const foreign = scoutBot(other.id, 'foreign');
+    new BotRepository(api.store).create(foreign);
+    const id = 'custom:' + item.id;
+    expect(() => api.access.set(other.id, foreign.id, id, true)).toThrow(
+      'Choose a workspace or custom tool',
+    );
+    // A stale/invalid assignment must not grant access to a different workspace's tool.
+    api.store.run('INSERT INTO bot_tool_assignments VALUES(?,?,1)', foreign.id, id);
+    expect(api.access.allowed(foreign, id)).toBe(false);
+    const tools = api.capabilities.forBot(foreign, new AbortController().signal, () => {});
+    expect(tools).not.toHaveProperty('shared_tool');
+    for (const operation of ['inspect', 'update', 'disable', 'remove'] as const)
+      await expect(
+        tools.register_custom_tool.execute!(
+          { operation, id: item.id },
+          { toolCallId: randomUUID(), messages: [], context: {} },
+        ),
+      ).rejects.toThrow('Capability not found');
+    expect(await api.capabilities.invoke(item.id, { value: 'original' })).toEqual({
+      value: 'original',
+    });
   });
   it('terminates a synchronous loop, supports cancellation, and leaves the HTTP server responsive', async () => {
     const item = await register(
@@ -660,6 +762,7 @@ describe('Custom capabilities', () => {
           supportsImages: false,
           isDefault: true,
           contextWindowTokens: 65536,
+          maxOutputTokens: 8192,
         })
       ).status,
     ).toBe(201);

@@ -4,6 +4,7 @@ import { IPC } from '../shared/contracts';
 interface DesktopActions {
   openExternal: (url: string) => Promise<void>;
   writeClipboardText: (text: string) => Promise<void>;
+  readClipboardText: () => Promise<string>;
 }
 
 /** Explicit actions from Mukai's main frame; embedded websites receive no such privileges. */
@@ -12,6 +13,7 @@ export function registerDesktopActions(
   actions: DesktopActions = {
     openExternal: (url) => shell.openExternal(url),
     writeClipboardText: (text) => clipboard.writeText(text),
+    readClipboardText: () => clipboard.readText(),
   },
 ) {
   ipcMain.handle(IPC.openExternal, async (event, value: unknown) => {
@@ -33,8 +35,16 @@ export function registerDesktopActions(
       throw new Error('Clipboard text must be at most 1 MB.');
     await actions.writeClipboardText(value);
   });
+  ipcMain.handle(IPC.readClipboardText, async (event) => {
+    if (!trustedSender(event)) throw new Error('Untrusted IPC sender');
+    const text = await actions.readClipboardText();
+    if (Buffer.byteLength(text, 'utf8') > 1024 * 1024)
+      throw new Error('Clipboard text must be at most 1 MB.');
+    return text;
+  });
   return () => {
     ipcMain.removeHandler(IPC.openExternal);
     ipcMain.removeHandler(IPC.writeClipboardText);
+    ipcMain.removeHandler(IPC.readClipboardText);
   };
 }

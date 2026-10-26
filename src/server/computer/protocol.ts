@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { RuntimeOwner } from '../../shared/runtime';
 
 export const PROTOCOL_VERSION = 1;
-export const GUEST_REVISION = 15;
+export const GUEST_REVISION = 17;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',
@@ -30,7 +30,7 @@ export type ComputerHelper = (action: string, args: unknown[]) => Promise<unknow
 export const helperRequest = z.object({
   requestId: z.string().uuid(),
   rpcId: z.string().uuid(),
-  action: z.enum(['enqueue', 'wakeBot', 'callRoute']),
+  action: z.enum(['enqueue', 'wakeBot', 'callRoute', 'terminal_started']),
   args: z.array(z.unknown()).max(3),
 });
 export const helperReply = z

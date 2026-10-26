@@ -14,6 +14,7 @@ export function Tooltip({
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const bubble = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | undefined>(undefined);
   useLayoutEffect(() => {
     if (!open || !bubble.current) return;
     const element = bubble.current;
@@ -39,6 +40,7 @@ export function Tooltip({
     document.addEventListener('scroll', position, true);
     document.addEventListener('pointerdown', dismiss);
     return () => {
+      window.clearTimeout(closeTimer.current);
       element.hidePopover();
       window.removeEventListener('resize', position);
       document.removeEventListener('scroll', position, true);
@@ -48,9 +50,23 @@ export function Tooltip({
   return (
     <span
       className="tooltip"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => {
-        if (document.activeElement !== trigger.current) setOpen(false);
+      onMouseEnter={() => {
+        window.clearTimeout(closeTimer.current);
+        setOpen(true);
+      }}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement))
+          closeTimer.current = window.setTimeout(() => setOpen(false), 150);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+        }
       }}
     >
       <button
@@ -60,15 +76,7 @@ export function Tooltip({
         aria-label={label}
         aria-describedby={open ? id : undefined}
         onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
         onClick={() => setOpen(true)}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-          }
-        }}
       >
         <Info size={15} aria-hidden="true" />
       </button>

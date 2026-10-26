@@ -162,6 +162,26 @@ export class MessageRepository {
       id,
     );
   }
+  private activityJson(id: string, activity: ChatActivity[]) {
+    if (!activity.some((item) => item.terminal?.status === 'running'))
+      return JSON.stringify(activity);
+    // Live terminal reads can finish while the model is still streaming. Preserve
+    // their final output when a later chat save carries an older running snapshot.
+    const row = this.database.get('SELECT activity_json FROM messages WHERE id=?', id);
+    const saved = JSON.parse(String(row?.activity_json || '[]')) as ChatActivity[];
+    return JSON.stringify(
+      activity.map((item) => {
+        if (item.terminal?.status !== 'running') return item;
+        const completed = saved.find(
+          (prior) =>
+            prior.id === item.id &&
+            prior.terminal?.id === item.terminal?.id &&
+            prior.terminal?.status !== 'running',
+        );
+        return completed ? { ...item, terminal: completed.terminal } : item;
+      }),
+    );
+  }
   saveProgress(
     id: string,
     content: string,
@@ -173,7 +193,7 @@ export class MessageRepository {
       'UPDATE messages SET content = ?,reasoning=?,activity_json=?,parts_json=? WHERE id = ?',
       content,
       reasoning,
-      JSON.stringify(activity),
+      this.activityJson(id, activity),
       JSON.stringify(parts),
       id,
     );
@@ -193,7 +213,7 @@ export class MessageRepository {
       status,
       error,
       reasoning,
-      JSON.stringify(activity),
+      this.activityJson(id, activity),
       JSON.stringify(parts),
       id,
     );

@@ -34,6 +34,10 @@ import type { TelegramActivity } from '../telegram/activity';
 import type { ToolApproval } from '../../shared/approvals';
 import type { TelegramSession } from '../telegram/types';
 import { telegramMessage } from '../telegram/presentation';
+import type { ConversationArtifactService } from './conversationArtifactService';
+import { telegramFileLimit, telegramMediaLimit, telegramMediaReferences } from '../telegram/media';
+import { downloadTelegramMedia } from '../telegram/remoteMedia';
+import { fileMetadata } from './fileMetadata';
 
 interface TelegramLifecycle {
   start(): void;
@@ -74,6 +78,7 @@ export class TelegramService {
     readonly conversations: ConversationService,
     readonly chats: ChatService,
     private diagnostics: DiagnosticService,
+    private artifacts: ConversationArtifactService,
     dir: string,
     private network: typeof fetch = fetch,
     private now: () => number = Date.now,
@@ -575,18 +580,46 @@ export class TelegramService {
   finish(job: TelegramJob, message?: ChatMessage) {
     if (!this.jobAllowed(job)) return;
     const answer = message ? responsePresentation(message).answer : '';
-    const text =
+    let text =
       message?.status === 'complete'
         ? answer ||
           'The response completed without a text answer. Open this conversation in Mukai for details.'
         : message?.status === 'stopped'
           ? 'This response was stopped. Open Mukai to review any completed work.'
           : 'This response was interrupted or failed. Open Mukai to review the saved progress before retrying.';
+    const media =
+      message?.status === 'complete'
+        ? telegramMediaReferences(this.diagnostics.redactSecrets(answer))
+        : [];
+    if (media.length > telegramMediaLimit)
+      text += `\n\nOnly the first ${telegramMediaLimit} referenced files will be sent here. Open Mukai for the remaining files.`;
     this.jobs.complete(
       job,
       splitTelegramText(text),
       message?.status === 'complete' ? 'done' : 'interrupted',
+      media.slice(0, telegramMediaLimit),
     );
+  }
+  async loadMedia(value: TelegramDelivery, signal: AbortSignal) {
+    if (!value.media || !value.workspaceId || !value.botId || !this.deliveryAllowed(value))
+      throw new Error('Telegram media access changed.');
+    const readSignal = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
+    const source = /^https?:\/\//i.test(value.media.href)
+      ? await downloadTelegramMedia(value.media.href, readSignal)
+      : await this.artifacts.reference(
+          value.workspaceId,
+          value.media.href,
+          false,
+          readSignal,
+          telegramFileLimit,
+        );
+    readSignal.throwIfAborted();
+    if (!source.bytes.length || source.bytes.length > telegramFileLimit)
+      throw new Error('The media file is empty or exceeds the Telegram file limit.');
+    return {
+      ...source,
+      ...fileMetadata(source.bytes.subarray(0, 4096), source.name, source.bytes.length),
+    };
   }
   recover(job: TelegramJob) {
     const message = this.conversations.latestBotReply(job.conversationId, job.botId, job.id);
@@ -600,6 +633,14 @@ export class TelegramService {
     this.finish(job, message ?? undefined);
   }
   deliveryAllowed(value: TelegramDelivery) {
+    if (
+      value.media &&
+      (!value.workspaceId ||
+        !value.botId ||
+        value.editMessageId ||
+        !this.jobs.deliveryActive(value.id))
+    )
+      return false;
     const allowed =
       value.workspaceEvent && value.workspaceId
         ? this.workspaceAllowed(value.connectionId, value.chatId, value.workspaceId, value.botId)

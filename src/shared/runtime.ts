@@ -26,6 +26,8 @@ export interface BrowserBounds {
   height: number;
 }
 export interface ProcessSession extends RuntimeOwner {
+  shell?: string;
+  envFromSettings?: string[];
   id: string;
   command: string;
   cwd: string;

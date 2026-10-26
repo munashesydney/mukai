@@ -19,7 +19,8 @@ export class DesktopTransport {
   >();
   private sockets = new WebSocketServer({
     noServer: true,
-    maxPayload: 1024 * 1024,
+    // Leave room for RFB headers and extended clipboard encoding around 1 MiB of text.
+    maxPayload: 2 * 1024 * 1024,
     perMessageDeflate: false,
   });
   private closed = false;

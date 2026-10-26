@@ -156,8 +156,8 @@ In your bot’s private Telegram chat, send `/workspaces` and select a workspace
 Text messages then use a dedicated, persistent Mukai conversation. Switching
 workspaces resumes its conversation; `/new` creates a fresh one and `/stop`
 cancels the selected conversation’s response and queued messages. Conversations
-remain available in the desktop/browser app. Attachments and group chats are not
-supported in this version. Tool approvals still happen in Mukai according to the
+remain available in the desktop/browser app. Incoming attachments and group chats
+are not supported in this version. Tool approvals still happen in Mukai according to the
 workspace’s existing approval settings.
 
 The existing backend owns one long poller, a durable SQLite inbox, a separate AI
@@ -169,7 +169,16 @@ from that integration before Mukai can connect; Mukai never removes it silently.
 
 Replies use Telegram’s streaming drafts when available and persist a final text
 answer; otherwise a typing indicator accompanies the final reply. Long answers
-are split into messages. Reasoning, raw tool outputs, and approval payloads are
+are split into messages. Explicit image, audio, video, and document references in
+completed answers are delivered afterward as Telegram media or downloadable files.
+This includes saved artifacts, attachments, workspace file links, and direct public
+media URLs; ordinary website citations stay links. MP3/M4A audio and MP4 video use
+native players; other formats are sent as files. Each reply sends up to 20 distinct
+references, with a notice if more remain. Files are limited to 50 MiB; downloads from
+workspace VMs retain the existing 10 MiB limit. Unavailable or rejected files get a
+notice without resending the answer. Public URLs are downloaded anonymously with
+bounded reads and public-address checks on DNS and redirects.
+Reasoning, raw tool outputs, and approval payloads are
 not forwarded. Incoming messages are deduplicated and queued against their
 original workspace/conversation. Access is checked again before execution and
 delivery. Interrupted AI/tool executions are not automatically replayed after
@@ -183,7 +192,7 @@ Pause, revoke the paired account, or disconnect the bot from the Telegram tab.
 Disconnecting removes the saved token and pairing/session data while preserving
 Mukai conversations. As with provider credentials, protect the complete local
 data directory, which also holds the encryption key. Telegram carries the chat
-text in addition to the AI provider you configured.
+text and referenced files in addition to the AI provider you configured.
 
 `npm run test:telegram-ui` runs the production Electron renderer against a
 disposable real Mukai backend and a test-only Telegram transport. It covers the

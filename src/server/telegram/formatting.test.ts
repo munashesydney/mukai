@@ -3,6 +3,18 @@ import { telegramFormatting } from './formatting';
 import { telegramMessage } from './presentation';
 
 describe('Telegram Markdown presentation', () => {
+  it('renders internal file and image labels without exposing unusable Mukai URLs', () => {
+    for (const body of [
+      '[Report](mukai://artifact/report)',
+      '![Screenshot](mukai://artifact/shot)',
+    ]) {
+      const result = telegramFormatting(telegramMessage(body, 'Project'));
+      expect(result.text).toBe(
+        'Workspace Project\n\n' + (body.startsWith('!') ? 'Screenshot' : 'Report'),
+      );
+      expect(result.entities?.some((entity) => entity.type === 'text_link')).toBe(false);
+    }
+  });
   it('formats emphasis, headings, code, links and lists with UTF-16 entity offsets', () => {
     const result = telegramFormatting(
       telegramMessage(

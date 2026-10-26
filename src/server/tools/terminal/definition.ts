@@ -1,12 +1,14 @@
 import { z } from 'zod';
+import { terminalEnvironmentFields } from '../../../shared/terminal';
 export const terminalDefinition = {
   name: 'terminal',
   title: 'Terminal & Processes',
   summary: 'Run local commands and manage background processes.',
   actions: ['run', 'list', 'poll', 'wait', 'log', 'write', 'kill'],
   description:
-    'Run a local shell command in the workspace folder. Windows uses PowerShell; other systems use sh. This is a local shell, not a filesystem sandbox. cwd is relative to the workspace; each command starts a fresh shell. Never claim a command ran unless it succeeded. Output is bounded. If still running after yieldMs, returns a session id: use process to wait, poll, read logs, send stdin or kill. background=true returns immediately. timeoutSeconds limits total lifetime (default 300 seconds foreground / 3600 background). Only launch background work needed for the user task; stop unneeded processes. Commands run non-interactively without a PTY.',
+    'Run a fresh non-interactive shell (PowerShell on Windows, sh elsewhere), without a PTY, in the workspace folder. cwd is workspace-relative; commands have local OS permissions. Output is bounded. Running results include a session id for process. background returns immediately; yieldMs controls the initial wait. timeoutSeconds limits lifetime (default 300 foreground/3600 background). Stop unneeded background work. envFromSettings selects saved workspace variable names; env supplies temporary nonsecret values.',
   inputSchema: z.object({
+    ...terminalEnvironmentFields,
     command: z.string().trim().min(1).max(16000),
     cwd: z.string().max(1000).optional(),
     background: z.boolean().optional(),

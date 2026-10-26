@@ -5,6 +5,7 @@ import type { Database, Row } from '../db/database';
 import type {
   TelegramDelivery,
   TelegramJob,
+  TelegramMediaReference,
   TelegramSession,
   TelegramUpdate,
 } from '../telegram/types';
@@ -113,6 +114,11 @@ export class TelegramJobRepository {
       "UPDATE telegram_chat_jobs SET state='cancelled' WHERE conversation_id=? AND state IN ('queued','running')",
       id,
     );
+    this.database.run(
+      `UPDATE telegram_outbox SET state='cancelled' WHERE state='pending' AND EXISTS(
+        SELECT 1 FROM telegram_chat_jobs j WHERE j.conversation_id=? AND instr(telegram_outbox.id,j.id||':')=1)`,
+      id,
+    );
   }
   runnable(id: string) {
     return (
@@ -122,14 +128,22 @@ export class TelegramJobRepository {
       ) !== undefined
     );
   }
+  deliveryActive(id: string) {
+    return !!this.database.get(
+      "SELECT 1 FROM telegram_outbox WHERE id=? AND state IN ('pending','sending')",
+      id,
+    );
+  }
   queue(value: Omit<TelegramDelivery, 'id' | 'attempts'>, id: string = randomUUID()) {
-    const parts = splitTelegramText(value.text || ' ', telegramBodyLimit);
+    const parts = value.media
+      ? [value.text]
+      : splitTelegramText(value.text || ' ', telegramBodyLimit);
     this.database.db.exec('SAVEPOINT telegram_delivery');
     try {
       for (const [index, text] of parts.entries()) {
         this.database.run(
-          `INSERT OR IGNORE INTO telegram_outbox(id,connection_id,chat_id,text,markup_json,reply_to,workspace_id,bot_id,created_at,workspace_event,event_id,edit_message_id,reply_action)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT OR IGNORE INTO telegram_outbox(id,connection_id,chat_id,text,markup_json,reply_to,workspace_id,bot_id,created_at,workspace_event,event_id,edit_message_id,reply_action,media_json)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           index ? `${id}:part:${index}` : id,
           value.connectionId,
           value.chatId,
@@ -143,6 +157,7 @@ export class TelegramJobRepository {
           value.eventId ?? null,
           value.editMessageId ?? null,
           value.replyAction ?? null,
+          value.media ? JSON.stringify(value.media) : null,
         );
       }
       this.database.db.exec('RELEASE telegram_delivery');
@@ -151,7 +166,12 @@ export class TelegramJobRepository {
       throw error;
     }
   }
-  complete(job: TelegramJob, parts: string[], state: 'done' | 'interrupted') {
+  complete(
+    job: TelegramJob,
+    parts: string[],
+    state: 'done' | 'interrupted',
+    media: TelegramMediaReference[] = [],
+  ) {
     this.database.transaction(() => {
       for (const [index, text] of parts.entries())
         this.queue(
@@ -166,10 +186,25 @@ export class TelegramJobRepository {
           },
           `${job.id}:${index}`,
         );
+      for (const [index, reference] of media.entries())
+        this.queue(
+          {
+            connectionId: job.connectionId,
+            chatId: job.chatId,
+            text: reference.label,
+            media: reference,
+            replyTo: job.sourceMessageId,
+            workspaceId: job.workspaceId,
+            botId: job.botId,
+            workspaceEvent: !!job.notificationId,
+          },
+          `${job.id}:media:${index}`,
+        );
       this.state(job.id, state);
     });
   }
   splitPending(value: TelegramDelivery) {
+    if (value.media) return false;
     const parts = splitTelegramText(value.text, telegramBodyLimit);
     if (parts.length <= 1) return false;
     this.database.transaction(() => {
@@ -214,6 +249,7 @@ export class TelegramJobRepository {
       replyAction: row.reply_action === 'deny_reason' ? 'deny_reason' : undefined,
       editMessageId: row.edit_message_id === null ? undefined : Number(row.edit_message_id),
       priority: Number(row.priority),
+      media: row.media_json ? JSON.parse(String(row.media_json)) : undefined,
     };
   }
   sending(id: string) {

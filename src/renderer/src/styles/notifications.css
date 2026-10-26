@@ -14,6 +14,11 @@
 .notifications-dismiss-all {
   flex-shrink: 0;
 }
+.notifications-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .notifications-heading h1 {
   display: flex;
   align-items: center;

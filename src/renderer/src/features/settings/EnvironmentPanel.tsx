@@ -48,7 +48,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
       <SettingsHeading
         eyebrow="WORKSPACE CONFIGURATION"
         title="Environment Variables"
-        description="Private configuration for this workspace’s custom tools and routes. Values are encrypted and never returned to bots."
+        description="Private configuration for this workspace’s custom tools, routes, and terminal runs. Values are encrypted and supplied only when requested."
         actions={
           <>
             <button

@@ -4,6 +4,13 @@ import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ProcessSession, RuntimeOwner } from '../../shared/runtime';
 import { ApiError } from '../config';
+import {
+  terminalEnvironmentFields,
+  missingEnvironmentError,
+  type TerminalSnapshot,
+} from '../../shared/terminal';
+import { z } from 'zod';
+import { ProcessRedactor } from './processRedactor';
 
 interface ManagedProcess {
   info: ProcessSession;
@@ -23,6 +30,11 @@ function sameOwner(a: RuntimeOwner, b: RuntimeOwner) {
 }
 
 export class ProcessService {
+  constructor(
+    private options: {
+      resolveEnvironment?: (workspaceId: string, names: string[]) => Record<string, string>;
+    } = {},
+  ) {}
   private sessions = new Map<string, ManagedProcess>();
   private closed = false;
   private deletingWorkspaces = new Set<string>();
@@ -72,10 +84,51 @@ export class ProcessService {
       background?: boolean;
       timeoutSeconds?: number;
       yieldMs?: number;
+      envFromSettings?: string[];
+      env?: Record<string, string>;
     },
     signal: AbortSignal,
+    runtime: {
+      settingsEnvironment?: Record<string, string>;
+      onStart?: (snapshot: TerminalSnapshot) => void | Promise<void>;
+    } = {},
   ) {
     signal.throwIfAborted();
+    const environment = z.object(terminalEnvironmentFields).parse(input);
+    const names = [...new Set(environment.envFromSettings || [])];
+    const configured =
+      this.options.resolveEnvironment?.(owner.workspaceId, names) ??
+      runtime.settingsEnvironment ??
+      {};
+    const missing = names.filter(
+      (name) =>
+        !Object.hasOwn(configured, name) ||
+        typeof configured[name] !== 'string' ||
+        !configured[name],
+    );
+    if (missing.length) throw new ApiError(400, missingEnvironmentError(missing));
+    const supplied = {
+      ...environment.env,
+      ...Object.fromEntries(names.map((name) => [name, configured[name]])),
+    };
+    const compareName = (name: string) =>
+      process.platform === 'win32' ? name.toUpperCase() : name;
+    const configuredNames = new Set(names.map(compareName));
+    if (Object.keys(environment.env || {}).some((name) => configuredNames.has(compareName(name))))
+      throw new ApiError(
+        400,
+        'Specify a variable in either env or envFromSettings, not both. No command was started.',
+      );
+    if (new Set(Object.keys(supplied).map(compareName)).size !== Object.keys(supplied).length)
+      throw new ApiError(
+        400,
+        'Environment variable names must be unique for this operating system. No command was started.',
+      );
+    if (Object.values(supplied).some((value) => value.includes('\0')))
+      throw new ApiError(
+        400,
+        'Environment values cannot contain null characters. No command was started.',
+      );
     if (this.deletingWorkspaces.has(owner.workspaceId))
       throw new ApiError(409, 'Workspace is being deleted.');
     if (this.closed) throw new ApiError(503, 'Terminal is shutting down.');
@@ -107,8 +160,15 @@ export class ProcessService {
         ([key]) => !/(TOKEN|SECRET|PASSWORD|API_KEY|MUKAI_DATA_DIR)/i.test(key),
       ),
     );
+    for (const [name, value] of Object.entries(supplied)) {
+      for (const existing of Object.keys(env))
+        if (compareName(existing) === compareName(name)) delete env[existing];
+      env[name] = value;
+    }
     if (this.deletingWorkspaces.has(owner.workspaceId))
       throw new ApiError(409, 'Workspace is being deleted.');
+    const stdout = new ProcessRedactor(names.map((name) => configured[name]));
+    const stderr = new ProcessRedactor(names.map((name) => configured[name]));
     const child =
       process.platform === 'win32'
         ? spawn(
@@ -122,6 +182,8 @@ export class ProcessService {
     const entry: ManagedProcess = {
       info: {
         ...owner,
+        shell: process.platform === 'win32' ? 'PowerShell' : 'sh',
+        envFromSettings: names,
         id: randomUUID(),
         command: input.command,
         cwd,
@@ -157,12 +219,16 @@ export class ProcessService {
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
-    child.stdin.on('error', (error) => append('\nProcess input failed: ' + error.message));
+    const redactError = (text: string) =>
+      new ProcessRedactor(names.map((name) => configured[name])).write(text, true);
+    child.stdout.on('data', (chunk) => append(stdout.write(chunk)));
+    child.stderr.on('data', (chunk) => append(stderr.write(chunk)));
+    child.stdin.on('error', (error) =>
+      append(redactError('\nProcess input failed: ' + error.message)),
+    );
     child.on('error', (error) => {
       entry.info.status = 'failed';
-      append(error.message);
+      append(redactError(error.message));
       clearTimeout(entry.timer);
       exited();
       finish();
@@ -172,6 +238,8 @@ export class ProcessService {
       exited();
     });
     child.on('close', (code) => {
+      append(stdout.finish());
+      append(stderr.finish());
       if (entry.info.status === 'running') entry.info.status = 'exited';
       entry.info.exitCode = code;
       clearTimeout(entry.timer);
@@ -184,6 +252,12 @@ export class ProcessService {
     signal.addEventListener('abort', abort, { once: true });
     try {
       signal.throwIfAborted();
+      try {
+        await runtime.onStart?.(this.read(owner, entry.info.id));
+      } catch (error) {
+        await this.stop(entry);
+        throw error;
+      }
       if (!input.background) await this.awaitCompletion(entry, input.yieldMs ?? 1000, signal);
       signal.throwIfAborted();
       return this.read(owner, entry.info.id);

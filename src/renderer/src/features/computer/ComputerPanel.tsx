@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Monitor, RefreshCw, MousePointer2 } from 'lucide-react';
+import { ArrowLeft, Clipboard, Monitor, RefreshCw, MousePointer2 } from 'lucide-react';
 import type RFB from '@novnc/novnc';
 import type { ComputerStatus } from '../../../../shared/computer';
 import { computerService } from '../../services/computerService';
+import { copyText, readClipboardText } from '../../services/clipboardService';
+import { bindComputerClipboard } from './computerClipboard';
+import { ComputerClipboardPanel } from './ComputerClipboardPanel';
 
 export function ComputerPanel({
   workspaceId,
@@ -15,11 +18,15 @@ export function ComputerPanel({
 }) {
   const target = useRef<HTMLDivElement>(null);
   const client = useRef<RFB | null>(null);
+  const clipboard = useRef<ReturnType<typeof bindComputerClipboard> | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [error, setError] = useState('');
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [interactive, setInteractive] = useState(true);
+  const [clipboardOpen, setClipboardOpen] = useState(false);
+  const [remoteClipboard, setRemoteClipboard] = useState<string | null>(null);
+  const [clipboardMessage, setClipboardMessage] = useState('');
   useEffect(() => {
     if (!open) return;
     const container = target.current;
@@ -39,6 +46,9 @@ export function ComputerPanel({
     setState('connecting');
     setError('');
     setStatus(null);
+    setClipboardOpen(false);
+    setRemoteClipboard(null);
+    setClipboardMessage('');
     const check = async () => {
       if (checking) return;
       checking = true;
@@ -65,6 +75,13 @@ export function ComputerPanel({
           credentials: { password: session.password, username: '', target: '' },
         });
         client.current = rfb;
+        clipboard.current = bindComputerClipboard(container, rfb, {
+          read: readClipboardText,
+          write: copyText,
+          remote: setRemoteClipboard,
+          message: setClipboardMessage,
+          mac: window.mukai?.platform === 'darwin' || /Mac|iPhone|iPad/.test(navigator.platform),
+        });
         rfb.scaleViewport = true;
         rfb.resizeSession = true;
         rfb.background = 'transparent';
@@ -99,6 +116,8 @@ export function ComputerPanel({
       window.clearInterval(timer);
       window.clearTimeout(resizeTimer);
       resize.disconnect();
+      clipboard.current?.dispose();
+      clipboard.current = null;
       rfb?.disconnect();
       client.current = null;
       container?.replaceChildren();
@@ -106,7 +125,9 @@ export function ComputerPanel({
   }, [workspaceId, open, attempt]);
   useEffect(() => {
     if (client.current) {
+      clipboard.current?.setEnabled(interactive);
       client.current.focusOnClick = interactive;
+      client.current.viewOnly = !interactive;
       if (!interactive) client.current.blur();
     }
   }, [interactive, state]);
@@ -130,6 +151,15 @@ export function ComputerPanel({
         </span>
         <div className="computer-controls">
           <button
+            className={`computer-control ${clipboardOpen ? 'is-active' : ''}`}
+            aria-expanded={clipboardOpen}
+            disabled={state !== 'connected' || !interactive}
+            onClick={() => setClipboardOpen(!clipboardOpen)}
+          >
+            <Clipboard size={14} />
+            <span>Clipboard</span>
+          </button>
+          <button
             className={`computer-control ${interactive ? 'is-active' : ''}`}
             aria-pressed={interactive}
             title={interactive ? 'Mouse and keyboard enabled' : 'Watch without sending input'}
@@ -144,7 +174,28 @@ export function ComputerPanel({
           </button>
         </div>
       </header>
+      {clipboardMessage && state === 'connected' && interactive && (
+        <p className="computer-clipboard-notice" role="status">
+          {clipboardMessage}
+        </p>
+      )}
       <div className="computer-display">
+        {open && clipboardOpen && state === 'connected' && interactive && (
+          <ComputerClipboardPanel
+            key={`${workspaceId}:${attempt}`}
+            workspaceId={workspaceId}
+            remote={remoteClipboard}
+            onPaste={(text, terminal) => {
+              if (!clipboard.current) throw new Error('The VM is disconnected.');
+              clipboard.current.pasteText(text, terminal);
+            }}
+            onCopy={async () => {
+              if (!clipboard.current) throw new Error('The VM is disconnected.');
+              await clipboard.current.copyRemote();
+            }}
+            onClose={() => setClipboardOpen(false)}
+          />
+        )}
         {open && (
           <div
             ref={target}

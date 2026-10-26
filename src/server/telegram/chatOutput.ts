@@ -3,7 +3,7 @@ import type { ChatOutput } from '../services/chatService';
 import type { TelegramJob } from './types';
 import type { TelegramDeliveryQueue } from './delivery';
 
-/** Only public answer text leaves Mukai. Reasoning and tool event payloads stay local. */
+/** Stream public answer text; TelegramService queues completed-answer media. Tool payloads stay local. */
 export class TelegramChatOutput implements ChatOutput {
   private text = '';
   private partId?: string;

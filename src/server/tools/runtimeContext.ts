@@ -2,12 +2,14 @@ import type { ChatActivity } from '../../shared/ai';
 import { ACTIVITY_TRUNCATED, resultPreview } from '../services/toolResultPolicy';
 import type { RuntimeOwner } from '../../shared/runtime';
 import { serverUrls } from '../../shared/chatActivity';
+import { terminalSnapshotSchema } from '../../shared/terminal';
 export interface RuntimeToolContext {
   owner: RuntimeOwner;
   signal: AbortSignal;
   onActivity: (activity: ChatActivity) => void;
   budget: { remaining: number };
   resultBytes?: number;
+  resolveTerminalEnvironment?: (names: string[]) => Record<string, string>;
 }
 export async function executeRuntime<T>(
   context: RuntimeToolContext,
@@ -32,6 +34,8 @@ export async function executeRuntime<T>(
       'status' in result
     ) {
       activity.processSessionId = String(result.id);
+      const snapshot = terminalSnapshotSchema.safeParse(result);
+      if (snapshot.success) activity.terminal = snapshot.data;
       if ('output' in result && typeof result.output === 'string')
         activity.serverUrls = serverUrls(result.output);
     }

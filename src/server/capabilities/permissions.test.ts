@@ -255,6 +255,22 @@ describe.each(['local', 'qemu'] as const)('%s capability permissions', (computer
       });
       expect((await request('/approvals')).value.pending).toEqual([]);
     });
+    it('lets a noncreator sub-bot execute a shared tool after the configured user approval', async () => {
+      api.store.run("UPDATE bots SET is_main=0 WHERE id='scout'");
+      await register('user_approval');
+      expect(api.access.allowed(scoutBot(), 'custom:' + registrationId)).toBe(true);
+      const run = chat();
+      const approval = await pendingApproval();
+      expect(approval.toolName).toBe('custom_effect');
+      expect(effect()).toBe('');
+      await request('/approvals/' + approval.id, 'POST', { approved: true });
+      await run;
+      expect(effect()).toBe('approved-value\n');
+      expect(receipt()).toMatchObject({
+        permission: { mode: 'user_approval', approvedBy: 'user', decision: 'approved' },
+        execution: 'completed',
+      });
+    });
     it.each(['continue', 'cancel'] as const)(
       'holds ask_bot execution until the %s decision',
       async (choice) => {

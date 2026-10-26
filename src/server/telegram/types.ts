@@ -48,6 +48,15 @@ export interface TelegramJob extends TelegramSession {
   text: string;
   state: 'queued' | 'running' | 'done' | 'cancelled' | 'interrupted';
 }
+export interface TelegramMediaReference {
+  href: string;
+  label: string;
+}
+export interface TelegramMediaFile {
+  name: string;
+  bytes: Buffer;
+  mediaType: string;
+}
 export interface TelegramDelivery {
   id: string;
   connectionId: string;
@@ -63,4 +72,5 @@ export interface TelegramDelivery {
   eventId?: string;
   editMessageId?: number;
   priority?: number;
+  media?: TelegramMediaReference;
 }
