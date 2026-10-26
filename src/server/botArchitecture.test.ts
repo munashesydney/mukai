@@ -792,7 +792,7 @@ describe('Bot architecture', () => {
       expect.arrayContaining([expect.objectContaining({ id: child.id, createdBy: main.id })]),
     );
   });
-  it('assigns custom tools by stable registration ID while routes remain shared', async () => {
+  it('shares custom tools by default while respecting explicit assignments by stable registration ID', async () => {
     const main = await bot(),
       child = await bot('Scout');
     mkdirSync(join(root, 'project'));
@@ -808,8 +808,7 @@ describe('Bot architecture', () => {
     });
     const id = 'custom:' + (registration as { id: string }).id;
     expect(api.access.allowed(main, id)).toBe(true);
-    expect(api.access.allowed(child, id)).toBe(false);
-    api.access.set('default', child.id, id, true);
+    expect(api.access.allowed(child, id)).toBe(true);
     await provider();
     await chat(child);
     expect(calls[0].tools.map((item) => item.function.name)).toContain('echo');

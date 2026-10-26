@@ -8,6 +8,7 @@ import { GuestDispatcher } from '../computer/guestDispatcher';
 import type { QemuComputer } from '../computer/qemuComputer';
 import type { CapabilityRegistration } from '../../shared/customCapabilities';
 import { scoutBot } from '../services/botService';
+import { BotRepository } from '../repositories/botRepository';
 
 let api: Awaited<ReturnType<typeof startApiServer>>;
 let guest: GuestDispatcher;
@@ -48,6 +49,31 @@ afterEach(async () => {
 });
 
 describe('VM capability registration and execution', () => {
+  it('lets another workspace bot update and execute a guest tool without taking over its creator metadata', async () => {
+    const peer = {
+      ...scoutBot('default', 'peer'),
+      name: 'Peer',
+      isMain: false,
+      createdBy: 'scout',
+    };
+    new BotRepository(api.store).create(peer);
+    const item = await register('tool', toolSource('return args.value*2;'));
+    expect(api.access.allowed(peer, 'custom:' + item.id)).toBe(true);
+    await writeFile(join(folder, 'module.ts'), toolSource('return args.value*3;'));
+    const updated = (await api.capabilities.manage('default', peer.id, 'tool', {
+      operation: 'update',
+      id: item.id,
+    })) as CapabilityRegistration;
+    expect(updated.ownerBotId).toBe('scout');
+    expect(updated.version).not.toBe(item.version);
+    const tools = api.capabilities.forBot(peer, new AbortController().signal, () => {});
+    expect(
+      await tools.guest_tool.execute!(
+        { value: 7 },
+        { toolCallId: 'peer-call', messages: [], context: {} },
+      ),
+    ).toBe(21);
+  });
   it('compiles guest dependencies and exposes registered tools with assignments', async () => {
     await writeFile(join(folder, 'math.ts'), 'export const multiply = (a:number,b:number) => a*b;');
     const item = await register(

@@ -383,8 +383,8 @@ export class CapabilityService {
     // Registration always creates an ID; a suggested ID must not trigger an existing-row lookup.
     const previous =
       input.operation !== 'register' && input.id ? this.require(input.id, workspaceId) : undefined;
-    if (previous && (previous.kind !== kind || (ownerBotId && previous.ownerBotId !== ownerBotId)))
-      throw new ApiError(403, 'Only the owner may change this registration.');
+    if (previous && previous.kind !== kind)
+      throw new ApiError(400, 'Registration kind does not match the selected tool or route.');
     if (input.operation === 'inspect') {
       if (!previous) throw new ApiError(400, 'Choose a registration ID.');
       return this.detail(previous.id, workspaceId);
@@ -496,7 +496,7 @@ export class CapabilityService {
           `INSERT INTO capabilities VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,module_path=excluded.module_path,export_name=excluded.export_name,version=excluded.version,definition_json=excluded.definition_json,method=excluded.method,path=excluded.path`,
           id,
           workspaceId,
-          previous?.ownerBotId ?? ownerBotId,
+          previous ? previous.ownerBotId : ownerBotId,
           kind,
           definition.name,
           modulePath,

@@ -31,13 +31,13 @@ export class ToolAccessService {
     const current = this.bot(bot.id);
     if (toolId === 'manage_bot') return true;
     const override = this.repository.override(bot.id, toolId);
-    if (override !== undefined) return override;
     if (toolId.startsWith('custom:')) {
       const item = this.repository
         .customTools(current.workspaceId)
         .find((tool) => tool.id === toolId.slice(7));
-      return Boolean(item && (current.isMain || item.ownerBotId === current.id));
+      return Boolean(item && (override ?? true));
     }
+    if (override !== undefined) return override;
     return (
       (workspaceToolIds as readonly string[]).includes(toolId) &&
       (current.isMain || (toolId !== 'manage_pursuit' && toolId !== 'manage_bot'))
