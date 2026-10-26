@@ -1,5 +1,7 @@
 import { parseArguments } from './arguments';
 import { version } from './runtime';
+import { existsSync } from 'node:fs';
+import { runtimeExecutable } from './installation';
 
 const help = `Mukai — your AI workspace, in your browser.
 
@@ -8,6 +10,7 @@ Usage:
   mukai status [--data-dir PATH]
   mukai doctor [--data-dir PATH]
   mukai auth-reset [--data-dir PATH]
+  mukai update
   mukai --version
   mukai --help
 
@@ -15,7 +18,7 @@ serve runs locally in the foreground. Ctrl+C stops it.
 --port 0 selects an available port. PORT sets the default port.
 Data defaults to the desktop app's data directory, or MUKAI_DATA_DIR.
 One backend per data directory. --data-dir selects a separate installation.
-Re-run the installer to upgrade; it preserves application data.`;
+Run mukai update to upgrade; it preserves application data.`;
 
 export async function main(args = process.argv.slice(2)) {
   const options = parseArguments(args);
@@ -27,8 +30,16 @@ export async function main(args = process.argv.slice(2)) {
       console.log(version());
       return 0;
     case 'serve':
+      if (!(process.send && process.env.MUKAI_CLI_WORKER === '1')) {
+        const { runtimePaths } = await import('./runtime');
+        const paths = runtimePaths();
+        if (paths.installed && existsSync(runtimeExecutable(paths.root)))
+          return (await import('./supervisor')).supervise(paths.root, options);
+      }
       await (await import('./commands/serve')).serve(options);
       return 0;
+    case 'update':
+      return (await import('./commands/update')).update();
     case 'status':
       return (await import('./commands/status')).status(options.dataDir);
     case 'doctor':

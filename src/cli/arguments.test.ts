@@ -9,6 +9,7 @@ describe('CLI arguments', () => {
     expect(parseArguments(['serve'], '8080').port).toBe(8080);
     expect(parseArguments(['serve', '--port', '9000'], '8080').port).toBe(9000);
     expect(parseArguments(['--version'], 'invalid').command).toBe('version');
+    expect(parseArguments(['update'], 'invalid').command).toBe('update');
   });
   it('fails on unknown commands, ambiguous flags and invalid ports', () => {
     for (const args of [
@@ -20,6 +21,8 @@ describe('CLI arguments', () => {
       ['serve', 'extra'],
       ['status', '--open'],
       ['doctor', '--port', '80'],
+      ['update', '--open'],
+      ['update', '--port', '80'],
       ['serve', '--data-dir', ''],
     ])
       expect(() => parseArguments(args)).toThrow();

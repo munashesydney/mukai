@@ -66,8 +66,10 @@ import { TelegramJobRepository } from './repositories/telegramJobRepository';
 import { TelegramService } from './services/telegramService';
 import { TelegramRuntime } from './telegram/runtime';
 import { TelegramActivity } from './telegram/activity';
+import type { UpdateController } from '../shared/updates';
 
 export interface ApiOptions {
+  updates?: UpdateController;
   webDir?: string;
   version?: string;
   dataDir?: string;
@@ -303,6 +305,7 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      updates: options.updates,
       telegram,
       settings,
       browserMode: Boolean(options.webDir),

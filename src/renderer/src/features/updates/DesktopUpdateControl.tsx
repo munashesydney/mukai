@@ -1,6 +1,7 @@
 import { Download, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useDesktopUpdate } from './useDesktopUpdate';
+import { updateService } from '../../services/updateService';
 
 export function DesktopUpdateControl({ settings = false }: { settings?: boolean }) {
   const state = useDesktopUpdate();
@@ -24,8 +25,8 @@ export function DesktopUpdateControl({ settings = false }: { settings?: boolean 
   const action = async () => {
     setError('');
     try {
-      if (ready) await window.mukai!.restartToUpdate();
-      else await window.mukai!.checkForUpdates();
+      if (ready) await updateService.restartToUpdate();
+      else await updateService.checkForUpdates();
     } catch {
       setError('Could not contact the updater. Try again.');
     }

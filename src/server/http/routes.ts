@@ -47,6 +47,7 @@ import { trustedLocalRequest } from '../web/origin';
 import type { SettingsService } from '../services/settingsService';
 import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
+import type { UpdateController } from '../../shared/updates';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -70,6 +71,7 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  updates,
   telegram,
   settings,
   browserMode = false,
@@ -96,6 +98,7 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  updates?: UpdateController;
   telegram: TelegramService;
   settings: SettingsService;
   browserMode?: boolean;
@@ -176,6 +179,40 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'settings' && id === 'updates') {
+      if (!action && method === 'GET')
+        return send(
+          response,
+          updates?.getState() ?? {
+            status: 'disabled',
+            currentVersion: version,
+            automaticUpdates: settings.automaticUpdates(),
+            message: 'Updates require an installer-managed Mukai CLI release.',
+          },
+        );
+      if (!updates) throw new ApiError(409, 'Updates are unavailable for this server.');
+      if (!action && method === 'PUT') {
+        const input = z
+          .object({ enabled: z.boolean() })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, updates.setAutomaticUpdates(input.enabled));
+      }
+      if (action === 'check' && method === 'POST') return send(response, updates.check());
+      if (action === 'restart' && method === 'POST') {
+        z.object({ confirm: z.literal(true) })
+          .strict()
+          .parse(await jsonBody(request));
+        if (updates.getState().status !== 'ready')
+          throw new ApiError(409, 'No downloaded update is ready.');
+        // Flush the response before stopping this HTTP server and its active requests.
+        response.once('finish', () => {
+          void updates.restart().catch((error) => console.error('CLI restart failed:', error));
+        });
+        return send(response, { restarting: true });
+      }
+      throw new ApiError(405, 'Method not allowed');
+    }
     // Public route configuration is application-wide, independent of workspace IDs.
     if (resource === 'capabilities' && id === 'settings' && !action) {
       if (method === 'GET') return send(response, capabilities.routeSettings());

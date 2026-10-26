@@ -5,11 +5,20 @@ import { join } from 'node:path';
 import { request } from 'node:http';
 import { startApiServer } from '../app';
 import { runningServer, writeServerState } from '../../cli/serverState';
+import type { DesktopUpdateState } from '../../shared/contracts';
 
 describe('production browser server', () => {
   let directory: string;
   let api: Awaited<ReturnType<typeof startApiServer>>;
   let cookie: string;
+  let updateState: DesktopUpdateState = {
+    status: 'idle',
+    currentVersion: '0.1.0-test',
+    automaticUpdates: true,
+  };
+  const restart = vi.fn(async () => {
+    updateState = { ...updateState, status: 'installing' };
+  });
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'mukai-web-'));
     const webDir = join(directory, 'web');
@@ -21,6 +30,15 @@ describe('production browser server', () => {
       dataDir: join(directory, 'data'),
       webDir,
       version: '0.1.0-test',
+      updates: {
+        getState: () => ({ ...updateState }),
+        check: () => (updateState = { ...updateState, status: 'checking' }),
+        setAutomaticUpdates: (enabled) => {
+          api.settings.saveAutomaticUpdates(enabled);
+          return (updateState = { ...updateState, automaticUpdates: enabled });
+        },
+        restart,
+      },
     });
     const response = await fetch(api.url + '/api/session', {
       method: 'POST',
@@ -94,6 +112,52 @@ describe('production browser server', () => {
         })
       ).status,
     ).toBe(401);
+  });
+  it('authenticates update controls, validates preferences and confirms restart after the response', async () => {
+    for (const [path, method, body] of [
+      ['/api/settings/updates', 'GET', undefined],
+      ['/api/settings/updates', 'PUT', { enabled: false }],
+      ['/api/settings/updates/check', 'POST', undefined],
+      ['/api/settings/updates/restart', 'POST', { confirm: true }],
+    ] as const) {
+      const response = await fetch(api.url + path, {
+        method,
+        ...(body
+          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+          : {}),
+      });
+      expect(response.status).toBe(401);
+    }
+    const headers = { Cookie: cookie, Origin: api.url, 'Content-Type': 'application/json' };
+    const call = (path: string, method = 'GET', value?: unknown) =>
+      fetch(api.url + '/api/settings/updates' + path, {
+        method,
+        headers,
+        ...(value ? { body: JSON.stringify(value) } : {}),
+      });
+    expect(await (await call('')).json()).toMatchObject({ status: 'idle', automaticUpdates: true });
+    expect((await call('', 'PUT', { enabled: 'false' })).status).toBe(400);
+    expect(await (await call('', 'PUT', { enabled: false })).json()).toMatchObject({
+      automaticUpdates: false,
+    });
+    expect(api.settings.automaticUpdates()).toBe(false);
+    expect(await (await call('/check', 'POST')).json()).toMatchObject({ status: 'checking' });
+    expect((await call('/restart', 'POST', { confirm: true })).status).toBe(409);
+    updateState = { ...updateState, status: 'ready', version: '0.2.0' };
+    expect((await call('/restart', 'POST', { confirm: false })).status).toBe(400);
+    expect(restart).not.toHaveBeenCalled();
+    expect(await (await call('/restart', 'POST', { confirm: true })).json()).toEqual({
+      restarting: true,
+    });
+    expect(restart).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        await fetch(api.url + '/api/settings/updates/check', {
+          method: 'POST',
+          headers: { ...headers, Origin: 'https://evil.example' },
+        })
+      ).status,
+    ).toBe(403);
   });
   it('status verifies the server instance and never trusts an arbitrary saved URL', async () => {
     const dataDir = join(directory, 'data');

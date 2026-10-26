@@ -5,6 +5,8 @@ import { startApiServer } from '../../server/app';
 import type { CliArguments } from '../arguments';
 import { runtimePaths, version } from '../runtime';
 import { removeServerState, writeServerState } from '../serverState';
+import { findInstallation } from '../installation';
+import { CliUpdater } from '../updater';
 
 export async function openBrowser(url: string) {
   const command =
@@ -31,10 +33,36 @@ export async function serve(options: CliArguments) {
     throw new Error(
       'Mukai UI is missing. In a checkout, run npm run build:cli. For an installation, reinstall Mukai CLI.',
     );
+  const installation =
+    process.send && process.env.MUKAI_CLI_WORKER === '1'
+      ? await findInstallation(paths.root)
+      : undefined;
+  const updater = new CliUpdater(version(), installation, {
+    saveAutomaticUpdates: (enabled) => {
+      api.settings.saveAutomaticUpdates(enabled);
+    },
+    restart: async (root) => {
+      if (!process.send || stopping)
+        throw new Error('The CLI server is stopping. Restart it from your terminal.');
+      // Preserve the actual bound port, including when serve was launched with --port 0.
+      await new Promise<void>((done, reject) =>
+        process.send!(
+          {
+            type: 'mukai:restart',
+            root,
+            port: Number(new URL(api.url).port),
+          },
+          (error) => (error ? reject(error) : done()),
+        ),
+      );
+      await stop();
+    },
+  });
   const api = await startApiServer(options.port, {
     ...paths,
     dataDir: options.dataDir,
     version: version(),
+    updates: updater,
   });
   const session = api.browserSession!;
   let stopping: Promise<void> | undefined;
@@ -43,6 +71,8 @@ export async function serve(options: CliArguments) {
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
       process.off('message', onMessage);
+      process.off('disconnect', onSignal);
+      await updater.shutdown();
       // Stop accepting requests before waiting for tools and schedulers to settle.
       const closed = new Promise<void>((resolve, reject) =>
         api.server.close((error) => (error ? reject(error) : resolve())),
@@ -70,7 +100,11 @@ export async function serve(options: CliArguments) {
   };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
-  if (process.send) process.on('message', onMessage);
+  if (process.send) {
+    process.on('message', onMessage);
+    process.once('disconnect', onSignal);
+  }
+  updater.initialize(api.settings.automaticUpdates());
   const connectionUrl = api.ownerAuth!.configured()
     ? `${api.url}/`
     : `${api.url}/#mukai-setup=${api.ownerAuth!.setupCode}`;
@@ -86,6 +120,7 @@ export async function serve(options: CliArguments) {
     await stop();
     throw error;
   }
+  if (process.connected) process.send?.({ type: 'mukai:ready' });
   console.log(
     `Mukai ${version()}\nLocal address: ${api.url}\nConnect: ${connectionUrl}\nData: ${options.dataDir}\nPress Ctrl+C to stop.`,
   );

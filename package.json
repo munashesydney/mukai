@@ -15,6 +15,7 @@
     "package:cli": "tsx scripts/cli/package.ts",
     "test:cli:packaged": "tsx scripts/cli/smoke.ts",
     "test:cli:browser": "tsx scripts/cli/browser-smoke.ts",
+    "test:cli:updates": "npm run build:web && tsx scripts/cli/update-smoke.ts",
     "test:settings-ui": "tsx scripts/run-shared-settings-smoke.ts",
     "test:providers-ui": "node --import tsx scripts/provider-settings-smoke.ts",
     "test:media-ui": "node --import tsx scripts/media-attachments-smoke.ts",

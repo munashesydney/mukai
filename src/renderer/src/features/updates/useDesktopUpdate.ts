@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { DesktopUpdateState } from '../../../../shared/contracts';
+import { updateService } from '../../services/updateService';
 
 export function useDesktopUpdate() {
   const [state, setState] = useState<DesktopUpdateState>();
   useEffect(() => {
-    const bridge = window.mukai;
-    if (!bridge?.getUpdateState) return;
+    const bridge = updateService;
     let active = true;
     let receivedEvent = false;
     const remove = bridge.onUpdateState((next) => {

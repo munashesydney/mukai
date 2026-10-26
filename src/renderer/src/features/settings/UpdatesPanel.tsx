@@ -4,6 +4,7 @@ import { DesktopUpdateControl } from '../updates/DesktopUpdateControl';
 import { useDesktopUpdate } from '../updates/useDesktopUpdate';
 import { SettingsHeading } from './SettingsHeading';
 import './UpdatesPanel.css';
+import { updateService } from '../../services/updateService';
 
 export function UpdatesPanel() {
   const state = useDesktopUpdate();
@@ -12,9 +13,7 @@ export function UpdatesPanel() {
   const available = state && state.status !== 'disabled';
   const ready = state?.status === 'ready';
   const title = !state
-    ? window.mukai
-      ? 'Loading updater…'
-      : 'Updates for the desktop app'
+    ? 'Loading updater…'
     : state.status === 'disabled'
       ? 'Updates for installed releases'
       : ready
@@ -31,9 +30,7 @@ export function UpdatesPanel() {
                   ? 'You’re up to date'
                   : 'Keep Mukai up to date';
   const description = !state
-    ? window.mukai
-      ? 'Getting your update settings.'
-      : 'Open Mukai on your desktop to manage app updates.'
+    ? 'Getting your update settings.'
     : state.status === 'disabled'
       ? state.message
       : ready
@@ -52,7 +49,7 @@ export function UpdatesPanel() {
     setSaving(true);
     setError('');
     try {
-      await window.mukai!.setAutomaticUpdates(enabled);
+      await updateService.setAutomaticUpdates(enabled);
     } catch {
       setError('Could not save your update preference. Try again.');
     } finally {
@@ -114,10 +111,10 @@ export function UpdatesPanel() {
             {saving
               ? 'Saving…'
               : !available
-                ? 'Manage automatic updates in an installed desktop app.'
+                ? 'Updates are available in installed desktop and CLI releases.'
                 : state.automaticUpdates
-                  ? 'On for this device. You’ll be prompted before restarting.'
-                  : 'Off for this device. You can still check for updates above.'}
+                  ? 'On for this installation. You’ll be prompted before restarting.'
+                  : 'Off for this installation. You can still check for updates above.'}
           </p>
           {error && (
             <p className="updates-save-error" role="alert">
