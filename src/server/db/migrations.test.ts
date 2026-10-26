@@ -18,6 +18,101 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('migrates image assignments into Media while preserving denials and saved activity', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    database.run("INSERT INTO bot_tool_assignments VALUES('scout','image',0)");
+    database.run("INSERT INTO bot_tool_assignments VALUES('scout','media',1)");
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes("SELECT bot_id,'media'")) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.all("SELECT tool_id,enabled FROM bot_tool_assignments WHERE bot_id='scout'"),
+      ).toEqual([{ tool_id: 'media', enabled: 0 }]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+  it('adds disabled audio/video defaults without changing saved credentials or models', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    database.run(
+      "INSERT INTO providers(id,name,kind,base_url,default_model,supports_images,is_default,encrypted_key,models_json) VALUES('legacy','Legacy','compatible','http://localhost/v1','text',0,1,'encrypted-value','[]')",
+    );
+    database.db.exec(
+      'ALTER TABLE providers DROP COLUMN supports_audio; ALTER TABLE providers DROP COLUMN supports_video;',
+    );
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ADD COLUMN supports_audio')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get(
+          "SELECT supports_audio,supports_video,encrypted_key,models_json FROM providers WHERE id='legacy'",
+        ),
+      ).toEqual({
+        supports_audio: 0,
+        supports_video: 0,
+        encrypted_key: 'encrypted-value',
+        models_json: '[]',
+      });
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+  it('adds optional artifact metadata without losing existing file or screenshot records', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    database.run(
+      "INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at) VALUES('artifact-message','scout','bot-scout','legacy','assistant','','complete','2026-10-15')",
+    );
+    for (const [id, kind] of [
+      ['legacy-file', 'file'],
+      ['legacy-image', 'image'],
+    ]) {
+      database.run(
+        'INSERT INTO artifacts(id,bot_id,message_id,conversation_id,path,name,kind,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        id,
+        'scout',
+        'artifact-message',
+        'bot-scout',
+        id,
+        id,
+        kind,
+        '2026-10-15',
+      );
+    }
+    database.db.exec(
+      'ALTER TABLE artifacts DROP COLUMN media_type; ALTER TABLE artifacts DROP COLUMN size;',
+    );
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE artifacts ADD COLUMN media_type')) +
+        1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(database.all('SELECT id,kind,media_type,size FROM artifacts ORDER BY id')).toEqual([
+        { id: 'legacy-file', kind: 'file', media_type: null, size: null },
+        { id: 'legacy-image', kind: 'image', media_type: 'image/png', size: null },
+      ]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('moves legacy Telegram labels out of user text and titles into internal source metadata', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

@@ -12,6 +12,23 @@ export function estimateTokens(value: unknown): number {
   if (Array.isArray(value)) return value.reduce((sum, item) => sum + estimateTokens(item) + 4, 0);
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
+    if (item.type === 'file' && /^(audio|video)\//.test(String(item.mediaType))) {
+      const data =
+        item.data && typeof item.data === 'object' && 'data' in item.data
+          ? item.data.data
+          : item.data;
+      const size =
+        typeof data === 'string'
+          ? data.length * 0.75
+          : data instanceof Uint8Array
+            ? data.byteLength
+            : 0;
+      // Encoded media is not text. Usage feedback calibrates these conservative estimates.
+      return Math.max(
+        8192,
+        Math.ceil(size / (String(item.mediaType).startsWith('audio/') ? 128 : 64)),
+      );
+    }
     if (
       item.type === 'image' ||
       (item.type === 'file' && String(item.mediaType).startsWith('image/'))
@@ -279,6 +296,12 @@ export class ContextManager {
     const serialized = JSON.stringify(removed, (_key, value: unknown) => {
       if (value && typeof value === 'object') {
         const item = value as Record<string, unknown>;
+        if (item.type === 'file' && /^(audio|video)\//.test(String(item.mediaType)))
+          return {
+            type: 'media-note',
+            mediaType: item.mediaType,
+            text: 'Earlier audio/video bytes omitted from summary input. Preserve recorded observations or transcripts if present; do not invent media contents. The original attachment is retained in chat history.',
+          };
         if (
           item.type === 'image' ||
           (item.type === 'file' && String(item.mediaType).startsWith('image/'))

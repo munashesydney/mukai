@@ -10,6 +10,8 @@ import { publicAttachment } from '../models/entities';
 import { AttachmentRepository } from '../repositories/attachmentRepository';
 import { BotRepository } from '../repositories/botRepository';
 import { ApiError } from '../config';
+import { supportsAttachment, type InputCapabilities } from '../../shared/modelCapabilities';
+import { mediaAttachment } from './mediaAttachment';
 
 const textExtensions = new Set([
   '.txt',
@@ -116,6 +118,8 @@ export class AttachmentService {
       )
         mediaType = 'image/webp';
       else throw new ApiError(400, 'This file is not a supported PNG, JPEG, or WebP image.');
+    } else if (['.wav', '.mp3', '.mp4', '.mov'].includes(extension)) {
+      ({ kind, mediaType } = mediaAttachment(extension, buffer));
     } else if (extension === '.pdf') {
       if (buffer.toString('ascii', 0, 5) !== '%PDF-')
         throw new ApiError(400, 'Upload a valid PDF document.');
@@ -155,7 +159,7 @@ export class AttachmentService {
     } else
       throw new ApiError(
         400,
-        'Supported files: PNG, JPEG, WebP, PDF, DOCX, and common UTF-8 text/code files.',
+        'Supported files: PNG, JPEG, WebP, WAV, MP3, MP4, MOV, PDF, DOCX, and common UTF-8 text/code files. Each file must be 10 MB or smaller.',
       );
     if (kind === 'text' && !text?.trim())
       throw new ApiError(
@@ -193,7 +197,12 @@ export class AttachmentService {
     }
     return publicAttachment(file);
   }
-  select(ids: string[], botId: string, vision: boolean, conversationId = 'bot-' + botId) {
+  select(
+    ids: string[],
+    botId: string,
+    capabilities: InputCapabilities | boolean,
+    conversationId = 'bot-' + botId,
+  ) {
     if (ids.length > ATTACHMENT_LIMIT || new Set(ids).size !== ids.length)
       throw new ApiError(400, 'Attach up to four different files.');
     return ids.map((id) => {
@@ -205,10 +214,16 @@ export class AttachmentService {
         row.messageId !== null
       )
         throw new ApiError(400, 'An attachment is missing or already sent. Upload it again.');
-      if (row.kind === 'image' && !vision)
+      const inputs =
+        typeof capabilities === 'boolean'
+          ? { supportsImages: capabilities, supportsAudio: false, supportsVideo: false }
+          : capabilities;
+      if (!supportsAttachment(row.kind, inputs))
         throw new ApiError(
           400,
-          'This model is configured for text only. Remove the image or choose a vision model in the model picker.',
+          row.kind === 'image'
+            ? 'This model is configured for text only. Remove the image or choose a vision model in the model picker.'
+            : `This model does not support ${row.kind} input. Remove the ${row.kind} attachment or choose a model with ${row.kind} support in the model picker.`,
         );
       return row;
     });

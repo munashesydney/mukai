@@ -1,5 +1,6 @@
 import type { SkillService } from '../skills/service';
 import type { ChatOutputService } from '../services/chatOutputService';
+import type { ConversationArtifactService } from '../services/conversationArtifactService';
 import type { DesktopTransport } from '../computer/desktopTransport';
 import { bundleSchema } from '../skills/bundle';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -46,6 +47,7 @@ import { trustedLocalRequest } from '../web/origin';
 import type { SettingsService } from '../services/settingsService';
 import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
+import type { UpdateController } from '../../shared/updates';
 
 const followupText = z.string().trim().min(1).max(16000);
 const followupActionSchema = z.discriminatedUnion('action', [
@@ -69,11 +71,13 @@ function uploadName(request: IncomingMessage) {
 }
 
 export function createRoutes({
+  updates,
   telegram,
   settings,
   browserMode = false,
   version = '0.1.0',
   chatOutputs,
+  conversationArtifacts,
   notifications,
   desktops,
   approvals,
@@ -94,11 +98,13 @@ export function createRoutes({
   memory,
   skills,
 }: {
+  updates?: UpdateController;
   telegram: TelegramService;
   settings: SettingsService;
   browserMode?: boolean;
   version?: string;
   chatOutputs: ChatOutputService;
+  conversationArtifacts: ConversationArtifactService;
   notifications: NotificationService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
@@ -173,6 +179,40 @@ export function createRoutes({
     const parts = path.split('/').filter(Boolean);
     const [resource, id, action] = parts;
     if (parts.length > 3) throw new ApiError(404, 'Not found');
+    if (resource === 'settings' && id === 'updates') {
+      if (!action && method === 'GET')
+        return send(
+          response,
+          updates?.getState() ?? {
+            status: 'disabled',
+            currentVersion: version,
+            automaticUpdates: settings.automaticUpdates(),
+            message: 'Updates require an installer-managed Mukai CLI release.',
+          },
+        );
+      if (!updates) throw new ApiError(409, 'Updates are unavailable for this server.');
+      if (!action && method === 'PUT') {
+        const input = z
+          .object({ enabled: z.boolean() })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, updates.setAutomaticUpdates(input.enabled));
+      }
+      if (action === 'check' && method === 'POST') return send(response, updates.check());
+      if (action === 'restart' && method === 'POST') {
+        z.object({ confirm: z.literal(true) })
+          .strict()
+          .parse(await jsonBody(request));
+        if (updates.getState().status !== 'ready')
+          throw new ApiError(409, 'No downloaded update is ready.');
+        // Flush the response before stopping this HTTP server and its active requests.
+        response.once('finish', () => {
+          void updates.restart().catch((error) => console.error('CLI restart failed:', error));
+        });
+        return send(response, { restarting: true });
+      }
+      throw new ApiError(405, 'Method not allowed');
+    }
     // Public route configuration is application-wide, independent of workspace IDs.
     if (resource === 'capabilities' && id === 'settings' && !action) {
       if (method === 'GET') return send(response, capabilities.routeSettings());
@@ -542,6 +582,35 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
+        if (action === 'reference' && method === 'POST') {
+          const input = z
+            .object({ href: z.string().min(1).max(4500), image: z.boolean().default(false) })
+            .strict()
+            .parse(await jsonBody(request));
+          const controller = new AbortController();
+          const cancel = () => controller.abort();
+          response.once('close', cancel);
+          try {
+            const file = await conversationArtifacts.reference(
+              conversation.workspaceId,
+              input.href,
+              input.image,
+              AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+            );
+            response.setHeader('Content-Type', file.mediaType);
+            response.setHeader(
+              'Content-Disposition',
+              `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+            );
+            response.setHeader('X-Content-Type-Options', 'nosniff');
+            response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+            response.setHeader('Cache-Control', 'no-store');
+            response.writeHead(200).end(file.bytes);
+          } finally {
+            response.off('close', cancel);
+          }
+          return;
+        }
         if (action === 'followups') {
           if (method === 'GET') return send(response, chats.listFollowups(id));
           if (conversation.kind === 'bot')
@@ -582,11 +651,19 @@ export function createRoutes({
             message?.role !== 'assistant' ||
             !activity ||
             activity.status !== 'complete' ||
-            activity.tool !== 'image' ||
-            activity.action !== 'view'
+            !(
+              (activity.tool === 'image' && activity.action === 'view') ||
+              (activity.tool === 'media' && activity.action === 'view_image')
+            )
           )
             throw new ApiError(404, 'Viewed image not found in this conversation.');
-          const bytes = await artifacts.previewImage(message.botId, id, activity.path);
+          const bytes =
+            activity.attachmentId || activity.artifactId
+              ? await conversationArtifacts.image(conversation.workspaceId, {
+                  attachmentId: activity.attachmentId,
+                  artifactId: activity.artifactId,
+                })
+              : await artifacts.previewImage(message.botId, id, activity.path);
           response.setHeader('Content-Type', 'image/png');
           response.setHeader('X-Content-Type-Options', 'nosniff');
           response.setHeader('Cache-Control', 'no-store');

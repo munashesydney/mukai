@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, FileText, LoaderCircle, X } from 'lucide-react';
+import { Download, FileText, LoaderCircle, X, AudioLines, Video } from 'lucide-react';
 import type { Attachment } from '../../../../shared/ai';
 import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
@@ -62,12 +62,24 @@ export function AttachmentCard({
           </div>
         ))}
       <div className="attachment-card-info">
-        <FileText size={16} />
+        {attachment.kind === 'audio' ? (
+          <AudioLines size={16} />
+        ) : attachment.kind === 'video' ? (
+          <Video size={16} />
+        ) : (
+          <FileText size={16} />
+        )}
         <div>
           <strong title={attachment.name}>{attachment.name}</strong>
           <small>
             {(attachment.size / 1024).toFixed(1)} KB ·{' '}
-            {attachment.kind === 'image' ? 'Image' : 'Extracted text'}
+            {attachment.kind === 'image'
+              ? 'Image'
+              : attachment.kind === 'audio'
+                ? 'Audio'
+                : attachment.kind === 'video'
+                  ? 'Video'
+                  : 'Extracted text'}
           </small>
         </div>
         <button

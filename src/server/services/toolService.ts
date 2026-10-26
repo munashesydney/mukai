@@ -29,16 +29,22 @@ import type { AskHandler } from '../tools/ask/execute';
 import { communicateTools } from '../tools/communicate/execute';
 import { conversationTools } from '../tools/conversations/execute';
 import type { NotificationService } from './notificationService';
+import type { ConversationArtifactService } from './conversationArtifactService';
 import type { ConversationHistoryService } from './conversationHistoryService';
 import { computerTools } from '../computer/tools';
 import { executeWebSearch } from '../tools/web-search/execute';
 import { webSearchDefinition } from '../tools/web-search/definition';
 import { tool } from 'ai';
 import { ComputerUseService } from './computerUseService';
+import type { InputCapabilities } from '../../shared/modelCapabilities';
 
 export class ToolService {
   private notifications?: NotificationService;
   private history?: ConversationHistoryService;
+  private conversationArtifacts?: ConversationArtifactService;
+  attachArtifacts(service: ConversationArtifactService) {
+    this.conversationArtifacts = service;
+  }
   attachCommunication(notifications: NotificationService, history: ConversationHistoryService) {
     this.notifications = notifications;
     this.history = history;
@@ -180,6 +186,7 @@ export class ToolService {
   ) {}
   list(workspaceId: string): ToolInfo[] {
     const workspace = this.workspaces.require(workspaceId);
+    const canCopyAttachments = this.conversationArtifacts?.hasAttachments(workspaceId);
     const counts = this.messages.toolCounts(workspaceId);
     const memoryCounts = Object.fromEntries(
       // Include activities saved before the three tools became one family.
@@ -190,16 +197,25 @@ export class ToolService {
     );
     return toolCatalog().map((tool) => ({
       ...tool,
+      ...(tool.id === 'file_operations' &&
+      workspace.computer !== 'qemu' &&
+      !workspace.folder &&
+      canCopyAttachments
+        ? {
+            actions: ['copy_attachment'],
+            description: 'Copy a saved upload to an absolute path on the local computer.',
+          }
+        : {}),
       ...(workspace.computer === 'qemu' &&
-      ['terminal', 'image', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
+      ['terminal', 'media', 'browser', 'file_operations', 'computer_use'].includes(tool.id)
         ? {
             description:
               tool.id === 'computer_use'
                 ? 'See and control the workspace Linux VM desktop, mouse, and keyboard.'
                 : tool.id === 'browser'
                   ? 'Control workspace or main Chrome on the Linux VM desktop.'
-                  : tool.id === 'image'
-                    ? 'Read and view guest images inside the Linux VM.'
+                  : tool.id === 'media'
+                    ? 'Read and inspect images, audio and video on the Linux VM or by saved reference.'
                     : tool.id === 'terminal'
                       ? 'Run Linux commands and manage guest processes.'
                       : 'Read, write and organize files inside the workspace Linux VM.',
@@ -222,10 +238,11 @@ export class ToolService {
                   : [
                         'browser',
                         'computer_use',
-                        'image',
+                        'media',
                         'web_search',
                         'communicate',
                         'conversations',
+                        ...(canCopyAttachments ? ['file_operations'] : []),
                       ].includes(tool.id)
                     ? true
                     : workspace.computer === 'qemu' || Boolean(workspace.folder),
@@ -239,7 +256,13 @@ export class ToolService {
                   (counts.communicate?.[action] || 0) + (counts.ask?.[action] || 0),
                 ]),
               )
-            : counts[tool.id] || {},
+            : tool.id === 'media'
+              ? {
+                  ...counts.media,
+                  read_image: (counts.media?.read_image || 0) + (counts.image?.read || 0),
+                  view_image: (counts.media?.view_image || 0) + (counts.image?.view || 0),
+                }
+              : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {
@@ -250,7 +273,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, image, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Reach Mukai on the host at http://10.0.2.2:47831; send Host: localhost:47831 when testing custom routes. Direct HTTP requests to auth=mukai routes require a bearer token; custom modules can use context.callRoute instead without handling the token. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, media, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Reach Mukai on the host at http://10.0.2.2:47831; send Host: localhost:47831 when testing custom routes. Direct HTTP requests to auth=mukai routes require a bearer token; custom modules can use context.callRoute instead without handling the token. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }
@@ -259,11 +282,16 @@ export class ToolService {
     messageId: string,
     signal: AbortSignal,
     onActivity: (activity: ChatActivity) => void,
-    vision = false,
+    inputs: boolean | InputCapabilities = false,
     resultBytes?: number,
     skillContextBytes?: number,
     ask?: AskHandler,
   ) {
+    const capabilities =
+      typeof inputs === 'boolean'
+        ? { supportsImages: inputs, supportsAudio: false, supportsVideo: false }
+        : inputs;
+    const vision = capabilities.supportsImages;
     const workspace = this.workspaces.require(bot.workspaceId);
     const conversationId = this.messages.message(messageId).conversationId;
     const scheduledRun = Boolean(
@@ -275,8 +303,20 @@ export class ToolService {
       onActivity,
       budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
       vision,
+      supportsAudio: capabilities.supportsAudio,
+      supportsVideo: capabilities.supportsVideo,
       resultBytes,
+      readImage: this.conversationArtifacts
+        ? async (input: { attachmentId?: string; artifactId?: string }) => {
+            const source = await this.conversationArtifacts!.bytes(bot.workspaceId, input);
+            return { bytes: source.bytes, name: source.metadata.name };
+          }
+        : undefined,
     };
+    const attachmentBytes = this.conversationArtifacts
+      ? async (id: string) =>
+          (await this.conversationArtifacts!.bytes(bot.workspaceId, { attachmentId: id })).bytes
+      : undefined;
     return this.assigned(
       bot,
       {
@@ -292,6 +332,7 @@ export class ToolService {
         ...(this.history
           ? conversationTools({
               history: this.history,
+              artifacts: this.conversationArtifacts,
               workspaceId: bot.workspaceId,
               signal,
               onActivity,
@@ -323,9 +364,11 @@ export class ToolService {
               ...computerTools({
                 ...runtime,
                 computer: this.workspaces.computers!.guest(workspace),
+                attachmentBytes,
                 fileBudget: { remaining: FILE_TOOL_CALL_LIMIT },
                 recordChange: (snapshot) => this.changes.record(bot.id, messageId, snapshot),
-                recordFile: (path) => this.artifacts.record(bot.id, messageId, path),
+                recordFile: (path, metadata) =>
+                  this.artifacts.record(bot.id, messageId, path, metadata),
                 saveScreenshot: (image) =>
                   this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
               }),
@@ -355,19 +398,26 @@ export class ToolService {
               webSearch: this.webSearch,
               folder: workspace.folder,
               vision,
+              supportsAudio: capabilities.supportsAudio,
+              supportsVideo: capabilities.supportsVideo,
               resultBytes,
+              readImage: runtime.readImage,
               saveScreenshot: (image) =>
                 this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
             })),
-        ...(workspace.computer !== 'qemu' && workspace.folder
+        ...(workspace.computer !== 'qemu' &&
+        (workspace.folder || this.conversationArtifacts?.hasAttachments(bot.workspaceId))
           ? toolsForBot({
               botId: bot.id,
               signal,
-              files: new WorkspaceFileService(workspace.folder, this.dataDir, (snapshot) =>
+              files: new WorkspaceFileService(workspace.folder || '', this.dataDir, (snapshot) =>
                 this.changes.record(bot.id, messageId, snapshot),
               ),
               onActivity,
-              onFileChanged: (path) => this.artifacts.record(bot.id, messageId, path),
+              onFileChanged: (path, metadata) =>
+                this.artifacts.record(bot.id, messageId, path, metadata),
+              attachmentBytes,
+              copyOnly: !workspace.folder,
               callBudget: { remaining: FILE_TOOL_CALL_LIMIT },
             })
           : {}),
@@ -387,7 +437,11 @@ export class ToolService {
       },
       Object.fromEntries(
         (this.capabilities?.list(bot.workspaceId) || [])
-          .filter((item) => item.kind === 'tool')
+          .filter(
+            (item) =>
+              item.kind === 'tool' &&
+              !toolCatalog().some((builtin) => builtin.id === item.definition.name),
+          )
           .map((item) => [item.definition.name, 'custom:' + item.id]),
       ),
     );

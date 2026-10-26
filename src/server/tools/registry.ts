@@ -1,6 +1,11 @@
 import { skillsDefinition } from './skills/definition';
 import { tool, type ToolSet } from 'ai';
-import { fileOperationsDefinition } from './file-operations/definition';
+import type { ZodType } from 'zod';
+import {
+  fileOperationsDefinition,
+  copyAttachmentSchema,
+  type FileOperationsInput,
+} from './file-operations/definition';
 import { executeFileOperations } from './file-operations/execute';
 import type { ToolContext, ToolScope } from './types';
 import { pursuitDefinition } from './pursuits/definition';
@@ -26,8 +31,9 @@ import { executeBotManagement } from './bots/execute';
 import { webSearchDefinition } from './web-search/definition';
 import { executeWebSearch } from './web-search/execute';
 import type { WebSearchService } from '../services/webSearchService';
-import { imageDefinition } from './image/definition';
-import { imageTools } from './image/execute';
+import type { ImageSource } from './image/execute';
+import { mediaDefinition } from './media/definition';
+import { mediaTools } from './media/execute';
 import { computerUseDefinition } from './computer_use/definition';
 import { computerUseTools, type ComputerUseContext } from './computer_use/execute';
 
@@ -67,13 +73,16 @@ export function runtimeTools(
     browsers: BrowserService;
     webSearch: WebSearchService;
     folder: string | null;
+    readImage?: ImageSource;
     vision: boolean;
+    supportsAudio?: boolean;
+    supportsVideo?: boolean;
     desktop: ComputerUseContext['desktop'];
     saveScreenshot: NonNullable<Parameters<typeof executeBrowser>[1]['saveScreenshot']>;
   },
 ): ToolSet {
   return {
-    ...imageTools(context),
+    ...mediaTools(context),
     ...computerUseTools(context),
     web_search: tool({
       description: webSearchDefinition.description,
@@ -180,8 +189,12 @@ const registrations = [
     scope: { type: 'all-bots' } as ToolScope,
     create: (context: ToolContext) =>
       tool({
-        description: fileOperationsDefinition.description,
-        inputSchema: fileOperationsDefinition.inputSchema,
+        description: context.copyOnly
+          ? 'copy_attachment copies original upload bytes (attachmentId) to an absolute local destination path. Discover IDs with conversations.list_artifacts/search_artifacts. Parent directories must exist; overwrite=true is required to replace a file. Limit 10 MiB.'
+          : fileOperationsDefinition.description,
+        inputSchema: (context.copyOnly
+          ? copyAttachmentSchema
+          : fileOperationsDefinition.inputSchema) as ZodType<FileOperationsInput>,
         execute: (input, options) =>
           executeFileOperations(
             input,
@@ -225,7 +238,7 @@ export function toolCatalog() {
       botManagementDefinition,
       browserDefinition,
       computerUseDefinition,
-      imageDefinition,
+      mediaDefinition,
       webSearchDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,

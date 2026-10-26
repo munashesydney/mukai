@@ -234,7 +234,7 @@ async function main() {
       'Dismissed drafts must not overwrite the saved profile.',
     );
     await page.getByRole('tab', { name: 'Updates', exact: true }).click();
-    await page.getByText('Open Mukai on your desktop to manage app updates.').waitFor();
+    await page.getByText('Updates require an installer-managed Mukai CLI release.').waitFor();
     assert.equal(await page.getByRole('switch', { name: 'Automatic updates' }).isDisabled(), true);
     await page.getByRole('tab', { name: 'Appearance', exact: true }).click();
     await page.locator('label.mode-option:has(input[value="light"])').click();

@@ -1,12 +1,52 @@
-import { memo, useMemo, type ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Bot } from '../../../../shared/ai';
 import { botHandle } from '../../../../shared/mentions';
+import { parseResponseReference } from '../../../../shared/responseReferences';
+import { closedChartFence } from '../../../../shared/responseCharts';
+import { ResponseReference } from './ResponseReference';
+import { ChartLoading, ResponseChartBlock } from './ResponseChart';
+import { responseImages } from './responseImages';
+import { ResponseImageContext } from './responseImageContext';
+import { ResponseReferenceContext } from './responseReferenceContext';
+import { ResponseImageGallery } from './ResponseImageGallery';
+import '../../styles/responseRichContent.css';
 
 const mentionHref = '#mukai-mention-';
 const remarkPlugins = [remarkGfm];
 const noMentionBots: Bot[] = [];
+const MarkdownSource = createContext({ text: '', streaming: false });
+function MarkdownPre({ node, children }: ExtraProps & { children?: ReactNode }) {
+  const { text, streaming } = useContext(MarkdownSource);
+  const code = node?.children[0];
+  if (
+    code?.type === 'element' &&
+    Array.isArray(code.properties.className) &&
+    code.properties.className.includes('language-mukai-chart')
+  ) {
+    const start = node?.position?.start.offset,
+      end = node?.position?.end.offset;
+    if (start === undefined || end === undefined || !closedChartFence(text.slice(start, end)))
+      return streaming ? <ChartLoading /> : <p role="alert">This chart block was not completed.</p>;
+    return (
+      <ResponseChartBlock
+        source={code.children.map((child) => (child.type === 'text' ? child.value : '')).join('')}
+      />
+    );
+  }
+  return <pre>{children}</pre>;
+}
 
 function linkMentions(text: string, bots: Bot[]) {
   if (!bots.length) return text;
@@ -23,12 +63,44 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   text,
   mentionBots = noMentionBots,
   onMention,
+  streaming = false,
+  imageGallery = false,
 }: {
   text: string;
   mentionBots?: Bot[];
   onMention?: (bot: Bot) => void;
+  streaming?: boolean;
+  imageGallery?: boolean;
 }) {
   const renderedText = linkMentions(text, mentionBots);
+  const conversationId = useContext(ResponseReferenceContext);
+  const images = useMemo(
+    () => (imageGallery && conversationId ? responseImages(renderedText) : []),
+    [imageGallery, conversationId, renderedText],
+  );
+  const galleryRef = useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  useEffect(() => {
+    if (!highlight) return;
+    const timer = window.setTimeout(() => setHighlight(0), 1500);
+    return () => window.clearTimeout(timer);
+  }, [highlight]);
+  const reveal = useCallback((key: string) => {
+    setSelected(key);
+    setHighlight((previous) => previous + 1);
+    galleryRef.current?.focus({ preventScroll: true });
+    galleryRef.current?.scrollIntoView({
+      block: 'center',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
+    });
+  }, []);
+  const gallery = useMemo(
+    () => (imageGallery && conversationId ? { images, reveal } : null),
+    [imageGallery, conversationId, images, reveal],
+  );
   const components = useMemo(
     () => ({
       a: ({ href, children }: { href?: string; children?: ReactNode }) => {
@@ -47,6 +119,12 @@ export const MessageMarkdown = memo(function MessageMarkdown({
             </button>
           );
         }
+        if (href && parseResponseReference(href))
+          return (
+            <ResponseReference key={href} href={href}>
+              {children}
+            </ResponseReference>
+          );
         return /^https?:\/\//i.test(href || '') ? (
           <a
             href={href}
@@ -65,15 +143,35 @@ export const MessageMarkdown = memo(function MessageMarkdown({
           <span>{children}</span>
         );
       },
-      img: ({ alt }: { alt?: string }) => <span>{alt ? `[${alt}]` : '[Image link]'}</span>,
+      img: ({ alt, src }: { alt?: string; src?: string }) =>
+        src && parseResponseReference(src) ? (
+          <ResponseReference key={src} href={src} image label={alt || 'Image'} />
+        ) : (
+          <span>{alt ? `[${alt}]` : '[Image link]'}</span>
+        ),
+      pre: MarkdownPre,
     }),
     [mentionBots, onMention],
   );
   return (
     <div className="ai-markdown">
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
-        {renderedText}
-      </ReactMarkdown>
+      <ResponseImageContext.Provider value={gallery}>
+        <MarkdownSource.Provider value={{ text: renderedText, streaming }}>
+          <ReactMarkdown
+            remarkPlugins={remarkPlugins}
+            components={components}
+            urlTransform={(url) => (parseResponseReference(url) ? url : defaultUrlTransform(url))}
+          >
+            {renderedText}
+          </ReactMarkdown>
+        </MarkdownSource.Provider>
+        <ResponseImageGallery
+          selected={selected}
+          onSelect={setSelected}
+          galleryRef={galleryRef}
+          highlighted={!!highlight}
+        />
+      </ResponseImageContext.Provider>
     </div>
   );
 });

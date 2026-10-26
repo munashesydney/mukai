@@ -9,13 +9,15 @@ import {
   rename,
   unlink,
   copyFile,
+  open,
 } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep, parse } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../config';
 import type { FileOperationsInput } from '../tools/file-operations/definition';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import { patchText } from './patchText';
+import { fileMetadata } from './fileMetadata';
 
 const FILE_LIMIT = 256 * 1024;
 const OUTPUT_LIMIT = 24000;
@@ -73,11 +75,12 @@ export class WorkspaceFileService {
       );
     }
   }
-  async path(value = '.', allowMissing = false) {
-    const root = await this.root();
-    const normalized = value.replace(/\\/g, '/');
+  async path(value = '.', allowMissing = false, allowAbsolute = false) {
+    const absolute = allowAbsolute && isAbsolute(value);
+    const root = absolute ? parse(resolve(value)).root : await this.root();
+    const normalized = (absolute ? relative(root, resolve(value)) : value).replace(/\\/g, '/');
     if (
-      isAbsolute(value) ||
+      (!absolute && isAbsolute(value)) ||
       normalized.startsWith('/') ||
       normalized.includes(':') ||
       normalized.includes('\0')
@@ -149,28 +152,54 @@ export class WorkspaceFileService {
       );
     }
   }
-  async download(value: string) {
+  async download(value: string, maxBytes = FILE_LIMIT) {
     const target = await this.path(value);
     const info = await lstat(target.absolute);
-    if (!info.isFile() || info.size > FILE_LIMIT)
+    if (!info.isFile() || info.size > maxBytes)
       throw new ApiError(400, 'This artifact is unavailable or exceeds the file limit.');
     const bytes = await readFile(target.absolute, {
       flag: constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
     });
-    if (bytes.length > FILE_LIMIT) throw new ApiError(400, 'This artifact exceeds the file limit.');
+    if (bytes.length > maxBytes) throw new ApiError(400, 'This artifact exceeds the file limit.');
     return { name: basename(target.absolute), bytes };
   }
-  private async save(value: string, content: string, overwrite: boolean, signal: AbortSignal) {
-    if (Buffer.byteLength(content, 'utf8') > FILE_LIMIT || content.includes('\0'))
+  async inspect(value: string) {
+    const target = await this.path(value);
+    if (!(await lstat(target.absolute)).isFile())
+      throw new ApiError(400, 'Inspect a regular workspace file.');
+    const file = await open(target.absolute, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink > 1)
+        throw new ApiError(400, 'Inspect a regular workspace file.');
+      const header = Buffer.alloc(Math.min(info.size, 4096));
+      const { bytesRead } = await file.read(header, 0, header.length, 0);
+      return fileMetadata(header.subarray(0, bytesRead), target.absolute, info.size);
+    } finally {
+      await file.close();
+    }
+  }
+  private async save(
+    value: string,
+    content: string | Buffer,
+    overwrite: boolean,
+    signal: AbortSignal,
+    importing = false,
+  ) {
+    if (
+      importing
+        ? Buffer.byteLength(content) > 10 * 1024 * 1024
+        : Buffer.byteLength(content) > FILE_LIMIT || content.includes('\0')
+    )
       throw new ApiError(400, 'Write UTF-8 text up to 256 KB.');
-    const target = await this.path(value, true);
+    const target = await this.path(value, true, importing);
     if (target.relative === '.') throw new ApiError(400, 'Choose a file path.');
     signal.throwIfAborted();
     const temporary = resolve(dirname(target.absolute), `.mukai-write-${randomUUID()}.tmp`);
     let committed = false;
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600, signal });
-      await this.path(value, true);
+      await this.path(value, true, importing);
       signal.throwIfAborted();
       if (overwrite) await rename(temporary, target.absolute);
       else {
@@ -194,14 +223,36 @@ export class WorkspaceFileService {
         }
       });
     }
-    return target.relative;
+    return importing ? target.absolute : target.relative;
   }
   async execute(input: FileOperationsInput, signal: AbortSignal) {
     if (!['write_file', 'patch', 'create_directory'].includes(input.action))
       return this.executeAction(input, signal);
+    return this.mutate(input.path || '.', signal, () => this.executeAction(input, signal));
+  }
+  async copyAttachment(path: string, bytes: Buffer, overwrite: boolean, signal: AbortSignal) {
+    if (!this.folder && !isAbsolute(path))
+      throw new ApiError(400, 'Use an absolute destination when this workspace has no folder.');
+    return this.mutate(path, signal, async () => {
+      const destination = await this.save(path, bytes, overwrite, signal, true);
+      const artifactPath =
+        this.folder && inside(resolve(this.folder), destination)
+          ? relative(resolve(this.folder), destination).split(sep).join('/')
+          : undefined;
+      return {
+        path: destination,
+        changed: true,
+        ...(artifactPath ? { artifactPath } : {}),
+        bytes: bytes.length,
+        metadata: fileMetadata(bytes.subarray(0, 4096), destination, bytes.length),
+        summary: `Copied attachment to ${destination}.`,
+      };
+    });
+  }
+  private async mutate<T>(value: string, signal: AbortSignal, execute: () => Promise<T>) {
     // Reserve the queue position before any asynchronous validation, preserving call order.
     // This path is only a lock key; executeAction validates it before touching the filesystem.
-    const target = resolve(this.folder, (input.path || '.').replace(/\\/g, '/'));
+    const target = resolve(this.folder, value.replace(/\\/g, '/'));
     const key = process.platform === 'win32' ? target.toLowerCase() : target;
     const previous = mutationLocks.get(key) || Promise.resolve();
     let unlock!: () => void;
@@ -212,7 +263,7 @@ export class WorkspaceFileService {
     try {
       await previous;
       signal.throwIfAborted();
-      return await this.executeAction(input, signal);
+      return await execute();
     } finally {
       unlock();
       if (mutationLocks.get(key) === current) mutationLocks.delete(key);
@@ -222,6 +273,8 @@ export class WorkspaceFileService {
     signal.throwIfAborted();
     const value = input.path || '.';
     switch (input.action) {
+      case 'copy_attachment':
+        throw new ApiError(400, 'copy_attachment must resolve a saved upload through the host.');
       case 'list': {
         const target = await this.path(value);
         const entries = (await readdir(target.absolute, { withFileTypes: true }))
@@ -273,7 +326,13 @@ export class WorkspaceFileService {
         }
         const path = await this.save(value, input.content, input.overwrite === true, signal);
         const warnings = this.recordChange({ path, before, after: input.content });
-        return { path, changed: true, warnings, summary: `Saved ${path}.` };
+        return {
+          path,
+          changed: true,
+          metadata: fileMetadata(Buffer.from(input.content), path),
+          warnings,
+          summary: `Saved ${path}.`,
+        };
       }
       case 'patch': {
         if (!input.oldText || input.newText === undefined)
@@ -285,7 +344,13 @@ export class WorkspaceFileService {
           throw new ApiError(409, 'The file changed while patching. Read it again.');
         const path = await this.save(value, after, true, signal);
         const warnings = this.recordChange({ path, before: file.text, after });
-        return { path, changed: true, warnings, summary: `Patched ${path}.` };
+        return {
+          path,
+          changed: true,
+          metadata: fileMetadata(Buffer.from(after), path),
+          warnings,
+          summary: `Patched ${path}.`,
+        };
       }
       case 'create_directory': {
         const target = await this.path(value, true);

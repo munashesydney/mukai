@@ -17,6 +17,7 @@ import { Sheet } from '../../components/ui/Sheet';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { errorText } from '../../utils/errors';
+import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 
 export function ProviderModels({
   provider,
@@ -155,7 +156,9 @@ export function ProviderModels({
                 <span className="provider-model-limits">
                   {model.contextWindowTokens?.toLocaleString() ?? 'Unknown'} context ·{' '}
                   {model.maxOutputTokens.toLocaleString()} output ·{' '}
-                  {model.supportsImages ? 'Text & images' : 'Text only'}
+                  {inputCapabilityLabel(
+                    modelInputCapabilities({ model: model.id, supportsImages: null }, provider),
+                  )}
                 </span>
               </div>
               <div className="ai-form-actions">
@@ -365,6 +368,40 @@ export function ProviderModels({
                   />
                   Supports images
                 </label>
+                <label className="ai-checkbox">
+                  <Checkbox
+                    checked={
+                      draft.supportsAudio ??
+                      modelInputCapabilities({ model: draft.id, supportsImages: null }, provider)
+                        .supportsAudio
+                    }
+                    disabled={
+                      disabled || !['google', 'openai', 'compatible'].includes(provider.kind)
+                    }
+                    onChange={(event) =>
+                      setDraft({ ...draft, supportsAudio: event.target.checked })
+                    }
+                  />
+                  Supports audio input (WAV, MP3)
+                </label>
+                <label className="ai-checkbox">
+                  <Checkbox
+                    checked={
+                      draft.supportsVideo ??
+                      modelInputCapabilities({ model: draft.id, supportsImages: null }, provider)
+                        .supportsVideo
+                    }
+                    disabled={disabled || !['google', 'compatible'].includes(provider.kind)}
+                    onChange={(event) =>
+                      setDraft({ ...draft, supportsVideo: event.target.checked })
+                    }
+                  />
+                  Supports video input (MP4, MOV)
+                </label>
+                <small>
+                  Enable only inputs supported by the selected model and provider API. Existing
+                  unsupported media stays in history as a text notice after switching models.
+                </small>
                 {error && (
                   <p className="ai-alert" role="alert">
                     {error}

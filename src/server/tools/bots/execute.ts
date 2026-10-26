@@ -30,6 +30,9 @@ export async function executeBotManagement(
     else if (input.action === 'get') {
       if (!input.botId) throw new Error('get requires botId.');
       result = context.management.get(context.bot, input.botId);
+    } else if (input.action === 'delete') {
+      if (!input.botId) throw new Error('delete requires botId.');
+      result = context.management.remove(context.bot, input.botId);
     } else if (input.action === 'update') {
       if (!input.botId) throw new Error('update requires botId.');
       result = await context.management.update(context.bot, input.botId, {

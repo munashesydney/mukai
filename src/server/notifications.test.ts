@@ -274,7 +274,14 @@ describe('Autonomous updates and conversation history', () => {
     });
     expect(catalog.find((tool) => tool.id === 'conversations')).toMatchObject({
       available: true,
-      actions: ['search', 'search_messages', 'read'],
+      actions: [
+        'search',
+        'search_messages',
+        'read',
+        'list_artifacts',
+        'search_artifacts',
+        'read_artifact',
+      ],
     });
     expect(catalog.some((tool) => tool.id === 'ask')).toBe(false);
   });

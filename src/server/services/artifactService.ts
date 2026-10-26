@@ -1,4 +1,4 @@
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { basename, join, relative, resolve, sep, isAbsolute, posix } from 'node:path';
 import { mkdir, lstat, realpath, open, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -10,6 +10,9 @@ import { BotRepository } from '../repositories/botRepository';
 import { WorkspaceService } from './workspaceService';
 import { WorkspaceFileService } from './workspaceFileService';
 import type { FileArtifact, Workspace } from '../../shared/ai';
+import type { FileMetadata } from '../../shared/fileMetadata';
+import { fileMetadata } from './fileMetadata';
+import { artifactHref } from '../../shared/responseReferences';
 
 const SCREENSHOT_LIMIT = 16 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -74,15 +77,17 @@ export class ArtifactService {
       throw error;
     }
   }
-  record(botId: string, messageId: string, path: string) {
-    this.artifacts.save({
+  record(botId: string, messageId: string, path: string, metadata?: FileMetadata) {
+    const file = this.artifacts.save({
       id: randomUUID(),
       botId,
       messageId,
       path,
       name: basename(path),
       createdAt: new Date().toISOString(),
+      ...metadata,
     });
+    return { artifactId: file.id, reference: artifactHref(file.id) };
   }
   private screenshotFolder(workspaceId: string) {
     const workspace = this.workspaces.require(workspaceId);
@@ -143,21 +148,83 @@ export class ArtifactService {
         path,
         name,
         kind: 'image',
+        mediaType: 'image/png',
+        size: bytes.length,
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
       await unlink(path);
       throw error;
     }
-    return { artifactId: id, path, width, height };
+    return { artifactId: id, reference: artifactHref(id), path, width, height };
   }
-  async read(id: string) {
+  async readPath(workspaceId: string, path: string, signal: AbortSignal) {
+    const workspace = this.workspaces.require(workspaceId);
+    let relativePath = path;
+    if (workspace.computer === 'qemu') {
+      if (posix.isAbsolute(path)) {
+        const normalized = posix.normalize(path);
+        if (!normalized.startsWith('/home/mukai/workspace/'))
+          throw new ApiError(403, 'File references must stay inside this workspace.');
+        relativePath = normalized.slice('/home/mukai/workspace/'.length);
+      }
+      if (/^[a-z]:|^\\\\/i.test(path))
+        throw new ApiError(403, 'Use a path inside the workspace VM.');
+    } else {
+      if (!workspace.folder)
+        throw new ApiError(400, 'Connect a workspace folder before opening file paths.');
+      if (isAbsolute(path)) relativePath = relative(resolve(workspace.folder), resolve(path));
+    }
+    try {
+      signal.throwIfAborted();
+      const file =
+        workspace.computer === 'qemu'
+          ? ((await this.workspaces
+              .computers!.guest(workspace)
+              .request(
+                'download',
+                { path: relativePath, maxBytes: 10 * 1024 * 1024 },
+                { workspaceId, botId: 'reference-preview', conversationId: 'reference-preview' },
+                signal,
+              )) as { name: string; bytes: string })
+          : await new WorkspaceFileService(workspace.folder!, this.dataDir).download(
+              relativePath,
+              10 * 1024 * 1024,
+            );
+      const bytes = typeof file.bytes === 'string' ? Buffer.from(file.bytes, 'base64') : file.bytes;
+      return {
+        name: file.name,
+        bytes,
+        ...fileMetadata(bytes.subarray(0, 4096), file.name, bytes.length),
+      };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'The requested file or directory is unavailable.' ||
+          /^(ENOENT|ENOTDIR):/.test(error.message))
+      )
+        throw new ApiError(
+          404,
+          'This file is no longer available. It may have been moved or deleted.',
+        );
+      throw error;
+    }
+  }
+  async read(id: string, signal = AbortSignal.timeout(45000)) {
+    signal.throwIfAborted();
     const artifact = this.artifacts.find(id);
     const bot = artifact && this.bots.find(artifact.botId);
     if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
     const workspace = this.workspaces.require(bot.workspaceId);
     try {
-      return await this.readFile(artifact, workspace);
+      const result = await this.readFile(artifact, workspace, signal);
+      const metadata = fileMetadata(
+        result.bytes.subarray(0, 4096),
+        result.name,
+        result.bytes.length,
+      );
+      this.artifacts.updateMetadata(id, metadata);
+      return { ...result, mediaType: metadata.mediaType };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | null)?.code;
       const vmFile = workspace.computer === 'qemu' && artifact.kind !== 'image';
@@ -180,22 +247,72 @@ export class ArtifactService {
       throw error;
     }
   }
-  private async readFile(artifact: FileArtifact, workspace: Workspace) {
+  async inspect(id: string, signal = AbortSignal.timeout(5000)) {
+    signal.throwIfAborted();
+    const artifact = this.artifacts.find(id);
+    const bot = artifact && this.bots.find(artifact.botId);
+    if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
+    const workspace = this.workspaces.require(bot.workspaceId);
+    let metadata: FileMetadata;
     if (artifact.kind === 'image') {
-      const name = artifact.id + '.png';
-      const folders = [
-        this.screenshotFolder(workspace.id),
-        join(this.dataDir, 'artifacts', 'screenshots', workspace.id),
-      ].map((folder) => resolve(folder));
-      const folder = folders.find(
-        (candidate) => resolve(join(candidate, name)) === resolve(artifact.path),
+      const file = await this.openScreenshot(artifact, workspace);
+      try {
+        metadata = { mediaType: 'image/png', size: (await file.stat()).size };
+      } finally {
+        await file.close();
+      }
+    } else if (workspace.computer === 'qemu') {
+      // Discovery must never start a stopped VM just to fill in optional metadata.
+      if (this.workspaces.computers?.status(workspace).state !== 'running') return null;
+      metadata = z
+        .object({ mediaType: z.string(), size: z.number().int().nonnegative() })
+        .parse(
+          await this.workspaces.computers
+            .guest(workspace)
+            .request(
+              'files',
+              { action: 'inspect_artifact', path: artifact.path },
+              { workspaceId: workspace.id, botId: bot.id, conversationId: 'artifact-inspect' },
+              signal,
+            ),
+        );
+    } else {
+      if (!workspace.folder) return null;
+      metadata = await new WorkspaceFileService(workspace.folder, this.dataDir).inspect(
+        artifact.path,
       );
-      if (!folder || !samePath(await realpath(folder), folder))
-        throw new ApiError(400, 'The screenshot artifact is outside its managed storage.');
-      const info = await lstat(artifact.path);
-      if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > SCREENSHOT_LIMIT)
-        throw new ApiError(400, 'The screenshot artifact is unavailable.');
-      const file = await open(artifact.path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    }
+    this.artifacts.updateMetadata(id, metadata);
+    return metadata;
+  }
+  private async openScreenshot(artifact: FileArtifact, workspace: Workspace) {
+    const name = artifact.id + '.png';
+    const folders = [
+      this.screenshotFolder(workspace.id),
+      join(this.dataDir, 'artifacts', 'screenshots', workspace.id),
+    ].map((folder) => resolve(folder));
+    const folder = folders.find(
+      (candidate) => resolve(join(candidate, name)) === resolve(artifact.path),
+    );
+    if (!folder || !samePath(await realpath(folder), folder))
+      throw new ApiError(400, 'The screenshot artifact is outside its managed storage.');
+    const info = await lstat(artifact.path);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > SCREENSHOT_LIMIT)
+      throw new ApiError(400, 'The screenshot artifact is unavailable.');
+    const file = await open(artifact.path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    const opened = await file.stat().catch(async (error) => {
+      await file.close();
+      throw error;
+    });
+    if (!opened.isFile() || opened.nlink > 1 || opened.size > SCREENSHOT_LIMIT) {
+      await file.close();
+      throw new ApiError(400, 'The screenshot artifact is unavailable.');
+    }
+    return file;
+  }
+  private async readFile(artifact: FileArtifact, workspace: Workspace, signal: AbortSignal) {
+    if (artifact.kind === 'image') {
+      const file = await this.openScreenshot(artifact, workspace);
       try {
         const opened = await file.stat();
         if (!opened.isFile() || opened.nlink > 1 || opened.size > SCREENSHOT_LIMIT)
@@ -203,6 +320,7 @@ export class ArtifactService {
         const bytes = Buffer.alloc(Math.min(opened.size + 1, SCREENSHOT_LIMIT + 1));
         let length = 0;
         while (length < bytes.length) {
+          signal.throwIfAborted();
           const chunk = await file.read(bytes, length, bytes.length - length, null);
           if (!chunk.bytesRead) break;
           length += chunk.bytesRead;
@@ -219,9 +337,9 @@ export class ArtifactService {
         .computers!.guest(workspace)
         .request(
           'download',
-          { path: artifact.path },
+          { path: artifact.path, maxBytes: 10 * 1024 * 1024 },
           { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
-          AbortSignal.timeout(45000),
+          signal,
         )) as { name: string; bytes: string };
       return {
         name: result.name,
@@ -231,7 +349,10 @@ export class ArtifactService {
     }
     if (!workspace.folder) throw new ApiError(400, 'This workspace has no folder.');
     return {
-      ...(await new WorkspaceFileService(workspace.folder, this.dataDir).download(artifact.path)),
+      ...(await new WorkspaceFileService(workspace.folder, this.dataDir).download(
+        artifact.path,
+        10 * 1024 * 1024,
+      )),
       mediaType: 'text/plain; charset=utf-8',
     };
   }

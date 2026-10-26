@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Bot, ChatMessage, FileArtifact } from '../../../../shared/ai';
 import type { ChatServerOutput } from '../../../../shared/chatActivity';
 import { chatActivityService } from '../../services/chatActivityService';
@@ -11,6 +11,18 @@ export function useChatActivity(
   bots: Bot[],
   botId: string,
 ) {
+  const layoutRef = useRef<HTMLDivElement>(null);
+  // Match the CSS container breakpoint, including chats beside a computer/browser panel.
+  const [narrow, setNarrow] = useState(true);
+  useLayoutEffect(() => {
+    const layout = layoutRef.current;
+    if (!layout) return;
+    const measure = () => setNarrow(layout.getBoundingClientRect().width <= 700);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(layout);
+    return () => observer.disconnect();
+  }, []);
   const [outputs, setOutputs] = useState<ChatServerOutput[]>([]);
   const [artifacts, setArtifacts] = useState<FileArtifact[]>([]);
   const [error, setError] = useState('');
@@ -71,20 +83,23 @@ export function useChatActivity(
   const [preference, setPreference] = useState(() => ({
     storageKey,
     runKey,
-    open: working || savedPreference(),
+    narrow,
+    open: false,
   }));
-  // A new run opens activity once. Closing it during that run stays respected.
-  if (preference.storageKey !== storageKey || (working && preference.runKey !== runKey)) {
+  const layoutChanged = preference.storageKey !== storageKey || preference.narrow !== narrow;
+  // Wide chats open once per run; narrow chats only open through the activity button.
+  if (layoutChanged || (working && preference.runKey !== runKey)) {
     setPreference({
       storageKey,
       runKey,
-      open: working || savedPreference(),
+      narrow,
+      open: narrow ? !layoutChanged && preference.open : working || savedPreference(),
     });
   }
   function setOpen(open: boolean) {
-    setPreference({ storageKey, runKey, open });
+    setPreference({ storageKey, runKey, narrow, open });
     try {
-      localStorage.setItem(storageKey, open ? 'open' : 'closed');
+      if (!narrow) localStorage.setItem(storageKey, open ? 'open' : 'closed');
     } catch {
       /* Optional preference. */
     }
@@ -93,6 +108,7 @@ export function useChatActivity(
   return {
     ...data,
     botId,
+    layoutRef,
     conversationId,
     error,
     working,

@@ -37,8 +37,10 @@ export async function executeRuntime<T>(
     }
     context.signal.throwIfAborted();
     const visible =
-      result && typeof result === 'object' && 'image' in result
-        ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'image'))
+      result && typeof result === 'object' && ('image' in result || 'media' in result)
+        ? Object.fromEntries(
+            Object.entries(result).filter(([key]) => key !== 'image' && key !== 'media'),
+          )
         : result;
     context.onActivity({
       ...activity,

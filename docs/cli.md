@@ -24,7 +24,9 @@ The Linux installer also checks `/dev/kvm` access, including when QEMU is alread
 
 Installers verify SHA-256 checksums before activation. Unix installations live in `~/.local/share/mukai/versions`, with a command in `~/.local/bin`; Windows uses `%LOCALAPPDATA%/MukaiCLI`, registering its `bin` directory in the current user's PATH. Mukai's user files do not require administrator installation; system dependencies and KVM membership may require approval. Existing unrelated `mukai` commands are not overwritten.
 
-Re-running the installer upgrades or repairs the active CLI through a fresh version directory. Previous installation directories remain available, and a running server finishes using its existing version. An already-running backend must be stopped before launching another against the same data directory. Set `MUKAI_VERSION` to a published version to install that version instead of latest. Set `MUKAI_NO_MODIFY_PATH=1` to install without changing shell profiles or user PATH.
+Run `mukai update` to download and activate the latest CLI release. Updates verify the release's SHA-256 checksum, platform, version, and bundled Node runtime before switching the launcher atomically. Previous installation directories remain available, and a running server finishes using its existing version. Stop and start that server to use a terminal-installed update. An already-running backend must be stopped before launching another against the same data directory.
+
+Re-running the installer also upgrades or repairs the active CLI through a fresh version directory. Set `MUKAI_VERSION` to a published version to install that version instead of latest. Set `MUKAI_NO_MODIFY_PATH=1` to install without changing shell profiles or user PATH.
 
 ## Commands
 
@@ -35,11 +37,16 @@ mukai serve --data-dir /path/to/data
 mukai status
 mukai doctor
 mukai auth-reset
+mukai update
 mukai --version
 mukai --help
 ```
 
 `serve` runs in the foreground. Ctrl+C stops requests, tools, browser/VM connections, and scheduling, then releases the database lock. The default port is 47831; `PORT` changes it, and `--port` takes precedence. Port 0 selects an available port. `--open` launches your default browser; otherwise open the printed connection link.
+
+In installer-managed CLI releases, **Settings → Updates** supports manual checks, download progress, and the persisted automatic-update preference. Background checks run after 15 seconds and every four hours when enabled. Downloads wait for **Restart to update**; a confirmation explains that running bots and tools will stop. A foreground supervisor shuts down the old backend, releases its data lock, and starts the new bundled runtime with the same data directory and bound port (including `--port 0`). The browser reconnects and reloads the bundled UI. Ctrl+C still stops the replacement server. Logged-in owner sessions persist across this restart; an unclaimed installation requires its new terminal setup code. Terminal updates do not interrupt running servers.
+
+Source checkouts and manually unpacked portable archives show updates as unavailable; use the installer to obtain a managed installation. Desktop continues to use its native updater. CLI updates do not change PATH, install system dependencies, or write to application data.
 
 On first launch, the terminal prints a private setup code and a setup link. The link puts the code in its fragment, which is removed from the address bar before any requests. Verify the code, then choose your owner username and password. Codes expire after 30 minutes; restart the server to obtain another. Verification gives you five minutes to finish account creation. Once claimed, the installation presents a login page instead of account creation.
 
@@ -66,6 +73,7 @@ npm run build:cli
 npm run cli -- serve --port 8080 --open
 npm run package:cli
 npm run test:cli:packaged
+npm run test:cli:updates
 npm run test:settings-ui
 ```
 

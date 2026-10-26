@@ -52,3 +52,41 @@ export const compatibleImageMiddleware: LanguageModelMiddleware = {
     return { ...params, prompt };
   },
 };
+
+// MiMo documents input_audio.data as a MIME-tagged data URL, whereas the generic
+// compatible adapter emits raw base64 plus format. Adapt this provider only.
+export const compatibleAudioDataUrlMiddleware: LanguageModelMiddleware = {
+  specificationVersion: 'v4',
+  transformParams: async ({ params }) => ({
+    ...params,
+    prompt: params.prompt.map((message) =>
+      message.role !== 'user'
+        ? message
+        : {
+            ...message,
+            content: message.content.map((part) => {
+              if (
+                part.type !== 'file' ||
+                !part.mediaType.startsWith('audio/') ||
+                part.data.type !== 'data'
+              )
+                return part;
+              const base64 =
+                typeof part.data.data === 'string'
+                  ? part.data.data
+                  : Buffer.from(part.data.data).toString('base64');
+              return {
+                ...part,
+                providerOptions: {
+                  ...part.providerOptions,
+                  openaiCompatible: {
+                    ...part.providerOptions?.openaiCompatible,
+                    input_audio: { data: `data:${part.mediaType};base64,${base64}` },
+                  },
+                },
+              };
+            }),
+          },
+    ),
+  }),
+};

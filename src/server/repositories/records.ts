@@ -35,6 +35,8 @@ export function providerRecord(row: Row): ProviderRecord {
     baseUrl: String(row.base_url),
     defaultModel: String(row.default_model),
     supportsImages: Boolean(row.supports_images),
+    supportsAudio: Boolean(row.supports_audio),
+    supportsVideo: Boolean(row.supports_video),
     isDefault: Boolean(row.is_default),
     encryptedKey: row.encrypted_key as string | null,
     contextWindowTokens:

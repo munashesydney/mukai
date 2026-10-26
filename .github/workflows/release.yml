@@ -118,6 +118,9 @@ jobs:
       - name: Verify owner setup and browser login
         if: runner.os == 'Windows'
         run: npm run test:cli:browser
+      - name: Verify CLI upgrades and browser restart
+        if: runner.os == 'Windows'
+        run: npm run test:cli:updates
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cli-${{ matrix.platform }}-${{ matrix.arch }}

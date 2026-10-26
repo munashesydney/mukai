@@ -37,6 +37,38 @@ const history = (): ModelMessage[] => [
   ...pair('third'),
 ];
 describe('working context', () => {
+  it('omits audio/video bytes from compaction prompts without losing the current request', async () => {
+    const summarize = vi.fn(
+      async () => 'Earlier recordings were attached; no transcript was provided.',
+    );
+    const manager = new ContextManager(32768, 2048, 100, summarize);
+    const current: ModelMessage = { role: 'user', content: 'Continue the exact task.' };
+    await manager.prepare(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'file', data: 'PRIVATE_MEDIA_BYTES'.repeat(50000), mediaType: 'audio/wav' },
+            { type: 'file', data: 'PRIVATE_VIDEO_BYTES'.repeat(50000), mediaType: 'video/mp4' },
+          ],
+        },
+        ...pair('one'),
+        ...pair('two'),
+        ...pair('three'),
+        ...pair('four'),
+        current,
+      ],
+      true,
+    );
+    expect(summarize).toHaveBeenCalled();
+    const summaryInputs = JSON.stringify(summarize.mock.calls);
+    expect(summaryInputs).toContain('media-note');
+    expect(summaryInputs).not.toContain('PRIVATE_MEDIA_BYTES');
+    expect(summaryInputs).not.toContain('PRIVATE_VIDEO_BYTES');
+    expect(
+      estimateTokens({ type: 'file', data: 'A'.repeat(100000), mediaType: 'audio/wav' }),
+    ).toBeLessThan(10000);
+  });
   it('drops superseded runtime snapshots while retaining the human request, latest status and tool pair', async () => {
     const runtime = (now: string): ModelMessage => ({
       role: 'user',

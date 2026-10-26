@@ -32,6 +32,8 @@ import { ConversationService } from './services/conversationService';
 import { NotificationService } from './services/notificationService';
 import { ConversationHistoryService } from './services/conversationHistoryService';
 import { NotificationRepository } from './repositories/notificationRepository';
+import { ConversationArtifactRepository } from './repositories/conversationArtifactRepository';
+import { ConversationArtifactService } from './services/conversationArtifactService';
 import { ConversationHistoryRepository } from './repositories/conversationHistoryRepository';
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
@@ -64,8 +66,10 @@ import { TelegramJobRepository } from './repositories/telegramJobRepository';
 import { TelegramService } from './services/telegramService';
 import { TelegramRuntime } from './telegram/runtime';
 import { TelegramActivity } from './telegram/activity';
+import type { UpdateController } from '../shared/updates';
 
 export interface ApiOptions {
+  updates?: UpdateController;
   webDir?: string;
   version?: string;
   dataDir?: string;
@@ -158,6 +162,12 @@ export function createApiServer(options: ApiOptions = {}) {
       new ConversationHistoryRepository(store),
       workspaces,
     );
+    const conversationArtifacts = new ConversationArtifactService(
+      new ConversationArtifactRepository(store),
+      attachments,
+      artifacts,
+    );
+    tools.attachArtifacts(conversationArtifacts);
     tools.attachCommunication(notifications, conversationHistory);
     const jobs = new ChatJobRepository(store);
     const chats = new ChatService(
@@ -295,11 +305,13 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
     );
     const route = createRoutes({
+      updates: options.updates,
       telegram,
       settings,
       browserMode: Boolean(options.webDir),
       version: options.version,
       chatOutputs,
+      conversationArtifacts,
       notifications,
       desktops,
       approvals,
@@ -394,6 +406,7 @@ export function createApiServer(options: ApiOptions = {}) {
       notifications,
       approvals,
       conversationHistory,
+      conversationArtifacts,
       access,
       botManagement,
       server,

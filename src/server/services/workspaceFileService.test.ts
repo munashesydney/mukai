@@ -29,6 +29,20 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace file boundaries and operations', () => {
+  it('inspects large and empty files without imposing the text download limit, and rejects directories', async () => {
+    const bytes = Buffer.alloc(2 * 1024 * 1024);
+    bytes.write('%PDF-1.7');
+    writeFileSync(join(root, 'report.pdf'), bytes);
+    writeFileSync(join(root, 'empty.txt'), '');
+    expect(await service.inspect('report.pdf')).toEqual({
+      mediaType: 'application/pdf',
+      size: bytes.length,
+    });
+    expect(await service.inspect('empty.txt')).toEqual({ mediaType: 'text/plain', size: 0 });
+    await expect(service.download('report.pdf')).rejects.toThrow('file limit');
+    await expect(service.inspect('.')).rejects.toThrow('regular workspace file');
+    await expect(service.inspect('private-data/secret.txt')).rejects.toThrow('private');
+  });
   it('reports a committed patch even when change-history recording fails', async () => {
     writeFileSync(join(root, 'note.txt'), 'original');
     const tracked = new WorkspaceFileService(root, privateDir, () => {

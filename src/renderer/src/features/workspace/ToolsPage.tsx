@@ -33,14 +33,14 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'manage_bot') return <Users size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
   if (toolId === 'computer_use') return <Monitor size={size} />;
-  if (toolId === 'image') return <Image size={size} />;
+  if (toolId === 'media') return <Image size={size} />;
   if (toolId === 'web_search') return <Search size={size} />;
   if (toolId === 'terminal') return <Terminal size={size} />;
   return <FileText size={size} />;
 }
 
 function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
-  if (vm && ['terminal', 'browser', 'image', 'file_operations', 'computer_use'].includes(tool.id))
+  if (vm && ['terminal', 'browser', 'media', 'file_operations', 'computer_use'].includes(tool.id))
     return 'Runs inside the workspace Linux VM';
   if (vm && tool.id.startsWith('register_custom_')) return 'Modules run inside the Linux VM';
   if (tool.id === 'skills') return 'Workspace workflows · Loaded per bot and conversation';
@@ -52,8 +52,8 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
     return 'Required for all bots · Actions depend on bot and conversation';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'computer_use') return 'Local desktop · Mouse, keyboard and screenshots';
-  if (tool.id === 'image')
-    return 'Local images · Includes files outside the workspace · Vision model required to view';
+  if (tool.id === 'media')
+    return 'Images, audio and video · Metadata or model input · Local/VM paths and saved references';
   if (tool.id === 'web_search') return 'Public web search and page content · No API key required';
   if (tool.id === 'terminal') return 'Local shell · Per-conversation processes';
   return folder ? 'Within this workspace folder' : 'Connect a folder to start';

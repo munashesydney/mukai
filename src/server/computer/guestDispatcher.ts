@@ -10,6 +10,8 @@ import { terminalDefinition, processDefinition } from '../tools/terminal/definit
 import { fileOperationsDefinition } from '../tools/file-operations/definition';
 import { browserDefinition } from '../tools/browser/definition';
 import { imageDefinition } from '../tools/image/definition';
+import { mediaDefinition } from '../tools/media/definition';
+import { executeMedia } from '../tools/media/execute';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import type { Computer, ComputerHelper } from './protocol';
 import { GuestCapabilities } from './guestCapabilities';
@@ -92,11 +94,59 @@ export class GuestDispatcher implements Computer {
         const files = new WorkspaceFileService(this.folder, this.dataDir, (snapshot) =>
           changes.push(snapshot),
         );
+        if (
+          input &&
+          typeof input === 'object' &&
+          'action' in input &&
+          input.action === 'inspect_artifact'
+        ) {
+          const value = z.object({ path: z.string().min(1).max(4000) }).parse(input);
+          return files.inspect(value.path);
+        }
+        if (
+          input &&
+          typeof input === 'object' &&
+          'action' in input &&
+          input.action === 'copy_attachment'
+        ) {
+          const value = z
+            .object({
+              path: z.string().min(1).max(4000),
+              bytes: z.string().max(14 * 1024 * 1024),
+              overwrite: z.boolean().optional(),
+            })
+            .parse(input);
+          const result = await files.copyAttachment(
+            value.path,
+            Buffer.from(value.bytes, 'base64'),
+            value.overwrite === true,
+            signal,
+          );
+          return { result, changes };
+        }
         const result = await files.execute(
           fileOperationsDefinition.inputSchema.parse(input),
           signal,
         );
         return { result, changes };
+      }
+      case 'media': {
+        const output = await executeMedia(
+          mediaDefinition.inputSchema.parse(input),
+          {
+            owner,
+            signal,
+            folder: this.folder,
+            vision: true,
+            supportsAudio: true,
+            supportsVideo: true,
+            budget: { remaining: 1 },
+            onActivity: () => {},
+          },
+          'guest-media',
+        );
+        if (!output.ok) throw new Error('error' in output ? output.error : 'Media read failed.');
+        return output.result;
       }
       case 'image': {
         const output = await executeImage(
@@ -145,8 +195,21 @@ export class GuestDispatcher implements Computer {
         return result;
       }
       case 'download': {
-        const { path } = z.object({ path: z.string().min(1).max(4000) }).parse(input);
-        const file = await new WorkspaceFileService(this.folder, this.dataDir).download(path);
+        const { path, maxBytes } = z
+          .object({
+            path: z.string().min(1).max(4000),
+            maxBytes: z
+              .number()
+              .int()
+              .min(1)
+              .max(10 * 1024 * 1024)
+              .optional(),
+          })
+          .parse(input);
+        const file = await new WorkspaceFileService(this.folder, this.dataDir).download(
+          path,
+          maxBytes,
+        );
         return { name: file.name, bytes: file.bytes.toString('base64') };
       }
     }

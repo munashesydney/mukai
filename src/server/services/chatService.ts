@@ -39,6 +39,12 @@ import { ApiError } from '../config';
 import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
 import { customToolReceipt } from './customToolReceipt';
+import { unsuccessfulToolResult } from './toolFeedback';
+import { attachmentContext } from './attachmentContext';
+import { rejectedMedia, omitRejectedMedia } from './mediaRecovery';
+import { imageDefinition } from '../tools/image/definition';
+import { mediaDefinition } from '../tools/media/definition';
+import type { InputCapabilities } from '../../shared/modelCapabilities';
 import { GenerationTimeout } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
 import { ChatCheckpointError, ChatJobRepository } from '../repositories/chatJobRepository';
@@ -62,6 +68,7 @@ import {
   limitResultText,
   ACTIVITY_TRUNCATED,
   imageDeliveryState,
+  mediaDeliveryState,
 } from './toolResultPolicy';
 import {
   assistantContextText,
@@ -383,7 +390,7 @@ export class ChatService {
   private context(
     conversationId: string,
     botId: string,
-    vision: boolean,
+    capabilities: InputCapabilities,
     throughSequence: number,
     contextWindow: number,
   ): ModelMessage[] {
@@ -438,20 +445,7 @@ export class ChatService {
         },
       ];
       for (const file of this.attachments.forMessage(row.id)) {
-        if (file.kind === 'image' && vision)
-          content.push({
-            type: 'file',
-            data: this.attachments.bytes(file).toString('base64'),
-            mediaType: String(file.mediaType),
-          });
-        else
-          content.push({
-            type: 'text',
-            text:
-              file.kind === 'text'
-                ? `Attached document: ${String(file.name)}\n<document>\n${String(file.extractedText)}\n</document>`
-                : `[An image named ${String(file.name)} was attached previously; this text-only model cannot view it.]`,
-          });
+        content.push(...attachmentContext(file, capabilities, () => this.attachments.bytes(file)));
       }
       return [{ role: 'user' as const, content }];
     });
@@ -539,20 +533,12 @@ export class ChatService {
           409,
           'Only the most recent response can be retried. Send a new message instead.',
         );
-      const previousFiles = this.attachments.forMessage(userId);
-      if (!config.vision && previousFiles.some((file) => file.kind === 'image'))
-        throw new ApiError(400, 'Choose a vision model before retrying this image message.');
       retryMessage = this.messages.message(assistantId);
       this.messages.reset(assistantId, recoveringStep);
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
-      const files = this.attachments.select(
-        value.attachmentIds,
-        botId,
-        config.vision,
-        conversationId,
-      );
+      const files = this.attachments.select(value.attachmentIds, botId, config, conversationId);
       userId = randomUUID();
       assistantId = randomUUID();
       this.messages.createTurn({
@@ -672,7 +658,7 @@ export class ChatService {
           assistantId,
           generation.controller.signal,
           onActivity,
-          config.vision,
+          config,
           Math.floor(
             contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.45 * 3,
           ),
@@ -860,7 +846,7 @@ export class ChatService {
       let messages = this.context(
         conversationId,
         botId,
-        config.vision,
+        config,
         this.messages.sequence(userId),
         contextLimits(config.contextWindow, config.maxOutputTokens).capacity,
       );
@@ -884,6 +870,8 @@ export class ChatService {
             endpoint: config.provider.baseUrl,
             model: config.modelId,
             vision: config.vision,
+            audio: config.supportsAudio,
+            video: config.supportsVideo,
             contextWindow: config.contextWindow,
             output: config.maxOutputTokens,
             schemas: await toolDefinitions(tools),
@@ -895,6 +883,25 @@ export class ChatService {
       // Old pending questions retain their recorded tool name after the family rename.
       if (recoveryCalls.some((call) => call.toolName === 'ask') && tools.communicate)
         tools.ask = tools.communicate;
+      const legacyImageRecovery =
+        recoveryCalls.some((call) => call.toolName === 'image') && !!tools.media;
+      if (legacyImageRecovery) {
+        const media = tools.media;
+        tools.image = {
+          ...media,
+          inputSchema: imageDefinition.inputSchema,
+          execute: (input, options) => {
+            const legacy = imageDefinition.inputSchema.parse(input);
+            return media.execute!(
+              mediaDefinition.inputSchema.parse({
+                ...legacy,
+                action: legacy.action === 'view' ? 'view_image' : 'read_image',
+              }),
+              options,
+            );
+          },
+        };
+      }
       const checkpoint =
         existingUser && (!runtime || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
@@ -1019,6 +1026,24 @@ export class ChatService {
       if (originalRequest && !pinnedRequests.includes(originalRequest))
         pinnedRequests.unshift(originalRequest);
       manager.pinRequests(pinnedRequests);
+      let mediaRecoveryUsed = false;
+      const omitMedia = (reason: 'size' | 'format' | 'context') => {
+        if (mediaRecoveryUsed) return false;
+        const fallback = omitRejectedMedia(messages, reason);
+        if (!fallback.count) return false;
+        for (let index = 0; index < pinnedRequests.length; index++) {
+          const position = messages.indexOf(pinnedRequests[index]);
+          if (position >= 0) pinnedRequests[index] = fallback.messages[position];
+        }
+        manager.pinRequests(pinnedRequests);
+        messages = fallback.messages;
+        for (const message of messages)
+          if (message.role === 'tool')
+            for (const part of message.content)
+              if (part.type === 'tool-result') reportTruncation(part.toolCallId, part.output);
+        mediaRecoveryUsed = true;
+        return true;
+      };
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let finalReplyOnly = emptyReplyRecoveries > 0;
       const finalReplyNotice = FINAL_REPLY_NOTICE;
@@ -1103,20 +1128,28 @@ export class ChatService {
         }
       };
       const reportTruncation = (callId: string, output: unknown) => {
-        const delivery = imageDeliveryState(output);
+        const delivery = imageDeliveryState(output),
+          mediaDelivery = mediaDeliveryState(output);
         const observation = generation.activity.find((item) => item.id === callId);
         if (
-          delivery &&
+          (delivery || mediaDelivery) &&
           observation &&
           ((['browser', 'computer_use'].includes(observation.tool) &&
             observation.action === 'screenshot') ||
-            (observation.tool === 'image' && observation.action === 'view'))
+            (observation.tool === 'image' && observation.action === 'view') ||
+            (observation.tool === 'media' &&
+              ['view_image', 'listen_audio', 'view_video'].includes(observation.action)))
         ) {
           try {
             const [json, ...notices] = observation.summary.split('\n\n');
             const summary = JSON.parse(json);
-            summary.imageIncluded = delivery === 'included';
-            summary.imageDelivery = delivery;
+            if (observation.tool === 'media' && observation.action !== 'view_image') {
+              summary.mediaIncluded = mediaDelivery === 'included';
+              summary.mediaDelivery = mediaDelivery;
+            } else {
+              summary.imageIncluded = delivery === 'included';
+              summary.imageDelivery = delivery;
+            }
             onActivity({
               ...observation,
               summary: [JSON.stringify(summary), ...notices].join('\n\n'),
@@ -1127,7 +1160,7 @@ export class ChatService {
         }
         const preview = JSON.stringify(output, (_key, value: unknown) => {
           if (value && typeof value === 'object' && 'type' in value && value.type === 'file')
-            return '[image]';
+            return '[media]';
           return value;
         });
         if (
@@ -1397,6 +1430,9 @@ export class ChatService {
         save();
         saveCheckpoint();
       }
+      // The alias exists only for resuming old approved calls, never as a second
+      // tool family in a new model request. Historical call/result names remain intact.
+      if (legacyImageRecovery) delete tools.image;
       let customNames = Object.keys(this.tools.customForBot(bot, signal, onActivity));
       let malformedRecoveries = 0,
         completionRecoveries = 0,
@@ -1489,6 +1525,12 @@ export class ChatService {
           estimateTokens(currentSystem) + (await toolTokens(tools)) + memoryOverhead,
         );
         const capacity = contextLimits(config.contextWindow, config.maxOutputTokens);
+        if (manager.estimate(pinnedRequests) > capacity.input && omitMedia('context'))
+          this.diagnostics.info(
+            'chat.media_omitted',
+            'Media bytes replaced with context notices to fit the model input budget.',
+            diagnosticContext(),
+          );
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();
         const attemptMessages = finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages;
@@ -1630,10 +1672,21 @@ export class ChatService {
               }
               if (Date.now() - lastSaved > 150) save();
             } else if (chunk.type === 'tool-result') {
-              if (invalidToolInputs.delete(chunk.toolName))
+              if (
+                chunk.output &&
+                typeof chunk.output === 'object' &&
+                'feedback' in chunk.output &&
+                chunk.toolName === 'conversations'
+              )
+                this.diagnostics.info(
+                  'chat.tool_feedback',
+                  'The tool returned usage guidance; the bot can use the suggested action.',
+                  { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
+                );
+              if (!unsuccessfulToolResult(chunk.output) && invalidToolInputs.delete(chunk.toolName))
                 this.diagnostics.info(
                   'chat.tool_input_corrected',
-                  `Invalid input for ${chunk.toolName} was corrected; the tool returned a result.`,
+                  `A ${chunk.toolName} call returned a successful result after earlier invalid input.`,
                   { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
                 );
             } else if (chunk.type === 'tool-error') {
@@ -1692,6 +1745,21 @@ export class ChatService {
             status = 'complete';
             error = null;
             continue;
+          }
+          if (
+            !signal.aborted &&
+            !mediaRecoveryUsed &&
+            executionVersion === stepExecutionVersion &&
+            generation.content.length === textBeforeStep &&
+            generation.reasoning.length === reasoningBeforeStep
+          ) {
+            const reason = rejectedMedia(caught);
+            if (reason && omitMedia(reason)) {
+              status = 'complete';
+              error = null;
+              this.diagnostics.record('chat.media_omitted', caught, diagnosticContext(), 'warn');
+              continue;
+            }
           }
           if (
             !signal.aborted &&

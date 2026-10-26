@@ -26,7 +26,7 @@ export class BotManagementService {
   actionsFor(caller: Bot, messageId?: string): BotAction[] {
     const current = this.bots.require(caller.id);
     if (current.isMain)
-      return ['create', 'update', 'list', 'get', 'send_message', 'get_last_message'];
+      return ['create', 'update', 'delete', 'list', 'get', 'send_message', 'get_last_message'];
     return messageId && this.chats.delegatedMessage(messageId)
       ? ['list', 'get', 'get_last_message']
       : ['list', 'get', 'send_message', 'get_last_message'];
@@ -38,7 +38,7 @@ export class BotManagementService {
         403,
         action === 'send_message'
           ? 'send_message is intentionally unavailable in a delegated sub-bot run to prevent delegation loops. Return your final reply to the calling bot.'
-          : 'Only the workspace main bot can create or update bots. Ask the user to discuss this with the main bot.',
+          : 'Only the workspace main bot can create, update, or delete bots. Ask the user to discuss this with the main bot.',
       );
   }
   get(caller: Bot, botId: string) {
@@ -47,6 +47,14 @@ export class BotManagementService {
     if (target.workspaceId !== caller.workspaceId)
       throw new ApiError(403, 'Bot belongs to another workspace.');
     return { ...target, hierarchyLevel: this.level(target) };
+  }
+  remove(caller: Bot, botId: string) {
+    this.requireAction(caller, 'delete');
+    const target = this.get(caller, botId);
+    if (target.id === caller.id || target.isMain)
+      throw new ApiError(403, 'The main bot cannot delete itself.');
+    this.bots.remove(target.id);
+    return { deleted: true, botId: target.id, name: target.name };
   }
   async update(
     caller: Bot,
