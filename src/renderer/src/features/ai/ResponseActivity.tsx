@@ -21,6 +21,7 @@ import { formatWorkDuration, responsePresentation } from '../../../../shared/res
 import { MessageMarkdown } from './MessageMarkdown';
 import { ToolImagePreview } from './ToolImagePreview';
 import { ResponseReferenceContext } from './responseReferenceContext';
+import { TerminalCard } from './TerminalCard';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
@@ -233,6 +234,22 @@ function ToolPart({
   message: ChatMessage;
 }) {
   const activity = message.activity?.find((item) => item.id === part.activityId);
+  if (activity?.tool === 'terminal' && activity.action !== 'list') {
+    const sessionId = activity.processSessionId || activity.terminal?.id;
+    const latest = sessionId
+      ? [...(message.activity || [])]
+          .reverse()
+          .find(
+            (item) =>
+              item.tool === 'terminal' &&
+              (item.processSessionId || item.terminal?.id) === sessionId &&
+              item.terminal,
+          )
+      : undefined;
+    return (
+      <TerminalCard activity={latest ? { ...activity, terminal: latest.terminal } : activity} />
+    );
+  }
   return activity ? (
     <ToolRow activity={activity} message={message} />
   ) : (
@@ -313,9 +330,27 @@ function CompactionPart({
 
 function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
   const groups: ResponsePart[][] = [];
+  const sessions = new Set<string>();
+  const isTerminal = (part: ResponsePart) =>
+    part.type === 'tool' &&
+    message.activity?.some(
+      (item) => item.id === part.activityId && item.tool === 'terminal' && item.action !== 'list',
+    );
   for (const part of parts) {
+    if (part.type === 'tool' && isTerminal(part)) {
+      const activity = message.activity?.find((item) => item.id === part.activityId);
+      const sessionId = activity?.processSessionId || activity?.terminal?.id;
+      if (sessionId && sessions.has(sessionId)) continue;
+      if (sessionId) sessions.add(sessionId);
+    }
     const previous = groups.at(-1);
-    if (part.type === 'tool' && previous?.[0].type === 'tool') previous.push(part);
+    if (
+      part.type === 'tool' &&
+      previous?.[0].type === 'tool' &&
+      !isTerminal(part) &&
+      !isTerminal(previous[0])
+    )
+      previous.push(part);
     else groups.push([part]);
   }
   return (

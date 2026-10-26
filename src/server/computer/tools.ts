@@ -13,6 +13,7 @@ import { resultPreview } from '../services/toolResultPolicy';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
 import { computerUseTools } from '../tools/computer_use/execute';
 import { artifactHref, type SavedFileReference } from '../../shared/responseReferences';
+import { terminalSnapshotSchema, missingEnvironmentError } from '../../shared/terminal';
 
 export function computerTools(
   context: RuntimeToolContext & {
@@ -45,7 +46,7 @@ export function computerTools(
     const name = definition.name;
     const description =
       name === 'terminal'
-        ? 'Run a Linux /bin/sh command inside this workspace’s VM, in /home/mukai/workspace. cwd is relative to that directory. Each call starts a fresh non-interactive shell without a PTY. Use process for background sessions, stdin, logs, waiting and termination. Commands never execute on the host.'
+        ? 'Run a Linux /bin/sh command inside this workspace’s VM, in /home/mukai/workspace. cwd is relative to that directory. Each call starts a fresh non-interactive shell without a PTY. envFromSettings selects workspace variable names from Settings for this run and its child processes; missing or empty names fail before launch. env is for ordinary nonsecret values. Use process for background sessions, stdin, logs, waiting and termination. Commands never execute on the host.'
         : name === 'browser'
           ? browserDefinition.description +
             ' In this VM workspace, all targets use Chrome inside the Linux guest, visible in View computer. mukai is an alias for chrome here (there is no embedded guest browser). chrome-default uses the guest desktop’s main Chrome profile and its logins, never the host browser. Enable and approve main Chrome connections inside the VM. Stopping the VM ends all guest browser sessions. screenshot artifacts use guest paths.'
@@ -98,6 +99,16 @@ export function computerTools(
                 ? 'files'
                 : (name as 'terminal' | 'process' | 'browser' | 'media');
             let requestInput = input;
+            if (name === 'terminal') {
+              const terminal = terminalDefinition.inputSchema.parse(input);
+              const names = terminal.envFromSettings || [];
+              if (names.length && !context.resolveTerminalEnvironment)
+                throw new Error(missingEnvironmentError(names));
+              const settingsEnvironment = names.length
+                ? context.resolveTerminalEnvironment!(names)
+                : {};
+              requestInput = names.length ? { ...terminal, settingsEnvironment } : terminal;
+            }
             if (name === 'file_operations' && value.action === 'copy_attachment') {
               if (
                 typeof value.attachmentId !== 'string' ||
@@ -113,6 +124,23 @@ export function computerTools(
               requestInput,
               context.owner,
               signal,
+              name === 'terminal'
+                ? async (action, args) => {
+                    if (action !== 'terminal_started') throw new Error('Unknown terminal event.');
+                    const snapshot = terminalSnapshotSchema.parse(args[0]);
+                    context.onActivity({
+                      id: options.toolCallId,
+                      tool: 'terminal',
+                      action: 'run',
+                      path: String(value.command || ''),
+                      status: 'running',
+                      summary: '',
+                      processSessionId: snapshot.id,
+                      terminal: snapshot,
+                    });
+                    return null;
+                  }
+                : undefined,
             );
             if (name === 'file_operations') {
               const response = z

@@ -3,8 +3,10 @@ import { z } from 'zod';
 import type { Database } from '../db/database';
 import { privateSecret } from '../config';
 import type { EnvironmentVariable } from '../../shared/customCapabilities';
+import { environmentVariableName, missingEnvironmentError } from '../../shared/terminal';
+import { ApiError } from '../config';
 
-export const variableName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
+export const variableName = environmentVariableName;
 export class CapabilityEnvironment {
   private key: Buffer;
   // Keep old values redacted too, including after rotation/deletion.
@@ -83,7 +85,7 @@ export class CapabilityEnvironment {
     }));
   }
   resolve(workspaceId: string, names: string[]) {
-    const result: Record<string, string> = {};
+    const result: Record<string, string> = Object.create(null);
     for (const name of names) {
       const row = this.db.get(
         'SELECT value FROM capability_env WHERE workspace_id=? AND name=?',
@@ -93,6 +95,12 @@ export class CapabilityEnvironment {
       if (row) result[name] = this.decrypt(String(row.value));
     }
     return result;
+  }
+  resolveForTerminal(workspaceId: string, names: string[]) {
+    const values = this.resolve(workspaceId, names);
+    const missing = [...new Set(names.filter((name) => !values[name]))];
+    if (missing.length) throw new ApiError(400, missingEnvironmentError(missing));
+    return values;
   }
   redact(text: string) {
     for (const secret of this.secrets) {

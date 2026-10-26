@@ -110,7 +110,8 @@ async function configure(vision = false, model: Partial<SavedProviderModel> = {}
   const savedModel: SavedProviderModel = {
     id: 'test-chat',
     name: 'Test chat',
-    contextWindowTokens: null,
+    // Tool-loop fixtures count retained results. Compaction scenarios set their own smaller limits.
+    contextWindowTokens: 65536,
     maxOutputTokens: 8192,
     supportsImages: vision,
     ...model,

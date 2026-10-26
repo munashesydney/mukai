@@ -8,7 +8,19 @@ export function executeTerminal(
   callId: string,
 ) {
   return executeRuntime(context, callId, 'terminal', 'run', input.command, () =>
-    context.processes.run(context.owner, context.folder, input, context.signal),
+    context.processes.run(context.owner, context.folder, input, context.signal, {
+      onStart: (snapshot) =>
+        context.onActivity({
+          id: callId,
+          tool: 'terminal',
+          action: 'run',
+          path: input.command,
+          status: 'running',
+          summary: '',
+          processSessionId: snapshot.id,
+          terminal: snapshot,
+        }),
+    }),
   );
 }
 export function executeProcess(

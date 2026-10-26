@@ -67,13 +67,25 @@ export class GuestDispatcher implements Computer {
         }
         return result;
       }
-      case 'terminal':
+      case 'terminal': {
+        const privateInput = z
+          .object({ settingsEnvironment: z.record(z.string(), z.string()).optional() })
+          .parse(input);
         return this.processes.run(
           owner,
           this.folder,
           terminalDefinition.inputSchema.parse(input),
           signal,
+          {
+            settingsEnvironment: privateInput.settingsEnvironment,
+            onStart: helper
+              ? async (snapshot) => {
+                  await helper('terminal_started', [snapshot]);
+                }
+              : undefined,
+          },
         );
+      }
       case 'process': {
         const value = processDefinition.inputSchema.parse(input);
         if (value.action === 'list') return this.processes.list(owner);

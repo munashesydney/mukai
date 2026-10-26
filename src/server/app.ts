@@ -117,7 +117,10 @@ export function createApiServer(options: ApiOptions = {}) {
       workspaces,
       dir,
     );
-    const processes = new ProcessService();
+    const processes = new ProcessService({
+      resolveEnvironment: (workspaceId, names) =>
+        capabilities.environment.resolveForTerminal(workspaceId, names),
+    });
     const browsers = new BrowserService(dir, options.embeddedBrowser);
     const desktop = new ComputerUseService(new NativeDesktopBackend(options.desktopHelperDir));
     const tools = new ToolService(

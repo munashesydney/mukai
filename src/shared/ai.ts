@@ -1,6 +1,7 @@
 import type { FileChangeSummary } from './fileChanges';
 import type { VmResources } from './computer';
 import type { BotAvatar } from './mascots';
+import type { TerminalSnapshot } from './terminal';
 
 export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
 export interface ChatGPTAccount {
@@ -122,6 +123,7 @@ export interface ChatActivity {
   attachmentId?: string;
   artifactId?: string;
   processSessionId?: string;
+  terminal?: TerminalSnapshot;
   serverUrls?: string[];
 }
 export interface FileArtifact {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChatActivity } from '../../shared/ai';
 import type { ChatServerOutput } from '../../shared/chatActivity';
 import type { Database, Row } from '../db/database';
+import type { TerminalSnapshot } from '../../shared/terminal';
 
 type SavedOutput = Omit<ChatServerOutput, 'status' | 'computer'>;
 function output(row: Row): SavedOutput {
@@ -36,6 +37,31 @@ export class ChatOutputRepository {
       value.messageId,
       value.sessionId,
       value.url,
+    );
+  }
+  saveTerminal(
+    conversationId: string,
+    messageId: string,
+    activityId: string,
+    snapshot: TerminalSnapshot,
+  ) {
+    const row = this.db.get(
+      "SELECT activity_json FROM messages WHERE id=? AND conversation_id=? AND role='assistant'",
+      messageId,
+      conversationId,
+    );
+    if (!row) return;
+    const activities = JSON.parse(String(row.activity_json || '[]')) as ChatActivity[];
+    const activity = activities.find(
+      (item) => item.id === activityId && item.processSessionId === snapshot.id,
+    );
+    if (!activity || JSON.stringify(activity.terminal) === JSON.stringify(snapshot)) return;
+    activity.terminal = snapshot;
+    this.db.run(
+      'UPDATE messages SET activity_json=? WHERE id=? AND conversation_id=?',
+      JSON.stringify(activities),
+      messageId,
+      conversationId,
     );
   }
   list(conversationId: string) {

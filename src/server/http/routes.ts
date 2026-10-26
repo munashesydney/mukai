@@ -640,6 +640,10 @@ export function createRoutes({
         }
         if (action === 'outputs' && method === 'GET')
           return send(response, await chatOutputs.list(id));
+        if (action === 'terminal' && method === 'GET') {
+          const sessionId = z.string().uuid().parse(url.searchParams.get('sessionId'));
+          return send(response, await chatOutputs.terminal(id, sessionId));
+        }
         if (action === 'activity-image' && method === 'POST') {
           const input = z
             .object({ messageId: z.string().min(1), activityId: z.string().min(1) })

@@ -8,6 +8,7 @@ import type { ProcessService } from './processService';
 import type { BrowserService } from './browserService';
 import type { ComputerManager } from '../computer/manager';
 import { ApiError } from '../config';
+import { terminalSnapshotSchema, type TerminalSnapshot } from '../../shared/terminal';
 
 const sessionSchema = z.object({
   id: z.string(),
@@ -31,6 +32,58 @@ export class ChatOutputService {
     const task = this.load(conversationId).finally(() => this.pending.delete(conversationId));
     this.pending.set(conversationId, task);
     return task;
+  }
+  async terminal(conversationId: string, sessionId: string): Promise<TerminalSnapshot> {
+    const conversation = this.conversations.require(conversationId);
+    const workspace = this.workspaces.require(conversation.workspaceId);
+    let reference:
+      | { snapshot?: TerminalSnapshot; botId: string; messageId: string; activityId: string }
+      | undefined;
+    for (const source of this.repository.sources(conversationId)) {
+      for (const activity of source.activities) {
+        if (activity.tool !== 'terminal') continue;
+        let saved = terminalSnapshotSchema.safeParse(activity.terminal);
+        if (!saved.success) {
+          try {
+            saved = terminalSnapshotSchema.safeParse(JSON.parse(activity.summary));
+          } catch {
+            /* Older previews can be truncated. */
+          }
+        }
+        if ((activity.processSessionId || (saved.success ? saved.data.id : '')) !== sessionId)
+          continue;
+        reference = {
+          snapshot: saved.success ? saved.data : reference?.snapshot,
+          botId: source.botId,
+          messageId: source.messageId,
+          activityId: activity.id,
+        };
+      }
+    }
+    if (!reference) throw new ApiError(404, 'Terminal session not found in this conversation.');
+    try {
+      const owner = { workspaceId: workspace.id, botId: reference.botId, conversationId };
+      let result: unknown;
+      if (workspace.computer === 'qemu') {
+        if (this.computers.status(workspace).state !== 'running')
+          throw new Error('Computer is stopped.');
+        result = await this.computers
+          .guest(workspace)
+          .request('process', { action: 'poll', sessionId }, owner, AbortSignal.timeout(2500));
+      } else result = this.processes.read(owner, sessionId);
+      const snapshot = terminalSnapshotSchema.parse(result);
+      if (snapshot.status !== 'running')
+        this.repository.saveTerminal(
+          conversationId,
+          reference.messageId,
+          reference.activityId,
+          snapshot,
+        );
+      return snapshot;
+    } catch {
+      if (reference.snapshot) return { ...reference.snapshot, unavailable: true };
+      throw new ApiError(404, 'Terminal session is no longer available.');
+    }
   }
   private async load(conversationId: string): Promise<ChatServerOutput[]> {
     const conversation = this.conversations.require(conversationId);

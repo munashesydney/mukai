@@ -939,7 +939,8 @@ async function main() {
             {
               id: 'fixture',
               name: 'Fixture',
-              contextWindowTokens: 32768,
+              // Exercise activity updates without unrelated context compaction.
+              contextWindowTokens: 65536,
               maxOutputTokens: 4096,
               supportsImages: false,
             },
@@ -998,6 +999,16 @@ async function main() {
         await evaluate('Boolean(document.querySelector(".response-chart-loading .is-spinning"))'),
       );
       assert.equal(await evaluate('document.querySelectorAll(".response-chart").length'), 3);
+      // A manual reopen during generation must not override the completion collapse.
+      await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===true');
+      await evaluate(
+        'Array.from(document.querySelectorAll(".response-work > summary")).at(-1).click()',
+      );
+      await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===false');
+      await evaluate(
+        'Array.from(document.querySelectorAll(".response-work > summary")).at(-1).click()',
+      );
+      await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===true');
       streamedResponse.end(
         'data: ' +
           JSON.stringify({
@@ -1015,6 +1026,11 @@ async function main() {
       );
       await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
       await wait('document.querySelectorAll(".response-chart").length===4');
+      await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===false');
+      await evaluate(
+        'Array.from(document.querySelectorAll(".response-work > summary")).at(-1).click()',
+      );
+      await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===true');
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
       // The same live tool run on a small screen must never open activity itself.
       liveRun = 1;

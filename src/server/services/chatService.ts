@@ -1208,6 +1208,26 @@ export class ChatService {
               state: 'pending',
             });
             const custom = this.tools.customRegistration(bot, name);
+            if (name === 'terminal') {
+              try {
+                this.tools.validateTerminalEnvironment(bot, input);
+              } catch (error) {
+                const summary =
+                  error instanceof Error ? error.message : 'Invalid terminal environment.';
+                onActivity({
+                  id: options.toolCallId,
+                  tool: 'terminal',
+                  action: 'run',
+                  path:
+                    typeof input === 'object' && input && 'command' in input
+                      ? String(input.command)
+                      : '',
+                  status: 'failed',
+                  summary,
+                });
+                return { ok: false, error: summary };
+              }
+            }
             if (
               custom &&
               custom.definition.permissionMode !== 'auto_approve' &&

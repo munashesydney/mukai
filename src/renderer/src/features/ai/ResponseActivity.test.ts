@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../../shared/ai';
 import { ResponseActivity } from './ResponseActivity';
+import type { ChatActivity } from '../../../../shared/ai';
 
 const message: ChatMessage = {
   id: 'response',
@@ -34,6 +35,92 @@ const message: ChatMessage = {
   ],
 };
 describe('Response activity disclosures', () => {
+  it('shows one live terminal card for a run and its later process polls, using process status instead of tool completion', () => {
+    const snapshot = {
+      id: '68db9142-e774-4bdf-bbdb-1b95219dd12a',
+      command: 'python report.py',
+      cwd: '/workspace',
+      shell: 'sh',
+      status: 'running' as const,
+      exitCode: null,
+      createdAt: message.createdAt,
+      output: 'Starting…',
+    };
+    const activity: ChatActivity[] = [
+      {
+        id: 'run',
+        tool: 'terminal',
+        action: 'run',
+        path: snapshot.command,
+        status: 'complete',
+        summary: '',
+        processSessionId: snapshot.id,
+        terminal: snapshot,
+      },
+      {
+        id: 'poll',
+        tool: 'terminal',
+        action: 'poll',
+        path: snapshot.id,
+        status: 'complete',
+        summary: '',
+        processSessionId: snapshot.id,
+        terminal: { ...snapshot, output: 'Latest output <script>bad()</script>' },
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          content: '',
+          activity,
+          parts: activity.map((item) => ({
+            id: item.id,
+            type: 'tool' as const,
+            activityId: item.id,
+          })),
+        },
+      }),
+    );
+    expect(html.match(/class="terminal-card"/g)).toHaveLength(1);
+    expect(html).toContain('Running python report.py');
+    expect(html).toContain('Latest output &lt;script&gt;');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('Success');
+    expect(html).toContain('aria-expanded="true"');
+  });
+  it('expands terminal failures and displays their actual exit code', () => {
+    const activity: ChatActivity = {
+      id: 'failed-run',
+      tool: 'terminal',
+      action: 'run',
+      path: 'python broken.py',
+      status: 'complete',
+      summary: '',
+      terminal: {
+        id: '68db9142-e774-4bdf-bbdb-1b95219dd12a',
+        command: 'python broken.py',
+        cwd: '/workspace',
+        status: 'exited',
+        exitCode: 2,
+        createdAt: message.createdAt,
+        output: 'Cannot open file.',
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          content: '',
+          activity: [activity],
+          parts: [{ id: 'tool', type: 'tool', activityId: activity.id }],
+        },
+      }),
+    );
+    expect(html).toContain('Failed · exit 2');
+    expect(html).toContain('Cannot open file.');
+    expect(html).toContain('aria-expanded="true"');
+  });
   it.each(['compacting', 'complete', 'failed', 'interrupted'] as const)(
     'shows an ordered %s context divider between activity and resumed work',
     (state) => {

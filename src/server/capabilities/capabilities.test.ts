@@ -762,6 +762,7 @@ describe('Custom capabilities', () => {
           supportsImages: false,
           isDefault: true,
           contextWindowTokens: 65536,
+          maxOutputTokens: 8192,
         })
       ).status,
     ).toBe(201);

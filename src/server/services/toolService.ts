@@ -37,6 +37,7 @@ import { webSearchDefinition } from '../tools/web-search/definition';
 import { tool } from 'ai';
 import { ComputerUseService } from './computerUseService';
 import type { InputCapabilities } from '../../shared/modelCapabilities';
+import { terminalDefinition } from '../tools/terminal/definition';
 
 export class ToolService {
   private notifications?: NotificationService;
@@ -106,6 +107,13 @@ export class ToolService {
       .find((item) => item.kind === 'tool' && item.definition.name === name);
     if (registration) this.access?.require(bot, 'custom:' + registration.id);
     return registration;
+  }
+  validateTerminalEnvironment(bot: Bot, input: unknown) {
+    this.access?.require(bot, 'terminal');
+    const names = terminalDefinition.inputSchema.parse(input).envFromSettings || [];
+    if (!names.length) return;
+    if (!this.capabilities) throw new Error('Workspace environment variables are unavailable.');
+    this.capabilities.environment.resolveForTerminal(bot.workspaceId, names);
   }
   prepareCustomConfirmation(
     bot: Bot,
@@ -306,6 +314,10 @@ export class ToolService {
       supportsAudio: capabilities.supportsAudio,
       supportsVideo: capabilities.supportsVideo,
       resultBytes,
+      resolveTerminalEnvironment: (names: string[]) => {
+        if (!this.capabilities) throw new Error('Workspace environment variables are unavailable.');
+        return this.capabilities.environment.resolveForTerminal(bot.workspaceId, names);
+      },
       readImage: this.conversationArtifacts
         ? async (input: { attachmentId?: string; artifactId?: string }) => {
             const source = await this.conversationArtifacts!.bytes(bot.workspaceId, input);
@@ -401,6 +413,7 @@ export class ToolService {
               supportsAudio: capabilities.supportsAudio,
               supportsVideo: capabilities.supportsVideo,
               resultBytes,
+              resolveTerminalEnvironment: runtime.resolveTerminalEnvironment,
               readImage: runtime.readImage,
               saveScreenshot: (image) =>
                 this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
