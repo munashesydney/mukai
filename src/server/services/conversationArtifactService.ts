@@ -18,18 +18,25 @@ export class ConversationArtifactService {
   hasAttachments(workspaceId: string) {
     return this.repository.hasAttachments(workspaceId);
   }
-  async reference(workspaceId: string, href: string, imageOnly: boolean, signal: AbortSignal) {
+  async reference(
+    workspaceId: string,
+    href: string,
+    imageOnly: boolean,
+    signal: AbortSignal,
+    maxBytes = 10 * 1024 * 1024,
+  ) {
     const reference = parseResponseReference(href);
     if (!reference) throw new ApiError(400, 'Invalid file reference.');
     const load = async () => {
       if (reference.type === 'file')
-        return this.artifacts.readPath(workspaceId, reference.path, signal);
+        return this.artifacts.readPath(workspaceId, reference.path, signal, maxBytes);
       const source = await this.bytes(
         workspaceId,
         reference.type === 'artifact'
           ? { artifactId: reference.id }
           : { attachmentId: reference.id },
         signal,
+        maxBytes,
       );
       return {
         name: source.metadata.name,
@@ -84,7 +91,12 @@ export class ConversationArtifactService {
       input.attachmentId || input.artifactId!,
     );
   }
-  async bytes(workspaceId: string, input: ArtifactReference, signal?: AbortSignal) {
+  async bytes(
+    workspaceId: string,
+    input: ArtifactReference,
+    signal?: AbortSignal,
+    maxBytes = 10 * 1024 * 1024,
+  ) {
     signal?.throwIfAborted();
     const metadata = this.metadata(workspaceId, input);
     if (metadata.source === 'attachment') {
@@ -99,7 +111,7 @@ export class ConversationArtifactService {
         throw error;
       }
     }
-    const { bytes } = await this.artifacts.read(metadata.id, signal);
+    const { bytes } = await this.artifacts.read(metadata.id, signal, maxBytes);
     return { metadata: this.metadata(workspaceId, input), bytes };
   }
   async image(workspaceId: string, input: ArtifactReference) {

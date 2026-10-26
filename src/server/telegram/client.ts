@@ -28,16 +28,31 @@ export class TelegramClient {
     private token: string,
     private request: typeof fetch = fetch,
   ) {}
-  async call<T>(method: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  async call<T>(
+    method: string,
+    input: Record<string, unknown> | FormData,
+    signal?: AbortSignal,
+  ): Promise<T> {
     if (!/^[a-zA-Z]+$/.test(method)) throw new Error('Invalid Telegram method.');
-    const controller = AbortSignal.timeout(method === 'getUpdates' ? 40000 : 15000);
+    const upload = input instanceof FormData;
+    const createsMessage = [
+      'sendMessage',
+      'sendPhoto',
+      'sendAudio',
+      'sendVideo',
+      'sendAnimation',
+      'sendDocument',
+    ].includes(method);
+    const controller = AbortSignal.timeout(
+      upload ? 120000 : method === 'getUpdates' ? 40000 : 15000,
+    );
     let response: Response;
     try {
       response = await this.request(`https://api.telegram.org/bot${this.token}/${method}`, {
         method: 'POST',
         redirect: 'error',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        ...(upload ? {} : { headers: { 'Content-Type': 'application/json' } }),
+        body: upload ? input : JSON.stringify(input),
         signal: signal ? AbortSignal.any([signal, controller]) : controller,
       });
       const reader = response.body?.getReader();
@@ -66,14 +81,14 @@ export class TelegramClient {
         throw new TelegramApiError(
           result.error_code || response.status,
           Number.isFinite(retry) ? Math.max(1, Math.min(retry, 86400)) : 0,
-          response.status >= 500 && method === 'sendMessage',
+          response.status >= 500 && createsMessage,
         );
       }
       return result.result as T;
     } catch (error) {
       if (error instanceof TelegramApiError) throw error;
       // Fetch errors can embed the token URL in their causes. Never propagate them.
-      throw new TelegramApiError(0, 0, method === 'sendMessage');
+      throw new TelegramApiError(0, 0, createsMessage);
     }
   }
   async identity(signal?: AbortSignal) {

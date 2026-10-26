@@ -152,16 +152,28 @@ export class WorkspaceFileService {
       );
     }
   }
-  async download(value: string, maxBytes = FILE_LIMIT) {
+  async download(value: string, maxBytes = FILE_LIMIT, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const target = await this.path(value);
-    const info = await lstat(target.absolute);
-    if (!info.isFile() || info.size > maxBytes)
-      throw new ApiError(400, 'This artifact is unavailable or exceeds the file limit.');
-    const bytes = await readFile(target.absolute, {
-      flag: constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
-    });
-    if (bytes.length > maxBytes) throw new ApiError(400, 'This artifact exceeds the file limit.');
-    return { name: basename(target.absolute), bytes };
+    const file = await open(target.absolute, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink > 1 || info.size > maxBytes)
+        throw new ApiError(400, 'This artifact is unavailable or exceeds the file limit.');
+      const bytes = Buffer.alloc(Math.min(info.size + 1, maxBytes + 1));
+      let length = 0;
+      while (length < bytes.length) {
+        signal?.throwIfAborted();
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      if (length > info.size || length > maxBytes)
+        throw new ApiError(400, 'This artifact exceeds the file limit.');
+      return { name: basename(target.absolute), bytes: bytes.subarray(0, length) };
+    } finally {
+      await file.close();
+    }
   }
   async inspect(value: string) {
     const target = await this.path(value);

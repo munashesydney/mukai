@@ -158,7 +158,12 @@ export class ArtifactService {
     }
     return { artifactId: id, reference: artifactHref(id), path, width, height };
   }
-  async readPath(workspaceId: string, path: string, signal: AbortSignal) {
+  async readPath(
+    workspaceId: string,
+    path: string,
+    signal: AbortSignal,
+    maxBytes = 10 * 1024 * 1024,
+  ) {
     const workspace = this.workspaces.require(workspaceId);
     let relativePath = path;
     if (workspace.computer === 'qemu') {
@@ -183,13 +188,14 @@ export class ArtifactService {
               .computers!.guest(workspace)
               .request(
                 'download',
-                { path: relativePath, maxBytes: 10 * 1024 * 1024 },
+                { path: relativePath, maxBytes: Math.min(maxBytes, 10 * 1024 * 1024) },
                 { workspaceId, botId: 'reference-preview', conversationId: 'reference-preview' },
                 signal,
               )) as { name: string; bytes: string })
           : await new WorkspaceFileService(workspace.folder!, this.dataDir).download(
               relativePath,
-              10 * 1024 * 1024,
+              maxBytes,
+              signal,
             );
       const bytes = typeof file.bytes === 'string' ? Buffer.from(file.bytes, 'base64') : file.bytes;
       return {
@@ -210,14 +216,14 @@ export class ArtifactService {
       throw error;
     }
   }
-  async read(id: string, signal = AbortSignal.timeout(45000)) {
+  async read(id: string, signal = AbortSignal.timeout(45000), maxBytes = 10 * 1024 * 1024) {
     signal.throwIfAborted();
     const artifact = this.artifacts.find(id);
     const bot = artifact && this.bots.find(artifact.botId);
     if (!artifact || !bot) throw new ApiError(404, 'Artifact not found.');
     const workspace = this.workspaces.require(bot.workspaceId);
     try {
-      const result = await this.readFile(artifact, workspace, signal);
+      const result = await this.readFile(artifact, workspace, signal, maxBytes);
       const metadata = fileMetadata(
         result.bytes.subarray(0, 4096),
         result.name,
@@ -310,7 +316,12 @@ export class ArtifactService {
     }
     return file;
   }
-  private async readFile(artifact: FileArtifact, workspace: Workspace, signal: AbortSignal) {
+  private async readFile(
+    artifact: FileArtifact,
+    workspace: Workspace,
+    signal: AbortSignal,
+    maxBytes: number,
+  ) {
     if (artifact.kind === 'image') {
       const file = await this.openScreenshot(artifact, workspace);
       try {
@@ -337,7 +348,7 @@ export class ArtifactService {
         .computers!.guest(workspace)
         .request(
           'download',
-          { path: artifact.path, maxBytes: 10 * 1024 * 1024 },
+          { path: artifact.path, maxBytes: Math.min(maxBytes, 10 * 1024 * 1024) },
           { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
           signal,
         )) as { name: string; bytes: string };
@@ -351,7 +362,8 @@ export class ArtifactService {
     return {
       ...(await new WorkspaceFileService(workspace.folder, this.dataDir).download(
         artifact.path,
-        10 * 1024 * 1024,
+        maxBytes,
+        signal,
       )),
       mediaType: 'text/plain; charset=utf-8',
     };

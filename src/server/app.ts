@@ -246,6 +246,7 @@ export function createApiServer(options: ApiOptions = {}) {
       conversations,
       chats,
       diagnostics,
+      conversationArtifacts,
       dir,
       options.telegramFetch,
     );

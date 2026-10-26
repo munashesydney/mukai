@@ -1,4 +1,5 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { parseResponseReference } from '../../shared/responseReferences';
 
 interface MarkdownNode {
   type: string;
@@ -49,6 +50,7 @@ export function telegramFormatting(
       ),
     );
     let text = prefix;
+    let fileReference = false;
     const entities: TelegramEntity[] = [...labels];
     const safeUrl = (url?: string) => !!url && /^(https?:\/\/|mailto:)/i.test(url);
     const appendChildren = (node: MarkdownNode, separator = '', depth = 0) => {
@@ -94,12 +96,14 @@ export function telegramFormatting(
         case 'link':
         case 'linkReference':
           if (safeUrl(url)) type = 'text_link';
+          else if (url && parseResponseReference(url)) fileReference = true;
           appendChildren(node, '', depth);
           break;
         case 'image':
         case 'imageReference':
           text += node.alt || 'Image';
           if (safeUrl(url)) type = 'text_link';
+          else if (url && parseResponseReference(url)) fileReference = true;
           break;
         case 'list':
           node.children?.forEach((child, index) => {
@@ -168,7 +172,7 @@ export function telegramFormatting(
       )
       .sort((a, b) => a.offset - b.offset || b.length - a.length);
     if (
-      supported.length <= labels.length ||
+      (supported.length <= labels.length && !fileReference) ||
       supported.length > 100 ||
       text.length > 4096 ||
       !text.trim()

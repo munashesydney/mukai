@@ -441,6 +441,7 @@ export const migrations = [
      SELECT bot_id,'media',enabled FROM bot_tool_assignments WHERE tool_id='image'
      ON CONFLICT(bot_id,tool_id) DO UPDATE SET enabled=MIN(bot_tool_assignments.enabled,excluded.enabled);
    DELETE FROM bot_tool_assignments WHERE tool_id='image';`,
+  `ALTER TABLE telegram_outbox ADD COLUMN media_json TEXT;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

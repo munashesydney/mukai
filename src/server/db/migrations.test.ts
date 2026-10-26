@@ -18,6 +18,31 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('adds Telegram media delivery without changing queued text replies', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    database.run(
+      "INSERT INTO telegram_connections(id,encrypted_token,bot_json) VALUES('connection','encrypted','{}')",
+    );
+    database.run(
+      "INSERT INTO telegram_outbox(id,connection_id,chat_id,text,created_at) VALUES('legacy','connection',42,'Queued answer',1)",
+    );
+    database.db.exec('ALTER TABLE telegram_outbox DROP COLUMN media_json');
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ADD COLUMN media_json')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get("SELECT text,media_json,state FROM telegram_outbox WHERE id='legacy'"),
+      ).toEqual({ text: 'Queued answer', media_json: null, state: 'pending' });
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('migrates image assignments into Media while preserving denials and saved activity', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

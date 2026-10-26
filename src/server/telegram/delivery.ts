@@ -1,7 +1,8 @@
 import { TelegramApiError, type TelegramClient } from './client';
 import type { TelegramService } from '../services/telegramService';
-import type { TelegramJob } from './types';
+import type { TelegramDelivery, TelegramJob, TelegramMediaFile } from './types';
 import { telegramFormatting } from './formatting';
+import { telegramMediaField, telegramMediaLabel, telegramMediaMethod } from './media';
 
 interface Draft {
   job: TelegramJob;
@@ -93,6 +94,28 @@ export class TelegramDeliveryQueue {
         return;
       }
       if (jobs.splitPending(delivery)) return;
+      let file: TelegramMediaFile | undefined;
+      if (delivery.media) {
+        try {
+          file = await this.service.loadMedia(delivery, signal);
+        } catch {
+          // A read/download failure happened before a Telegram send, so it cannot be uncertain.
+          if (this.stopped) return;
+          if (!this.service.deliveryAllowed(delivery)) {
+            jobs.deliveryState(delivery.id, 'cancelled');
+            return;
+          }
+          jobs.deliveryState(delivery.id, 'failed');
+          this.mediaNotice(delivery);
+          return;
+        }
+        // Access may have been revoked while bytes were being loaded.
+        if (this.stopped) return;
+        if (!this.service.deliveryAllowed(delivery)) {
+          jobs.deliveryState(delivery.id, 'cancelled');
+          return;
+        }
+      }
       jobs.sending(delivery.id);
       this.nextAt = Date.now() + 1100;
       try {
@@ -124,14 +147,17 @@ export class TelegramDeliveryQueue {
             };
         let result: { message_id: number } | true;
         try {
-          result = await this.client.call(
-            delivery.editMessageId ? 'editMessageReplyMarkup' : 'sendMessage',
-            payload,
-            signal,
-          );
+          result = file
+            ? await this.sendMedia(delivery, file, signal)
+            : await this.client.call(
+                delivery.editMessageId ? 'editMessageReplyMarkup' : 'sendMessage',
+                payload,
+                signal,
+              );
         } catch (error) {
           // A confirmed rejection is safe to retry as plain text; uncertain sends are never replayed.
           if (
+            file ||
             delivery.editMessageId ||
             !formatted.entities ||
             !(error instanceof TelegramApiError) ||
@@ -172,7 +198,11 @@ export class TelegramDeliveryQueue {
         else if (failure.code === 429 && delivery.attempts < 10) {
           this.nextAt = Date.now() + Math.max(1000, failure.retryAfter * 1000);
           jobs.deliveryState(delivery.id, 'pending', this.nextAt);
-        } else jobs.deliveryState(delivery.id, 'failed');
+        } else {
+          const notify = delivery.media && !this.stopped && this.service.deliveryAllowed(delivery);
+          jobs.deliveryState(delivery.id, 'failed');
+          if (notify) this.mediaNotice(delivery);
+        }
         if ([401, 403, 409].includes(failure.code)) this.blocked = true;
         if (!this.stopped)
           this.service.reportDeliveryError(
@@ -224,6 +254,65 @@ export class TelegramDeliveryQueue {
       this.drafts.delete(id);
       this.drafts.set(id, draft);
       break;
+    }
+  }
+  private mediaNotice(delivery: TelegramDelivery) {
+    this.service.jobs.queue(
+      {
+        connectionId: delivery.connectionId,
+        chatId: delivery.chatId,
+        workspaceId: delivery.workspaceId,
+        botId: delivery.botId,
+        workspaceEvent: delivery.workspaceEvent,
+        replyTo: delivery.replyTo,
+        text: `Could not deliver “${telegramMediaLabel(delivery.media!.label, 180)}”. The file may be unavailable, too large, or unsupported by Telegram. Open Mukai or use the original public link to access it.`,
+      },
+      `${delivery.id}:notice`,
+    );
+  }
+  private async sendMedia(
+    delivery: TelegramDelivery,
+    file: TelegramMediaFile,
+    signal: AbortSignal,
+  ) {
+    const method = telegramMediaMethod(file);
+    const send = (target: typeof method) => {
+      const form = new FormData();
+      form.set('chat_id', String(delivery.chatId));
+      form.set(
+        'caption',
+        this.service.messageText(
+          telegramMediaLabel(delivery.media!.label),
+          delivery.workspaceId,
+          delivery.botId,
+        ),
+      );
+      if (delivery.replyTo)
+        form.set(
+          'reply_parameters',
+          JSON.stringify({ message_id: delivery.replyTo, allow_sending_without_reply: true }),
+        );
+      const name = telegramMediaLabel(file.name.split(/[\\/]/).at(-1) || 'file', 180);
+      form.set(
+        telegramMediaField[target],
+        new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }),
+        name,
+      );
+      return this.client.call<{ message_id: number }>(target, form, signal);
+    };
+    try {
+      return await send(method);
+    } catch (error) {
+      // A confirmed native-player rejection can fall back to the original downloadable file.
+      if (
+        method === 'sendDocument' ||
+        !(error instanceof TelegramApiError) ||
+        error.code !== 400 ||
+        error.uncertain
+      )
+        throw error;
+      if (this.stopped || !this.service.deliveryAllowed(delivery)) throw error;
+      return send('sendDocument');
     }
   }
 }
