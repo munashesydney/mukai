@@ -5,7 +5,7 @@ import { TelegramLogo } from '../ui/TelegramLogo';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
-  { id: 'notifications', label: 'Messages', icon: Bell },
+  { id: 'notifications', label: 'Updates', icon: Bell },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
   { id: 'tools', label: 'Tools', icon: Puzzle },
