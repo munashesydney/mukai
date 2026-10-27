@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
 import { seedTestWorkspace } from './testFixtures';
-import type { Bot, BotInput, ChatMessage } from '../shared/ai';
+import type { Bot, BotInput, ChatMessage, ProviderSettings } from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
 import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
@@ -18,11 +18,13 @@ import type { ApprovalState } from '../shared/approvals';
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
   model: string;
+  stream?: boolean;
   tools: {
     function: { name: string; parameters: { properties: { action?: { enum?: string[] } } } };
   }[];
   messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
+let requestPaths: string[];
 let mode:
   | 'normal'
   | 'slow'
@@ -37,7 +39,9 @@ let mode:
   | 'delegate-empty-always'
   | 'delegate-empty-restart'
   | 'web-search'
-  | 'web-revoke';
+  | 'web-revoke'
+  | 'probe-fail'
+  | 'probe-slow';
 let delegatedId: string;
 let sendMode: 'fire_and_forget' | 'wait';
 let nestedId: string;
@@ -76,6 +80,38 @@ async function provider() {
     apiKey: '',
   });
 }
+async function modelProvider(name: string, path: string, isDefault = true) {
+  const saved = await request<ProviderSettings>('/providers', 'POST', {
+    name,
+    kind: 'compatible',
+    baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}${path}/v1`,
+    defaultModel: 'text-default',
+    supportsImages: false,
+    isDefault,
+    apiKey: 'catalog-test-secret',
+    models: [
+      {
+        id: 'text-default',
+        name: 'Text',
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+        supportsImages: false,
+      },
+      {
+        id: 'media-model',
+        name: 'Media',
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        reasoningEffort: 'provider-default',
+      },
+    ],
+  });
+  expect(saved.status).toBe(201);
+  return saved.data;
+}
 async function chat(target: Bot) {
   const response = await fetch(api.url + `/bots/${target.id}/chat`, {
     method: 'POST',
@@ -88,6 +124,7 @@ async function chat(target: Bot) {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'mukai-bot-architecture-'));
   calls = [];
+  requestPaths = [];
   mode = 'normal';
   delegatedId = '';
   sendMode = 'wait';
@@ -103,6 +140,31 @@ beforeEach(async () => {
     for await (const chunk of req) body += chunk;
     const call = JSON.parse(body) as (typeof calls)[number];
     calls.push(call);
+    requestPaths.push(req.url || '');
+    if (!call.stream) {
+      if (mode === 'probe-slow') return;
+      if (mode === 'probe-fail') {
+        res.writeHead(401, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({
+            error: { message: 'Invalid test API key', type: 'authentication_error' },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({
+          id: 'probe',
+          object: 'chat.completion',
+          created: 1,
+          model: call.model,
+          choices: [
+            { index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' },
+          ],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        }),
+      );
+      return;
+    }
     const child = call.messages.some((item) =>
       item.content?.includes('This message is coming from another bot'),
     );
@@ -396,6 +458,7 @@ describe('Bot architecture', () => {
   it('assigns unused random mascots to AI-created bots without exposing mascots to the AI', async () => {
     const mascots = botAvatarIds.filter((avatar) => avatar !== 'mukai-logo');
     const main = (await request<Bot>('/bots', 'POST', { ...input(), avatar: mascots[0] })).data;
+    await provider();
     const context = {
       bot: main,
       management: api.botManagement,
@@ -537,6 +600,7 @@ describe('Bot architecture', () => {
       expect((await request('/bots', 'POST', { ...input('Ada'), role })).status).toBe(400);
     }
     const main = await bot();
+    await provider();
     expect(main.role).toBe('Main Bot/Orchestrator');
     expect(main).not.toHaveProperty('description');
     const changed = await request<Bot>(`/bots/${main.id}`, 'PUT', {
@@ -570,14 +634,520 @@ describe('Bot architecture', () => {
     expect(api.botManagement.list(main)).toContainEqual(
       expect.objectContaining({ id: child.id, role: 'Code architect' }),
     );
-    await provider();
     await chat(main);
     await chat(child);
-    expect(calls[0].messages[0].content).toContain('human or bot-sounding name');
-    expect(calls[1].messages[0].content).toContain('"role":"Code architect"');
+    const inference = calls.filter((call) => call.stream);
+    expect(inference[0].messages[0].content).toContain('human or bot-sounding name');
+    expect(inference[1].messages[0].content).toContain('"role":"Code architect"');
     expect(api.store.all('PRAGMA table_info(bots)').map((row) => row.name)).not.toContain(
       'description',
     );
+  });
+  it('reports effective model capabilities in bot tool results without saving inherited values', async () => {
+    const main = await bot();
+    const models = [
+      {
+        id: 'media-model',
+        name: 'Media model',
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+        reasoningEffort: 'provider-default',
+      },
+      {
+        id: 'text-model',
+        name: 'Text model',
+        supportsImages: false,
+        supportsAudio: false,
+        supportsVideo: false,
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+      },
+    ];
+    const saved = await request<{ id: string }>('/providers', 'POST', {
+      name: 'Media fixture',
+      kind: 'compatible',
+      baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}/v1`,
+      defaultModel: 'media-model',
+      supportsImages: true,
+      isDefault: true,
+      apiKey: 'test-only-provider-secret',
+      models,
+    });
+    expect(saved.status).toBe(201);
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const invoke = (value: Parameters<typeof executeBotManagement>[0]) =>
+      executeBotManagement(value, context, randomUUID());
+    const effective = {
+      providerId: saved.data.id,
+      providerName: 'Media fixture',
+      model: 'media-model',
+      supportsText: true,
+      supportsImages: true,
+      supportsAudio: true,
+      supportsVideo: true,
+      inputCapabilities: 'Text, images, audio, video',
+      contextWindowTokens: 512000,
+      maxOutputTokens: 48000,
+      reasoningEffort: 'provider-default',
+    };
+    expect(await invoke({ action: 'get', botId: main.id })).toMatchObject({
+      ok: true,
+      result: effective,
+    });
+    const created = await invoke({
+      action: 'create',
+      name: 'Ada',
+      role: 'Reviewer',
+      instructions: 'Review the task.',
+    });
+    expect(created).toMatchObject({ ok: true, result: effective });
+    const child = created.result as { id: string };
+    expect(
+      await invoke({ action: 'update', botId: child.id, role: 'Media reviewer' }),
+    ).toMatchObject({
+      ok: true,
+      result: { ...effective, role: 'Media reviewer' },
+    });
+    // Tool projections must not turn inherited defaults into saved overrides on update.
+    expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === child.id)).toMatchObject({
+      providerId: null,
+      model: null,
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+      reasoningEffort: null,
+    });
+    expect(
+      (
+        await request(`/bots/${child.id}/model`, 'PUT', {
+          providerId: saved.data.id,
+          model: 'text-model',
+          supportsImages: null,
+        })
+      ).status,
+    ).toBe(200);
+    const listed = await invoke({ action: 'list' });
+    expect(listed).toMatchObject({
+      ok: true,
+      result: expect.arrayContaining([
+        expect.objectContaining({ id: main.id, ...effective }),
+        expect.objectContaining({
+          id: child.id,
+          model: 'text-model',
+          supportsImages: false,
+          supportsAudio: false,
+          supportsVideo: false,
+          inputCapabilities: 'Text only',
+          contextWindowTokens: 64000,
+          maxOutputTokens: 4096,
+        }),
+      ]),
+    });
+    const inspected = await invoke({ action: 'get', botId: child.id });
+    expect(inspected).toMatchObject({ ok: true, result: { supportsImages: false } });
+    expect(inspected.result).not.toHaveProperty('avatar');
+    expect(JSON.stringify([listed, inspected, created])).not.toMatch(
+      /test-only-provider-secret|encryptedKey|baseUrl/,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(calls[0].stream).not.toBe(true);
+  });
+  it('keeps bot inspection available without a configured provider and labels capabilities unknown', async () => {
+    const main = await bot();
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const inspected = await executeBotManagement(
+      { action: 'get', botId: main.id },
+      context,
+      randomUUID(),
+    );
+    expect(inspected).toMatchObject({
+      ok: true,
+      result: {
+        model: 'Not configured',
+        providerName: 'Not configured',
+        supportsImages: 'unknown',
+        supportsAudio: 'unknown',
+        supportsVideo: 'unknown',
+        contextWindowTokens: 'unknown',
+        maxOutputTokens: 'unknown',
+      },
+    });
+    expect(api.botManagement.list(main)).toContainEqual(
+      expect.objectContaining({ id: main.id, supportsImages: 'unknown' }),
+    );
+    expect(
+      await executeBotManagement(
+        { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.' },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Configure a provider') });
+    expect((await request<Bot[]>('/bots')).data).toHaveLength(1);
+  });
+  it('discovers saved models read-only with distinct selection IDs for duplicate model names', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    await modelProvider('First provider', '/first');
+    await modelProvider('Second provider', '/second', false);
+    const before = (await request<ProviderSettings[]>('/providers')).data;
+    const context = {
+      bot: child,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const listed = await executeBotManagement({ action: 'list_models' }, context, randomUUID());
+    expect(listed.ok).toBe(true);
+    const entries = listed.result as { modelId: string; model: string; providerName: string }[];
+    expect(entries).toHaveLength(4);
+    expect(new Set(entries.map((model) => model.modelId)).size).toBe(4);
+    const duplicates = entries.filter((model) => model.model === 'media-model');
+    expect(duplicates).toHaveLength(2);
+    const inspected = await executeBotManagement(
+      { action: 'get_model', modelId: duplicates[0].modelId },
+      context,
+      randomUUID(),
+    );
+    expect(inspected).toMatchObject({
+      ok: true,
+      result: {
+        modelId: duplicates[0].modelId,
+        model: 'media-model',
+        inputCapabilities: 'Text, images, audio, video',
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+      },
+    });
+    expect(api.botManagement.listModels(main)).toEqual(entries);
+    expect((await request<ProviderSettings[]>('/providers')).data).toEqual(before);
+    expect(calls).toHaveLength(0);
+    expect(JSON.stringify(listed)).not.toMatch(/catalog-test-secret|encryptedKey|baseUrl/);
+    expect(
+      await executeBotManagement(
+        { action: 'get_model', modelId: 'media-model' },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('list_models') });
+    expect(botManagementDefinition.inputSchema.safeParse({ action: 'get_model' }).success).toBe(
+      false,
+    );
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'update',
+        botId: main.id,
+        modelId: duplicates[0].modelId,
+      }).success,
+    ).toBe(true);
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'list',
+        modelId: duplicates[0].modelId,
+      }).success,
+    ).toBe(false);
+  });
+  it('tests the selected provider and nondefault model before creating a bot that uses them', async () => {
+    const main = await bot();
+    await modelProvider('First provider', '/first');
+    const selectedProvider = await modelProvider('Second provider', '/second', false);
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.providerName === 'Second provider' && model.model === 'media-model')!;
+    const result = await executeBotManagement(
+      {
+        action: 'create',
+        name: 'Vision reviewer',
+        role: 'Reviewer',
+        instructions: 'Review images.',
+        modelId: selected.modelId,
+      },
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { providerId: selectedProvider.id, model: 'media-model', supportsImages: true },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ model: 'media-model' });
+    expect(calls[0].stream).not.toBe(true);
+    expect(requestPaths).toEqual(['/second/v1/chat/completions']);
+    const child = (await request<Bot[]>('/bots')).data.find(
+      (bot) => bot.id === (result.result as { id: string }).id,
+    )!;
+    expect(child).toMatchObject({
+      providerId: selectedProvider.id,
+      model: 'media-model',
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+    });
+    await chat(child);
+    expect(calls.at(-1)).toMatchObject({ model: 'media-model', stream: true });
+    expect(requestPaths.at(-1)).toBe('/second/v1/chat/completions');
+    expect(
+      (await request<ProviderSettings[]>('/providers')).data.find(
+        (provider) => provider.id === selectedProvider.id,
+      )?.defaultModel,
+    ).toBe('text-default');
+  });
+  it('changes an existing bot’s model after testing it and continues its saved conversation', async () => {
+    const main = await bot();
+    const oldProvider = await modelProvider('Old provider', '/old');
+    const nextProvider = await modelProvider('Next provider', '/next', false);
+    const child = (
+      await request<Bot>('/bots', 'POST', {
+        ...input('Iris'),
+        providerId: oldProvider.id,
+        model: 'text-default',
+        supportsImages: false,
+        contextWindowTokens: 8192,
+        maxOutputTokens: 512,
+        reasoningEffort: 'provider-default',
+      })
+    ).data;
+    await chat(child);
+    const history = (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data;
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.providerName === 'Next provider' && model.model === 'media-model')!;
+    const changed = await executeBotManagement(
+      botManagementDefinition.inputSchema.parse({
+        action: 'update',
+        botId: child.id,
+        modelId: selected.modelId,
+        role: 'Image reviewer',
+      }),
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(changed).toMatchObject({
+      ok: true,
+      result: {
+        id: child.id,
+        name: 'Iris',
+        role: 'Image reviewer',
+        createdAt: child.createdAt,
+        createdBy: child.createdBy,
+        providerId: nextProvider.id,
+        model: 'media-model',
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ model: 'media-model' });
+    expect(calls[1].stream).not.toBe(true);
+    expect(requestPaths[1]).toBe('/next/v1/chat/completions');
+    const saved = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === child.id)!;
+    expect(saved).toMatchObject({
+      avatar: child.avatar,
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+      reasoningEffort: null,
+    });
+    expect((await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data).toEqual(history);
+    await chat(child);
+    expect(calls.at(-1)).toMatchObject({ model: 'media-model', stream: true });
+    expect(calls.at(-1)!.messages).toContainEqual(
+      expect.objectContaining({ role: 'assistant', content: history[1].content }),
+    );
+    expect(
+      (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data.slice(0, history.length),
+    ).toEqual(history);
+  });
+  it('leaves all bot settings and assignments intact when a model update fails', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    const child = await api.botManagement.create(main, input('Ada'), ['browser']);
+    const before = api.botManagement.get(main, child.id);
+    const assignments = api.access.list('default');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const update = (modelId: string) =>
+      executeBotManagement(
+        {
+          action: 'update',
+          botId: child.id,
+          modelId,
+          name: 'Should not save',
+          instructions: 'Should not save',
+          toolIds: [],
+        },
+        context,
+        randomUUID(),
+      );
+    expect(await update('missing-selection')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('list_models'),
+    });
+    expect(calls).toHaveLength(0);
+    mode = 'probe-fail';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    expect(await update(selected.modelId)).toMatchObject({ ok: false, error: expect.any(String) });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    expect(api.access.list('default')).toEqual(assignments);
+  });
+  it('cancels model updates without saving and refuses to change a busy bot', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    await modelProvider('Models', '/models');
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    const before = api.botManagement.get(main, child.id);
+    mode = 'probe-slow';
+    const controller = new AbortController();
+    const pending = executeBotManagement(
+      { action: 'update', botId: child.id, modelId: selected.modelId, role: 'Should not save' },
+      { bot: main, management: api.botManagement, signal: controller.signal, onActivity() {} },
+      randomUUID(),
+    );
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    controller.abort();
+    await rejected;
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    mode = 'slow';
+    const running = chat(child);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(
+      await executeBotManagement(
+        { action: 'update', botId: child.id, modelId: selected.modelId },
+        {
+          bot: main,
+          management: api.botManagement,
+          signal: new AbortController().signal,
+          onActivity() {},
+        },
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Stop this bot') });
+    expect(calls).toHaveLength(2);
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    await request(`/bots/${child.id}/stop`, 'POST');
+    await running;
+  });
+  it('uses the creator’s current model when modelId is omitted, even with a stale caller snapshot', async () => {
+    const main = await bot();
+    const saved = await modelProvider('Selected provider', '/selected');
+    expect(
+      (
+        await request(`/bots/${main.id}/model`, 'PUT', {
+          providerId: saved.id,
+          model: 'media-model',
+          supportsImages: null,
+        })
+      ).status,
+    ).toBe(200);
+    const result = await executeBotManagement(
+      { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review images.' },
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { providerId: saved.id, model: 'media-model' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(botManagementDefinition.description).toContain(
+      'Creating without modelId defaults to the creator’s current model.',
+    );
+  });
+  it('returns model-selection and connection errors without creating a bot', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const create = (modelId?: string) =>
+      executeBotManagement(
+        { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.', modelId },
+        context,
+        randomUUID(),
+      );
+    expect(await create('not-a-selection')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('list_models'),
+    });
+    expect(calls).toHaveLength(0);
+    mode = 'probe-fail';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    const failed = await create(selected.modelId);
+    expect(failed).toMatchObject({ ok: false, error: expect.any(String) });
+    expect(JSON.stringify(failed)).not.toContain('catalog-test-secret');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.id)).toEqual([main.id]);
+    expect(api.store.all('SELECT * FROM bot_tool_assignments')).toHaveLength(0);
+  });
+  it('does not save a bot when its connection test is cancelled', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    mode = 'probe-slow';
+    const controller = new AbortController();
+    const pending = executeBotManagement(
+      { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.' },
+      { bot: main, management: api.botManagement, signal: controller.signal, onActivity() {} },
+      randomUUID(),
+    );
+    // Attach the rejection handler before aborting the provider request.
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect((await request<Bot[]>('/bots')).data).toHaveLength(1);
+    controller.abort();
+    await rejected;
+    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.id)).toEqual([main.id]);
   });
   it('uses the bot’s selected model on actual inference, resets old model limits, and preserves its other fields', async () => {
     const main = await bot(),
@@ -697,11 +1267,21 @@ describe('Bot architecture', () => {
     expect(
       calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['create', 'update', 'delete', 'list', 'get', 'send_message', 'get_last_message']);
+    ).toEqual([
+      'create',
+      'update',
+      'delete',
+      'list',
+      'get',
+      'list_models',
+      'get_model',
+      'send_message',
+      'get_last_message',
+    ]);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'send_message', 'get_last_message']);
+    ).toEqual(['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message']);
     for (const target of [main, child])
       expect(
         (
@@ -848,6 +1428,7 @@ describe('Bot architecture', () => {
   it('reserves creation and updates for the main bot, bounds grants, and requires Bots access', async () => {
     const main = await bot(),
       peer = await bot('Peer');
+    await provider();
     expect(() => api.access.set('default', peer.id, 'manage_bot', false)).toThrow(
       'Bots access is required',
     );
@@ -922,7 +1503,7 @@ describe('Bot architecture', () => {
     expect(
       childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'get_last_message']);
+    ).toEqual(['list', 'get', 'list_models', 'get_model', 'get_last_message']);
     expect(JSON.stringify(childCall.messages)).toContain(
       'intentionally unavailable to prevent delegation loops',
     );
@@ -1438,6 +2019,8 @@ describe('Bot architecture', () => {
     expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
       'list',
       'get',
+      'list_models',
+      'get_model',
       'get_last_message',
     ]);
     const result = await executeBotManagement(
@@ -1459,6 +2042,8 @@ describe('Bot architecture', () => {
     expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
       'list',
       'get',
+      'list_models',
+      'get_model',
       'get_last_message',
     ]);
     expect(api.botManagement.actionsFor(main, reply.id)).toContain('send_message');

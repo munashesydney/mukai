@@ -26,10 +26,20 @@ export class BotManagementService {
   actionsFor(caller: Bot, messageId?: string): BotAction[] {
     const current = this.bots.require(caller.id);
     if (current.isMain)
-      return ['create', 'update', 'delete', 'list', 'get', 'send_message', 'get_last_message'];
+      return [
+        'create',
+        'update',
+        'delete',
+        'list',
+        'get',
+        'list_models',
+        'get_model',
+        'send_message',
+        'get_last_message',
+      ];
     return messageId && this.chats.delegatedMessage(messageId)
-      ? ['list', 'get', 'get_last_message']
-      : ['list', 'get', 'send_message', 'get_last_message'];
+      ? ['list', 'get', 'list_models', 'get_model', 'get_last_message']
+      : ['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message'];
   }
   requireAction(caller: Bot, action: BotAction, messageId?: string) {
     this.access.require(caller, 'manage_bot');
@@ -48,6 +58,17 @@ export class BotManagementService {
       throw new ApiError(403, 'Bot belongs to another workspace.');
     return { ...target, hierarchyLevel: this.level(target) };
   }
+  /** Project effective values only at the tool boundary; keep saved overrides untouched. */
+  describe(bot: Bot) {
+    const configuration = Object.fromEntries(
+      Object.entries(bot).filter(([key]) => key !== 'avatar'),
+    );
+    return {
+      ...configuration,
+      ...this.providers.describeModel(bot),
+      hierarchyLevel: this.level(bot),
+    };
+  }
   remove(caller: Bot, botId: string) {
     this.requireAction(caller, 'delete');
     const target = this.get(caller, botId);
@@ -61,19 +82,54 @@ export class BotManagementService {
     botId: string,
     patch: Pick<
       z.infer<typeof botManagementDefinition.inputSchema>,
-      'name' | 'role' | 'instructions' | 'toolIds'
+      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId'
     >,
+    signal?: AbortSignal,
   ) {
     this.requireAction(caller, 'update');
-    const target = this.get(caller, botId);
+    let target = this.get(caller, botId);
     if (Object.values(patch).every((value) => value === undefined))
       throw new ApiError(400, 'Update requires at least one field.');
     this.access.validateSelection(caller, patch.toolIds);
-    const { toolIds, ...fields } = patch;
+    const { toolIds, modelId, ...fields } = patch;
+    const selection = modelId ? this.providers.resolveModelSelection(modelId) : undefined;
+    if (modelId && selection) {
+      if (this.chats.busy(botId) || this.reserved.has(botId))
+        throw new ApiError(409, 'Stop this bot’s response before editing it.');
+      const checkSignal = signal ?? new AbortController().signal;
+      await this.providers.testBotModel({ ...selection, supportsImages: null }, checkSignal);
+      await this.providers.validateModel(selection.providerId, selection.model);
+      checkSignal.throwIfAborted();
+      this.providers.resolveModelSelection(modelId);
+      // Re-read after the connection test so unrelated edits are not overwritten.
+      this.requireAction(caller, 'update');
+      target = this.get(caller, botId);
+      this.access.validateSelection(caller, toolIds);
+      if (this.chats.busy(botId) || this.reserved.has(botId))
+        throw new ApiError(409, 'Stop this bot’s response before editing it.');
+    }
     const defined = Object.fromEntries(
       Object.entries(fields).filter(([, value]) => value !== undefined),
     );
-    const updated = this.bots.save({ ...target, ...defined }, target.id);
+    const updated = this.bots.save(
+      {
+        ...target,
+        ...defined,
+        ...(selection
+          ? {
+              ...selection,
+              supportsImages: null,
+              contextWindowTokens: null,
+              maxOutputTokens: null,
+              reasoningEffort:
+                target.providerId === selection.providerId && target.model === selection.model
+                  ? (target.reasoningEffort ?? null)
+                  : null,
+            }
+          : {}),
+      },
+      target.id,
+    );
     if (toolIds !== undefined) this.access.initializeChild(caller, updated, toolIds);
     return updated;
   }
@@ -86,12 +142,65 @@ export class BotManagementService {
       createdBy: bot.createdBy,
       isMain: bot.isMain,
       hierarchyLevel: this.level(bot),
+      ...this.providers.describeModel(bot),
     }));
   }
-  async create(caller: Bot, input: Omit<BotInput, 'avatar'>, toolIds?: string[]) {
+  listModels(caller: Bot) {
+    this.requireAction(caller, 'list_models');
+    return this.providers.listConfiguredModels();
+  }
+  getModel(caller: Bot, modelId: string) {
+    this.requireAction(caller, 'get_model');
+    return this.providers.getConfiguredModel(modelId);
+  }
+  async createFromTool(
+    caller: Bot,
+    input: Pick<
+      z.infer<typeof botManagementDefinition.inputSchema>,
+      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId'
+    >,
+    signal: AbortSignal,
+  ) {
+    this.requireAction(caller, 'create');
+    this.access.validateSelection(caller, input.toolIds);
+    if (!input.name || !input.role?.trim() || !input.instructions)
+      throw new ApiError(400, 'Create requires name, role, and instructions.');
+    const current = this.bots.require(caller.id);
+    const selection = input.modelId
+      ? {
+          ...this.providers.resolveModelSelection(input.modelId),
+          supportsImages: null,
+          contextWindowTokens: null,
+          maxOutputTokens: null,
+        }
+      : {
+          providerId: current.providerId,
+          model: current.model,
+          supportsImages: current.supportsImages,
+          contextWindowTokens: current.contextWindowTokens,
+          maxOutputTokens: current.maxOutputTokens,
+        };
+    const configuration = {
+      name: input.name,
+      role: input.role.trim(),
+      instructions: input.instructions,
+      ...selection,
+    };
+    await this.providers.testBotModel(configuration, signal);
+    if (input.modelId) this.providers.resolveModelSelection(input.modelId);
+    return this.create(current, configuration, input.toolIds, signal);
+  }
+  async create(
+    caller: Bot,
+    input: Omit<BotInput, 'avatar'>,
+    toolIds?: string[],
+    signal?: AbortSignal,
+  ) {
     this.requireAction(caller, 'create');
     this.access.validateSelection(caller, toolIds);
+    signal?.throwIfAborted();
     await this.providers.validateModel(input.providerId, input.model);
+    signal?.throwIfAborted();
     return this.bots.save(
       { ...input, avatar: undefined },
       undefined,

@@ -17,7 +17,7 @@ export async function executeBotManagement(
     id: callId,
     tool: 'manage_bot',
     action: input.action,
-    path: input.botId || input.name || '',
+    path: input.botId || input.modelId || input.name || '',
     status: 'running',
     summary: input.action === 'send_message' ? 'Sending a message to a bot…' : 'Managing bots…',
   };
@@ -26,7 +26,11 @@ export async function executeBotManagement(
     context.signal.throwIfAborted();
     context.management.requireAction(context.bot, input.action, context.messageId);
     let result;
-    if (input.action === 'list') result = context.management.list(context.bot);
+    if (input.action === 'list_models') result = context.management.listModels(context.bot);
+    else if (input.action === 'get_model') {
+      if (!input.modelId) throw new Error('get_model requires modelId from list_models.');
+      result = context.management.getModel(context.bot, input.modelId);
+    } else if (input.action === 'list') result = context.management.list(context.bot);
     else if (input.action === 'get') {
       if (!input.botId) throw new Error('get requires botId.');
       result = context.management.get(context.bot, input.botId);
@@ -35,30 +39,22 @@ export async function executeBotManagement(
       result = context.management.remove(context.bot, input.botId);
     } else if (input.action === 'update') {
       if (!input.botId) throw new Error('update requires botId.');
-      result = await context.management.update(context.bot, input.botId, {
-        name: input.name,
-        role: input.role,
-        instructions: input.instructions,
-        toolIds: input.toolIds,
-      });
+      result = await context.management.update(
+        context.bot,
+        input.botId,
+        {
+          name: input.name,
+          role: input.role,
+          instructions: input.instructions,
+          toolIds: input.toolIds,
+          modelId: input.modelId,
+        },
+        context.signal,
+      );
     } else if (input.action === 'create') {
       if (!input.name || !input.role?.trim() || !input.instructions)
         throw new Error('Create requires name, role, and instructions.');
-      const caller = context.bot;
-      result = await context.management.create(
-        caller,
-        {
-          name: input.name,
-          role: input.role.trim(),
-          instructions: input.instructions,
-          providerId: caller.providerId,
-          model: caller.model,
-          supportsImages: caller.supportsImages,
-          contextWindowTokens: caller.contextWindowTokens,
-          maxOutputTokens: caller.maxOutputTokens,
-        },
-        input.toolIds,
-      );
+      result = await context.management.createFromTool(context.bot, input, context.signal);
       activity.createdBotId = result.id;
     } else if (input.action === 'get_last_message') {
       if (!input.botId || !input.conversationId)
@@ -93,7 +89,7 @@ export async function executeBotManagement(
     }
     context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });
     if (input.action === 'create' || input.action === 'update' || input.action === 'get')
-      result = Object.fromEntries(Object.entries(result).filter(([key]) => key !== 'avatar'));
+      result = context.management.describe(result as Bot);
     return { ok: true, result };
   } catch (error) {
     context.signal.throwIfAborted();

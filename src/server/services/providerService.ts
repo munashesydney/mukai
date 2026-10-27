@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -8,12 +8,12 @@ import {
   compatibleImageMiddleware,
   compatibleAudioDataUrlMiddleware,
 } from './compatibleImageMiddleware';
-import { modelInputCapabilities } from '../../shared/modelCapabilities';
+import { inputCapabilityLabel, modelInputCapabilities } from '../../shared/modelCapabilities';
 import { toolMediaMiddleware } from './toolMediaMiddleware';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
-import type { ProviderInput, ProviderModelsInput } from '../../shared/ai';
+import type { ProviderInput, ProviderModelsInput, SavedProviderModel } from '../../shared/ai';
 import {
   defaultCompatibleContext,
   defaultCompatibleOutput,
@@ -26,10 +26,25 @@ import type { DiagnosticService } from './diagnosticService';
 import { ChatGPTService } from './chatgptService';
 import { chatGPTError } from './chatgptTransport';
 import { PROVIDER_MAX_RETRIES } from './responsePolicy';
-import { effectiveReasoning, reasoningProfile, supportsReasoning } from '../../shared/reasoning';
+import {
+  effectiveReasoning,
+  reasoningDefaultLabel,
+  reasoningProfile,
+  supportsReasoning,
+} from '../../shared/reasoning';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
+
+type ModelConfigurationInput = Pick<
+  BotRecord,
+  | 'providerId'
+  | 'model'
+  | 'supportsImages'
+  | 'contextWindowTokens'
+  | 'maxOutputTokens'
+  | 'reasoningEffort'
+>;
 
 export function isContextOverflow(error: unknown) {
   const value = error as { statusCode?: number; message?: string; responseBody?: string };
@@ -364,30 +379,119 @@ export class ProviderService {
       this.providers.save({ ...provider, models: [...refreshed, ...added] });
     return models;
   }
-  resolve(bot: BotRecord) {
+  private configuredModels() {
+    return this.providers.list().flatMap((provider) =>
+      (provider.models ?? []).map((model) => ({
+        provider,
+        model,
+        modelId:
+          'model_' +
+          createHash('sha256')
+            .update(JSON.stringify([provider.id, model.id]))
+            .digest('hex'),
+      })),
+    );
+  }
+  private configuredModel(modelId: string) {
+    const selected = this.configuredModels().find((entry) => entry.modelId === modelId);
+    if (!selected)
+      throw new ApiError(
+        404,
+        'Model selection not found. Use list_models to choose a configured modelId.',
+      );
+    return selected;
+  }
+  private describeConfiguredModel(entry: {
+    provider: ProviderRecord;
+    model: SavedProviderModel;
+    modelId: string;
+  }) {
+    return {
+      ...this.describeModel({
+        providerId: entry.provider.id,
+        model: entry.model.id,
+        supportsImages: null,
+      }),
+      modelId: entry.modelId,
+      name: entry.model.name,
+      reasoningEfforts: reasoningProfile(entry.provider, entry.model.id).levels,
+    };
+  }
+  /** Saved catalog only: discovery never refreshes, imports, or changes model settings. */
+  listConfiguredModels() {
+    return this.configuredModels().map((entry) => this.describeConfiguredModel(entry));
+  }
+  getConfiguredModel(modelId: string) {
+    return this.describeConfiguredModel(this.configuredModel(modelId));
+  }
+  resolveModelSelection(modelId: string) {
+    const selected = this.configuredModel(modelId);
+    return { providerId: selected.provider.id, model: selected.model.id };
+  }
+  private configuration(bot: ModelConfigurationInput) {
     const provider = bot.providerId
       ? this.providers.find(bot.providerId)
       : this.providers.default();
-    if (!provider) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
+    if (!provider) return;
     const modelId = String(bot.model || provider.defaultModel);
-    if (!modelId.trim())
-      throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
     const configured = provider.models?.find((model) => model.id === modelId);
     const effort = effectiveReasoning(bot, configured);
-    if (effort && !supportsReasoning(provider, modelId, effort))
-      throw new ApiError(
-        400,
-        `Reasoning effort ${effort} is not supported by ${modelId}. Choose another effort in the model picker.`,
-      );
-    const capabilities = modelInputCapabilities(bot, provider);
     return {
       provider,
       modelId,
       contextWindow: modelContextWindow(bot, provider),
       maxOutputTokens:
         configured?.maxOutputTokens ?? bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
-      ...capabilities,
-      vision: capabilities.supportsImages,
+      ...modelInputCapabilities(bot, provider),
+      reasoningEffort: effort,
+    };
+  }
+  /** Effective settings for tool results, without opening a model or accessing credentials. */
+  describeModel(bot: ModelConfigurationInput) {
+    const config = this.configuration(bot);
+    if (!config || !config.modelId.trim())
+      return {
+        providerId: config?.provider.id ?? bot.providerId ?? 'Not configured',
+        providerName: config?.provider.name ?? 'Not configured',
+        model: config?.modelId || bot.model || 'Not configured',
+        inputCapabilities: 'Unknown: provider or model is not configured',
+        supportsText: 'unknown' as const,
+        supportsImages: 'unknown' as const,
+        supportsAudio: 'unknown' as const,
+        supportsVideo: 'unknown' as const,
+        contextWindowTokens: 'unknown' as const,
+        maxOutputTokens: 'unknown' as const,
+        reasoningEffort: 'Unknown: provider or model is not configured',
+      };
+    return {
+      providerId: config.provider.id,
+      providerName: config.provider.name,
+      model: config.modelId,
+      inputCapabilities: inputCapabilityLabel(config),
+      supportsText: true,
+      supportsImages: config.supportsImages,
+      supportsAudio: config.supportsAudio,
+      supportsVideo: config.supportsVideo,
+      contextWindowTokens: config.contextWindow ?? 'unknown',
+      maxOutputTokens: config.maxOutputTokens,
+      reasoningEffort:
+        config.reasoningEffort ?? reasoningDefaultLabel(config.provider, config.modelId),
+    };
+  }
+  resolve(bot: BotRecord) {
+    const config = this.configuration(bot);
+    if (!config) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
+    const { provider, modelId, reasoningEffort: effort } = config;
+    if (!modelId.trim())
+      throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
+    if (effort && !supportsReasoning(provider, modelId, effort))
+      throw new ApiError(
+        400,
+        `Reasoning effort ${effort} is not supported by ${modelId}. Choose another effort in the model picker.`,
+      );
+    return {
+      ...config,
+      vision: config.supportsImages,
       model: wrapLanguageModel({
         model: this.model(provider, modelId),
         middleware: toolMediaMiddleware,
@@ -469,34 +573,53 @@ export class ProviderService {
         });
     }
   }
-  async test(id: string) {
+  async testBotModel(bot: ModelConfigurationInput, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const config = this.configuration(bot);
+    if (!config)
+      throw new ApiError(400, 'Configure a provider in Settings before creating this bot.');
+    const result = await this.test(config.provider.id, config.modelId, signal);
+    signal.throwIfAborted();
+    const current = this.configuration(bot);
+    if (current?.provider.id !== config.provider.id || current.modelId !== config.modelId)
+      throw new ApiError(
+        409,
+        'The model changed during the connection test. Retry the bot operation.',
+      );
+    return result;
+  }
+  async test(id: string, selectedModel?: string, signal?: AbortSignal) {
     const provider = this.require(id);
-    if (!provider.defaultModel)
+    const modelId = selectedModel ?? provider.defaultModel;
+    if (!modelId.trim())
       throw new ApiError(400, 'Add a model in Settings before testing this connection.');
     try {
       const result = await generateText({
-        model: this.model(provider, String(provider.defaultModel)),
+        model: this.model(provider, modelId),
         prompt: 'Reply with OK.',
         maxOutputTokens: 64,
         maxRetries: PROVIDER_MAX_RETRIES,
-        abortSignal: AbortSignal.timeout(20000),
+        abortSignal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+          : AbortSignal.timeout(20000),
         providerOptions: { openai: { store: false } },
       });
       if (!result.text.trim())
         return {
           ok: true,
-          message: `Connected to ${String(provider.defaultModel)}. The provider accepted the test but returned no text at the short output limit. Try a chat message to check its output.`,
+          message: `Connected to ${modelId}. The provider accepted the test but returned no text at the short output limit. Try a chat message to check its output.`,
         };
       return {
         ok: true,
-        message: `Connected to ${String(provider.defaultModel)}. A short test request was sent.`,
+        message: `Connected to ${modelId}. A short test request was sent.`,
       };
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof ApiError) throw error;
       this.diagnostics.record('provider.test_failed', error, {
         providerId: provider.id,
         providerKind: provider.kind,
-        model: provider.defaultModel,
+        model: modelId,
         phase: 'provider-test',
       });
       throw new ApiError(502, safeProviderError(error));
