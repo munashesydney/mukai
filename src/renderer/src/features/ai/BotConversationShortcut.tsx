@@ -39,6 +39,7 @@ export function BotConversationShortcut({
       title={`${sender} ${busy || chat.isWorking ? 'is' : 'was'} talking to ${receiver} here. Wanna go?`}
       role="dialog"
       placement="right"
+      pointer
       width={290}
       className="bot-conversation-shortcut"
       buttonClassName="sidebar-row bot-conversation-row"
@@ -53,16 +54,6 @@ export function BotConversationShortcut({
           </label>
           <div className="bot-conversation-confirmation-actions">
             <button
-              className="button button--primary"
-              onClick={() => {
-                close();
-                if (remember) onRemember();
-                onSelect();
-              }}
-            >
-              Yes
-            </button>
-            <button
               className="button"
               data-popup-autofocus
               onClick={() => {
@@ -71,6 +62,16 @@ export function BotConversationShortcut({
               }}
             >
               No
+            </button>
+            <button
+              className="button button--primary"
+              onClick={() => {
+                close();
+                if (remember) onRemember();
+                onSelect();
+              }}
+            >
+              Yes
             </button>
           </div>
         </>

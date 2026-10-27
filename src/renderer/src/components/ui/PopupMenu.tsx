@@ -15,6 +15,7 @@ export function PopupMenu({
   disabled = false,
   role = 'menu',
   width = 370,
+  pointer = false,
 }: {
   label: string;
   title: string;
@@ -29,6 +30,7 @@ export function PopupMenu({
   disabled?: boolean;
   role?: 'menu' | 'dialog';
   width?: number;
+  pointer?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null),
@@ -64,6 +66,18 @@ export function PopupMenu({
         bottom: !sideways && upward ? `${window.innerHeight - bounds.top + 9}px` : 'auto',
         maxHeight: `${sideways ? window.innerHeight - 24 : Math.max(80, upward ? above : below)}px`,
       });
+      if (pointer) {
+        const card = element.getBoundingClientRect();
+        element.dataset.pointerSide = sideways ? 'left' : upward ? 'bottom' : 'top';
+        element.style.setProperty(
+          '--popup-pointer-x',
+          `${Math.max(18, Math.min(bounds.left + bounds.width / 2 - card.left, card.width - 18))}px`,
+        );
+        element.style.setProperty(
+          '--popup-pointer-y',
+          `${Math.max(18, Math.min(bounds.top + bounds.height / 2 - card.top, card.height - 18))}px`,
+        );
+      }
     }
     position();
     element.showPopover();
@@ -88,7 +102,7 @@ export function PopupMenu({
       document.removeEventListener('scroll', scroll, true);
       window.removeEventListener('resize', position);
     };
-  }, [expanded, placement, width]);
+  }, [expanded, placement, width, pointer]);
   return (
     <div
       ref={root}
@@ -154,7 +168,7 @@ export function PopupMenu({
           role={role}
           aria-label={title}
           popover="manual"
-          className={`popup-menu ${menuClassName}`}
+          className={`popup-menu ${pointer ? 'popup-menu--pointer' : ''} ${menuClassName}`}
         >
           <p>{title}</p>
           {children(close)}
