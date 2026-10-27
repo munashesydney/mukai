@@ -17,6 +17,8 @@ export function BotPairConversationsSidebar({
   loading,
   error,
   onRefresh,
+  expandedGroup,
+  onToggleGroup,
 }: {
   bots: Bot[];
   conversations: Conversation[];
@@ -25,10 +27,9 @@ export function BotPairConversationsSidebar({
   loading: boolean;
   error: string;
   onRefresh: () => void;
+  expandedGroup: string | null;
+  onToggleGroup: (group: string) => void;
 }) {
-  const [expanded, setExpanded] = useState<Record<string, { open: boolean; location: Location }>>(
-    {},
-  );
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const selectedRow = useRef<HTMLButtonElement>(null);
   const activeConversationId =
@@ -38,7 +39,7 @@ export function BotPairConversationsSidebar({
   const activeConversation = conversations.find((chat) => chat.id === activeConversationId);
   useEffect(() => {
     selectedRow.current?.scrollIntoView({ block: 'nearest' });
-  }, [location, activeConversation?.id]);
+  }, [location, activeConversation?.id, expandedGroup]);
   const groups = new Map<string, { bots: Bot[]; conversations: Conversation[] }>();
   for (const conversation of conversations) {
     const ids = [...conversation.botIds].sort();
@@ -68,9 +69,7 @@ export function BotPairConversationsSidebar({
         </p>
       )}
       {[...groups].map(([key, group]) => {
-        const active = group.conversations.some((chat) => chat.id === activeConversationId);
-        const override = expanded[key];
-        const open = active && override?.location !== location ? true : (override?.open ?? active);
+        const open = expandedGroup === `pair:${key}`;
         const title = group.bots.map((bot) => bot.name).join('/');
         const visibleCount = visibleCounts[key] ?? INITIAL_CONVERSATION_COUNT;
         const visibleChats = visibleConversations(
@@ -84,9 +83,7 @@ export function BotPairConversationsSidebar({
               className="sidebar-row bot-conversation-parent"
               aria-label={title}
               aria-expanded={open}
-              onClick={() =>
-                setExpanded((previous) => ({ ...previous, [key]: { open: !open, location } }))
-              }
+              onClick={() => onToggleGroup(`pair:${key}`)}
             >
               <span className="bot-pair-avatars">
                 {group.bots.map((bot) => (

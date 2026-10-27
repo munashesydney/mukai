@@ -92,7 +92,7 @@ export const chatStore = {
     try {
       const [messages, files, followups] = await Promise.all([
         chatService.history(id),
-        id.startsWith('space:') ? Promise.resolve([]) : attachmentService.pending(id),
+        attachmentService.pending(id),
         chatService.followups(id),
       ]);
       if (active.has(id) || get(id).messages !== previous.messages) return;

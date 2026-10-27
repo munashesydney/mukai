@@ -1355,6 +1355,27 @@ p {
   padding: 15px 28px 18px;
   flex-shrink: 0;
 }
+.bot-chat-join {
+  display: flex;
+  justify-content: center;
+  padding: 16px 24px 28px;
+  flex-shrink: 0;
+}
+.bot-chat-join-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--theme-border);
+  border-radius: 999px;
+  background: var(--theme-soft);
+  color: var(--theme-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.bot-chat-join-pill:hover {
+  background: var(--surface-muted);
+}
 .composer {
   border: 1px solid var(--line);
   border-radius: 10px;

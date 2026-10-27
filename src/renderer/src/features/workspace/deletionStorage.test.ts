@@ -4,10 +4,12 @@ it('clears only deleted workspace preferences and conversation drafts', () => {
   const storage = new Map([
     ['mukai.workspace.v1.gone', 'data'],
     ['mukai.active-bot.gone', 'bot'],
+    ['mukai.active-pair-conversation.gone', 'chat'],
     ['mukai.active-conversation.bot', 'chat'],
     ['mukai.draft.private:chat', 'draft'],
     ['mukai.draft.space:chat', 'draft'],
     ['mukai.draft.bot', 'legacy draft'],
+    ['mukai.joined-bot-chat.gone.chat', '1'],
     ['mukai.workspace.v1.keep', 'keep'],
     ['mukai.draft.private:other', 'keep'],
   ]);
@@ -33,5 +35,10 @@ it('also removes default workspace legacy preferences', () => {
     'default',
     { deleted: true, botIds: [], conversationIds: [] },
   );
-  expect(keys).toEqual(['mukai.workspace.v1', 'mukai.active-bot.default', 'mukai.active-bot']);
+  expect(keys).toEqual([
+    'mukai.workspace.v1',
+    'mukai.active-bot.default',
+    'mukai.active-pair-conversation.default',
+    'mukai.active-bot',
+  ]);
 });

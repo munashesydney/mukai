@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, MessageCirclePlus, Hand } from 'lucide-react';
 import { useApprovals } from './approvalStore';
 import type { Bot } from '../../../../shared/ai';
@@ -35,15 +35,22 @@ export function BotConversationsSidebar({
   location,
   onSelect,
   onCreate,
+  expandedGroup,
+  onToggleGroup,
 }: {
   bots: Bot[];
   conversations: Conversation[];
   location: Location;
   onSelect: (location: Location) => void;
   onCreate: (botId: string) => Promise<void>;
+  expandedGroup: string | null;
+  onToggleGroup: (group: string) => void;
 }) {
   const approvals = useApprovals();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const selectedRow = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    selectedRow.current?.scrollIntoView({ block: 'nearest' });
+  }, [location.section, location.item, location.conversationId, location.view, expandedGroup]);
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const [creating, setCreating] = useState<string | null>(null),
     [error, setError] = useState('');
@@ -53,7 +60,6 @@ export function BotConversationsSidebar({
     setError('');
     try {
       await onCreate(botId);
-      setExpanded((previous) => ({ ...previous, [botId]: true }));
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -68,12 +74,16 @@ export function BotConversationsSidebar({
         </p>
       )}
       {botsByRecentInteraction(bots, conversations).map((bot) => {
-        const open = expanded[bot.id] ?? location.item === bot.id;
+        const open = expandedGroup === `bot:${bot.id}`;
+        const activeConversationId =
+          location.section === 'bots' && location.item === bot.id && !location.view
+            ? location.conversationId
+            : undefined;
         const chats = conversations
           .filter((conversation) => botConversationGroup(conversation) === bot.id)
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
         const visibleCount = visibleCounts[bot.id] ?? INITIAL_CONVERSATION_COUNT;
-        const visibleChats = visibleConversations(chats, visibleCount);
+        const visibleChats = visibleConversations(chats, visibleCount, activeConversationId);
         const count = approvals.pending.filter(
           (request) =>
             request.botId === bot.id ||
@@ -86,7 +96,7 @@ export function BotConversationsSidebar({
                 className="sidebar-row bot-row bot-conversation-parent"
                 aria-expanded={open}
                 onClick={() => {
-                  setExpanded((previous) => ({ ...previous, [bot.id]: !open }));
+                  onToggleGroup(`bot:${bot.id}`);
                 }}
               >
                 <span className="bot-conversation-toggle">
@@ -97,6 +107,11 @@ export function BotConversationsSidebar({
               </button>
               {!open && <BotConversationStatus conversations={chats} />}
               <div className="bot-conversation-action">
+                {!open && count > 0 && (
+                  <span className="pending-approval-count" title={`${count} pending approvals`}>
+                    {count}
+                  </span>
+                )}
                 {bot.isMain && <MainBotBadge />}
                 <IconButton
                   label={`New conversation with ${bot.name}`}
@@ -107,7 +122,7 @@ export function BotConversationsSidebar({
                 </IconButton>
               </div>
             </div>
-            {count > 0 && (
+            {open && count > 0 && (
               <button
                 className={`bot-pending-approvals ${location.item === bot.id && location.view === 'pending-approvals' ? 'is-selected' : ''}`}
                 aria-current={
@@ -134,9 +149,16 @@ export function BotConversationsSidebar({
                   return (
                     <button
                       key={chat.id}
-                      className={`sidebar-row bot-conversation-row ${!location.view && location.conversationId === chat.id ? 'is-selected' : ''}`}
+                      ref={
+                        chat.kind === 'private' && activeConversationId === chat.id
+                          ? selectedRow
+                          : undefined
+                      }
+                      className={`sidebar-row bot-conversation-row ${chat.kind === 'private' && activeConversationId === chat.id ? 'is-selected' : ''}`}
                       aria-current={
-                        !location.view && location.conversationId === chat.id ? 'page' : undefined
+                        chat.kind === 'private' && activeConversationId === chat.id
+                          ? 'page'
+                          : undefined
                       }
                       title={chat.name}
                       onClick={() =>

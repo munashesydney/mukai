@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
 import { seedTestWorkspace } from './testFixtures';
-import type { Bot, BotInput, ChatMessage, ProviderSettings } from '../shared/ai';
+import type {
+  Bot,
+  BotInput,
+  ChatMessage,
+  ProviderSettings,
+  ChatEvent,
+  Attachment,
+} from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
 import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
@@ -70,6 +77,25 @@ async function bot(name = 'Mukai', workspaceId = 'default') {
   const result = await request<Bot>('/bots', 'POST', { ...input(name), workspaceId });
   expect(result.status).toBe(201);
   return result.data;
+}
+async function joinPair(
+  id: string,
+  text: string,
+  attachmentIds: string[] = [],
+  requestId = randomUUID(),
+) {
+  const response = await fetch(`${api.url}/conversations/${id}/chat`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, text, attachmentIds, botId: 'ignored-client-target' }),
+  });
+  expect(response.status).toBe(200);
+  const events = (await response.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as ChatEvent);
+  expect(events.at(-1)?.type).toBe('done');
+  return events;
 }
 async function provider() {
   await request('/providers', 'POST', {
@@ -2514,7 +2540,7 @@ describe('Bot architecture', () => {
     ).toHaveLength(2);
     expect(calls).toHaveLength(5);
   });
-  it('continues only the requested pair thread, preserves history, and keeps the viewer read-only', async () => {
+  it('continues only the requested pair thread and lets the human talk to its original receiving bot', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
@@ -2566,18 +2592,49 @@ describe('Bot architecture', () => {
     await expect(
       api.botManagement.sendMessage(main, child.id, 'Private chat', signal, 'bot-' + child.id),
     ).rejects.toThrow('between you and the target');
+    const humanRequestId = randomUUID();
+    await joinPair(first.conversationId, 'Human message', [], humanRequestId);
+    const joinedHistory = (
+      await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)
+    ).data;
+    expect(joinedHistory.slice(0, 4)).toEqual(history);
+    expect(joinedHistory.slice(4)).toMatchObject([
+      { botId: '', authorName: 'You', role: 'user', content: 'Human message' },
+      { botId: child.id, authorName: child.name, role: 'assistant', status: 'complete' },
+    ]);
+    const directCall = calls.at(-1)!;
+    expect(
+      directCall.messages.some((message) =>
+        message.content?.includes('This message is coming from another bot'),
+      ),
+    ).toBe(false);
+    expect(
+      directCall.messages.some(
+        (message) =>
+          message.role === 'user' &&
+          JSON.stringify(message.content).includes('[Human user] Human message'),
+      ),
+    ).toBe(true);
+    expect(
+      directCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
+        .properties.action!.enum,
+    ).toContain('send_message');
+    await joinPair(first.conversationId, '', [], humanRequestId);
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)).data,
+    ).toHaveLength(6);
     expect(
       (
         await request(`/conversations/${first.conversationId}/chat`, 'POST', {
-          requestId: randomUUID(),
-          text: 'Human message',
+          requestId: history[0].requestId,
+          text: '',
           attachmentIds: [],
         })
       ).status,
     ).toBe(403);
     expect(
       (await request(`/conversations/${first.conversationId}/attachments`, 'POST')).status,
-    ).toBe(400);
+    ).toBe(413);
     const pairChats = (await request<Conversation[]>('/conversations?kind=bot')).data;
     expect(pairChats).toHaveLength(2);
     expect(pairChats[0]).toMatchObject({
@@ -2593,6 +2650,239 @@ describe('Bot architecture', () => {
     expect((await request<Conversation[]>('/conversations')).data).toEqual([]);
     expect(botManagementDefinition.inputSchema.safeParse({ action: 'spawn' }).success).toBe(false);
     expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('keeps every earlier bot turn and explicit sender identity when the human joins, including after restart', async () => {
+    // A bot named You must still be distinguished from the actual human by saved identity.
+    const main = await bot('You');
+    await provider();
+    const child = await api.botManagement.create(main, input('Orbit'));
+    const signal = new AbortController().signal;
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Original bot task 0: save orbit-random-2.png.',
+      signal,
+    );
+    for (let index = 1; index < 6; index++)
+      await api.botManagement.sendMessage(
+        main,
+        child.id,
+        `Original bot follow-up ${index}.`,
+        signal,
+        first.conversationId,
+      );
+    await api.botManagement.sendMessage(main, child.id, 'OUTSIDE THIS THREAD', signal);
+    const path = `/conversations/${first.conversationId}/messages`;
+    const firstReply = api.store.get(
+      "SELECT id FROM messages WHERE conversation_id=? AND role='assistant' ORDER BY sequence LIMIT 1",
+      first.conversationId,
+    )!;
+    api.store.run(
+      'UPDATE messages SET content=?,activity_json=?,parts_json=? WHERE id=?',
+      'Created and verified orbit-random-2.png.',
+      JSON.stringify([
+        {
+          id: 'original-image-task',
+          tool: 'terminal',
+          action: 'run',
+          path: 'python3',
+          summary: 'Verified PNG: 256x256 RGB.',
+          status: 'complete',
+        },
+      ]),
+      JSON.stringify([
+        { id: 'image-answer', type: 'text', text: 'Created and verified orbit-random-2.png.' },
+      ]),
+      String(firstReply.id),
+    );
+    const before = (await request<ChatMessage[]>(path)).data;
+    expect(before).toHaveLength(12);
+    // Old compacted memories did not distinguish bot and human authors. They must not hide saved turns.
+    const through = api.store.get(
+      'SELECT sequence FROM messages WHERE id=?',
+      before.at(-1)!.id,
+    )!.sequence;
+    api.store.run(
+      'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+      first.conversationId,
+      child.id,
+      'Previous task completed; sender not recorded.',
+      through,
+    );
+
+    const assertHistory = (history: ChatMessage[]) => {
+      const call = calls.filter((call) => call.stream).at(-1)!;
+      const turns = call.messages.filter(
+        (message) =>
+          message.content?.startsWith('[Bot: ') || message.content?.startsWith('[Human user] '),
+      );
+      // All saved earlier messages plus this new request reach the model in order; no ten-message space limit.
+      expect(turns).toHaveLength(history.length + 1);
+      for (const [index, saved] of history.entries()) {
+        expect(turns[index].role).toBe(saved.botId === child.id ? 'assistant' : 'user');
+        expect(turns[index].content).toContain(saved.content);
+        expect(turns[index].content).toMatch(saved.botId ? /^\[Bot: / : /^\[Human user\] /);
+        if (saved.botId) {
+          expect(turns[index].content).toContain(
+            JSON.stringify({ id: saved.botId, name: saved.authorName }),
+          );
+        }
+      }
+      expect(JSON.stringify(call.messages)).not.toContain('OUTSIDE THIS THREAD');
+      expect(JSON.stringify(call.messages)).toContain('Verified PNG: 256x256 RGB.');
+      expect(JSON.stringify(call.messages)).toContain(
+        'This message is coming from the human user.',
+      );
+      expect(JSON.stringify(call.messages)).not.toContain(
+        'This message is coming from another bot',
+      );
+      expect(turns.at(-1)!.role).toBe('user');
+      expect(turns.at(-1)!.content).toMatch(/^\[Human user\] /);
+    };
+    await joinPair(first.conversationId, 'Hey, who am I speaking to?');
+    assertHistory(before);
+    const joined = (await request<ChatMessage[]>(path)).data;
+    expect(joined).toHaveLength(14);
+    await restart();
+    await joinPair(first.conversationId, 'How many messages are in this chat?');
+    assertHistory(joined);
+    expect((await request<ChatMessage[]>(path)).data).toHaveLength(16);
+    // Returning to bot delegation retains both sources and restores the correct current requester.
+    await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Continue with the human’s notes.',
+      signal,
+      first.conversationId,
+    );
+    const resumed = calls.at(-1)!;
+    expect(JSON.stringify(resumed.messages)).toContain('[Human user] Hey, who am I speaking to?');
+    expect(JSON.stringify(resumed.messages)).toContain(
+      '[Human user] How many messages are in this chat?',
+    );
+    expect(
+      resumed.messages.some((message) =>
+        message.content?.includes('This message is coming from another bot'),
+      ),
+    ).toBe(true);
+    expect(
+      resumed.messages.some((message) =>
+        message.content?.includes('This message is coming from the human user.'),
+      ),
+    ).toBe(false);
+  });
+
+  it('supports attachments in a pair thread and keeps them scoped to its receiving bot and conversation', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'First task.',
+      new AbortController().signal,
+    );
+    const second = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Separate task.',
+      new AbortController().signal,
+    );
+    const uploaded = await fetch(`${api.url}/conversations/${first.conversationId}/attachments`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + api.token, 'X-Filename': 'notes.txt' },
+      body: 'Review the green folder.',
+    });
+    expect(uploaded.status).toBe(201);
+    const file = (await uploaded.json()) as Attachment;
+    expect(file.botId).toBe(child.id);
+    expect(
+      (await request<Attachment[]>(`/conversations/${first.conversationId}/attachments`)).data,
+    ).toMatchObject([{ id: file.id }]);
+    expect(
+      (
+        await request(`/conversations/${second.conversationId}/chat`, 'POST', {
+          requestId: randomUUID(),
+          text: 'Wrong thread',
+          attachmentIds: [file.id],
+        })
+      ).status,
+    ).toBe(400);
+    await joinPair(first.conversationId, 'Check my notes.', [file.id]);
+    const history = (
+      await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)
+    ).data;
+    expect(history[2]).toMatchObject({
+      authorName: 'You',
+      botId: '',
+      attachments: [{ id: file.id }],
+    });
+    expect(history[3].botId).toBe(child.id);
+    expect(
+      (await request<Attachment[]>(`/conversations/${first.conversationId}/attachments`)).data,
+    ).toEqual([]);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Review the green folder.');
+    await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Continue after the human.',
+      new AbortController().signal,
+      first.conversationId,
+    );
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('[Human user] Check my notes.');
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) =>
+          message.content?.includes('This message is coming from another bot'),
+        ),
+    ).toBe(true);
+  });
+  it('queues a human follow-up to the receiving bot while its delegated reply is running', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    mode = 'delegate-slow';
+    const pending = api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Work first.',
+      new AbortController().signal,
+    );
+    await waitFor(() => expect(heldChildren).toHaveLength(1));
+    const conversation = (await request<Conversation[]>('/conversations?kind=bot')).data[0];
+    const followupId = randomUUID();
+    const queued = await request<{ botId: string }[]>(
+      `/conversations/${conversation.id}/followups`,
+      'POST',
+      {
+        id: followupId,
+        text: 'Now answer me directly.',
+        botId: main.id,
+      },
+    );
+    expect(queued.status).toBe(201);
+    expect(queued.data[0].botId).toBe(child.id);
+    mode = 'normal';
+    heldChildren[0]('Delegated reply done.');
+    await pending;
+    await waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`)).data,
+      ).toMatchObject([
+        { botId: main.id },
+        { botId: child.id },
+        { botId: '', authorName: 'You', requestId: followupId },
+        { botId: child.id, status: 'complete', requestId: followupId },
+      ]),
+    );
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) =>
+          message.content?.includes('This message is coming from another bot'),
+        ),
+    ).toBe(false);
   });
   it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
     const main = await bot();

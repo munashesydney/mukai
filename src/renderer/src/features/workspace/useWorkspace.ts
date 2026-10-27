@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Location, Message } from './types';
 import { loadWorkspace, workspaceStorageKey } from './workspaceStorage';
+import { activePairConversationKey, loadActiveBotLocation } from './activeBotLocation';
 export function useWorkspace(workspaceId = 'default') {
   const storageKey =
     workspaceId === 'default' ? workspaceStorageKey : `${workspaceStorageKey}.${workspaceId}`;
@@ -8,33 +9,24 @@ export function useWorkspace(workspaceId = 'default') {
     loadWorkspace(undefined, storageKey, workspaceId !== 'default'),
   );
   const [storageFailed, setStorageFailed] = useState(false);
-  const [history, setHistory] = useState<{ entries: Location[]; index: number }>({
-    entries: [
-      {
-        section: 'bots',
-        item: (() => {
-          try {
-            return (
-              localStorage.getItem(`mukai.active-bot.${workspaceId}`) ||
-              (workspaceId === 'default' ? localStorage.getItem('mukai.active-bot') : null) ||
-              'scout'
-            );
-          } catch {
-            return 'scout';
-          }
-        })(),
-      },
-    ],
+  const [history, setHistory] = useState<{ entries: Location[]; index: number }>(() => ({
+    entries: [loadActiveBotLocation(workspaceId)],
     index: 0,
-  });
+  }));
   const location = history.entries[history.index];
   useEffect(() => {
-    if (location.section === 'bots' && location.item !== 'hierarchy') {
+    if (
+      location.section === 'bots' &&
+      location.item !== 'hierarchy' &&
+      (location.item !== 'bot-conversations' || location.conversationId)
+    ) {
       try {
         localStorage.setItem(`mukai.active-bot.${workspaceId}`, location.item);
         if (location.conversationId)
           localStorage.setItem(
-            `mukai.active-conversation.${location.item}`,
+            location.item === 'bot-conversations'
+              ? activePairConversationKey(workspaceId)
+              : `mukai.active-conversation.${location.item}`,
             location.conversationId,
           );
       } catch {

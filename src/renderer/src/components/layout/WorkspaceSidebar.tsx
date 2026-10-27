@@ -20,6 +20,7 @@ import { IconButton } from '../ui/IconButton';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
 import { BotPairConversationsSidebar } from '../../features/ai/BotPairConversationsSidebar';
+import { activeConversationGroup } from '../../features/ai/conversationSidebar';
 import { PopupMenu } from '../ui/PopupMenu';
 
 export function WorkspaceSidebar({
@@ -66,15 +67,18 @@ export function WorkspaceSidebar({
   onCreateWorkspace: () => void;
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
-  const [directToggle, setDirectToggle] = useState<{ open: boolean; location?: Location }>({
-    open: true,
-  });
-  const directOpen =
-    location.section === 'bots' &&
-    location.item === 'bot-conversations' &&
-    directToggle.location !== location
-      ? true
-      : directToggle.open;
+  const locationKey = JSON.stringify(location);
+  const [expansion, setExpansion] = useState<{ locationKey: string; group: string | null }>();
+  const expandedGroup =
+    expansion?.locationKey === locationKey
+      ? expansion.group
+      : activeConversationGroup(location, botPairConversations);
+  const directOpen = expandedGroup === 'pairs' || Boolean(expandedGroup?.startsWith('pair:'));
+  const toggleGroup = (group: string) =>
+    setExpansion({
+      locationKey,
+      group: expandedGroup === group ? null : group,
+    });
   const isSelected = (item: string) => location.item === item;
   const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');
   const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
@@ -231,12 +235,17 @@ export function WorkspaceSidebar({
               bots={bots}
               conversations={[...botConversations, ...botPairConversations]}
               location={location}
-              onSelect={onSelect}
+              onSelect={(next) => {
+                setExpansion(undefined);
+                onSelect(next);
+              }}
               onCreate={onCreateConversation}
+              expandedGroup={expandedGroup}
+              onToggleGroup={toggleGroup}
             />
             <div className="sidebar-section-heading bot-pair-section-heading">
               <button
-                onClick={() => setDirectToggle({ open: !directOpen, location })}
+                onClick={() => setExpansion({ locationKey, group: directOpen ? null : 'pairs' })}
                 aria-expanded={directOpen}
               >
                 {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -248,10 +257,15 @@ export function WorkspaceSidebar({
                 bots={bots}
                 conversations={botPairConversations}
                 location={location}
-                onSelect={onSelect}
+                onSelect={(next) => {
+                  setExpansion(undefined);
+                  onSelect(next);
+                }}
                 loading={botPairLoading}
                 error={botPairError}
                 onRefresh={onRefreshBotPairs}
+                expandedGroup={expandedGroup}
+                onToggleGroup={toggleGroup}
               />
             )}
           </>

@@ -613,8 +613,6 @@ export function createRoutes({
         }
         if (action === 'followups') {
           if (method === 'GET') return send(response, chats.listFollowups(id));
-          if (conversation.kind === 'bot')
-            throw new ApiError(403, 'Bot conversations are read-only for users.');
           if (method === 'PUT')
             return send(
               response,
@@ -626,8 +624,8 @@ export function createRoutes({
               .strict()
               .parse(await jsonBody(request));
             const bot =
-              conversation.kind === 'private'
-                ? conversations.privateBot(id)
+              conversation.kind === 'private' || conversation.kind === 'bot'
+                ? conversations.userChatBot(id)
                 : bots.require(input.botId || '');
             if (
               !conversation.botIds.includes(String(bot.id)) ||
@@ -682,7 +680,11 @@ export function createRoutes({
           return send(response, conversations.history(id));
         if (action === 'chat' && method === 'POST') {
           if (conversation.kind === 'bot')
-            throw new ApiError(403, 'Bot conversations are read-only for users.');
+            return conversations.sendToBot(
+              id,
+              chatSchema.parse(await jsonBody(request)),
+              chatOutput(response),
+            );
           if (conversation.kind === 'private')
             return conversations.sendPrivate(
               id,
@@ -696,11 +698,12 @@ export function createRoutes({
           );
         }
         if (action === 'attachments' && method === 'GET') {
-          conversations.privateBot(id);
+          if (conversation.kind === 'space') return send(response, []);
+          conversations.userChatBot(id);
           return send(response, attachments.pending(id));
         }
         if (action === 'attachments' && method === 'POST') {
-          const bot = conversations.privateBot(id);
+          const bot = conversations.userChatBot(id);
           return send(
             response,
             await attachments.upload(

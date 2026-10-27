@@ -74,6 +74,9 @@ Delegated context comes from saved message sender information, so these restrict
 
 - A purple star marks the main bot in the Bots sidebar, its chat header, and Bot Hierarchy.
 - The Bots sidebar orders bots by the latest update to their grouped conversations. The main bot is not pinned above a more recently active bot; it wins ties. Two-bot conversations are grouped under the receiving bot.
+- Bot and bot-pair lists share one expanded group. Navigation opens the active group and collapses the others; a bot-pair thread is highlighted only in the pair section.
+- Bot-to-bot threads initially show a **Jump in the chat** pill. Clicking it reveals the shared bot composer and remembers that choice per thread in local storage. Human messages, attachments, and follow-ups go to the original receiving bot in the same thread and appear as **You**, separately from bot-authored turns.
+- Joining keeps the same model history, including earlier bot requests, replies, and tool outcomes. Saved bot and human messages have explicit sender labels; the current requester is identified separately. Older bot-thread context summaries are ignored until rebuilt from saved history so missing sender identity cannot hide the original exchange.
 - Bot Hierarchy shows reporting relationships and roles. Bot details show the current manager under “Reports to.”
 - Tools → Bots shows required, checked, disabled assignments using the shared checkbox component. The main bot is labeled **All actions**, and sub-bots are labeled **Limited actions**. The explanatory text covers the additional restriction during delegation.
 
@@ -95,3 +98,4 @@ Pursuits are separate from bot delegation. A specialist does not receive pursuit
 - Sidebar ordering: `src/renderer/src/features/ai/conversationSidebar.ts`
 - Regression coverage: `src/server/botArchitecture.test.ts`
 - Focused UI smoke check: `npm run test:bots-ui -- --bot-roles-only`
+- Joining bot threads: `npm run test:bots-ui -- --pair-chat-only`

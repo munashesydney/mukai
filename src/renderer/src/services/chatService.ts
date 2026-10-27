@@ -26,7 +26,12 @@ export const chatService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(
         id.startsWith('space:')
-          ? { requestId: input.requestId, text: input.text, botId: input.botId ?? null }
+          ? {
+              requestId: input.requestId,
+              text: input.text,
+              botId: input.botId ?? null,
+              attachmentIds: input.attachmentIds,
+            }
           : input,
       ),
     });

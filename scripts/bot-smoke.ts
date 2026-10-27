@@ -91,6 +91,228 @@ async function main() {
     return (await response.json()) as T;
   };
   try {
+    if (process.argv.includes('--pair-chat-only')) {
+      ipcMain.handle(IPC.updateState, () => ({
+        status: 'disabled',
+        currentVersion: 'test',
+        automaticUpdates: false,
+      }));
+      seedTestWorkspace(api.store);
+      await request('/settings/appearance', 'PUT', { mode: 'dark', theme: 'mukai' });
+      const modelCalls: { messages: unknown[] }[] = [];
+      modelFixture = createServer(async (req, res) => {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const input = JSON.parse(body);
+        modelCalls.push(input);
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(
+          'data: ' +
+            JSON.stringify({
+              id: 'pair-smoke',
+              model: 'test',
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: 'assistant', content: 'Reply from the selected bot.' },
+                  finish_reason: 'stop',
+                },
+              ],
+            }) +
+            '\n\ndata: [DONE]\n\n',
+        );
+      });
+      await new Promise<void>((resolve) => modelFixture!.listen(0, '127.0.0.1', resolve));
+      await request('/providers', 'POST', {
+        name: 'Pair fixture',
+        kind: 'compatible',
+        baseUrl: `http://127.0.0.1:${(modelFixture.address() as { port: number }).port}/v1`,
+        defaultModel: 'test',
+        supportsImages: false,
+        isDefault: true,
+        apiKey: '',
+      });
+      const botInput = {
+        role: 'Assistant',
+        instructions: 'Help with the task.',
+        providerId: null,
+        model: null,
+        supportsImages: null,
+        avatar: 'nova',
+      };
+      const main = await request<Bot>('/bots', 'POST', { ...botInput, name: 'Mukai' });
+      const spawned = await request<Bot>('/bots', 'POST', {
+        ...botInput,
+        name: 'Orbit',
+        avatar: 'muka-mascot-1-purple',
+      });
+      const otherBot = await request<Bot>('/bots', 'POST', { ...botInput, name: 'Nova' });
+      const signal = new AbortController().signal;
+      const pair = await api.botManagement.sendMessage(
+        main,
+        spawned.id,
+        'Pair smoke task.',
+        signal,
+      );
+      await api.botManagement.sendMessage(main, spawned.id, 'Another pair smoke task.', signal);
+      await api.botManagement.sendMessage(main, otherBot.id, 'Other team task.', signal);
+      const title = [main, spawned]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((bot) => bot.name)
+        .join('/');
+      const openPair = async (name: string) => {
+        await wait('Boolean(document.querySelector(".bot-pair-section-heading button"))');
+        await evaluate(
+          `(() => { const section = document.querySelector('.bot-pair-section-heading button'); if(section.getAttribute('aria-expanded') !== 'true') section.click(); })()`,
+        );
+        await wait(
+          `Boolean(document.querySelector('button[aria-label=${JSON.stringify(title)}]'))`,
+        );
+        await evaluate(
+          `(() => { const group = document.querySelector('button[aria-label=${JSON.stringify(title)}]'); if(group.getAttribute('aria-expanded') !== 'true') group.click(); })()`,
+        );
+        await wait(`Boolean(document.querySelector('button[title=${JSON.stringify(name)}]'))`);
+        await evaluate(`document.querySelector('button[title=${JSON.stringify(name)}]').click()`);
+        await wait(
+          'document.querySelector(".conversation-heading h1")?.textContent.includes("/") && document.querySelectorAll(".ai-message").length >= 2',
+        );
+      };
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+      await openPair('Pair smoke task.');
+      assert.equal(
+        await evaluate('document.querySelectorAll(\'.bot-row[aria-expanded="true"]\').length'),
+        0,
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".bot-conversation-row.is-selected").length'),
+        1,
+      );
+      // Browsing another group closes the pair branch, and selecting its shortcut reopens only the pair.
+      await evaluate(
+        `Array.from(document.querySelectorAll('.bot-row')).find(button => button.textContent.trim() === 'Orbit').click()`,
+      );
+      assert.equal(await evaluate('document.querySelector(".bot-pair-conversation-groups")'), null);
+      assert.equal(
+        await evaluate('document.querySelectorAll(\'.bot-row[aria-expanded="true"]\').length'),
+        1,
+      );
+      await evaluate(`document.querySelector('button[title="Pair smoke task."]').click()`);
+      await wait('Boolean(document.querySelector(".bot-pair-conversation-groups .is-selected"))');
+      assert.equal(
+        await evaluate('document.querySelectorAll(\'.bot-row[aria-expanded="true"]\').length'),
+        0,
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".bot-conversation-row.is-selected").length'),
+        1,
+      );
+      await wait('Boolean(document.querySelector(".bot-chat-join-pill"))');
+      assert.equal(await evaluate('document.querySelector(".composer")'), null);
+      await capture('bot-pair-join-pill.png');
+      await click('Jump in the chat');
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      assert.equal(await evaluate('document.querySelector(".bot-chat-join-pill")'), null);
+      const otherTitle = [main, otherBot]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((bot) => bot.name)
+        .join('/');
+      await evaluate(
+        `document.querySelector('button[aria-label=${JSON.stringify(otherTitle)}]').click()`,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(\'.bot-pair-conversation-groups .bot-conversation-parent[aria-expanded="true"]\').length',
+        ),
+        1,
+      );
+      assert.equal(
+        await evaluate(
+          `document.querySelector('button[aria-label=${JSON.stringify(title)}]').getAttribute('aria-expanded')`,
+        ),
+        'false',
+      );
+      await evaluate(`document.querySelector('button[title="Other team task."]').click()`);
+      await wait('document.querySelectorAll(".bot-conversation-row.is-selected").length === 1');
+      assert.equal(
+        await evaluate('document.querySelectorAll(\'.bot-row[aria-expanded="true"]\').length'),
+        0,
+      );
+      await openPair('Pair smoke task.');
+      assert.equal(
+        await evaluate('document.querySelector(".composer textarea").getAttribute("aria-label")'),
+        'Message Orbit',
+      );
+      await fill('.composer textarea', 'Hello from the human.');
+      await wait('!document.querySelector(\'button[aria-label="Send message"]\').disabled');
+      await evaluate('document.querySelector(\'button[aria-label="Send message"]\').click()');
+      await wait(
+        'document.querySelectorAll(".ai-message").length === 4 && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".ai-message-meta strong")[2].textContent'),
+        'You',
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".ai-message")[2].querySelector(".bot-badge")'),
+        null,
+      );
+      assert.equal(
+        await evaluate('document.querySelectorAll(".ai-message-meta strong")[3].textContent'),
+        'Orbit',
+      );
+      assert.equal(
+        await evaluate(
+          `localStorage.getItem('mukai.joined-bot-chat.default.${pair.conversationId}')`,
+        ),
+        '1',
+      );
+      assert(
+        !JSON.stringify(modelCalls.at(-1)!.messages).includes(
+          'This message is coming from another bot',
+        ),
+      );
+      await capture('bot-pair-joined-conversation.png');
+      window.setSize(720, 900);
+      await capture('bot-pair-joined-conversation-narrow.png');
+      assert.equal(
+        await evaluate('document.documentElement.scrollWidth <= window.innerWidth'),
+        true,
+      );
+      window.setSize(1480, 980);
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+      await wait(
+        'document.querySelectorAll(".ai-message").length === 4 && Boolean(document.querySelector(".composer textarea"))',
+      );
+      assert.equal(
+        await evaluate('document.querySelector(".conversation-heading h1").textContent'),
+        title,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".bot-pair-conversation-groups .is-selected").getAttribute("title")',
+        ),
+        'Pair smoke task.',
+      );
+      assert.equal(await evaluate('document.querySelector(".bot-chat-join-pill")'), null);
+      await openPair('Another pair smoke task.');
+      await wait('Boolean(document.querySelector(".bot-chat-join-pill"))');
+      assert.equal(await evaluate('document.querySelector(".composer")'), null);
+      await evaluate(
+        `Array.from(document.querySelectorAll('.rail-link')).find(button => button.textContent.trim() === 'Bots').click()`,
+      );
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      await fill('.composer textarea', 'Private chat still works.');
+      await wait('!document.querySelector(\'button[aria-label="Send message"]\').disabled');
+      await evaluate('document.querySelector(\'button[aria-label="Send message"]\').click()');
+      await wait(
+        'document.querySelectorAll(".ai-message").length === 2 && !document.querySelector(\'button[aria-label="Stop generation"]\')',
+      );
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS pair chat UI: join pill, receiving bot, human identity, persistent composer after reload, separate thread preference, private composer, and narrow layout.',
+      );
+      return;
+    }
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run button"))');
     assert.deepEqual(await request('/workspaces'), []);
@@ -1098,8 +1320,14 @@ async function main() {
     await wait('document.querySelectorAll(".assignment-row").length===2');
     assert.equal(
       await evaluate(`document.querySelector('input[aria-label="Assign Scout"]').checked`),
-      false,
+      true,
     );
+    // Workspace custom tools are shared by default; verify revocation and reassignment.
+    await evaluate(`document.querySelector('input[aria-label="Assign Scout"]').click()`);
+    await wait(
+      `!document.querySelector('input[aria-label="Assign Scout"]').checked && !document.querySelector('input[aria-label="Assign Scout"]').disabled`,
+    );
+    assert(!api.access.allowed(child, 'custom:' + custom.id));
     await evaluate(`document.querySelector('input[aria-label="Assign Scout"]').click()`);
     await wait(
       `document.querySelector('input[aria-label="Assign Scout"]').checked && !document.querySelector('input[aria-label="Assign Scout"]').disabled`,
@@ -1868,7 +2096,7 @@ async function main() {
     await capture('bot-hierarchy-narrow.png');
     assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
     window.setSize(1480, 980);
-    console.log('Bot UI: checking pair conversations and their read-only viewer.');
+    console.log('Bot UI: checking pair conversations and joining as the human.');
     assert(api.access.allowed(engineer, 'manage_bot'));
     const pairSignal = new AbortController().signal;
     const pairThread = await api.botManagement.sendMessage(
@@ -1901,6 +2129,7 @@ async function main() {
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((bot) => bot.name)
       .join('/');
+    await click('Bot conversations');
     await wait(
       `Boolean(document.querySelector('button[aria-label=${JSON.stringify(pairTitle)}]'))`,
     );
@@ -1914,6 +2143,10 @@ async function main() {
     await wait('document.querySelectorAll(".ai-message").length===4');
     assert.equal(await evaluate('document.querySelector(".composer")'), null);
     assert.equal(await evaluate('document.querySelector("textarea")'), null);
+    assert.equal(
+      await evaluate('document.querySelector(".bot-chat-join-pill").textContent.trim()'),
+      'Jump in the chat',
+    );
     assert.equal(
       await evaluate('document.querySelector(\'button[aria-label="Send message"]\')'),
       null,
@@ -1947,6 +2180,11 @@ async function main() {
     await wait('document.querySelectorAll(".ai-message").length===6');
     await evaluate(`document.querySelector('button[title="Start a separate review."]').click()`);
     await wait('document.querySelectorAll(".ai-message").length===2');
+    assert.equal(await evaluate('document.querySelector(".composer")'), null);
+    assert.equal(
+      await evaluate('document.querySelector(".bot-chat-join-pill").textContent.trim()'),
+      'Jump in the chat',
+    );
     askFixture = 'approval';
     const pairApproval = api.botManagement.sendMessage(
       main,
@@ -1956,6 +2194,12 @@ async function main() {
     );
     await evaluate(
       `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
+    );
+    await wait(
+      'Boolean(document.querySelector(".bot-conversation-heading .pending-approval-count"))',
+    );
+    await evaluate(
+      `document.querySelector('.bot-conversation-heading .pending-approval-count').closest('.bot-conversation-heading').querySelector('.bot-row').click()`,
     );
     await wait('Boolean(document.querySelector(".bot-pending-approvals"))');
     const pendingPairRequest = (await request<ApprovalState>('/approvals')).pending[0];
@@ -2111,7 +2355,7 @@ async function main() {
     );
     assert.deepEqual(errors, []);
     console.log(
-      'PASS bot UI: onboarding, assignments, models, approvals, exact chat and pursuit links, reload recovery, nested hierarchy, read-only bot pair threads, live follow-ups, parent delegation navigation, child approval identity, and narrow layout.',
+      'PASS bot UI: onboarding, assignments, models, approvals, exact chat and pursuit links, reload recovery, nested hierarchy, human participation in bot pair threads, live follow-ups, parent delegation navigation, child approval identity, and narrow layout.',
     );
   } catch (error) {
     console.error('Bot UI failed before cleanup:', error);

@@ -286,7 +286,10 @@ export class MessageRepository {
         this.database.run(
           'INSERT INTO messages(id,bot_id,request_id,role,content,status,created_at,started_at,conversation_id,author_name,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
           role === 'user' ? input.userId : input.assistantId,
-          role === 'user' && input.sender ? input.sender.id : input.botId,
+          role === 'user'
+            ? (input.sender?.id ??
+                (this.botConversation(input.conversationId) ? null : input.botId))
+            : input.botId,
           input.requestId,
           role,
           role === 'user' ? input.text : '',
