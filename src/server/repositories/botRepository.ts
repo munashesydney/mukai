@@ -16,6 +16,14 @@ export class BotRepository {
   usesProvider(id: string) {
     return Boolean(this.database.get('SELECT id FROM bots WHERE provider_id = ?', id));
   }
+  hasUndeliveredResults(id: string) {
+    return Boolean(
+      this.database.get(
+        "SELECT 1 FROM bot_delegations WHERE target_id=? AND mode='fire_and_forget' AND delivered=0 AND state!='cancelled' LIMIT 1",
+        id,
+      ),
+    );
+  }
   create(bot: BotRecord) {
     this.database.run(
       'INSERT INTO bots(id,name,role,instructions,provider_id,model,supports_images,avatar,created_at,workspace_id,context_window_tokens,max_output_tokens,is_main,created_by,reasoning_effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',

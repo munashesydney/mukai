@@ -19,8 +19,20 @@ export class ChatCheckpointError extends Error {}
 /** Only saved tool calls still waiting to be incorporated into the model context. */
 export const resumableDelegationMessages = `SELECT d.parent_message_id FROM bot_delegations d
   JOIN chat_jobs j ON j.message_id=d.parent_message_id
-  JOIN json_each(j.approval_step_json) step ON json_extract(step.value,'$.toolCallId')=d.tool_call_id
-  WHERE d.state IN ('waiting','complete')`;
+  WHERE d.state IN ('waiting','complete') AND (
+    (d.mode='fire_and_forget' AND d.delivered=0) OR EXISTS (
+      SELECT 1 FROM json_each(j.approval_step_json) step
+      WHERE json_extract(step.value,'$.toolCallId')=d.tool_call_id))`;
+
+export interface DelegationResult {
+  botId: string;
+  conversationId: string;
+  requestId: string;
+  messageId?: string;
+  status: 'complete' | 'failed' | 'stopped' | 'interrupted';
+  response: string;
+  error: string | null;
+}
 
 export interface BotDelegation {
   parentMessageId: string;
@@ -31,6 +43,7 @@ export interface BotDelegation {
   childRequestId: string;
   message: string;
   state: 'waiting' | 'complete' | 'cancelled';
+  mode?: 'wait' | 'fire_and_forget';
 }
 
 export interface ApprovalStepCall {
@@ -64,11 +77,12 @@ export class ChatJobRepository {
       childRequestId: String(row.child_request_id),
       message: String(row.message),
       state: row.state as BotDelegation['state'],
+      mode: row.mode as BotDelegation['mode'],
     };
   }
   saveDelegation(value: BotDelegation) {
     this.database.run(
-      'INSERT INTO bot_delegations VALUES(?,?,?,?,?,?,?,?)',
+      'INSERT INTO bot_delegations(parent_message_id,tool_call_id,caller_id,target_id,conversation_id,child_request_id,message,state,mode) VALUES(?,?,?,?,?,?,?,?,?)',
       value.parentMessageId,
       value.toolCallId,
       value.callerId,
@@ -77,20 +91,74 @@ export class ChatJobRepository {
       value.childRequestId,
       value.message,
       value.state,
+      value.mode ?? 'wait',
     );
   }
   delegationState(messageId: string, toolCallId: string, state: BotDelegation['state']) {
     this.database.run(
-      'UPDATE bot_delegations SET state=? WHERE parent_message_id=? AND tool_call_id=?',
+      "UPDATE bot_delegations SET state=? WHERE parent_message_id=? AND tool_call_id=? AND state!='cancelled'",
       state,
       messageId,
       toolCallId,
     );
   }
+  completeDelegation(messageId: string, toolCallId: string, result: DelegationResult) {
+    this.database.run(
+      "UPDATE bot_delegations SET state='complete',result_json=? WHERE parent_message_id=? AND tool_call_id=? AND state!='cancelled'",
+      JSON.stringify(result),
+      messageId,
+      toolCallId,
+    );
+  }
+  backgroundDelegations(messageId: string) {
+    return this.database
+      .all(
+        `SELECT d.*,b.name AS bot_name,b.avatar AS bot_avatar,m.id AS reply_id,m.status AS reply_status,
+        m.content AS reply_content,m.error AS reply_error
+       FROM bot_delegations d JOIN bots b ON b.id=d.target_id
+       LEFT JOIN messages m ON m.conversation_id=d.conversation_id AND m.request_id=d.child_request_id
+         AND m.role='assistant' AND m.bot_id=d.target_id
+       WHERE d.parent_message_id=? AND d.mode='fire_and_forget' AND d.delivered=0 AND d.state!='cancelled'`,
+        messageId,
+      )
+      .map((row) => ({
+        toolCallId: String(row.tool_call_id),
+        botId: String(row.target_id),
+        botName: String(row.bot_name),
+        avatar: String(row.bot_avatar),
+        conversationId: String(row.conversation_id),
+        requestId: String(row.child_request_id),
+        message: String(row.message),
+        result: row.result_json
+          ? (JSON.parse(String(row.result_json)) as DelegationResult)
+          : row.reply_status && row.reply_status !== 'streaming'
+            ? {
+                botId: String(row.target_id),
+                conversationId: String(row.conversation_id),
+                requestId: String(row.child_request_id),
+                messageId: String(row.reply_id),
+                status: row.reply_status as DelegationResult['status'],
+                response: String(row.reply_content || '').slice(-12000),
+                error: row.reply_error ? String(row.reply_error) : null,
+              }
+            : undefined,
+      }));
+  }
+  consumeBackground(messageId: string, toolCallIds: string[], save: () => void) {
+    this.database.transaction(() => {
+      save();
+      for (const id of toolCallIds)
+        this.database.run(
+          'UPDATE bot_delegations SET delivered=1 WHERE parent_message_id=? AND tool_call_id=?',
+          messageId,
+          id,
+        );
+    });
+  }
   cancelDelegations(messageId: string) {
     const children = this.database
       .all(
-        "SELECT conversation_id,child_request_id FROM bot_delegations WHERE parent_message_id=? AND state='waiting'",
+        "SELECT conversation_id,child_request_id FROM bot_delegations WHERE parent_message_id=? AND state='waiting' AND mode='wait'",
         messageId,
       )
       .map((row) => ({
@@ -98,12 +166,13 @@ export class ChatJobRepository {
         requestId: String(row.child_request_id),
       }));
     this.database.run(
-      "UPDATE bot_delegations SET state='cancelled' WHERE parent_message_id=? AND state='waiting'",
+      "UPDATE bot_delegations SET state='cancelled' WHERE parent_message_id=? AND ((mode='wait' AND state='waiting') OR (mode='fire_and_forget' AND delivered=0))",
       messageId,
     );
     return children;
   }
   resumableDelegation(messageId: string, toolCallId?: string): boolean {
+    if (!toolCallId && this.backgroundDelegations(messageId).length) return true;
     const calls = this.approvalStep(messageId);
     if (!toolCallId)
       return calls.some((call) => this.resumableDelegation(messageId, call.toolCallId));
@@ -142,7 +211,7 @@ export class ChatJobRepository {
       JOIN bot_delegations d ON d.parent_message_id=m.id
       JOIN conversations c ON c.id=m.conversation_id
       WHERE m.status IN ('streaming','interrupted') AND d.state IN ('waiting','complete')
-      AND c.kind!='pursuit_run' AND j.approval_step_json IS NOT NULL
+      AND c.kind!='pursuit_run' AND (j.approval_step_json IS NOT NULL OR (d.mode='fire_and_forget' AND d.delivered=0))
       AND NOT EXISTS (SELECT 1 FROM bot_delegations p WHERE p.conversation_id=m.conversation_id
         AND p.child_request_id=m.request_id AND p.state='waiting')`,
       )

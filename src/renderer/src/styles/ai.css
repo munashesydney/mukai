@@ -999,6 +999,72 @@
   display: inline-flex;
   gap: 4px;
 }
+.spawned-bots {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.spawned-bots:empty {
+  display: none;
+}
+.spawned-bot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: left;
+  position: relative;
+  z-index: 1;
+}
+.spawned-bot-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.spawned-bot-caption {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.spawned-bot .typing-dots {
+  margin-left: 3px;
+  color: var(--text-muted);
+}
+.spawned-bot--returning .typing-dots {
+  visibility: hidden;
+}
+.response-bot-preview {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 260px;
+}
+.response-tool--reply {
+  animation: delegated-reply-arrive 0.22s ease-out;
+}
+@keyframes delegated-reply-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .response-tool--reply {
+    animation: none;
+  }
+}
 .typing-dots i {
   width: 4px;
   height: 4px;

@@ -124,7 +124,15 @@ export interface ChatActivity {
   path: string;
   status: 'running' | 'complete' | 'failed' | 'interrupted';
   summary: string;
-  delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
+  delegation?: {
+    botId: string;
+    botName: string;
+    conversationId: string;
+    requestId: string;
+    avatar?: BotAvatar;
+    mode?: 'wait' | 'fire_and_forget';
+    status?: MessageStatus;
+  };
   createdBotId?: string;
   attachmentId?: string;
   artifactId?: string;

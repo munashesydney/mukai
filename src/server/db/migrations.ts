@@ -443,6 +443,9 @@ export const migrations = [
    DELETE FROM bot_tool_assignments WHERE tool_id='image';`,
   `ALTER TABLE telegram_outbox ADD COLUMN media_json TEXT;`,
   `ALTER TABLE bots ADD COLUMN reasoning_effort TEXT CHECK(reasoning_effort IS NULL OR reasoning_effort IN ('provider-default','none','minimal','low','medium','high','xhigh','max'));`,
+  `ALTER TABLE bot_delegations ADD COLUMN mode TEXT NOT NULL DEFAULT 'wait' CHECK(mode IN ('wait','fire_and_forget'));
+   ALTER TABLE bot_delegations ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1));
+   ALTER TABLE bot_delegations ADD COLUMN result_json TEXT;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -25,12 +25,14 @@ let calls: {
   messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
 let requestPaths: string[];
+let heldChildren: ((text: string) => void)[];
 let mode:
   | 'normal'
   | 'slow'
   | 'revoke'
   | 'delegate'
   | 'delegate-slow'
+  | 'delegate-many'
   | 'delegate-approval'
   | 'delegate-tool-approval'
   | 'delegate-nested'
@@ -125,6 +127,7 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'mukai-bot-architecture-'));
   calls = [];
   requestPaths = [];
+  heldChildren = [];
   mode = 'normal';
   delegatedId = '';
   sendMode = 'wait';
@@ -171,14 +174,50 @@ beforeEach(async () => {
     const recoveringReply = call.messages
       .at(-1)
       ?.content?.startsWith('[Mukai runtime continuation');
-    if (mode === 'slow' || (mode === 'delegate-slow' && child)) return;
+    if (mode === 'slow') return;
+    if ((mode === 'delegate-slow' || mode === 'delegate-many') && child) {
+      heldChildren.push((text) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(
+          'data: ' +
+            JSON.stringify({
+              id: 'child',
+              model: 'test',
+              choices: [
+                { index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' },
+              ],
+            }) +
+            '\n\ndata: [DONE]\n\n',
+        );
+      });
+      return;
+    }
     if (child && mode === 'delegate-empty-restart' && recoveringReply) return;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = (delta: unknown, reason: string | null = null) =>
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
-    if (child && invalidAskFirst) {
+    if (mode === 'delegate-many' && !child && !call.messages.some((item) => item.role === 'tool')) {
+      send({
+        role: 'assistant',
+        tool_calls: [delegatedId, nestedId].map((id, index) => ({
+          index,
+          id: `parallel-${index}`,
+          type: 'function',
+          function: {
+            name: 'manage_bot',
+            arguments: JSON.stringify({
+              action: 'send_message',
+              botId: id,
+              message: 'Review the notes.',
+              mode: 'fire_and_forget',
+            }),
+          },
+        })),
+      });
+      send({}, 'tool_calls');
+    } else if (child && invalidAskFirst) {
       invalidAskFirst = false;
       send({
         role: 'assistant',
@@ -1558,14 +1597,18 @@ describe('Bot architecture', () => {
     ).toMatchObject({ ok: false, error: expect.stringContaining('conversationId') });
     expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(0);
   });
-  it('dispatches without waiting and lets the caller poll the latest reply', async () => {
+  it('dispatches without blocking tools, holds completion, and incorporates the child result', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
     delegatedId = child.id;
     sendMode = 'fire_and_forget';
     mode = 'delegate-slow';
-    await chat(main);
+    let completed = false;
+    const pending = chat(main).then(() => {
+      completed = true;
+    });
+    await waitFor(() => expect(calls).toHaveLength(3));
     const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
     expect(conversations).toHaveLength(1);
     const conversationId = conversations[0].id;
@@ -1574,16 +1617,34 @@ describe('Bot architecture', () => {
     expect(latest.requestId).toBeTruthy();
     expect(conversations[0].isWorking).toBe(true);
     const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
-    expect(parent.status).toBe('complete');
+    expect(parent.status).toBe('streaming');
+    expect(parent.activity).toContainEqual(
+      expect.objectContaining({ action: 'wait_for_bots', status: 'running' }),
+    );
+    expect(completed).toBe(false);
     const saved = api.store.get(
       'SELECT * FROM bot_delegations WHERE parent_message_id=?',
       parent.id,
     )!;
-    expect(saved.state).toBe('complete');
-    await request(`/bots/${main.id}/stop`, 'POST');
-    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
-      'streaming',
-    );
+    expect(saved.state).toBe('waiting');
+    heldChildren[0]('Verified child finding: blueberry.');
+    await pending;
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Verified child finding: blueberry.');
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.status).toBe('complete');
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(finished.activity?.[0].delegation).toMatchObject({
+      status: 'complete',
+      mode: 'fire_and_forget',
+      avatar: child.avatar,
+    });
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'complete', delivered: 1 });
     const replay = await api.botManagement.sendMessage(
       main,
       child.id,
@@ -1601,13 +1662,9 @@ describe('Bot architecture', () => {
     expect(
       (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data,
     ).toHaveLength(2);
-    await request(`/conversations/${conversationId}/stop`, 'POST');
-    await waitFor(() =>
-      expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
-        'stopped',
-      ),
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+      'complete',
     );
-    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe('stopped');
     mode = 'normal';
     const context = {
       bot: main,
@@ -1647,6 +1704,179 @@ describe('Bot architecture', () => {
     expect(() => api.botManagement.getLastMessage(main, child.id, 'bot-' + child.id)).toThrow(
       'between you and the target',
     );
+  });
+  async function waitingParent(main: Bot) {
+    let parent!: ChatMessage;
+    await waitFor(async () => {
+      parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+      expect(
+        parent.activity?.some(
+          (item) => item.action === 'wait_for_bots' && item.status === 'running',
+        ),
+      ).toBe(true);
+    });
+    return parent;
+  }
+  it('waits for every outstanding bot before requesting one final synthesis', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    nestedId = (await api.botManagement.create(main, input('Iris'))).id;
+    mode = 'delegate-many';
+    const pending = chat(main);
+    await waitingParent(main);
+    expect(heldChildren).toHaveLength(2);
+    expect(calls).toHaveLength(4);
+    heldChildren[0]('First verified finding.');
+    await waitFor(async () => {
+      const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+      expect(
+        parent.activity?.filter(
+          (item) => item.action === 'send_message' && item.delegation?.status === 'complete',
+        ),
+      ).toHaveLength(1);
+      const replies = parent.activity?.filter((item) => item.action === 'receive_message');
+      expect(replies).toHaveLength(1);
+      expect(replies![0].summary).toBe('First verified finding.');
+      expect(parent.parts?.at(-1)).toMatchObject({ type: 'tool', activityId: replies![0].id });
+      expect(parent.status).toBe('streaming');
+      expect(
+        parent.activity?.some(
+          (item) => item.action === 'wait_for_bots' && item.status === 'running',
+        ),
+      ).toBe(true);
+    });
+    expect(calls).toHaveLength(4);
+    const completedChild = api.store.get(
+      "SELECT target_id FROM bot_delegations WHERE state='complete' AND mode='fire_and_forget'",
+    )!;
+    expect((await request(`/bots/${String(completedChild.target_id)}`, 'DELETE')).status).toBe(409);
+    heldChildren[1]('Second verified finding.');
+    await pending;
+    expect(calls).toHaveLength(5);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('First verified finding.');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Second verified finding.');
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(2);
+    expect(parent.status).toBe('complete');
+  });
+  it('accepts user steering while waiting and incorporates later results into that same run', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    const id = randomUUID();
+    expect(
+      (
+        await request(`/bots/${main.id}/followups`, 'POST', {
+          id,
+          text: 'Focus only on accessibility.',
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await request(`/bots/${main.id}/followups`, 'PUT', {
+          action: 'steer',
+          id,
+          expectedRequestId: parent.requestId,
+        })
+      ).status,
+    ).toBe(200);
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Focus only on accessibility.');
+    heldChildren[0]('Verified accessibility result.');
+    await pending;
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.id).toBe(parent.id);
+    expect(
+      finished.parts?.filter((part) => part.type === 'steering' && part.id === id),
+    ).toHaveLength(1);
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Verified accessibility result.');
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data).toHaveLength(2);
+  });
+  it('respects explicit Stop and never delivers a late child result into a newer user turn', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    await request(`/bots/${main.id}/stop`, 'POST');
+    await pending;
+    mode = 'normal';
+    await chat(main);
+    const before = calls.length;
+    heldChildren[0]('Late finding from the cancelled parent task.');
+    const pair = parent.activity!.find((item) => item.delegation)!.delegation!;
+    await waitFor(() =>
+      expect(api.botManagement.getLastMessage(main, delegatedId, pair.conversationId).status).toBe(
+        'complete',
+      ),
+    );
+    const history = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data;
+    expect(history[1].status).toBe('stopped');
+    expect(history.at(-1)!.status).toBe('complete');
+    expect(history.at(-1)!.activity?.some((item) => item.action === 'receive_message')).toBe(false);
+    expect(calls).toHaveLength(before);
+    expect(
+      api.store.get('SELECT state FROM bot_delegations WHERE parent_message_id=?', parent.id)
+        ?.state,
+    ).toBe('cancelled');
+  });
+  it('resumes a parent with a stopped child outcome instead of leaving it waiting forever', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    await request(`/conversations/${parent.activity![0].delegation!.conversationId}/stop`, 'POST');
+    await pending;
+    expect(
+      calls.at(-1)!.messages.some((item) => item.content?.includes('"status":"stopped"')),
+    ).toBe(true);
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.status).toBe('complete');
+    expect(finished.activity).toContainEqual(
+      expect.objectContaining({ action: 'receive_message', status: 'interrupted' }),
+    );
+  });
+  it('restores a held fire-and-forget run and the original child request after restart', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    const pair = parent.activity![0].delegation!;
+    const before = (await request<ChatMessage[]>(`/conversations/${pair.conversationId}/messages`))
+      .data;
+    mode = 'delegate';
+    await restart();
+    await pending;
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!.status).toBe(
+        'complete',
+      ),
+    );
+    const after = (await request<ChatMessage[]>(`/conversations/${pair.conversationId}/messages`))
+      .data;
+    expect(after.map((message) => message.id)).toEqual(before.map((message) => message.id));
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.id).toBe(parent.id);
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(
+      api.store.get('SELECT delivered FROM bot_delegations WHERE parent_message_id=?', parent.id)
+        ?.delivered,
+    ).toBe(1);
   });
   async function restart(snapshot?: string) {
     await api.shutdown();

@@ -57,6 +57,9 @@ export class ToolService {
     this.access = access;
     this.management = management;
   }
+  resumeBackgroundDelegations(bot: Bot, messageId: string, signal: AbortSignal) {
+    this.management?.resumeBackground(bot, messageId, signal);
+  }
   assignments(workspaceId: string) {
     this.workspaces.require(workspaceId);
     return this.access?.list(workspaceId) || [];

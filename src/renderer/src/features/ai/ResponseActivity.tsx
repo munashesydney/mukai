@@ -22,6 +22,8 @@ import { MessageMarkdown } from './MessageMarkdown';
 import { ToolImagePreview } from './ToolImagePreview';
 import { ResponseReferenceContext } from './responseReferenceContext';
 import { TerminalCard } from './TerminalCard';
+import { SpawnedBots } from './SpawnedBots';
+import { responseStatus } from './responseStatus';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
@@ -39,6 +41,8 @@ const actionLabels: Record<string, string> = {
   listen_audio: 'Listened to audio',
   read_video: 'Read video metadata',
   view_video: 'Viewed video',
+  receive_message: 'Reply from',
+  wait_for_bots: 'Waited for delegated bots',
 };
 
 function ActivitySpinner() {
@@ -98,7 +102,9 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
       {running ? <ActivitySpinner /> : <Icon size={14} />}
       <span className="response-tool-label">
         {running
-          ? `Running ${activity.action.replaceAll('_', ' ')}`
+          ? activity.action === 'wait_for_bots'
+            ? 'Waiting for delegated bots'
+            : `Running ${activity.action.replaceAll('_', ' ')}`
           : problem
             ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
             : (activity.tool === 'image'
@@ -112,6 +118,9 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
           {activity.path}
         </span>
       </span>
+      {activity.action === 'receive_message' && (
+        <span className="response-bot-preview">{activity.summary.slice(0, 140)}</span>
+      )}
       {problem && <CircleAlert size={13} aria-label={activity.status} />}
       {activity.delegation && openConversation && (
         <button
@@ -146,19 +155,31 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
       </div>
     );
   return (
-    <details className={`response-tool response-tool--${activity.status}`}>
+    <details
+      className={`response-tool response-tool--${activity.status}${activity.action === 'receive_message' ? ' response-tool--reply' : ''}`}
+    >
       <summary>
         {label}
         <ChevronDown size={13} className="response-chevron" />
       </summary>
       <div className="response-tool-detail">
         <small>
-          {activity.tool.replaceAll('_', ' ')} · {activity.action} · {activity.status}
+          {activity.action === 'receive_message' ? (
+            `${activity.path} · Reply`
+          ) : (
+            <>
+              {activity.tool.replaceAll('_', ' ')} · {activity.action} · {activity.status}
+            </>
+          )}
         </small>
-        <p>
-          {activity.summary ||
-            (running ? 'Working in your workspace folder…' : 'Waiting for the operation result…')}
-        </p>
+        {activity.action === 'receive_message' ? (
+          <MessageMarkdown text={activity.summary} />
+        ) : (
+          <p>
+            {activity.summary ||
+              (running ? 'Working in your workspace folder…' : 'Waiting for the operation result…')}
+          </p>
+        )}
       </div>
     </details>
   );
@@ -177,31 +198,35 @@ function ToolGroup({
     const activity = message.activity?.find((item) => item.id === part.activityId);
     if (activity)
       labels.add(
-        activity.status !== 'complete'
-          ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
-          : activity.tool === 'media'
-            ? actionLabels[activity.action] || 'Inspected media'
-            : activity.tool === 'image'
-              ? activity.action === 'view'
-                ? 'Viewed images'
-                : 'Read image metadata'
-              : activity.tool === 'manage_pursuit'
-                ? 'Managed pursuits'
-                : activity.tool === 'terminal'
-                  ? 'Ran commands'
-                  : activity.tool === 'browser'
-                    ? 'Used browser'
-                    : ['write_file', 'patch'].includes(activity.action)
-                      ? 'Edited files'
-                      : activity.action === 'search_files'
-                        ? 'Searched files'
-                        : activity.action === 'read_file'
-                          ? 'Read files'
-                          : activity.action === 'create_directory'
-                            ? 'Created folders'
-                            : activity.action === 'list'
-                              ? 'Listed folders'
-                              : 'Used tools',
+        activity.action === 'wait_for_bots' && activity.status === 'running'
+          ? 'Waiting for bots'
+          : activity.action === 'receive_message'
+            ? 'Bot replies'
+            : activity.status !== 'complete'
+              ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
+              : activity.tool === 'media'
+                ? actionLabels[activity.action] || 'Inspected media'
+                : activity.tool === 'image'
+                  ? activity.action === 'view'
+                    ? 'Viewed images'
+                    : 'Read image metadata'
+                  : activity.tool === 'manage_pursuit'
+                    ? 'Managed pursuits'
+                    : activity.tool === 'terminal'
+                      ? 'Ran commands'
+                      : activity.tool === 'browser'
+                        ? 'Used browser'
+                        : ['write_file', 'patch'].includes(activity.action)
+                          ? 'Edited files'
+                          : activity.action === 'search_files'
+                            ? 'Searched files'
+                            : activity.action === 'read_file'
+                              ? 'Read files'
+                              : activity.action === 'create_directory'
+                                ? 'Created folders'
+                                : activity.action === 'list'
+                                  ? 'Listed folders'
+                                  : 'Used tools',
       );
   }
   return (
@@ -336,6 +361,12 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
     message.activity?.some(
       (item) => item.id === part.activityId && item.tool === 'terminal' && item.action !== 'list',
     );
+  const isDelegatedResult = (part: ResponsePart) =>
+    part.type === 'tool' &&
+    message.activity?.some(
+      (item) =>
+        item.id === part.activityId && ['wait_for_bots', 'receive_message'].includes(item.action),
+    );
   for (const part of parts) {
     if (part.type === 'tool' && isTerminal(part)) {
       const activity = message.activity?.find((item) => item.id === part.activityId);
@@ -348,7 +379,9 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
       part.type === 'tool' &&
       previous?.[0].type === 'tool' &&
       !isTerminal(part) &&
-      !isTerminal(previous[0])
+      !isTerminal(previous[0]) &&
+      !isDelegatedResult(part) &&
+      !isDelegatedResult(previous[0])
     )
       previous.push(part);
     else groups.push([part]);
@@ -419,7 +452,7 @@ function WorkProcess({
     streaming ? new Date(now).toISOString() : message.finishedAt,
   );
   const label = streaming
-    ? 'Working'
+    ? responseStatus(message)
     : message.status === 'complete'
       ? 'Worked'
       : message.status === 'stopped'
@@ -469,6 +502,7 @@ export const ResponseActivity = memo(function ResponseActivity({
       {!!answer && (
         <MessageMarkdown text={answer} streaming={message.status === 'streaming'} imageGallery />
       )}
+      <SpawnedBots message={message} />
     </ResponseReferenceContext.Provider>
   );
 });

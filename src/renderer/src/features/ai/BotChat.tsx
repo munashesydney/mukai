@@ -45,6 +45,7 @@ import { ChatActivityDrawer } from './ChatActivityDrawer';
 import { FollowupQueue } from './FollowupQueue';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
+import { responseStatus } from './responseStatus';
 
 export function BotChat({
   bot,
@@ -568,9 +569,6 @@ const MessageRow = memo(function MessageRow({
   onRetry: (requestId: string) => void;
 }) {
   const disclosure = useWorkDisclosure(message);
-  const delegation = message.activity?.find(
-    (activity) => activity.status === 'running' && activity.delegation,
-  )?.delegation;
   return (
     <>
       <SteeringMessages message={message} collapsed={!disclosure.workExpanded} />
@@ -622,15 +620,7 @@ const MessageRow = memo(function MessageRow({
                 <i />
                 <i />
               </span>
-              {delegation
-                ? `Waiting for ${delegation.botName}’s response…`
-                : message.activity?.some((activity) => activity.status === 'running')
-                  ? 'Working with files…'
-                  : message.content
-                    ? 'Responding…'
-                    : message.reasoning
-                      ? `${bot.name} is thinking…`
-                      : 'Waiting for the model…'}
+              {responseStatus(message)}…
             </div>
           )}
           {['failed', 'stopped', 'interrupted'].includes(message.status) && (

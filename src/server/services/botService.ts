@@ -157,6 +157,11 @@ export class BotService {
     if (this.list(bot.workspaceId).some((other) => other.createdBy === id))
       throw new ApiError(409, 'Delete this bot’s child bots first.');
     if (this.busy(id)) throw new ApiError(409, 'Stop this bot’s response before deleting it.');
+    if (this.bots.hasUndeliveredResults(id))
+      throw new ApiError(
+        409,
+        'Wait for this bot’s delegated results to reach its caller before deleting it.',
+      );
     const names = this.attachments.storageNames(id);
     this.bots.delete(id);
     names.forEach((name) => this.attachments.removeFile(name));

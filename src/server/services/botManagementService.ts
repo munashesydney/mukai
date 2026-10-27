@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { Bot, BotInput, ChatMessage } from '../../shared/ai';
+import type { Bot, BotInput, ChatMessage, ChatActivity } from '../../shared/ai';
 import { ApiError } from '../config';
 import type { BotService } from './botService';
 import type { ChatService } from './chatService';
 import type { ConversationService } from './conversationService';
 import type { ToolAccessService } from './toolAccessService';
 import type { ProviderService } from './providerService';
-import type { ChatJobRepository } from '../repositories/chatJobRepository';
+import type { ChatJobRepository, DelegationResult } from '../repositories/chatJobRepository';
 import { outsidePursuitExecution, pausePursuitTask } from './pursuitScheduler';
 import type { z } from 'zod';
 import { botManagementDefinition } from '../tools/bots/definition';
@@ -267,12 +267,7 @@ export class BotManagementService {
     delegation?: {
       parentMessageId?: string;
       toolCallId: string;
-      onStarted: (value: {
-        botId: string;
-        botName: string;
-        conversationId: string;
-        requestId: string;
-      }) => void;
+      onStarted: (value: NonNullable<ChatActivity['delegation']>) => void;
     },
     mode: 'fire_and_forget' | 'wait' = 'wait',
   ) {
@@ -286,6 +281,7 @@ export class BotManagementService {
     if (
       saved &&
       (saved.callerId !== caller.id ||
+        (saved.mode && saved.mode !== mode) ||
         saved.targetId !== target.id ||
         saved.message !== message ||
         (conversationId && conversationId !== saved.conversationId))
@@ -339,15 +335,17 @@ export class BotManagementService {
         conversationId: conversation.id,
         childRequestId: requestId,
         message,
-        // Detached sends finish the caller's dispatch immediately. They are not
-        // waiting delegations, so stopping the caller cannot cancel the child.
-        state: mode === 'wait' ? 'waiting' : 'complete',
+        state: 'waiting',
+        mode,
       });
     delegation?.onStarted({
       botId: target.id,
       botName: target.name,
       conversationId: conversation.id,
       requestId,
+      avatar: target.avatar,
+      mode,
+      status: 'streaming',
     });
     const abort = () => {
       if (this.chats.isClosing) return;
@@ -400,6 +398,28 @@ export class BotManagementService {
         );
         if (mode === 'wait') signal.throwIfAborted();
         if (!response) throw new ApiError(500, 'The bot did not return a saved response.');
+        if (
+          response.status !== 'streaming' &&
+          !this.chats.isClosing &&
+          delegation?.parentMessageId
+        ) {
+          const result: DelegationResult = {
+            botId,
+            conversationId: conversation.id,
+            requestId,
+            messageId: response.id,
+            status: response.status,
+            response: response.content.slice(-12000),
+            error: response.error,
+          };
+          this.jobs.completeDelegation(delegation.parentMessageId, delegation.toolCallId, result);
+          this.chats.delegationProgress(
+            delegation.parentMessageId,
+            delegation.toolCallId,
+            undefined,
+            result,
+          );
+        }
         if (mode === 'wait' && delegation?.parentMessageId)
           this.jobs.delegationState(delegation.parentMessageId, delegation.toolCallId, 'complete');
         return {
@@ -417,8 +437,28 @@ export class BotManagementService {
       }
     };
     if (mode === 'fire_and_forget') {
-      // Handle background errors; saved chat status remains available to polling.
-      void outsidePursuitExecution(run).catch(rejectStarted);
+      void outsidePursuitExecution(run).catch((error) => {
+        rejectStarted(error);
+        if (this.chats.isClosing || !delegation?.parentMessageId) return;
+        const result: DelegationResult = {
+          botId,
+          conversationId: conversation.id,
+          requestId,
+          status: 'failed',
+          response: '',
+          error:
+            error instanceof ApiError
+              ? error.message
+              : 'The delegated bot could not finish. Check its conversation for details.',
+        };
+        this.jobs.completeDelegation(delegation.parentMessageId, delegation.toolCallId, result);
+        this.chats.delegationProgress(
+          delegation.parentMessageId,
+          delegation.toolCallId,
+          undefined,
+          result,
+        );
+      });
       await startup;
       return {
         botId,
@@ -431,5 +471,36 @@ export class BotManagementService {
       };
     }
     return run();
+  }
+  resumeBackground(caller: Bot, messageId: string, signal: AbortSignal) {
+    for (const child of this.jobs.backgroundDelegations(messageId)) {
+      if (child.result) continue;
+      void this.sendMessage(
+        caller,
+        child.botId,
+        child.message,
+        signal,
+        child.conversationId,
+        {
+          parentMessageId: messageId,
+          toolCallId: child.toolCallId,
+          onStarted: (info) => this.chats.delegationProgress(messageId, child.toolCallId, info),
+        },
+        'fire_and_forget',
+      ).catch((error) => {
+        if (signal.aborted || this.chats.isClosing) return;
+        const result: DelegationResult = {
+          botId: child.botId,
+          conversationId: child.conversationId,
+          requestId: child.requestId,
+          status: 'failed',
+          response: '',
+          error:
+            error instanceof ApiError ? error.message : 'The delegated bot could not be resumed.',
+        };
+        this.jobs.completeDelegation(messageId, child.toolCallId, result);
+        this.chats.delegationProgress(messageId, child.toolCallId, undefined, result);
+      });
+    }
   }
 }
