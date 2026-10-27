@@ -77,7 +77,7 @@ export function WorkspaceSidebar({
   const toggleGroup = (group: string) =>
     setExpansion({
       locationKey,
-      group: expandedGroup === group ? null : group,
+      group: expandedGroup === group ? (group.startsWith('pair:') ? 'pairs' : null) : group,
     });
   const isSelected = (item: string) => location.item === item;
   const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');

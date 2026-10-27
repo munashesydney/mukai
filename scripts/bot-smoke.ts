@@ -231,6 +231,30 @@ async function main() {
         ),
         'false',
       );
+      await evaluate(
+        `document.querySelector('button[aria-label=${JSON.stringify(otherTitle)}]').click()`,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelector(".bot-pair-section-heading button").getAttribute("aria-expanded")',
+        ),
+        'true',
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(".bot-pair-conversation-groups .bot-conversation-parent").length',
+        ),
+        2,
+      );
+      assert.equal(
+        await evaluate(
+          'document.querySelectorAll(\'.bot-pair-conversation-groups .bot-conversation-parent[aria-expanded="true"]\').length',
+        ),
+        0,
+      );
+      await evaluate(
+        `document.querySelector('button[aria-label=${JSON.stringify(otherTitle)}]').click()`,
+      );
       await evaluate(`document.querySelector('button[title="Other team task."]').click()`);
       await wait('document.querySelectorAll(".bot-conversation-row.is-selected").length === 1');
       assert.equal(
