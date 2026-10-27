@@ -162,11 +162,8 @@ async function main() {
         .join('/');
       const openPair = async (name: string) => {
         await wait('Boolean(document.querySelector(".bot-pair-section-heading button"))');
-        await evaluate(
-          `(() => { const section = document.querySelector('.bot-pair-section-heading button'); if(section.getAttribute('aria-expanded') !== 'true') section.click(); })()`,
-        );
         await wait(
-          `Boolean(document.querySelector('button[aria-label=${JSON.stringify(title)}]'))`,
+          `(() => { const section = document.querySelector('.bot-pair-section-heading button'); if(section?.getAttribute('aria-expanded') === 'false') section.click(); return Boolean(document.querySelector('button[aria-label=${JSON.stringify(title)}]')); })()`,
         );
         await evaluate(
           `(() => { const group = document.querySelector('button[aria-label=${JSON.stringify(title)}]'); if(group.getAttribute('aria-expanded') !== 'true') group.click(); })()`,
@@ -197,6 +194,38 @@ async function main() {
         1,
       );
       await evaluate(`document.querySelector('button[title="Pair smoke task."]').click()`);
+      await wait('Boolean(document.querySelector(".bot-conversation-confirmation"))');
+      assert.equal(
+        await evaluate('document.querySelector(".bot-conversation-confirmation > p").textContent'),
+        'Mukai was talking to Orbit here. Wanna go?',
+      );
+      assert.equal(await evaluate('document.querySelector(".bot-pair-conversation-groups")'), null);
+      await capture('bot-conversation-confirmation.png');
+      await click('No');
+      assert.equal(
+        await evaluate('document.querySelector(".bot-conversation-confirmation")'),
+        null,
+      );
+      assert.equal(await evaluate('document.querySelector(".bot-pair-conversation-groups")'), null);
+      await evaluate(`document.querySelector('button[title="Pair smoke task."]').click()`);
+      await wait('Boolean(document.querySelector(".bot-conversation-confirmation"))');
+      window.setSize(800, 900);
+      await capture('bot-conversation-confirmation-narrow.png');
+      assert.equal(
+        await evaluate(
+          '(() => { const bounds = document.querySelector(".bot-conversation-confirmation").getBoundingClientRect(); return bounds.width > 0 && bounds.height > 0 && bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; })()',
+        ),
+        true,
+      );
+      window.setSize(1480, 980);
+      await evaluate(
+        'document.querySelector(".bot-conversation-confirmation input[type=checkbox]").click()',
+      );
+      await click('Yes');
+      assert.equal(
+        await evaluate('localStorage.getItem("mukai.skip-bot-conversation-confirmation")'),
+        '1',
+      );
       await wait('Boolean(document.querySelector(".bot-pair-conversation-groups .is-selected"))');
       assert.equal(
         await evaluate('document.querySelectorAll(\'.bot-row[aria-expanded="true"]\').length'),
@@ -318,6 +347,15 @@ async function main() {
         'Pair smoke task.',
       );
       assert.equal(await evaluate('document.querySelector(".bot-chat-join-pill")'), null);
+      await evaluate(
+        `Array.from(document.querySelectorAll('.bot-row')).find(button => button.textContent.trim() === 'Orbit').click()`,
+      );
+      await evaluate(`document.querySelector('button[title="Pair smoke task."]').click()`);
+      await wait('Boolean(document.querySelector(".bot-pair-conversation-groups .is-selected"))');
+      assert.equal(
+        await evaluate('document.querySelector(".bot-conversation-confirmation")'),
+        null,
+      );
       await openPair('Another pair smoke task.');
       await wait('Boolean(document.querySelector(".bot-chat-join-pill"))');
       assert.equal(await evaluate('document.querySelector(".composer")'), null);
@@ -333,7 +371,7 @@ async function main() {
       );
       assert.deepEqual(errors, []);
       console.log(
-        'PASS pair chat UI: join pill, receiving bot, human identity, persistent composer after reload, separate thread preference, private composer, and narrow layout.',
+        'PASS pair chat UI: shortcut confirmation, cancellation, remembered choice after reload, join pill, receiving bot, human identity, persistent composer after reload, separate thread preference, private composer, and narrow layout.',
       );
       return;
     }

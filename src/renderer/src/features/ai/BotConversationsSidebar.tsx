@@ -14,6 +14,10 @@ import {
   visibleConversations,
 } from './conversationSidebar';
 
+import {
+  BotConversationShortcut,
+  skipBotConversationConfirmationKey,
+} from './BotConversationShortcut';
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
 
 const INITIAL_CONVERSATION_COUNT = 3;
@@ -47,6 +51,21 @@ export function BotConversationsSidebar({
   onToggleGroup: (group: string) => void;
 }) {
   const approvals = useApprovals();
+  const [skipConfirmation, setSkipConfirmation] = useState(() => {
+    try {
+      return localStorage.getItem(skipBotConversationConfirmationKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  function rememberConfirmation() {
+    setSkipConfirmation(true);
+    try {
+      localStorage.setItem(skipBotConversationConfirmationKey, '1');
+    } catch {
+      // Keep the preference for this session if storage is unavailable.
+    }
+  }
   const selectedRow = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     selectedRow.current?.scrollIntoView({ block: 'nearest' });
@@ -146,33 +165,8 @@ export function BotConversationsSidebar({
                     chat.kind === 'bot'
                       ? bots.find((participant) => participant.id === chat.botIds[0])
                       : undefined;
-                  return (
-                    <button
-                      key={chat.id}
-                      ref={
-                        chat.kind === 'private' && activeConversationId === chat.id
-                          ? selectedRow
-                          : undefined
-                      }
-                      className={`sidebar-row bot-conversation-row ${chat.kind === 'private' && activeConversationId === chat.id ? 'is-selected' : ''}`}
-                      aria-current={
-                        chat.kind === 'private' && activeConversationId === chat.id
-                          ? 'page'
-                          : undefined
-                      }
-                      title={chat.name}
-                      onClick={() =>
-                        onSelect(
-                          chat.kind === 'bot'
-                            ? {
-                                section: 'bots',
-                                item: 'bot-conversations',
-                                conversationId: chat.id,
-                              }
-                            : { section: 'bots', item: bot.id, conversationId: chat.id },
-                        )
-                      }
-                    >
+                  const content = (
+                    <>
                       {sender && (
                         <span
                           className="bot-conversation-origin"
@@ -191,6 +185,49 @@ export function BotConversationsSidebar({
                       >
                         {age(chat.updatedAt)}
                       </ConversationStatus>
+                    </>
+                  );
+                  if (chat.kind === 'bot') {
+                    return (
+                      <BotConversationShortcut
+                        key={chat.id}
+                        chat={chat}
+                        sender={sender?.name || 'A bot'}
+                        receiver={bot.name}
+                        skipConfirmation={skipConfirmation}
+                        onRemember={rememberConfirmation}
+                        onSelect={() =>
+                          onSelect({
+                            section: 'bots',
+                            item: 'bot-conversations',
+                            conversationId: chat.id,
+                          })
+                        }
+                      >
+                        {content}
+                      </BotConversationShortcut>
+                    );
+                  }
+                  return (
+                    <button
+                      key={chat.id}
+                      ref={
+                        chat.kind === 'private' && activeConversationId === chat.id
+                          ? selectedRow
+                          : undefined
+                      }
+                      className={`sidebar-row bot-conversation-row ${chat.kind === 'private' && activeConversationId === chat.id ? 'is-selected' : ''}`}
+                      aria-current={
+                        chat.kind === 'private' && activeConversationId === chat.id
+                          ? 'page'
+                          : undefined
+                      }
+                      title={chat.name}
+                      onClick={() =>
+                        onSelect({ section: 'bots', item: bot.id, conversationId: chat.id })
+                      }
+                    >
+                      {content}
                     </button>
                   );
                 })}

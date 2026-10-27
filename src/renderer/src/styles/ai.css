@@ -91,6 +91,29 @@
 .popup-menu .full-access {
   color: #ca7331;
 }
+.bot-conversation-confirmation {
+  padding: 16px;
+}
+.bot-conversation-confirmation > p {
+  margin: 0 0 16px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.bot-conversation-confirmation-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bot-conversation-confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
 .bot-model-menu {
   padding-bottom: 0;
 }

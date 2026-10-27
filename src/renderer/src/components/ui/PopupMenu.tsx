@@ -11,6 +11,7 @@ export function PopupMenu({
   className = '',
   menuClassName = '',
   buttonClassName = '',
+  buttonTitle,
   disabled = false,
   role = 'menu',
   width = 370,
@@ -20,10 +21,11 @@ export function PopupMenu({
   footer?: ReactNode;
   trigger: ReactNode;
   children: (close: () => void) => ReactNode;
-  placement?: 'top' | 'bottom';
+  placement?: 'top' | 'bottom' | 'right';
   className?: string;
   menuClassName?: string;
   buttonClassName?: string;
+  buttonTitle?: string;
   disabled?: boolean;
   role?: 'menu' | 'dialog';
   width?: number;
@@ -49,16 +51,23 @@ export function PopupMenu({
       const upward =
         placement === 'top' ? above >= 180 || above > below : below < 180 && above > below;
       const popupWidth = Math.min(width, window.innerWidth - 24);
+      const sideways =
+        placement === 'right' && bounds.right + 9 + popupWidth <= window.innerWidth - 12;
       Object.assign(element.style, {
         width: `${popupWidth}px`,
-        left: `${Math.max(12, Math.min(bounds.left, window.innerWidth - popupWidth - 12))}px`,
-        top: upward ? 'auto' : `${bounds.bottom + 9}px`,
-        bottom: upward ? `${window.innerHeight - bounds.top + 9}px` : 'auto',
-        maxHeight: `${Math.max(80, upward ? above : below)}px`,
+        left: `${sideways ? bounds.right + 9 : Math.max(12, Math.min(bounds.left, window.innerWidth - popupWidth - 12))}px`,
+        top: sideways
+          ? `${Math.max(12, Math.min(bounds.top, window.innerHeight - element.offsetHeight - 12))}px`
+          : upward
+            ? 'auto'
+            : `${bounds.bottom + 9}px`,
+        bottom: !sideways && upward ? `${window.innerHeight - bounds.top + 9}px` : 'auto',
+        maxHeight: `${sideways ? window.innerHeight - 24 : Math.max(80, upward ? above : below)}px`,
       });
     }
     position();
     element.showPopover();
+    position();
     (
       element.querySelector<HTMLElement>('[data-popup-autofocus]') ||
       element.querySelector<HTMLButtonElement>('[aria-checked="true"]') ||
@@ -121,6 +130,7 @@ export function PopupMenu({
         ref={button}
         type="button"
         className={buttonClassName}
+        title={buttonTitle}
         aria-label={label}
         aria-haspopup={role}
         aria-expanded={expanded}
