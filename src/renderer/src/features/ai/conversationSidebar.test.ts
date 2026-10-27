@@ -57,7 +57,7 @@ describe('Background conversation activity', () => {
         createElement(BotPairConversationsSidebar, {
           bots,
           conversations,
-          location: { section: 'spaces', item: 'bot-conversations', conversationId },
+          location: { section: 'bots', item: 'bot-conversations', conversationId },
           onSelect: () => {},
           loading: false,
           error: '',
@@ -73,6 +73,26 @@ describe('Background conversation activity', () => {
     expect(expanded.match(/AI is working/g)).toHaveLength(2);
     expect(expanded).toContain('Task 1');
     expect(expanded).toContain('Task 2');
+  });
+
+  it('expands and highlights a linked pair conversation beyond the initial three rows', () => {
+    const markup = renderToStaticMarkup(
+      createElement(BotPairConversationsSidebar, {
+        bots: [
+          { id: 'caller', name: 'Caller', avatar: 'nova' },
+          { id: 'receiver', name: 'Receiver', avatar: 'nova' },
+        ] as Bot[],
+        conversations: ['1', '2', '3', '4', '5'].map((id) => chat(id)),
+        location: { section: 'bots', item: 'bot-conversations', conversationId: '5' },
+        onSelect: () => {},
+        loading: false,
+        error: '',
+        onRefresh: () => {},
+      }),
+    );
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain('is-selected" aria-current="page" title="Task 5"');
+    expect(markup).not.toContain('title="Task 4"');
   });
 
   it('keeps older working conversations visible and attributes delegation to its receiver', () => {

@@ -463,6 +463,10 @@ p {
   width: 22px;
   height: 22px;
 }
+.bot-pair-section-heading {
+  margin-top: 24px;
+  margin-bottom: 12px;
+}
 .section-count {
   color: var(--text-muted);
   font-size: 11px;
@@ -528,6 +532,12 @@ p {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.bot-pair-conversation-groups {
+  gap: 4px;
+}
+.bot-pair-conversation-groups .bot-conversation-parent {
+  min-height: 39px;
 }
 .bot-pair-empty {
   padding-inline-start: 24px;

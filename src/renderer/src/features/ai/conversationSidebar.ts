@@ -18,6 +18,12 @@ export function botConversationGroup(chat: Conversation) {
   return chat.kind === 'bot' ? chat.botIds[1] : chat.ownerBotId;
 }
 
-export function visibleConversations(conversations: Conversation[], count: number) {
-  return conversations.filter((chat, index) => index < count || chat.isWorking);
+export function visibleConversations(
+  conversations: Conversation[],
+  count: number,
+  activeConversationId?: string,
+) {
+  return conversations.filter(
+    (chat, index) => index < count || chat.isWorking || chat.id === activeConversationId,
+  );
 }

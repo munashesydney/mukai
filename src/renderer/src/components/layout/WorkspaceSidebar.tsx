@@ -66,7 +66,15 @@ export function WorkspaceSidebar({
   onCreateWorkspace: () => void;
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
-  const [directOpen, setDirectOpen] = useState(true);
+  const [directToggle, setDirectToggle] = useState<{ open: boolean; location?: Location }>({
+    open: true,
+  });
+  const directOpen =
+    location.section === 'bots' &&
+    location.item === 'bot-conversations' &&
+    directToggle.location !== location
+      ? true
+      : directToggle.open;
   const isSelected = (item: string) => location.item === item;
   const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');
   const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
@@ -182,23 +190,6 @@ export function WorkspaceSidebar({
                 </button>
               </div>
             )}
-            <div className="sidebar-section-heading">
-              <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
-                {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>Bot conversations</span>
-              </button>
-            </div>
-            {directOpen && (
-              <BotPairConversationsSidebar
-                bots={bots}
-                conversations={botPairConversations}
-                location={location}
-                onSelect={onSelect}
-                loading={botPairLoading}
-                error={botPairError}
-                onRefresh={onRefreshBotPairs}
-              />
-            )}
             {!!inMotion.length && (
               <>
                 <div className="sidebar-section-heading plain-heading">
@@ -243,6 +234,26 @@ export function WorkspaceSidebar({
               onSelect={onSelect}
               onCreate={onCreateConversation}
             />
+            <div className="sidebar-section-heading bot-pair-section-heading">
+              <button
+                onClick={() => setDirectToggle({ open: !directOpen, location })}
+                aria-expanded={directOpen}
+              >
+                {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <span>Bot conversations</span>
+              </button>
+            </div>
+            {directOpen && (
+              <BotPairConversationsSidebar
+                bots={bots}
+                conversations={botPairConversations}
+                location={location}
+                onSelect={onSelect}
+                loading={botPairLoading}
+                error={botPairError}
+                onRefresh={onRefreshBotPairs}
+              />
+            )}
           </>
         )}
         {location.section === 'pursuits' && (

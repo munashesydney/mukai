@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
 import type { Conversation } from '../../../../shared/conversations';
@@ -26,8 +26,19 @@ export function BotPairConversationsSidebar({
   error: string;
   onRefresh: () => void;
 }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, { open: boolean; location: Location }>>(
+    {},
+  );
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
+  const selectedRow = useRef<HTMLButtonElement>(null);
+  const activeConversationId =
+    location.section === 'bots' && location.item === 'bot-conversations'
+      ? location.conversationId
+      : undefined;
+  const activeConversation = conversations.find((chat) => chat.id === activeConversationId);
+  useEffect(() => {
+    selectedRow.current?.scrollIntoView({ block: 'nearest' });
+  }, [location, activeConversation?.id]);
   const groups = new Map<string, { bots: Bot[]; conversations: Conversation[] }>();
   for (const conversation of conversations) {
     const ids = [...conversation.botIds].sort();
@@ -41,7 +52,7 @@ export function BotPairConversationsSidebar({
     groups.set(key, group);
   }
   return (
-    <div className="bot-conversation-groups">
+    <div className="bot-conversation-groups bot-pair-conversation-groups">
       {loading && <p className="ai-caption">Loading bot conversations…</p>}
       {error && (
         <p className="ai-alert" role="alert">
@@ -57,18 +68,25 @@ export function BotPairConversationsSidebar({
         </p>
       )}
       {[...groups].map(([key, group]) => {
-        const open =
-          expanded[key] ?? group.conversations.some((chat) => chat.id === location.conversationId);
+        const active = group.conversations.some((chat) => chat.id === activeConversationId);
+        const override = expanded[key];
+        const open = active && override?.location !== location ? true : (override?.open ?? active);
         const title = group.bots.map((bot) => bot.name).join('/');
         const visibleCount = visibleCounts[key] ?? INITIAL_CONVERSATION_COUNT;
-        const visibleChats = visibleConversations(group.conversations, visibleCount);
+        const visibleChats = visibleConversations(
+          group.conversations,
+          visibleCount,
+          activeConversationId,
+        );
         return (
           <section className="bot-conversation-group" key={key}>
             <button
               className="sidebar-row bot-conversation-parent"
               aria-label={title}
               aria-expanded={open}
-              onClick={() => setExpanded((previous) => ({ ...previous, [key]: !open }))}
+              onClick={() =>
+                setExpanded((previous) => ({ ...previous, [key]: { open: !open, location } }))
+              }
             >
               <span className="bot-pair-avatars">
                 {group.bots.map((bot) => (
@@ -84,12 +102,13 @@ export function BotPairConversationsSidebar({
                 {visibleChats.map((chat) => (
                   <button
                     key={chat.id}
-                    className={`sidebar-row bot-conversation-row ${location.conversationId === chat.id ? 'is-selected' : ''}`}
-                    aria-current={location.conversationId === chat.id ? 'page' : undefined}
+                    ref={activeConversationId === chat.id ? selectedRow : undefined}
+                    className={`sidebar-row bot-conversation-row ${activeConversationId === chat.id ? 'is-selected' : ''}`}
+                    aria-current={activeConversationId === chat.id ? 'page' : undefined}
                     title={chat.name}
                     onClick={() =>
                       onSelect({
-                        section: 'spaces',
+                        section: 'bots',
                         item: 'bot-conversations',
                         conversationId: chat.id,
                       })

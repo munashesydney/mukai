@@ -143,7 +143,7 @@ export function BotConversationsSidebar({
                         onSelect(
                           chat.kind === 'bot'
                             ? {
-                                section: 'spaces',
+                                section: 'bots',
                                 item: 'bot-conversations',
                                 conversationId: chat.id,
                               }

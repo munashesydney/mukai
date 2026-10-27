@@ -200,6 +200,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     if (
       location.section === 'bots' &&
       location.item !== 'hierarchy' &&
+      location.item !== 'bot-conversations' &&
       location.view !== 'pending-approvals' &&
       bot &&
       botConversation &&
@@ -270,7 +271,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     <WorkspaceLayout
       onOpen={(conversationId) => {
         botPairs.refresh();
-        select({ section: 'spaces', item: 'bot-conversations', conversationId });
+        select({ section: 'bots', item: 'bot-conversations', conversationId });
       }}
     >
       <TitleBar
@@ -331,7 +332,10 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 onWorkspace={ai.selectWorkspace}
                 onCreateWorkspace={() => setEditingWorkspace('new')}
                 location={
-                  location.section === 'bots' && location.item !== 'hierarchy' && bot
+                  location.section === 'bots' &&
+                  location.item !== 'hierarchy' &&
+                  location.item !== 'bot-conversations' &&
+                  bot
                     ? { ...location, item: bot.id }
                     : location
                 }
@@ -439,6 +443,36 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               bot={bot}
               onOpen={(request) => select(approvalLocation(request))}
             />
+          ) : location.section === 'bots' && location.item === 'bot-conversations' ? (
+            botPair && pairBot ? (
+              <BotChat
+                key={botPair.id}
+                bot={pairBot}
+                bots={ai.bots}
+                conversation={botPair}
+                providers={ai.providers}
+                onNewConversation={() => createBotConversation(pairBot.id)}
+                onEdit={() => setEditingBot(pairBot)}
+                onProviders={() => openSettings('providers')}
+                onBotChanged={ai.updateBot}
+                onOpenBot={openBotConversation}
+                onViewComputer={() => setComputerOpen(true)}
+              />
+            ) : (
+              <main className="conversation ai-main-state">
+                <p role={botPairs.error ? 'alert' : undefined}>
+                  {botPairs.error ||
+                    (botPairs.loading
+                      ? 'Loading bot conversations…'
+                      : 'Choose a conversation between two bots.')}
+                </p>
+                {botPairs.error && (
+                  <button className="button" onClick={botPairs.refresh}>
+                    Try again
+                  </button>
+                )}
+              </main>
+            )
           ) : location.section === 'bots' ? (
             ai.loading || botChats.loading ? (
               <main className="conversation ai-main-state">
@@ -491,36 +525,6 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                   <br />
                   You can connect an AI provider after creating it.
                 </small>
-              </main>
-            )
-          ) : location.section === 'spaces' && location.item === 'bot-conversations' ? (
-            botPair && pairBot ? (
-              <BotChat
-                key={botPair.id}
-                bot={pairBot}
-                bots={ai.bots}
-                conversation={botPair}
-                providers={ai.providers}
-                onNewConversation={() => createBotConversation(pairBot.id)}
-                onEdit={() => setEditingBot(pairBot)}
-                onProviders={() => openSettings('providers')}
-                onBotChanged={ai.updateBot}
-                onOpenBot={openBotConversation}
-                onViewComputer={() => setComputerOpen(true)}
-              />
-            ) : (
-              <main className="conversation ai-main-state">
-                <p role={botPairs.error ? 'alert' : undefined}>
-                  {botPairs.error ||
-                    (botPairs.loading
-                      ? 'Loading bot conversations…'
-                      : 'Choose a conversation between two bots.')}
-                </p>
-                {botPairs.error && (
-                  <button className="button" onClick={botPairs.refresh}>
-                    Try again
-                  </button>
-                )}
               </main>
             )
           ) : location.section === 'spaces' ? (

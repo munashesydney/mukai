@@ -1887,7 +1887,7 @@ async function main() {
     );
     await api.botManagement.sendMessage(main, engineer.id, 'Start a separate review.', pairSignal);
     await evaluate(
-      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,
+      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
     );
     await wait(
       'document.querySelector(".workspace-sidebar").textContent.includes("Bot conversations")',
@@ -1908,7 +1908,9 @@ async function main() {
     await evaluate(
       `document.querySelector('button[aria-label=${JSON.stringify(pairTitle)}]').click()`,
     );
-    await wait('document.querySelectorAll(".bot-conversation-row").length===2');
+    await wait(
+      `document.querySelector('button[aria-label=${JSON.stringify(pairTitle)}]').closest('section').querySelectorAll('.bot-conversation-row').length===2`,
+    );
     await evaluate(`document.querySelector('button[title="Review the architecture."]').click()`);
     await wait('document.querySelectorAll(".ai-message").length===4');
     assert.equal(await evaluate('document.querySelector(".composer")'), null);
