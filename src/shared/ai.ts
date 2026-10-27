@@ -88,6 +88,7 @@ export interface Bot {
   avatar: BotAvatar;
   createdAt: string;
   isMain: boolean;
+  /** Current reporting parent; retained under the legacy storage field name. */
   createdBy: string | null;
   contextWindowTokens?: number | null;
   maxOutputTokens?: number | null;

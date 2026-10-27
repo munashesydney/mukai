@@ -53,15 +53,38 @@ export class BotService {
     return bot;
   }
   save(
-    input: Omit<BotInput, 'avatar'> & { avatar?: BotInput['avatar'] },
+    input: Omit<BotInput, 'avatar'> & {
+      avatar?: BotInput['avatar'];
+      reportsToBotId?: string;
+    },
     id?: string,
     workspaceId = 'default',
     createdBy?: string,
     configure?: (bot: Bot) => void,
   ) {
     const existing = id ? this.require(id) : undefined;
+    const { reportsToBotId, ...configuration } = input;
     workspaceId = existing?.workspaceId || workspaceId;
     if (!this.workspaces.find(workspaceId)) throw new ApiError(404, 'Workspace not found.');
+    if (reportsToBotId !== undefined) {
+      if (existing?.isMain) throw new ApiError(400, 'The main bot cannot report to another bot.');
+      this.validateReportingParent(reportsToBotId, workspaceId, existing?.id);
+      if (existing && existing.createdBy !== reportsToBotId) {
+        const descendants = new Set([existing.id]);
+        const bots = this.list(workspaceId);
+        let previousSize = 0;
+        while (previousSize !== descendants.size) {
+          previousSize = descendants.size;
+          for (const bot of bots)
+            if (bot.createdBy && descendants.has(bot.createdBy)) descendants.add(bot.id);
+        }
+        if ([...descendants].some((botId) => this.busy(botId)))
+          throw new ApiError(
+            409,
+            'Stop this bot and its descendants before changing its reporting parent.',
+          );
+      }
+    }
     if (id && this.busy(id)) throw new ApiError(409, 'Stop this bot’s response before editing it.');
     if (input.providerId && !this.providers.find(input.providerId))
       throw new ApiError(400, 'Provider not found.');
@@ -98,7 +121,7 @@ export class BotService {
     if (creator && creator.workspaceId !== workspaceId)
       throw new ApiError(403, 'Creator belongs to another workspace.');
     const bot = {
-      ...input,
+      ...configuration,
       reasoningEffort,
       avatar: resolveBotAvatar(input.avatar ?? existing?.avatar),
       role: existing?.isMain ? mainBotRole : input.role,
@@ -116,22 +139,44 @@ export class BotService {
       createdAt: existing?.createdAt || new Date().toISOString(),
       workspaceId,
       isMain: existing?.isMain ?? false,
-      createdBy: existing?.createdBy ?? null,
+      createdBy: reportsToBotId ?? existing?.createdBy ?? null,
     };
     if (existing) this.bots.update(bot);
     else
       return this.bots.insertNew(
-        (others) => ({
-          ...bot,
-          avatar: input.avatar === undefined ? randomUnusedMascot(others) : bot.avatar,
-          isMain: others.length === 0,
-          role: others.length === 0 ? mainBotRole : input.role,
-          createdBy: creator?.id || others.find((other) => other.isMain)?.id || null,
-        }),
+        (others) => {
+          if (!others.length && reportsToBotId !== undefined)
+            throw new ApiError(400, 'The main bot cannot report to another bot.');
+          return {
+            ...bot,
+            avatar: input.avatar === undefined ? randomUnusedMascot(others) : bot.avatar,
+            isMain: others.length === 0,
+            role: others.length === 0 ? mainBotRole : input.role,
+            createdBy:
+              reportsToBotId ?? creator?.id ?? others.find((other) => other.isMain)?.id ?? null,
+          };
+        },
         workspaceId,
         configure,
       );
     return bot;
+  }
+  private validateReportingParent(parentId: string, workspaceId: string, botId?: string) {
+    const visited = new Set<string>();
+    let current = this.require(parentId);
+    while (true) {
+      if (current.workspaceId !== workspaceId)
+        throw new ApiError(403, 'Reporting parent belongs to another workspace.');
+      if (current.id === botId || visited.has(current.id))
+        throw new ApiError(409, 'This reporting assignment would create a hierarchy cycle.');
+      visited.add(current.id);
+      if (!current.createdBy) {
+        if (!current.isMain)
+          throw new ApiError(409, 'Reporting parent must belong to the main bot’s hierarchy.');
+        return;
+      }
+      current = this.require(current.createdBy);
+    }
   }
   setModel(id: string, input: BotModelInput) {
     const bot = this.require(id);

@@ -48,6 +48,7 @@ export async function executeBotManagement(
           instructions: input.instructions,
           toolIds: input.toolIds,
           modelId: input.modelId,
+          reportsToBotId: input.reportsToBotId,
         },
         context.signal,
       );

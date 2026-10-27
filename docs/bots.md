@@ -4,7 +4,7 @@ Bots are persistent assistants within a workspace. Each bot has a name, role, in
 
 ## Main bot and sub-bots
 
-The first bot created in a workspace becomes its main bot, with the fixed role **Main Bot/Orchestrator**. Subsequent bots are sub-bots. Each workspace can have at most one main bot, enforced by the database as well as the creation flow. Editing a sub-bot cannot promote it to main or change its creator.
+The first bot created in a workspace becomes its main bot, with the fixed role **Main Bot/Orchestrator**. Subsequent bots are sub-bots. Each workspace can have at most one main bot, enforced by the database as well as the creation flow. Editing a sub-bot cannot promote it to main. The main bot can change a sub-bot’s reporting parent through the Bots tool.
 
 The main bot coordinates work. Its system prompt encourages it to:
 
@@ -16,7 +16,7 @@ The main bot coordinates work. Its system prompt encourages it to:
 
 Sub-bots receive different guidance. They know that the main bot can create and update bots, while they cannot. If a user asks a sub-bot to create or reconfigure a bot, it should direct the user to the main bot.
 
-`createdBy` records a bot's parent. The main bot is level 0; its children are level 1. Existing deeper hierarchies remain supported, although the current Bots tool only allows the main bot to create bots.
+`createdBy` stores the current reporting parent, exposed by the Bots tool as `reportsToBotId` as well. The main bot is level 0; its children are level 1. The main bot can create deeper hierarchies or move an existing branch by assigning its reporting parent.
 
 ## Bots tool and available actions
 
@@ -32,7 +32,7 @@ The runtime narrows the model's tool schema to these actions and checks authoriz
 
 ### Inspecting bots
 
-- `list` returns workspace bot IDs, names, roles, creator IDs, main-bot flags, and hierarchy levels.
+- `list` returns workspace bot IDs, names, roles, reporting parent IDs (`reportsToBotId` and the legacy `createdBy` field), main-bot flags, and hierarchy levels.
 - `get` requires `botId` and returns that workspace bot's configuration and hierarchy level.
 
 Both actions stay within the caller's workspace. Bots should inspect the team before creating a new specialist or choosing a delegation target.
@@ -41,8 +41,10 @@ Both actions stay within the caller's workspace. Bots should inspect the team be
 
 Only the main bot can use these actions:
 
-- `create` requires `name`, `role`, and `instructions`. `avatar` and `toolIds` are optional. The specialist inherits the caller's provider/model configuration and is saved as a sub-bot.
-- `update` requires `botId` and at least one of `name`, `role`, `instructions`, `avatar`, or `toolIds`. Omitted fields remain unchanged. This action does not change provider/model configuration, main-bot status, or creator relationships. The main bot's role stays fixed. A bot that is working must be stopped before editing it.
+- `create` requires `name`, `role`, and `instructions`. `toolIds`, `modelId`, and `reportsToBotId` are optional. Without `modelId`, the specialist inherits the caller’s model configuration, independently of its reporting parent. Without `reportsToBotId`, it reports to the main bot. The selected model connection is tested before creating a bot.
+- `update` requires `botId` and at least one of `name`, `role`, `instructions`, `toolIds`, `modelId`, or `reportsToBotId`. Omitted fields remain unchanged. Model changes test the selected connection before saving. The main bot’s role and main-bot status stay fixed. A bot that is working must be stopped before editing it.
+
+To assign “X reports to Z,” use `update` with X’s `botId` and Z’s `reportsToBotId`, or supply `reportsToBotId` when creating X. Set it to the main bot’s ID to move X back under the workspace lead. Parents must exist in the same workspace; self-parenting, cycles, and reparenting the main bot are rejected. Moving a bot moves its descendant branch and updates hierarchy-based messaging permissions. Stop any running bots in that branch first. Existing conversations, models, and tool assignments are preserved unless explicitly changed.
 
 Use human or bot-sounding names such as Ada or Nova, and descriptive job titles for roles.
 
@@ -72,7 +74,7 @@ Delegated context comes from saved message sender information, so these restrict
 
 - A purple star marks the main bot in the Bots sidebar, its chat header, and Bot Hierarchy.
 - The Bots sidebar orders bots by the latest update to their grouped conversations. The main bot is not pinned above a more recently active bot; it wins ties. Two-bot conversations are grouped under the receiving bot.
-- Bot Hierarchy shows creator relationships and roles.
+- Bot Hierarchy shows reporting relationships and roles. Bot details show the current manager under “Reports to.”
 - Tools → Bots shows required, checked, disabled assignments using the shared checkbox component. The main bot is labeled **All actions**, and sub-bots are labeled **Limited actions**. The explanatory text covers the additional restriction during delegation.
 
 ## Approvals and pursuits

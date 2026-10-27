@@ -513,7 +513,7 @@ export function BotChat({
             <dl>
               <dt>Workspace role</dt>
               <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
-              <dt>Created by</dt>
+              <dt>Reports to</dt>
               <dd>
                 {bot.createdBy
                   ? bots.find((parent) => parent.id === bot.createdBy)?.name || 'Unavailable bot'

@@ -212,7 +212,7 @@ export function BotHierarchyPage({
                     {root.isMain
                       ? 'WORKSPACE LEAD'
                       : root.createdBy
-                        ? 'CREATOR UNAVAILABLE'
+                        ? 'MANAGER UNAVAILABLE'
                         : 'ADDED BY YOU'}
                   </span>
                   <ul className="bot-tree-root">{branch(root)}</ul>

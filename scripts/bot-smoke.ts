@@ -1039,7 +1039,7 @@ async function main() {
     assert.equal(child.role, 'Research assistant');
     assert(
       !(await evaluate<boolean>(
-        'document.querySelector(".bot-conversation-groups").textContent.includes("Created by")',
+        'document.querySelector(".bot-conversation-groups").textContent.includes("Reports to")',
       )),
     );
     await evaluate(
@@ -1766,9 +1766,8 @@ async function main() {
       ...specialistInput,
       name: 'Nova',
       role: 'Software engineer',
+      reportsToBotId: architect.id,
     });
-    api.store.run('UPDATE bots SET created_by=? WHERE id=?', architect.id, engineer.id);
-    engineer.createdBy = architect.id;
     await api.botManagement.create(main, {
       ...specialistInput,
       name: 'Atlas',
@@ -1858,7 +1857,7 @@ async function main() {
     await evaluate(`document.querySelector('button[aria-label="Bot details"]').click()`);
     assert.equal(
       await evaluate(
-        `Array.from(document.querySelectorAll('.ai-details dt')).find(e=>e.textContent==='Created by').nextElementSibling.textContent.trim()`,
+        `Array.from(document.querySelectorAll('.ai-details dt')).find(e=>e.textContent==='Reports to').nextElementSibling.textContent.trim()`,
       ),
       'Ada',
     );

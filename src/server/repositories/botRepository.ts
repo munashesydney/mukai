@@ -46,7 +46,7 @@ export class BotRepository {
   }
   update(bot: BotRecord) {
     this.database.run(
-      'UPDATE bots SET name=?,role=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=?,context_window_tokens=?,max_output_tokens=?,reasoning_effort=? WHERE id=?',
+      'UPDATE bots SET name=?,role=?,instructions=?,provider_id=?,model=?,supports_images=?,avatar=?,context_window_tokens=?,max_output_tokens=?,reasoning_effort=?,created_by=? WHERE id=?',
       bot.name,
       bot.role,
       bot.instructions,
@@ -57,6 +57,7 @@ export class BotRepository {
       bot.contextWindowTokens ?? null,
       bot.maxOutputTokens ?? null,
       bot.reasoningEffort ?? null,
+      bot.createdBy,
       bot.id,
     );
   }

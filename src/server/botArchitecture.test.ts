@@ -412,6 +412,187 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it('creates reporting branches through the tool and reparents existing bots without losing their configuration or history', async () => {
+    const main = await bot();
+    await provider();
+    const manager = await api.botManagement.create(main, input('Manager'), []);
+    const alternate = await bot('Alternate');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const created = await executeBotManagement(
+      botManagementDefinition.inputSchema.parse({
+        action: 'create',
+        name: 'Engineer',
+        role: 'Software engineer',
+        instructions: 'Build and verify features.',
+        reportsToBotId: manager.id,
+        toolIds: ['terminal'],
+      }),
+      context,
+      randomUUID(),
+    );
+    expect(created).toMatchObject({
+      ok: true,
+      result: { createdBy: manager.id, reportsToBotId: manager.id, hierarchyLevel: 2 },
+    });
+    const engineer = (await request<Bot[]>('/bots')).data.find((bot) => bot.name === 'Engineer')!;
+    expect(api.access.allowed(engineer, 'terminal')).toBe(true);
+    expect(api.access.allowed(manager, 'terminal')).toBe(false);
+    const leaf = await api.botManagement.create(main, {
+      ...input('Junior'),
+      reportsToBotId: engineer.id,
+    });
+    const conversation = await api.botManagement.sendMessage(
+      main,
+      engineer.id,
+      'Keep this conversation.',
+      context.signal,
+    );
+    const history = (
+      await request<ChatMessage[]>(`/conversations/${conversation.conversationId}/messages`)
+    ).data;
+    const assignments = api.access.list(main.workspaceId);
+    const move = await executeBotManagement(
+      { action: 'update', botId: engineer.id, reportsToBotId: alternate.id },
+      context,
+      randomUUID(),
+    );
+    expect(move).toMatchObject({
+      ok: true,
+      result: { id: engineer.id, reportsToBotId: alternate.id, hierarchyLevel: 2 },
+    });
+    expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === engineer.id)).toEqual({
+      ...engineer,
+      createdBy: alternate.id,
+    });
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${conversation.conversationId}/messages`)).data,
+    ).toEqual(history);
+    expect(api.access.list(main.workspaceId)).toEqual(assignments);
+    expect(api.botManagement.get(main, leaf.id)).toMatchObject({
+      createdBy: engineer.id,
+      hierarchyLevel: 3,
+    });
+    await api.botManagement.update(main, engineer.id, { reportsToBotId: main.id });
+    expect(api.botManagement.list(main)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: engineer.id, reportsToBotId: main.id, hierarchyLevel: 1 }),
+        expect.objectContaining({ id: leaf.id, reportsToBotId: engineer.id, hierarchyLevel: 2 }),
+      ]),
+    );
+    // Even stale caller/target objects must respect the updated reporting depth.
+    expect(api.botManagement.requireMessageTarget(engineer, alternate.id).id).toBe(alternate.id);
+    await api.botManagement.update(main, engineer.id, { reportsToBotId: manager.id });
+    expect(() => api.botManagement.requireMessageTarget(engineer, alternate.id)).toThrow(
+      'higher-level',
+    );
+    await api.botManagement.update(main, engineer.id, { role: 'Senior engineer' });
+    expect(api.botManagement.get(main, engineer.id).createdBy).toBe(manager.id);
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('rejects invalid reporting parents, cycles, main-bot moves, and unauthorized hierarchy edits atomically', async () => {
+    const main = await bot(),
+      manager = await bot('Manager'),
+      child = await bot('Child');
+    await api.botManagement.update(main, child.id, { reportsToBotId: manager.id });
+    const context = (caller = main) => ({
+      bot: caller,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    });
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other-reporting','Other',NULL,'now')",
+    );
+    const foreign = await bot('Foreign', 'other-reporting');
+    for (const [target, parent, error] of [
+      [child, child.id, 'cycle'],
+      [manager, child.id, 'cycle'],
+      [main, manager.id, 'main bot cannot report'],
+      [child, foreign.id, 'another workspace'],
+      [child, 'missing-parent', 'Bot not found'],
+    ] as const) {
+      const result = await executeBotManagement(
+        { action: 'update', botId: target.id, reportsToBotId: parent, name: 'Must not save' },
+        context(),
+        randomUUID(),
+      );
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(error) });
+      expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === target.id)).toEqual(
+        target.id === child.id ? { ...child, createdBy: manager.id } : target,
+      );
+    }
+    expect(
+      await executeBotManagement(
+        { action: 'update', botId: child.id, reportsToBotId: main.id },
+        context(manager),
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Only the workspace main bot') });
+    await provider();
+    const before = (await request<Bot[]>('/bots')).data;
+    for (const reportsToBotId of [foreign.id, 'missing-parent']) {
+      expect(
+        await executeBotManagement(
+          {
+            action: 'create',
+            name: 'Invalid',
+            role: 'Assistant',
+            instructions: 'Help.',
+            reportsToBotId,
+          },
+          context(),
+          randomUUID(),
+        ),
+      ).toMatchObject({ ok: false });
+      expect((await request<Bot[]>('/bots')).data).toEqual(before);
+    }
+    expect(
+      botManagementDefinition.inputSchema.safeParse({ action: 'list', reportsToBotId: main.id })
+        .success,
+    ).toBe(false);
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'update',
+        botId: child.id,
+        reportsToBotId: '',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses to move a reporting branch while a descendant is working', async () => {
+    const main = await bot(),
+      manager = await bot('Manager'),
+      alternate = await bot('Alternate');
+    await provider();
+    const child = await api.botManagement.create(main, {
+      ...input('Child'),
+      reportsToBotId: manager.id,
+    });
+    mode = 'slow';
+    const running = chat(child);
+    await waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data.some(
+          (message) => message.status === 'streaming',
+        ),
+      ).toBe(true),
+    );
+    await expect(
+      api.botManagement.update(main, manager.id, { reportsToBotId: alternate.id }),
+    ).rejects.toThrow('descendants');
+    expect(api.botManagement.get(main, manager.id).createdBy).toBe(main.id);
+    await request(`/bots/${child.id}/stop`, 'POST');
+    await running;
+    await api.botManagement.update(main, manager.id, { reportsToBotId: alternate.id });
+    expect(api.botManagement.get(main, child.id).hierarchyLevel).toBe(3);
+  });
+
   it('gives only the main bot deletion access and preserves hierarchy and workspace boundaries', async () => {
     const main = await bot(),
       child = await bot('Ada'),

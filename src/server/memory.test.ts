@@ -285,7 +285,9 @@ describe('Mukai memory integration', () => {
     expect(api.memory.snapshot('default').facts).toHaveLength(1);
     await request('/memory/settings', 'PUT', settings);
     await chat('What coffee do I like?');
-    expect(JSON.stringify(calls.filter((call) => call.stream).at(-1)!.messages)).toContain(coffee.text);
+    expect(JSON.stringify(calls.filter((call) => call.stream).at(-1)!.messages)).toContain(
+      coffee.text,
+    );
   });
   it('serializes overlapping review requests across private and workspace conversations', async () => {
     api.memory.saveSettings('default', {

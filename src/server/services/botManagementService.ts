@@ -65,6 +65,7 @@ export class BotManagementService {
     );
     return {
       ...configuration,
+      reportsToBotId: bot.createdBy,
       ...this.providers.describeModel(bot),
       hierarchyLevel: this.level(bot),
     };
@@ -82,7 +83,7 @@ export class BotManagementService {
     botId: string,
     patch: Pick<
       z.infer<typeof botManagementDefinition.inputSchema>,
-      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId'
+      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId' | 'reportsToBotId'
     >,
     signal?: AbortSignal,
   ) {
@@ -140,6 +141,7 @@ export class BotManagementService {
       name: bot.name,
       role: bot.role,
       createdBy: bot.createdBy,
+      reportsToBotId: bot.createdBy,
       isMain: bot.isMain,
       hierarchyLevel: this.level(bot),
       ...this.providers.describeModel(bot),
@@ -157,7 +159,7 @@ export class BotManagementService {
     caller: Bot,
     input: Pick<
       z.infer<typeof botManagementDefinition.inputSchema>,
-      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId'
+      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId' | 'reportsToBotId'
     >,
     signal: AbortSignal,
   ) {
@@ -184,6 +186,7 @@ export class BotManagementService {
       name: input.name,
       role: input.role.trim(),
       instructions: input.instructions,
+      reportsToBotId: input.reportsToBotId,
       ...selection,
     };
     await this.providers.testBotModel(configuration, signal);
@@ -192,7 +195,7 @@ export class BotManagementService {
   }
   async create(
     caller: Bot,
-    input: Omit<BotInput, 'avatar'>,
+    input: Omit<BotInput, 'avatar'> & { reportsToBotId?: string },
     toolIds?: string[],
     signal?: AbortSignal,
   ) {
