@@ -9,6 +9,7 @@ import type {
 
 export function botRecord(row: Row): BotRecord {
   return {
+    reasoningEffort: (row.reasoning_effort ?? null) as BotRecord['reasoningEffort'],
     id: String(row.id),
     workspaceId: String(row.workspace_id),
     name: String(row.name),

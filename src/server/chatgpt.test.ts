@@ -115,6 +115,12 @@ const request = vi.fn<typeof fetch>(async (input, init) => {
           visibility: 'list',
           context_window: 200000,
           input_modalities: ['text', 'image'],
+          supported_reasoning_levels: [
+            { effort: 'low' },
+            { effort: 'high' },
+            { effort: 'max' },
+            { effort: 'unknown' },
+          ],
         },
         { slug: 'gpt-5-codex', display_name: 'Codex', visibility: 'list' },
         { slug: 'o3', display_name: 'o3', visibility: 'list' },
@@ -491,7 +497,11 @@ describe('ChatGPT OAuth and accounts', () => {
     const { result } = await login();
     const models = await service.models(result.providerId!);
     expect(models.map((model) => model.category)).toEqual(['GPT', 'Codex', 'Reasoning', 'Other']);
-    expect(models[0]).toMatchObject({ contextWindowTokens: 200000, supportsImages: true });
+    expect(models[0]).toMatchObject({
+      contextWindowTokens: 200000,
+      supportsImages: true,
+      reasoningEfforts: ['low', 'high', 'max'],
+    });
     expect(models[1]).toMatchObject({ contextWindowTokens: null, supportsImages: null });
     expect(classifyChatGPTModel('gpt-6-astra')).toBe('GPT');
   });

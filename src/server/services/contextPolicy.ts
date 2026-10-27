@@ -88,13 +88,14 @@ export async function toolDefinitions(tools: ToolSet) {
   return definitions;
 }
 
-export function contextLimits(window: number | null, requestedOutput: number) {
+export function contextLimits(window: number | null, requestedOutput: number, outputOverhead = 0) {
   // Legacy models with unknown capacity use a conservative working budget while
   // the UI continues to say "unknown", rather than presenting an invented limit.
   const capacity = window ?? 32768;
   // Long-context models can honor a 32K response cap while retaining ample input
   // room. Keep the conservative reserve for small and unknown model capacities.
-  const output = Math.min(requestedOutput, Math.floor(capacity / (capacity >= 65536 ? 2 : 8)));
+  const output =
+    Math.min(requestedOutput, Math.floor(capacity / (capacity >= 65536 ? 2 : 8))) + outputOverhead;
   return {
     capacity,
     output,
@@ -138,6 +139,7 @@ export class ContextManager {
     readonly maxOutput: number,
     private overhead: number,
     private summarize: Summarizer,
+    private outputOverhead = 0,
   ) {}
   setOverhead(value: number) {
     this.overhead = value;
@@ -153,7 +155,7 @@ export class ContextManager {
       );
   }
   toolAllowance(messages: ModelMessage[]) {
-    const limits = contextLimits(this.window, this.maxOutput);
+    const limits = contextLimits(this.window, this.maxOutput, this.outputOverhead);
     const latest = [...messages]
       .reverse()
       .find((message) => message.role === 'user' && !isBotRuntimeContext(message.content));
@@ -164,7 +166,7 @@ export class ContextManager {
     );
   }
   outputAllowance(messages: ModelMessage[], extraOverhead = 0) {
-    const limits = contextLimits(this.window, this.maxOutput);
+    const limits = contextLimits(this.window, this.maxOutput, this.outputOverhead);
     const remaining =
       Math.floor(limits.capacity * 0.9) -
       this.estimate(messages) -
@@ -183,7 +185,7 @@ export class ContextManager {
     this.pinnedRequests = messages;
   }
   async prepare(messages: ModelMessage[], force = false): Promise<ModelMessage[]> {
-    const limits = contextLimits(this.window, this.maxOutput);
+    const limits = contextLimits(this.window, this.maxOutput, this.outputOverhead);
     const budget = limits.input;
     if (!force && this.estimate(messages) <= budget) return messages;
     const units = contextUnits(messages);

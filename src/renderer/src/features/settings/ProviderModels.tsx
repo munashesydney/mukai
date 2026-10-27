@@ -18,6 +18,8 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { errorText } from '../../utils/errors';
 import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
+import { ModelReasoningSettings } from './ModelReasoningSettings';
+import { reasoningDefaultLabel } from '../../../../shared/reasoning';
 
 export function ProviderModels({
   provider,
@@ -36,6 +38,7 @@ export function ProviderModels({
   const [removeId, setRemoveId] = useState<string | null>(null);
   function empty(): SavedProviderModel {
     return {
+      reasoningEffort: 'provider-default',
       id: '',
       name: '',
       contextWindowTokens: provider.kind === 'compatible' ? defaultCompatibleContext : null,
@@ -156,6 +159,7 @@ export function ProviderModels({
                 <span className="provider-model-limits">
                   {model.contextWindowTokens?.toLocaleString() ?? 'Unknown'} context ·{' '}
                   {model.maxOutputTokens.toLocaleString()} output ·{' '}
+                  {reasoningDefaultLabel(provider, model.id)} reasoning ·{' '}
                   {inputCapabilityLabel(
                     modelInputCapabilities({ model: model.id, supportsImages: null }, provider),
                   )}
@@ -259,7 +263,10 @@ export function ProviderModels({
                         setDraft(
                           id === 'custom'
                             ? empty()
-                            : { ...preset.models.find((model) => model.id === id)! },
+                            : {
+                                ...preset.models.find((model) => model.id === id)!,
+                                reasoningEffort: 'provider-default',
+                              },
                         );
                         setError('');
                       }}
@@ -280,6 +287,8 @@ export function ProviderModels({
                           name: metadata?.name ?? id,
                           contextWindowTokens: metadata?.contextWindowTokens ?? null,
                           supportsImages: metadata?.supportsImages ?? false,
+                          reasoningEffort: 'provider-default',
+                          reasoningEfforts: metadata?.reasoningEfforts,
                         })
                       }
                     />
@@ -298,7 +307,17 @@ export function ProviderModels({
                       onChange={(event) => {
                         const id = event.target.value;
                         const known = preset?.models.find((model) => model.id === id);
-                        setDraft(known ? { ...known } : { ...draft, id });
+                        setDraft(
+                          known
+                            ? { ...known, reasoningEffort: 'provider-default' }
+                            : {
+                                ...draft,
+                                id,
+                                reasoningEffort: 'provider-default',
+                                reasoningEfforts: undefined,
+                                customReasoning: undefined,
+                              },
+                        );
                       }}
                     />
                   </label>
@@ -358,6 +377,12 @@ export function ProviderModels({
                     </small>
                   </label>
                 </div>
+                <ModelReasoningSettings
+                  provider={provider}
+                  draft={draft}
+                  onChange={setDraft}
+                  disabled={disabled}
+                />
                 <label className="ai-checkbox">
                   <Checkbox
                     checked={draft.supportsImages}

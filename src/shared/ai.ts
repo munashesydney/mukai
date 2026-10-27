@@ -2,6 +2,7 @@ import type { FileChangeSummary } from './fileChanges';
 import type { VmResources } from './computer';
 import type { BotAvatar } from './mascots';
 import type { TerminalSnapshot } from './terminal';
+import type { CustomReasoning, ReasoningEffort, ReasoningLevel } from './reasoning';
 
 export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
 export interface ChatGPTAccount {
@@ -11,6 +12,7 @@ export interface ChatGPTAccount {
   planEnabled: boolean;
 }
 export interface ProviderModel {
+  reasoningEfforts?: ReasoningLevel[];
   supportsAudio?: boolean | null;
   supportsVideo?: boolean | null;
   id: string;
@@ -20,6 +22,9 @@ export interface ProviderModel {
   supportsImages: boolean | null;
 }
 export interface SavedProviderModel {
+  reasoningEfforts?: ReasoningLevel[];
+  reasoningEffort?: ReasoningEffort;
+  customReasoning?: CustomReasoning;
   supportsAudio?: boolean;
   supportsVideo?: boolean;
   id: string;
@@ -71,6 +76,7 @@ export interface ProviderModelsInput {
   defaultModel: string;
 }
 export interface Bot {
+  reasoningEffort?: ReasoningEffort | null;
   id: string;
   workspaceId: string;
   name: string;
@@ -89,7 +95,7 @@ export interface Bot {
 export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId' | 'isMain' | 'createdBy'>;
 export type BotModelInput = Pick<
   Bot,
-  'providerId' | 'model' | 'supportsImages' | 'contextWindowTokens'
+  'providerId' | 'model' | 'supportsImages' | 'contextWindowTokens' | 'reasoningEffort'
 >;
 export const mainBotRole = 'Main Bot/Orchestrator';
 export interface Workspace {

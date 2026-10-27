@@ -18,6 +18,7 @@
     "test:cli:updates": "npm run build:web && tsx scripts/cli/update-smoke.ts",
     "test:settings-ui": "tsx scripts/run-shared-settings-smoke.ts",
     "test:providers-ui": "node --import tsx scripts/provider-settings-smoke.ts",
+    "test:reasoning-ui": "node --import tsx scripts/reasoning-smoke.ts",
     "test:media-ui": "node --import tsx scripts/media-attachments-smoke.ts",
     "test:cli:installer": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/cli/install-smoke.ps1",
     "build:guest": "tsx scripts/build-guest.ts",

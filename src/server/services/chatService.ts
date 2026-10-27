@@ -59,6 +59,7 @@ import {
 } from './contextPolicy';
 import { ProgressGuard } from './progressGuard';
 import { contextSummarizer } from './contextSummary';
+import { chatOutputReserve, chatReasoningSettings } from './reasoningOptions';
 import type { MemoryService } from './memoryService';
 import type { DiagnosticContext, DiagnosticPhase, DiagnosticService } from './diagnosticService';
 import {
@@ -1005,6 +1006,7 @@ export class ChatService {
           usage.runEstimated ||= estimated;
           publishUsage();
         }),
+        chatOutputReserve(config) - config.maxOutputTokens,
       );
       manager.compactions = usage.compactions;
       const appliedTexts = new Set(
@@ -1585,8 +1587,7 @@ export class ChatService {
               : attemptMessages,
           maxRetries: PROVIDER_MAX_RETRIES,
           abortSignal: stepSignal,
-          maxOutputTokens: manager.outputAllowance(attemptMessages),
-          providerOptions: config.options,
+          ...chatReasoningSettings(config, manager.outputAllowance(attemptMessages)),
           tools: pausedReason || finalReplyOnly ? {} : tools,
           activeTools: pausedReason || finalReplyOnly ? [] : undefined,
           toolChoice: pausedReason || finalReplyOnly ? 'none' : 'auto',
@@ -1595,6 +1596,26 @@ export class ChatService {
             providerError = event.error;
           },
         });
+        void Promise.resolve(result.warnings)
+          .then((warnings) => {
+            if (
+              warnings?.some(
+                (warning) =>
+                  'feature' in warning && /reasoning|thinking|effort/i.test(warning.feature),
+              )
+            )
+              this.diagnostics?.record(
+                'provider.reasoning_adjusted',
+                new Error(
+                  'The provider adapter reported an unsupported or adjusted reasoning setting.',
+                ),
+                { ...diagnosticContext(), phase: 'provider-request' },
+                'warn',
+              );
+          })
+          .catch(() => {
+            /* Provider failures are handled by the stream. */
+          });
         if (this.followups?.forMessage(assistantId, 'steering').length)
           generation.interruptProvider?.();
         const timeout = new GenerationTimeout(

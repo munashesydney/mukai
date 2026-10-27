@@ -94,6 +94,13 @@
 .bot-model-menu {
   padding-bottom: 0;
 }
+.ai-model-controls {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
 .bot-model-group {
   border-top: 1px solid var(--line);
   margin-top: 8px;

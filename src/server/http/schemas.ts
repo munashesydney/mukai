@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { botAvatarIds, legacyAvatarIds, resolveBotAvatar } from '../../shared/mascots';
+import { reasoningEfforts, reasoningLevels } from '../../shared/reasoning';
 
 export const botSchema = z.object({
+  reasoningEffort: z.enum(reasoningEfforts).nullable().optional(),
   name: z.string().trim().min(1).max(60),
   role: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(12000),
@@ -17,6 +19,19 @@ export const providerSchema = z.object({
   models: z
     .array(
       z.object({
+        reasoningEffort: z.enum(reasoningEfforts).optional(),
+        reasoningEfforts: z.array(z.enum(reasoningLevels)).max(7).optional(),
+        customReasoning: z
+          .object({
+            supportedEfforts: z
+              .array(z.enum(reasoningLevels))
+              .max(7)
+              .refine(
+                (values) => new Set(values).size === values.length,
+                'Effort levels must be unique.',
+              ),
+          })
+          .optional(),
         id: z.string().trim().min(1).max(150),
         name: z.string().trim().min(1).max(150),
         contextWindowTokens: z.number().int().min(4096).max(10000000).nullable(),
@@ -60,6 +75,7 @@ export const createBotSchema = botSchema.extend({
   workspaceId: z.string().min(1).max(80).optional(),
 });
 export const botModelSchema = botSchema.pick({
+  reasoningEffort: true,
   providerId: true,
   model: true,
   supportsImages: true,

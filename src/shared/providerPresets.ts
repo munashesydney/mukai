@@ -23,6 +23,7 @@ const model = (
   supportsAudio = false,
   supportsVideo = false,
 ): SavedProviderModel => ({
+  reasoningEffort: 'provider-default',
   id,
   name,
   contextWindowTokens,

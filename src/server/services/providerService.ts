@@ -26,6 +26,7 @@ import type { DiagnosticService } from './diagnosticService';
 import { ChatGPTService } from './chatgptService';
 import { chatGPTError } from './chatgptTransport';
 import { PROVIDER_MAX_RETRIES } from './responsePolicy';
+import { effectiveReasoning, reasoningProfile, supportsReasoning } from '../../shared/reasoning';
 
 // Provider warning strings are untrusted and can include request details.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -239,6 +240,7 @@ export class ProviderService {
           ? [
               {
                 id: value.defaultModel,
+                ...(!existing ? { reasoningEffort: 'provider-default' as const } : {}),
                 name: value.defaultModel,
                 contextWindowTokens:
                   value.contextWindowTokens !== undefined
@@ -271,6 +273,20 @@ export class ProviderService {
       maxOutputTokens: value.maxOutputTokens ?? existing?.maxOutputTokens ?? fallbackOutput,
     };
     if (value.models !== undefined) {
+      for (const model of value.models) {
+        if (model.reasoningEffort && !supportsReasoning(provider, model.id, model.reasoningEffort))
+          throw new ApiError(
+            400,
+            `Reasoning effort ${model.reasoningEffort} is not supported by ${model.id}.`,
+          );
+        if (
+          model.reasoningEffort &&
+          !['none', 'provider-default'].includes(model.reasoningEffort) &&
+          reasoningProfile(provider, model.id).driver === 'claude-budget' &&
+          model.maxOutputTokens < 1280
+        )
+          throw new ApiError(400, 'Thinking requires an output limit of at least 1,280 tokens.');
+      }
       const selected = value.models.find((model) => model.id === value.defaultModel);
       if (value.defaultModel && !selected)
         throw new ApiError(400, 'Choose a saved model as the provider default.');
@@ -328,6 +344,8 @@ export class ProviderService {
     const added = models
       .filter((model) => !saved.some((item) => item.id === model.id))
       .map((model) => ({
+        reasoningEffort: 'provider-default' as const,
+        reasoningEfforts: model.reasoningEfforts,
         id: model.id,
         name: model.name,
         contextWindowTokens: model.contextWindowTokens,
@@ -336,7 +354,14 @@ export class ProviderService {
         supportsAudio: model.supportsAudio ?? false,
         supportsVideo: model.supportsVideo ?? false,
       }));
-    if (added.length) this.providers.save({ ...provider, models: [...saved, ...added] });
+    const refreshed = saved.map((item) => {
+      const metadata = models.find((model) => model.id === item.id);
+      return metadata?.reasoningEfforts
+        ? { ...item, reasoningEfforts: metadata.reasoningEfforts }
+        : item;
+    });
+    if (added.length || JSON.stringify(refreshed) !== JSON.stringify(saved))
+      this.providers.save({ ...provider, models: [...refreshed, ...added] });
     return models;
   }
   resolve(bot: BotRecord) {
@@ -348,6 +373,12 @@ export class ProviderService {
     if (!modelId.trim())
       throw new ApiError(400, 'Choose a model for this provider in Settings before chatting.');
     const configured = provider.models?.find((model) => model.id === modelId);
+    const effort = effectiveReasoning(bot, configured);
+    if (effort && !supportsReasoning(provider, modelId, effort))
+      throw new ApiError(
+        400,
+        `Reasoning effort ${effort} is not supported by ${modelId}. Choose another effort in the model picker.`,
+      );
     const capabilities = modelInputCapabilities(bot, provider);
     return {
       provider,
@@ -361,7 +392,26 @@ export class ProviderService {
         model: this.model(provider, modelId),
         middleware: toolMediaMiddleware,
       }),
-      options: this.reasoningOptions(provider, modelId),
+      reasoningEffort: effort,
+      reasoningProfile: reasoningProfile(provider, modelId),
+      options:
+        effort === undefined
+          ? this.reasoningOptions(provider, modelId)
+          : {
+              openai: {
+                store: false,
+                ...(provider.kind === 'chatgpt' ? { systemMessageMode: 'developer' } : {}),
+                ...(['openai', 'chatgpt'].includes(provider.kind) &&
+                reasoningProfile(provider, modelId).levels.length > 0
+                  ? {
+                      forceReasoning: true,
+                      ...(effort !== 'none' ? { reasoningSummary: 'auto' } : {}),
+                    }
+                  : {}),
+              },
+              anthropic: {},
+              google: { thinkingConfig: { includeThoughts: true } },
+            },
     };
   }
   private reasoningOptions(provider: ProviderRecord, model: string) {
