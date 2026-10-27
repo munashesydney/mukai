@@ -79,21 +79,25 @@ export function BotPairConversationsSidebar({
         );
         return (
           <section className="bot-conversation-group" key={key}>
-            <button
-              className="sidebar-row bot-conversation-parent"
-              aria-label={title}
-              aria-expanded={open}
-              onClick={() => onToggleGroup(`pair:${key}`)}
-            >
-              <span className="bot-pair-avatars">
-                {group.bots.map((bot) => (
-                  <Avatar key={bot.id} person={bot.avatar} size="xs" />
-                ))}
-              </span>
-              <span>{title}</span>
-              {!open && <BotConversationStatus conversations={group.conversations} />}
-              {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
+            <div className="bot-conversation-heading">
+              <button
+                className="sidebar-row bot-conversation-parent"
+                aria-label={title}
+                aria-expanded={open}
+                onClick={() => onToggleGroup(`pair:${key}`)}
+              >
+                <span className="bot-conversation-toggle bot-pair-toggle">
+                  <span className="bot-pair-avatars">
+                    {group.bots.map((bot) => (
+                      <Avatar key={bot.id} person={bot.avatar} size="xs" />
+                    ))}
+                  </span>
+                  {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </span>
+                <span>{title}</span>
+                {!open && <BotConversationStatus conversations={group.conversations} />}
+              </button>
+            </div>
             {open && (
               <div className="bot-conversation-list">
                 {visibleChats.map((chat) => (
