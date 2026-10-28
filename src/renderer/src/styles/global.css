@@ -463,6 +463,10 @@ p {
   width: 22px;
   height: 22px;
 }
+.bot-pair-section-heading {
+  margin-top: 24px;
+  margin-bottom: 12px;
+}
 .section-count {
   color: var(--text-muted);
   font-size: 11px;
@@ -529,6 +533,12 @@ p {
   flex-direction: column;
   gap: 12px;
 }
+.bot-pair-conversation-groups {
+  gap: 4px;
+}
+.bot-pair-conversation-groups .bot-conversation-parent {
+  min-height: 39px;
+}
 .bot-pair-empty {
   padding-inline-start: 24px;
 }
@@ -578,6 +588,9 @@ p {
   position: absolute;
   opacity: 0;
 }
+.bot-pair-toggle {
+  width: 39px;
+}
 .bot-conversation-action {
   position: relative;
   display: grid;
@@ -608,6 +621,8 @@ p {
 }
 .bot-conversation-heading:hover .bot-conversation-toggle > .avatar,
 .bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .avatar,
+.bot-conversation-heading:hover .bot-conversation-toggle > .bot-pair-avatars,
+.bot-conversation-heading:has(:focus-visible) .bot-conversation-toggle > .bot-pair-avatars,
 .bot-conversation-heading:hover .bot-conversation-action > .main-bot-badge,
 .bot-conversation-heading:has(:focus-visible) .bot-conversation-action > .main-bot-badge {
   opacity: 0;
@@ -1344,6 +1359,27 @@ p {
 .composer-area {
   padding: 15px 28px 18px;
   flex-shrink: 0;
+}
+.bot-chat-join {
+  display: flex;
+  justify-content: center;
+  padding: 16px 24px 28px;
+  flex-shrink: 0;
+}
+.bot-chat-join-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--theme-border);
+  border-radius: 999px;
+  background: var(--theme-soft);
+  color: var(--theme-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.bot-chat-join-pill:hover {
+  background: var(--surface-muted);
 }
 .composer {
   border: 1px solid var(--line);

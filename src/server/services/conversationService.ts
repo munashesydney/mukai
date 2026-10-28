@@ -70,6 +70,24 @@ export class ConversationService {
   sendPrivate(id: string, input: ChatInput, output: ChatOutput, source?: 'telegram') {
     return this.chats.respond(this.privateBot(id), { ...input, source }, output, id);
   }
+  userChatBot(id: string) {
+    const conversation = this.require(id);
+    if (conversation.kind === 'private') return this.privateBot(id);
+    if (conversation.kind !== 'bot' || conversation.botIds.length !== 2)
+      throw new ApiError(400, 'Choose a private or bot-to-bot conversation.');
+    // Participant order records the original sender and receiver, independently of display order.
+    const bot = this.bots.require(conversation.botIds[1]);
+    if (bot.workspaceId !== conversation.workspaceId)
+      throw new ApiError(400, 'Conversation workspace does not match its bot.');
+    return bot;
+  }
+  sendToBot(id: string, input: ChatInput, output: ChatOutput) {
+    const bot = this.userChatBot(id);
+    const existing = this.messages.forRequest(id, input.requestId, 'user');
+    if (this.require(id).kind === 'bot' && existing?.botId)
+      throw new ApiError(403, 'Bot-authored requests cannot be retried as a user.');
+    return this.chats.respond(bot, input, output, id);
+  }
   create(workspaceId: string, input: SpaceInput) {
     const available = this.bots.list(workspaceId);
     if (input.botIds.some((id) => !available.some((bot) => bot.id === id)))
@@ -100,8 +118,6 @@ export class ConversationService {
   }
   async send(id: string, input: SpaceChatInput, output: ChatOutput) {
     const conversation = this.require(id);
-    if (conversation.kind === 'bot')
-      throw new ApiError(403, 'Bot conversations are read-only for users.');
     if (conversation.kind !== 'space')
       throw new ApiError(400, 'Use the private bot chat endpoint.');
     if (input.botId) {

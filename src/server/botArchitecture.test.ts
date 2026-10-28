@@ -6,7 +6,14 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
 import { seedTestWorkspace } from './testFixtures';
-import type { Bot, BotInput, ChatMessage } from '../shared/ai';
+import type {
+  Bot,
+  BotInput,
+  ChatMessage,
+  ProviderSettings,
+  ChatEvent,
+  Attachment,
+} from '../shared/ai';
 import { executeBotManagement } from './tools/bots/execute';
 import { WebSearchService } from './services/webSearchService';
 import type { ToolInfo } from '../shared/ai';
@@ -18,17 +25,21 @@ import type { ApprovalState } from '../shared/approvals';
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
   model: string;
+  stream?: boolean;
   tools: {
     function: { name: string; parameters: { properties: { action?: { enum?: string[] } } } };
   }[];
   messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
+let requestPaths: string[];
+let heldChildren: ((text: string) => void)[];
 let mode:
   | 'normal'
   | 'slow'
   | 'revoke'
   | 'delegate'
   | 'delegate-slow'
+  | 'delegate-many'
   | 'delegate-approval'
   | 'delegate-tool-approval'
   | 'delegate-nested'
@@ -37,7 +48,9 @@ let mode:
   | 'delegate-empty-always'
   | 'delegate-empty-restart'
   | 'web-search'
-  | 'web-revoke';
+  | 'web-revoke'
+  | 'probe-fail'
+  | 'probe-slow';
 let delegatedId: string;
 let sendMode: 'fire_and_forget' | 'wait';
 let nestedId: string;
@@ -65,6 +78,25 @@ async function bot(name = 'Mukai', workspaceId = 'default') {
   expect(result.status).toBe(201);
   return result.data;
 }
+async function joinPair(
+  id: string,
+  text: string,
+  attachmentIds: string[] = [],
+  requestId = randomUUID(),
+) {
+  const response = await fetch(`${api.url}/conversations/${id}/chat`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, text, attachmentIds, botId: 'ignored-client-target' }),
+  });
+  expect(response.status).toBe(200);
+  const events = (await response.text())
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as ChatEvent);
+  expect(events.at(-1)?.type).toBe('done');
+  return events;
+}
 async function provider() {
   await request('/providers', 'POST', {
     name: 'Local fixture',
@@ -75,6 +107,38 @@ async function provider() {
     isDefault: true,
     apiKey: '',
   });
+}
+async function modelProvider(name: string, path: string, isDefault = true) {
+  const saved = await request<ProviderSettings>('/providers', 'POST', {
+    name,
+    kind: 'compatible',
+    baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}${path}/v1`,
+    defaultModel: 'text-default',
+    supportsImages: false,
+    isDefault,
+    apiKey: 'catalog-test-secret',
+    models: [
+      {
+        id: 'text-default',
+        name: 'Text',
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+        supportsImages: false,
+      },
+      {
+        id: 'media-model',
+        name: 'Media',
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        reasoningEffort: 'provider-default',
+      },
+    ],
+  });
+  expect(saved.status).toBe(201);
+  return saved.data;
 }
 async function chat(target: Bot) {
   const response = await fetch(api.url + `/bots/${target.id}/chat`, {
@@ -88,6 +152,8 @@ async function chat(target: Bot) {
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'mukai-bot-architecture-'));
   calls = [];
+  requestPaths = [];
+  heldChildren = [];
   mode = 'normal';
   delegatedId = '';
   sendMode = 'wait';
@@ -103,20 +169,81 @@ beforeEach(async () => {
     for await (const chunk of req) body += chunk;
     const call = JSON.parse(body) as (typeof calls)[number];
     calls.push(call);
+    requestPaths.push(req.url || '');
+    if (!call.stream) {
+      if (mode === 'probe-slow') return;
+      if (mode === 'probe-fail') {
+        res.writeHead(401, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({
+            error: { message: 'Invalid test API key', type: 'authentication_error' },
+          }),
+        );
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({
+          id: 'probe',
+          object: 'chat.completion',
+          created: 1,
+          model: call.model,
+          choices: [
+            { index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' },
+          ],
+          usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+        }),
+      );
+      return;
+    }
     const child = call.messages.some((item) =>
       item.content?.includes('This message is coming from another bot'),
     );
     const recoveringReply = call.messages
       .at(-1)
       ?.content?.startsWith('[Mukai runtime continuation');
-    if (mode === 'slow' || (mode === 'delegate-slow' && child)) return;
+    if (mode === 'slow') return;
+    if ((mode === 'delegate-slow' || mode === 'delegate-many') && child) {
+      heldChildren.push((text) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(
+          'data: ' +
+            JSON.stringify({
+              id: 'child',
+              model: 'test',
+              choices: [
+                { index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' },
+              ],
+            }) +
+            '\n\ndata: [DONE]\n\n',
+        );
+      });
+      return;
+    }
     if (child && mode === 'delegate-empty-restart' && recoveringReply) return;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = (delta: unknown, reason: string | null = null) =>
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
-    if (child && invalidAskFirst) {
+    if (mode === 'delegate-many' && !child && !call.messages.some((item) => item.role === 'tool')) {
+      send({
+        role: 'assistant',
+        tool_calls: [delegatedId, nestedId].map((id, index) => ({
+          index,
+          id: `parallel-${index}`,
+          type: 'function',
+          function: {
+            name: 'manage_bot',
+            arguments: JSON.stringify({
+              action: 'send_message',
+              botId: id,
+              message: 'Review the notes.',
+              mode: 'fire_and_forget',
+            }),
+          },
+        })),
+      });
+      send({}, 'tool_calls');
+    } else if (child && invalidAskFirst) {
       invalidAskFirst = false;
       send({
         role: 'assistant',
@@ -311,6 +438,187 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it('creates reporting branches through the tool and reparents existing bots without losing their configuration or history', async () => {
+    const main = await bot();
+    await provider();
+    const manager = await api.botManagement.create(main, input('Manager'), []);
+    const alternate = await bot('Alternate');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const created = await executeBotManagement(
+      botManagementDefinition.inputSchema.parse({
+        action: 'create',
+        name: 'Engineer',
+        role: 'Software engineer',
+        instructions: 'Build and verify features.',
+        reportsToBotId: manager.id,
+        toolIds: ['terminal'],
+      }),
+      context,
+      randomUUID(),
+    );
+    expect(created).toMatchObject({
+      ok: true,
+      result: { createdBy: manager.id, reportsToBotId: manager.id, hierarchyLevel: 2 },
+    });
+    const engineer = (await request<Bot[]>('/bots')).data.find((bot) => bot.name === 'Engineer')!;
+    expect(api.access.allowed(engineer, 'terminal')).toBe(true);
+    expect(api.access.allowed(manager, 'terminal')).toBe(false);
+    const leaf = await api.botManagement.create(main, {
+      ...input('Junior'),
+      reportsToBotId: engineer.id,
+    });
+    const conversation = await api.botManagement.sendMessage(
+      main,
+      engineer.id,
+      'Keep this conversation.',
+      context.signal,
+    );
+    const history = (
+      await request<ChatMessage[]>(`/conversations/${conversation.conversationId}/messages`)
+    ).data;
+    const assignments = api.access.list(main.workspaceId);
+    const move = await executeBotManagement(
+      { action: 'update', botId: engineer.id, reportsToBotId: alternate.id },
+      context,
+      randomUUID(),
+    );
+    expect(move).toMatchObject({
+      ok: true,
+      result: { id: engineer.id, reportsToBotId: alternate.id, hierarchyLevel: 2 },
+    });
+    expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === engineer.id)).toEqual({
+      ...engineer,
+      createdBy: alternate.id,
+    });
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${conversation.conversationId}/messages`)).data,
+    ).toEqual(history);
+    expect(api.access.list(main.workspaceId)).toEqual(assignments);
+    expect(api.botManagement.get(main, leaf.id)).toMatchObject({
+      createdBy: engineer.id,
+      hierarchyLevel: 3,
+    });
+    await api.botManagement.update(main, engineer.id, { reportsToBotId: main.id });
+    expect(api.botManagement.list(main)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: engineer.id, reportsToBotId: main.id, hierarchyLevel: 1 }),
+        expect.objectContaining({ id: leaf.id, reportsToBotId: engineer.id, hierarchyLevel: 2 }),
+      ]),
+    );
+    // Even stale caller/target objects must respect the updated reporting depth.
+    expect(api.botManagement.requireMessageTarget(engineer, alternate.id).id).toBe(alternate.id);
+    await api.botManagement.update(main, engineer.id, { reportsToBotId: manager.id });
+    expect(() => api.botManagement.requireMessageTarget(engineer, alternate.id)).toThrow(
+      'higher-level',
+    );
+    await api.botManagement.update(main, engineer.id, { role: 'Senior engineer' });
+    expect(api.botManagement.get(main, engineer.id).createdBy).toBe(manager.id);
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+
+  it('rejects invalid reporting parents, cycles, main-bot moves, and unauthorized hierarchy edits atomically', async () => {
+    const main = await bot(),
+      manager = await bot('Manager'),
+      child = await bot('Child');
+    await api.botManagement.update(main, child.id, { reportsToBotId: manager.id });
+    const context = (caller = main) => ({
+      bot: caller,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    });
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other-reporting','Other',NULL,'now')",
+    );
+    const foreign = await bot('Foreign', 'other-reporting');
+    for (const [target, parent, error] of [
+      [child, child.id, 'cycle'],
+      [manager, child.id, 'cycle'],
+      [main, manager.id, 'main bot cannot report'],
+      [child, foreign.id, 'another workspace'],
+      [child, 'missing-parent', 'Bot not found'],
+    ] as const) {
+      const result = await executeBotManagement(
+        { action: 'update', botId: target.id, reportsToBotId: parent, name: 'Must not save' },
+        context(),
+        randomUUID(),
+      );
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(error) });
+      expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === target.id)).toEqual(
+        target.id === child.id ? { ...child, createdBy: manager.id } : target,
+      );
+    }
+    expect(
+      await executeBotManagement(
+        { action: 'update', botId: child.id, reportsToBotId: main.id },
+        context(manager),
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Only the workspace main bot') });
+    await provider();
+    const before = (await request<Bot[]>('/bots')).data;
+    for (const reportsToBotId of [foreign.id, 'missing-parent']) {
+      expect(
+        await executeBotManagement(
+          {
+            action: 'create',
+            name: 'Invalid',
+            role: 'Assistant',
+            instructions: 'Help.',
+            reportsToBotId,
+          },
+          context(),
+          randomUUID(),
+        ),
+      ).toMatchObject({ ok: false });
+      expect((await request<Bot[]>('/bots')).data).toEqual(before);
+    }
+    expect(
+      botManagementDefinition.inputSchema.safeParse({ action: 'list', reportsToBotId: main.id })
+        .success,
+    ).toBe(false);
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'update',
+        botId: child.id,
+        reportsToBotId: '',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses to move a reporting branch while a descendant is working', async () => {
+    const main = await bot(),
+      manager = await bot('Manager'),
+      alternate = await bot('Alternate');
+    await provider();
+    const child = await api.botManagement.create(main, {
+      ...input('Child'),
+      reportsToBotId: manager.id,
+    });
+    mode = 'slow';
+    const running = chat(child);
+    await waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data.some(
+          (message) => message.status === 'streaming',
+        ),
+      ).toBe(true),
+    );
+    await expect(
+      api.botManagement.update(main, manager.id, { reportsToBotId: alternate.id }),
+    ).rejects.toThrow('descendants');
+    expect(api.botManagement.get(main, manager.id).createdBy).toBe(main.id);
+    await request(`/bots/${child.id}/stop`, 'POST');
+    await running;
+    await api.botManagement.update(main, manager.id, { reportsToBotId: alternate.id });
+    expect(api.botManagement.get(main, child.id).hierarchyLevel).toBe(3);
+  });
+
   it('gives only the main bot deletion access and preserves hierarchy and workspace boundaries', async () => {
     const main = await bot(),
       child = await bot('Ada'),
@@ -396,6 +704,7 @@ describe('Bot architecture', () => {
   it('assigns unused random mascots to AI-created bots without exposing mascots to the AI', async () => {
     const mascots = botAvatarIds.filter((avatar) => avatar !== 'mukai-logo');
     const main = (await request<Bot>('/bots', 'POST', { ...input(), avatar: mascots[0] })).data;
+    await provider();
     const context = {
       bot: main,
       management: api.botManagement,
@@ -537,6 +846,7 @@ describe('Bot architecture', () => {
       expect((await request('/bots', 'POST', { ...input('Ada'), role })).status).toBe(400);
     }
     const main = await bot();
+    await provider();
     expect(main.role).toBe('Main Bot/Orchestrator');
     expect(main).not.toHaveProperty('description');
     const changed = await request<Bot>(`/bots/${main.id}`, 'PUT', {
@@ -570,14 +880,520 @@ describe('Bot architecture', () => {
     expect(api.botManagement.list(main)).toContainEqual(
       expect.objectContaining({ id: child.id, role: 'Code architect' }),
     );
-    await provider();
     await chat(main);
     await chat(child);
-    expect(calls[0].messages[0].content).toContain('human or bot-sounding name');
-    expect(calls[1].messages[0].content).toContain('"role":"Code architect"');
+    const inference = calls.filter((call) => call.stream);
+    expect(inference[0].messages[0].content).toContain('human or bot-sounding name');
+    expect(inference[1].messages[0].content).toContain('"role":"Code architect"');
     expect(api.store.all('PRAGMA table_info(bots)').map((row) => row.name)).not.toContain(
       'description',
     );
+  });
+  it('reports effective model capabilities in bot tool results without saving inherited values', async () => {
+    const main = await bot();
+    const models = [
+      {
+        id: 'media-model',
+        name: 'Media model',
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+        reasoningEffort: 'provider-default',
+      },
+      {
+        id: 'text-model',
+        name: 'Text model',
+        supportsImages: false,
+        supportsAudio: false,
+        supportsVideo: false,
+        contextWindowTokens: 64000,
+        maxOutputTokens: 4096,
+      },
+    ];
+    const saved = await request<{ id: string }>('/providers', 'POST', {
+      name: 'Media fixture',
+      kind: 'compatible',
+      baseUrl: `http://127.0.0.1:${(fixture.address() as { port: number }).port}/v1`,
+      defaultModel: 'media-model',
+      supportsImages: true,
+      isDefault: true,
+      apiKey: 'test-only-provider-secret',
+      models,
+    });
+    expect(saved.status).toBe(201);
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const invoke = (value: Parameters<typeof executeBotManagement>[0]) =>
+      executeBotManagement(value, context, randomUUID());
+    const effective = {
+      providerId: saved.data.id,
+      providerName: 'Media fixture',
+      model: 'media-model',
+      supportsText: true,
+      supportsImages: true,
+      supportsAudio: true,
+      supportsVideo: true,
+      inputCapabilities: 'Text, images, audio, video',
+      contextWindowTokens: 512000,
+      maxOutputTokens: 48000,
+      reasoningEffort: 'provider-default',
+    };
+    expect(await invoke({ action: 'get', botId: main.id })).toMatchObject({
+      ok: true,
+      result: effective,
+    });
+    const created = await invoke({
+      action: 'create',
+      name: 'Ada',
+      role: 'Reviewer',
+      instructions: 'Review the task.',
+    });
+    expect(created).toMatchObject({ ok: true, result: effective });
+    const child = created.result as { id: string };
+    expect(
+      await invoke({ action: 'update', botId: child.id, role: 'Media reviewer' }),
+    ).toMatchObject({
+      ok: true,
+      result: { ...effective, role: 'Media reviewer' },
+    });
+    // Tool projections must not turn inherited defaults into saved overrides on update.
+    expect((await request<Bot[]>('/bots')).data.find((bot) => bot.id === child.id)).toMatchObject({
+      providerId: null,
+      model: null,
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+      reasoningEffort: null,
+    });
+    expect(
+      (
+        await request(`/bots/${child.id}/model`, 'PUT', {
+          providerId: saved.data.id,
+          model: 'text-model',
+          supportsImages: null,
+        })
+      ).status,
+    ).toBe(200);
+    const listed = await invoke({ action: 'list' });
+    expect(listed).toMatchObject({
+      ok: true,
+      result: expect.arrayContaining([
+        expect.objectContaining({ id: main.id, ...effective }),
+        expect.objectContaining({
+          id: child.id,
+          model: 'text-model',
+          supportsImages: false,
+          supportsAudio: false,
+          supportsVideo: false,
+          inputCapabilities: 'Text only',
+          contextWindowTokens: 64000,
+          maxOutputTokens: 4096,
+        }),
+      ]),
+    });
+    const inspected = await invoke({ action: 'get', botId: child.id });
+    expect(inspected).toMatchObject({ ok: true, result: { supportsImages: false } });
+    expect(inspected.result).not.toHaveProperty('avatar');
+    expect(JSON.stringify([listed, inspected, created])).not.toMatch(
+      /test-only-provider-secret|encryptedKey|baseUrl/,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(calls[0].stream).not.toBe(true);
+  });
+  it('keeps bot inspection available without a configured provider and labels capabilities unknown', async () => {
+    const main = await bot();
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const inspected = await executeBotManagement(
+      { action: 'get', botId: main.id },
+      context,
+      randomUUID(),
+    );
+    expect(inspected).toMatchObject({
+      ok: true,
+      result: {
+        model: 'Not configured',
+        providerName: 'Not configured',
+        supportsImages: 'unknown',
+        supportsAudio: 'unknown',
+        supportsVideo: 'unknown',
+        contextWindowTokens: 'unknown',
+        maxOutputTokens: 'unknown',
+      },
+    });
+    expect(api.botManagement.list(main)).toContainEqual(
+      expect.objectContaining({ id: main.id, supportsImages: 'unknown' }),
+    );
+    expect(
+      await executeBotManagement(
+        { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.' },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Configure a provider') });
+    expect((await request<Bot[]>('/bots')).data).toHaveLength(1);
+  });
+  it('discovers saved models read-only with distinct selection IDs for duplicate model names', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    await modelProvider('First provider', '/first');
+    await modelProvider('Second provider', '/second', false);
+    const before = (await request<ProviderSettings[]>('/providers')).data;
+    const context = {
+      bot: child,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const listed = await executeBotManagement({ action: 'list_models' }, context, randomUUID());
+    expect(listed.ok).toBe(true);
+    const entries = listed.result as { modelId: string; model: string; providerName: string }[];
+    expect(entries).toHaveLength(4);
+    expect(new Set(entries.map((model) => model.modelId)).size).toBe(4);
+    const duplicates = entries.filter((model) => model.model === 'media-model');
+    expect(duplicates).toHaveLength(2);
+    const inspected = await executeBotManagement(
+      { action: 'get_model', modelId: duplicates[0].modelId },
+      context,
+      randomUUID(),
+    );
+    expect(inspected).toMatchObject({
+      ok: true,
+      result: {
+        modelId: duplicates[0].modelId,
+        model: 'media-model',
+        inputCapabilities: 'Text, images, audio, video',
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+      },
+    });
+    expect(api.botManagement.listModels(main)).toEqual(entries);
+    expect((await request<ProviderSettings[]>('/providers')).data).toEqual(before);
+    expect(calls).toHaveLength(0);
+    expect(JSON.stringify(listed)).not.toMatch(/catalog-test-secret|encryptedKey|baseUrl/);
+    expect(
+      await executeBotManagement(
+        { action: 'get_model', modelId: 'media-model' },
+        context,
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('list_models') });
+    expect(botManagementDefinition.inputSchema.safeParse({ action: 'get_model' }).success).toBe(
+      false,
+    );
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'update',
+        botId: main.id,
+        modelId: duplicates[0].modelId,
+      }).success,
+    ).toBe(true);
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'list',
+        modelId: duplicates[0].modelId,
+      }).success,
+    ).toBe(false);
+  });
+  it('tests the selected provider and nondefault model before creating a bot that uses them', async () => {
+    const main = await bot();
+    await modelProvider('First provider', '/first');
+    const selectedProvider = await modelProvider('Second provider', '/second', false);
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.providerName === 'Second provider' && model.model === 'media-model')!;
+    const result = await executeBotManagement(
+      {
+        action: 'create',
+        name: 'Vision reviewer',
+        role: 'Reviewer',
+        instructions: 'Review images.',
+        modelId: selected.modelId,
+      },
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { providerId: selectedProvider.id, model: 'media-model', supportsImages: true },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ model: 'media-model' });
+    expect(calls[0].stream).not.toBe(true);
+    expect(requestPaths).toEqual(['/second/v1/chat/completions']);
+    const child = (await request<Bot[]>('/bots')).data.find(
+      (bot) => bot.id === (result.result as { id: string }).id,
+    )!;
+    expect(child).toMatchObject({
+      providerId: selectedProvider.id,
+      model: 'media-model',
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+    });
+    await chat(child);
+    expect(calls.at(-1)).toMatchObject({ model: 'media-model', stream: true });
+    expect(requestPaths.at(-1)).toBe('/second/v1/chat/completions');
+    expect(
+      (await request<ProviderSettings[]>('/providers')).data.find(
+        (provider) => provider.id === selectedProvider.id,
+      )?.defaultModel,
+    ).toBe('text-default');
+  });
+  it('changes an existing bot’s model after testing it and continues its saved conversation', async () => {
+    const main = await bot();
+    const oldProvider = await modelProvider('Old provider', '/old');
+    const nextProvider = await modelProvider('Next provider', '/next', false);
+    const child = (
+      await request<Bot>('/bots', 'POST', {
+        ...input('Iris'),
+        providerId: oldProvider.id,
+        model: 'text-default',
+        supportsImages: false,
+        contextWindowTokens: 8192,
+        maxOutputTokens: 512,
+        reasoningEffort: 'provider-default',
+      })
+    ).data;
+    await chat(child);
+    const history = (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data;
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.providerName === 'Next provider' && model.model === 'media-model')!;
+    const changed = await executeBotManagement(
+      botManagementDefinition.inputSchema.parse({
+        action: 'update',
+        botId: child.id,
+        modelId: selected.modelId,
+        role: 'Image reviewer',
+      }),
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(changed).toMatchObject({
+      ok: true,
+      result: {
+        id: child.id,
+        name: 'Iris',
+        role: 'Image reviewer',
+        createdAt: child.createdAt,
+        createdBy: child.createdBy,
+        providerId: nextProvider.id,
+        model: 'media-model',
+        supportsImages: true,
+        supportsAudio: true,
+        supportsVideo: true,
+        contextWindowTokens: 512000,
+        maxOutputTokens: 48000,
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ model: 'media-model' });
+    expect(calls[1].stream).not.toBe(true);
+    expect(requestPaths[1]).toBe('/next/v1/chat/completions');
+    const saved = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === child.id)!;
+    expect(saved).toMatchObject({
+      avatar: child.avatar,
+      supportsImages: null,
+      contextWindowTokens: null,
+      maxOutputTokens: null,
+      reasoningEffort: null,
+    });
+    expect((await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data).toEqual(history);
+    await chat(child);
+    expect(calls.at(-1)).toMatchObject({ model: 'media-model', stream: true });
+    expect(calls.at(-1)!.messages).toContainEqual(
+      expect.objectContaining({ role: 'assistant', content: history[1].content }),
+    );
+    expect(
+      (await request<ChatMessage[]>(`/bots/${child.id}/messages`)).data.slice(0, history.length),
+    ).toEqual(history);
+  });
+  it('leaves all bot settings and assignments intact when a model update fails', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    const child = await api.botManagement.create(main, input('Ada'), ['browser']);
+    const before = api.botManagement.get(main, child.id);
+    const assignments = api.access.list('default');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const update = (modelId: string) =>
+      executeBotManagement(
+        {
+          action: 'update',
+          botId: child.id,
+          modelId,
+          name: 'Should not save',
+          instructions: 'Should not save',
+          toolIds: [],
+        },
+        context,
+        randomUUID(),
+      );
+    expect(await update('missing-selection')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('list_models'),
+    });
+    expect(calls).toHaveLength(0);
+    mode = 'probe-fail';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    expect(await update(selected.modelId)).toMatchObject({ ok: false, error: expect.any(String) });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    expect(api.access.list('default')).toEqual(assignments);
+  });
+  it('cancels model updates without saving and refuses to change a busy bot', async () => {
+    const main = await bot(),
+      child = await bot('Ada');
+    await modelProvider('Models', '/models');
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    const before = api.botManagement.get(main, child.id);
+    mode = 'probe-slow';
+    const controller = new AbortController();
+    const pending = executeBotManagement(
+      { action: 'update', botId: child.id, modelId: selected.modelId, role: 'Should not save' },
+      { bot: main, management: api.botManagement, signal: controller.signal, onActivity() {} },
+      randomUUID(),
+    );
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    controller.abort();
+    await rejected;
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    mode = 'slow';
+    const running = chat(child);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(
+      await executeBotManagement(
+        { action: 'update', botId: child.id, modelId: selected.modelId },
+        {
+          bot: main,
+          management: api.botManagement,
+          signal: new AbortController().signal,
+          onActivity() {},
+        },
+        randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Stop this bot') });
+    expect(calls).toHaveLength(2);
+    expect(api.botManagement.get(main, child.id)).toEqual(before);
+    await request(`/bots/${child.id}/stop`, 'POST');
+    await running;
+  });
+  it('uses the creator’s current model when modelId is omitted, even with a stale caller snapshot', async () => {
+    const main = await bot();
+    const saved = await modelProvider('Selected provider', '/selected');
+    expect(
+      (
+        await request(`/bots/${main.id}/model`, 'PUT', {
+          providerId: saved.id,
+          model: 'media-model',
+          supportsImages: null,
+        })
+      ).status,
+    ).toBe(200);
+    const result = await executeBotManagement(
+      { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review images.' },
+      {
+        bot: main,
+        management: api.botManagement,
+        signal: new AbortController().signal,
+        onActivity() {},
+      },
+      randomUUID(),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: { providerId: saved.id, model: 'media-model' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect(botManagementDefinition.description).toContain(
+      'Creating without modelId defaults to the creator’s current model.',
+    );
+  });
+  it('returns model-selection and connection errors without creating a bot', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    const create = (modelId?: string) =>
+      executeBotManagement(
+        { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.', modelId },
+        context,
+        randomUUID(),
+      );
+    expect(await create('not-a-selection')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('list_models'),
+    });
+    expect(calls).toHaveLength(0);
+    mode = 'probe-fail';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const selected = api.botManagement
+      .listModels(main)
+      .find((model) => model.model === 'media-model')!;
+    const failed = await create(selected.modelId);
+    expect(failed).toMatchObject({ ok: false, error: expect.any(String) });
+    expect(JSON.stringify(failed)).not.toContain('catalog-test-secret');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe('media-model');
+    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.id)).toEqual([main.id]);
+    expect(api.store.all('SELECT * FROM bot_tool_assignments')).toHaveLength(0);
+  });
+  it('does not save a bot when its connection test is cancelled', async () => {
+    const main = await bot();
+    await modelProvider('Models', '/models');
+    mode = 'probe-slow';
+    const controller = new AbortController();
+    const pending = executeBotManagement(
+      { action: 'create', name: 'Ada', role: 'Reviewer', instructions: 'Review.' },
+      { bot: main, management: api.botManagement, signal: controller.signal, onActivity() {} },
+      randomUUID(),
+    );
+    // Attach the rejection handler before aborting the provider request.
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect((await request<Bot[]>('/bots')).data).toHaveLength(1);
+    controller.abort();
+    await rejected;
+    expect((await request<Bot[]>('/bots')).data.map((bot) => bot.id)).toEqual([main.id]);
   });
   it('uses the bot’s selected model on actual inference, resets old model limits, and preserves its other fields', async () => {
     const main = await bot(),
@@ -697,11 +1513,21 @@ describe('Bot architecture', () => {
     expect(
       calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['create', 'update', 'delete', 'list', 'get', 'send_message', 'get_last_message']);
+    ).toEqual([
+      'create',
+      'update',
+      'delete',
+      'list',
+      'get',
+      'list_models',
+      'get_model',
+      'send_message',
+      'get_last_message',
+    ]);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'send_message', 'get_last_message']);
+    ).toEqual(['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message']);
     for (const target of [main, child])
       expect(
         (
@@ -848,6 +1674,7 @@ describe('Bot architecture', () => {
   it('reserves creation and updates for the main bot, bounds grants, and requires Bots access', async () => {
     const main = await bot(),
       peer = await bot('Peer');
+    await provider();
     expect(() => api.access.set('default', peer.id, 'manage_bot', false)).toThrow(
       'Bots access is required',
     );
@@ -922,7 +1749,7 @@ describe('Bot architecture', () => {
     expect(
       childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'get_last_message']);
+    ).toEqual(['list', 'get', 'list_models', 'get_model', 'get_last_message']);
     expect(JSON.stringify(childCall.messages)).toContain(
       'intentionally unavailable to prevent delegation loops',
     );
@@ -977,14 +1804,18 @@ describe('Bot architecture', () => {
     ).toMatchObject({ ok: false, error: expect.stringContaining('conversationId') });
     expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(0);
   });
-  it('dispatches without waiting and lets the caller poll the latest reply', async () => {
+  it('dispatches without blocking tools, holds completion, and incorporates the child result', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
     delegatedId = child.id;
     sendMode = 'fire_and_forget';
     mode = 'delegate-slow';
-    await chat(main);
+    let completed = false;
+    const pending = chat(main).then(() => {
+      completed = true;
+    });
+    await waitFor(() => expect(calls).toHaveLength(3));
     const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
     expect(conversations).toHaveLength(1);
     const conversationId = conversations[0].id;
@@ -993,16 +1824,34 @@ describe('Bot architecture', () => {
     expect(latest.requestId).toBeTruthy();
     expect(conversations[0].isWorking).toBe(true);
     const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
-    expect(parent.status).toBe('complete');
+    expect(parent.status).toBe('streaming');
+    expect(parent.activity).toContainEqual(
+      expect.objectContaining({ action: 'wait_for_bots', status: 'running' }),
+    );
+    expect(completed).toBe(false);
     const saved = api.store.get(
       'SELECT * FROM bot_delegations WHERE parent_message_id=?',
       parent.id,
     )!;
-    expect(saved.state).toBe('complete');
-    await request(`/bots/${main.id}/stop`, 'POST');
-    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
-      'streaming',
-    );
+    expect(saved.state).toBe('waiting');
+    heldChildren[0]('Verified child finding: blueberry.');
+    await pending;
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Verified child finding: blueberry.');
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.status).toBe('complete');
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(finished.activity?.[0].delegation).toMatchObject({
+      status: 'complete',
+      mode: 'fire_and_forget',
+      avatar: child.avatar,
+    });
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'complete', delivered: 1 });
     const replay = await api.botManagement.sendMessage(
       main,
       child.id,
@@ -1020,13 +1869,9 @@ describe('Bot architecture', () => {
     expect(
       (await request<ChatMessage[]>(`/conversations/${conversationId}/messages`)).data,
     ).toHaveLength(2);
-    await request(`/conversations/${conversationId}/stop`, 'POST');
-    await waitFor(() =>
-      expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
-        'stopped',
-      ),
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+      'complete',
     );
-    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe('stopped');
     mode = 'normal';
     const context = {
       bot: main,
@@ -1066,6 +1911,179 @@ describe('Bot architecture', () => {
     expect(() => api.botManagement.getLastMessage(main, child.id, 'bot-' + child.id)).toThrow(
       'between you and the target',
     );
+  });
+  async function waitingParent(main: Bot) {
+    let parent!: ChatMessage;
+    await waitFor(async () => {
+      parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+      expect(
+        parent.activity?.some(
+          (item) => item.action === 'wait_for_bots' && item.status === 'running',
+        ),
+      ).toBe(true);
+    });
+    return parent;
+  }
+  it('waits for every outstanding bot before requesting one final synthesis', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    nestedId = (await api.botManagement.create(main, input('Iris'))).id;
+    mode = 'delegate-many';
+    const pending = chat(main);
+    await waitingParent(main);
+    expect(heldChildren).toHaveLength(2);
+    expect(calls).toHaveLength(4);
+    heldChildren[0]('First verified finding.');
+    await waitFor(async () => {
+      const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+      expect(
+        parent.activity?.filter(
+          (item) => item.action === 'send_message' && item.delegation?.status === 'complete',
+        ),
+      ).toHaveLength(1);
+      const replies = parent.activity?.filter((item) => item.action === 'receive_message');
+      expect(replies).toHaveLength(1);
+      expect(replies![0].summary).toBe('First verified finding.');
+      expect(parent.parts?.at(-1)).toMatchObject({ type: 'tool', activityId: replies![0].id });
+      expect(parent.status).toBe('streaming');
+      expect(
+        parent.activity?.some(
+          (item) => item.action === 'wait_for_bots' && item.status === 'running',
+        ),
+      ).toBe(true);
+    });
+    expect(calls).toHaveLength(4);
+    const completedChild = api.store.get(
+      "SELECT target_id FROM bot_delegations WHERE state='complete' AND mode='fire_and_forget'",
+    )!;
+    expect((await request(`/bots/${String(completedChild.target_id)}`, 'DELETE')).status).toBe(409);
+    heldChildren[1]('Second verified finding.');
+    await pending;
+    expect(calls).toHaveLength(5);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('First verified finding.');
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Second verified finding.');
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(2);
+    expect(parent.status).toBe('complete');
+  });
+  it('accepts user steering while waiting and incorporates later results into that same run', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    const id = randomUUID();
+    expect(
+      (
+        await request(`/bots/${main.id}/followups`, 'POST', {
+          id,
+          text: 'Focus only on accessibility.',
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await request(`/bots/${main.id}/followups`, 'PUT', {
+          action: 'steer',
+          id,
+          expectedRequestId: parent.requestId,
+        })
+      ).status,
+    ).toBe(200);
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Focus only on accessibility.');
+    heldChildren[0]('Verified accessibility result.');
+    await pending;
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.id).toBe(parent.id);
+    expect(
+      finished.parts?.filter((part) => part.type === 'steering' && part.id === id),
+    ).toHaveLength(1);
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Verified accessibility result.');
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data).toHaveLength(2);
+  });
+  it('respects explicit Stop and never delivers a late child result into a newer user turn', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    await request(`/bots/${main.id}/stop`, 'POST');
+    await pending;
+    mode = 'normal';
+    await chat(main);
+    const before = calls.length;
+    heldChildren[0]('Late finding from the cancelled parent task.');
+    const pair = parent.activity!.find((item) => item.delegation)!.delegation!;
+    await waitFor(() =>
+      expect(api.botManagement.getLastMessage(main, delegatedId, pair.conversationId).status).toBe(
+        'complete',
+      ),
+    );
+    const history = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data;
+    expect(history[1].status).toBe('stopped');
+    expect(history.at(-1)!.status).toBe('complete');
+    expect(history.at(-1)!.activity?.some((item) => item.action === 'receive_message')).toBe(false);
+    expect(calls).toHaveLength(before);
+    expect(
+      api.store.get('SELECT state FROM bot_delegations WHERE parent_message_id=?', parent.id)
+        ?.state,
+    ).toBe('cancelled');
+  });
+  it('resumes a parent with a stopped child outcome instead of leaving it waiting forever', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    await request(`/conversations/${parent.activity![0].delegation!.conversationId}/stop`, 'POST');
+    await pending;
+    expect(
+      calls.at(-1)!.messages.some((item) => item.content?.includes('"status":"stopped"')),
+    ).toBe(true);
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.status).toBe('complete');
+    expect(finished.activity).toContainEqual(
+      expect.objectContaining({ action: 'receive_message', status: 'interrupted' }),
+    );
+  });
+  it('restores a held fire-and-forget run and the original child request after restart', async () => {
+    const main = await bot();
+    await provider();
+    delegatedId = (await api.botManagement.create(main, input('Ada'))).id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    const parent = await waitingParent(main);
+    const pair = parent.activity![0].delegation!;
+    const before = (await request<ChatMessage[]>(`/conversations/${pair.conversationId}/messages`))
+      .data;
+    mode = 'delegate';
+    await restart();
+    await pending;
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!.status).toBe(
+        'complete',
+      ),
+    );
+    const after = (await request<ChatMessage[]>(`/conversations/${pair.conversationId}/messages`))
+      .data;
+    expect(after.map((message) => message.id)).toEqual(before.map((message) => message.id));
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.id).toBe(parent.id);
+    expect(finished.activity?.filter((item) => item.action === 'receive_message')).toHaveLength(1);
+    expect(
+      api.store.get('SELECT delivered FROM bot_delegations WHERE parent_message_id=?', parent.id)
+        ?.delivered,
+    ).toBe(1);
   });
   async function restart(snapshot?: string) {
     await api.shutdown();
@@ -1438,6 +2456,8 @@ describe('Bot architecture', () => {
     expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
       'list',
       'get',
+      'list_models',
+      'get_model',
       'get_last_message',
     ]);
     const result = await executeBotManagement(
@@ -1459,6 +2479,8 @@ describe('Bot architecture', () => {
     expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
       'list',
       'get',
+      'list_models',
+      'get_model',
       'get_last_message',
     ]);
     expect(api.botManagement.actionsFor(main, reply.id)).toContain('send_message');
@@ -1518,7 +2540,7 @@ describe('Bot architecture', () => {
     ).toHaveLength(2);
     expect(calls).toHaveLength(5);
   });
-  it('continues only the requested pair thread, preserves history, and keeps the viewer read-only', async () => {
+  it('continues only the requested pair thread and lets the human talk to its original receiving bot', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
@@ -1570,18 +2592,49 @@ describe('Bot architecture', () => {
     await expect(
       api.botManagement.sendMessage(main, child.id, 'Private chat', signal, 'bot-' + child.id),
     ).rejects.toThrow('between you and the target');
+    const humanRequestId = randomUUID();
+    await joinPair(first.conversationId, 'Human message', [], humanRequestId);
+    const joinedHistory = (
+      await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)
+    ).data;
+    expect(joinedHistory.slice(0, 4)).toEqual(history);
+    expect(joinedHistory.slice(4)).toMatchObject([
+      { botId: '', authorName: 'You', role: 'user', content: 'Human message' },
+      { botId: child.id, authorName: child.name, role: 'assistant', status: 'complete' },
+    ]);
+    const directCall = calls.at(-1)!;
+    expect(
+      directCall.messages.some((message) =>
+        message.content?.includes('This message is coming from another bot'),
+      ),
+    ).toBe(false);
+    expect(
+      directCall.messages.some(
+        (message) =>
+          message.role === 'user' &&
+          JSON.stringify(message.content).includes('[Human user] Human message'),
+      ),
+    ).toBe(true);
+    expect(
+      directCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
+        .properties.action!.enum,
+    ).toContain('send_message');
+    await joinPair(first.conversationId, '', [], humanRequestId);
+    expect(
+      (await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)).data,
+    ).toHaveLength(6);
     expect(
       (
         await request(`/conversations/${first.conversationId}/chat`, 'POST', {
-          requestId: randomUUID(),
-          text: 'Human message',
+          requestId: history[0].requestId,
+          text: '',
           attachmentIds: [],
         })
       ).status,
     ).toBe(403);
     expect(
       (await request(`/conversations/${first.conversationId}/attachments`, 'POST')).status,
-    ).toBe(400);
+    ).toBe(413);
     const pairChats = (await request<Conversation[]>('/conversations?kind=bot')).data;
     expect(pairChats).toHaveLength(2);
     expect(pairChats[0]).toMatchObject({
@@ -1597,6 +2650,239 @@ describe('Bot architecture', () => {
     expect((await request<Conversation[]>('/conversations')).data).toEqual([]);
     expect(botManagementDefinition.inputSchema.safeParse({ action: 'spawn' }).success).toBe(false);
     expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+  });
+  it('keeps every earlier bot turn and explicit sender identity when the human joins, including after restart', async () => {
+    // A bot named You must still be distinguished from the actual human by saved identity.
+    const main = await bot('You');
+    await provider();
+    const child = await api.botManagement.create(main, input('Orbit'));
+    const signal = new AbortController().signal;
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Original bot task 0: save orbit-random-2.png.',
+      signal,
+    );
+    for (let index = 1; index < 6; index++)
+      await api.botManagement.sendMessage(
+        main,
+        child.id,
+        `Original bot follow-up ${index}.`,
+        signal,
+        first.conversationId,
+      );
+    await api.botManagement.sendMessage(main, child.id, 'OUTSIDE THIS THREAD', signal);
+    const path = `/conversations/${first.conversationId}/messages`;
+    const firstReply = api.store.get(
+      "SELECT id FROM messages WHERE conversation_id=? AND role='assistant' ORDER BY sequence LIMIT 1",
+      first.conversationId,
+    )!;
+    api.store.run(
+      'UPDATE messages SET content=?,activity_json=?,parts_json=? WHERE id=?',
+      'Created and verified orbit-random-2.png.',
+      JSON.stringify([
+        {
+          id: 'original-image-task',
+          tool: 'terminal',
+          action: 'run',
+          path: 'python3',
+          summary: 'Verified PNG: 256x256 RGB.',
+          status: 'complete',
+        },
+      ]),
+      JSON.stringify([
+        { id: 'image-answer', type: 'text', text: 'Created and verified orbit-random-2.png.' },
+      ]),
+      String(firstReply.id),
+    );
+    const before = (await request<ChatMessage[]>(path)).data;
+    expect(before).toHaveLength(12);
+    // Old compacted memories did not distinguish bot and human authors. They must not hide saved turns.
+    const through = api.store.get(
+      'SELECT sequence FROM messages WHERE id=?',
+      before.at(-1)!.id,
+    )!.sequence;
+    api.store.run(
+      'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+      first.conversationId,
+      child.id,
+      'Previous task completed; sender not recorded.',
+      through,
+    );
+
+    const assertHistory = (history: ChatMessage[]) => {
+      const call = calls.filter((call) => call.stream).at(-1)!;
+      const turns = call.messages.filter(
+        (message) =>
+          message.content?.startsWith('[Bot: ') || message.content?.startsWith('[Human user] '),
+      );
+      // All saved earlier messages plus this new request reach the model in order; no ten-message space limit.
+      expect(turns).toHaveLength(history.length + 1);
+      for (const [index, saved] of history.entries()) {
+        expect(turns[index].role).toBe(saved.botId === child.id ? 'assistant' : 'user');
+        expect(turns[index].content).toContain(saved.content);
+        expect(turns[index].content).toMatch(saved.botId ? /^\[Bot: / : /^\[Human user\] /);
+        if (saved.botId) {
+          expect(turns[index].content).toContain(
+            JSON.stringify({ id: saved.botId, name: saved.authorName }),
+          );
+        }
+      }
+      expect(JSON.stringify(call.messages)).not.toContain('OUTSIDE THIS THREAD');
+      expect(JSON.stringify(call.messages)).toContain('Verified PNG: 256x256 RGB.');
+      expect(JSON.stringify(call.messages)).toContain(
+        'This message is coming from the human user.',
+      );
+      expect(JSON.stringify(call.messages)).not.toContain(
+        'This message is coming from another bot',
+      );
+      expect(turns.at(-1)!.role).toBe('user');
+      expect(turns.at(-1)!.content).toMatch(/^\[Human user\] /);
+    };
+    await joinPair(first.conversationId, 'Hey, who am I speaking to?');
+    assertHistory(before);
+    const joined = (await request<ChatMessage[]>(path)).data;
+    expect(joined).toHaveLength(14);
+    await restart();
+    await joinPair(first.conversationId, 'How many messages are in this chat?');
+    assertHistory(joined);
+    expect((await request<ChatMessage[]>(path)).data).toHaveLength(16);
+    // Returning to bot delegation retains both sources and restores the correct current requester.
+    await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Continue with the human’s notes.',
+      signal,
+      first.conversationId,
+    );
+    const resumed = calls.at(-1)!;
+    expect(JSON.stringify(resumed.messages)).toContain('[Human user] Hey, who am I speaking to?');
+    expect(JSON.stringify(resumed.messages)).toContain(
+      '[Human user] How many messages are in this chat?',
+    );
+    expect(
+      resumed.messages.some((message) =>
+        message.content?.includes('This message is coming from another bot'),
+      ),
+    ).toBe(true);
+    expect(
+      resumed.messages.some((message) =>
+        message.content?.includes('This message is coming from the human user.'),
+      ),
+    ).toBe(false);
+  });
+
+  it('supports attachments in a pair thread and keeps them scoped to its receiving bot and conversation', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'First task.',
+      new AbortController().signal,
+    );
+    const second = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Separate task.',
+      new AbortController().signal,
+    );
+    const uploaded = await fetch(`${api.url}/conversations/${first.conversationId}/attachments`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + api.token, 'X-Filename': 'notes.txt' },
+      body: 'Review the green folder.',
+    });
+    expect(uploaded.status).toBe(201);
+    const file = (await uploaded.json()) as Attachment;
+    expect(file.botId).toBe(child.id);
+    expect(
+      (await request<Attachment[]>(`/conversations/${first.conversationId}/attachments`)).data,
+    ).toMatchObject([{ id: file.id }]);
+    expect(
+      (
+        await request(`/conversations/${second.conversationId}/chat`, 'POST', {
+          requestId: randomUUID(),
+          text: 'Wrong thread',
+          attachmentIds: [file.id],
+        })
+      ).status,
+    ).toBe(400);
+    await joinPair(first.conversationId, 'Check my notes.', [file.id]);
+    const history = (
+      await request<ChatMessage[]>(`/conversations/${first.conversationId}/messages`)
+    ).data;
+    expect(history[2]).toMatchObject({
+      authorName: 'You',
+      botId: '',
+      attachments: [{ id: file.id }],
+    });
+    expect(history[3].botId).toBe(child.id);
+    expect(
+      (await request<Attachment[]>(`/conversations/${first.conversationId}/attachments`)).data,
+    ).toEqual([]);
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Review the green folder.');
+    await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Continue after the human.',
+      new AbortController().signal,
+      first.conversationId,
+    );
+    expect(JSON.stringify(calls.at(-1)!.messages)).toContain('[Human user] Check my notes.');
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) =>
+          message.content?.includes('This message is coming from another bot'),
+        ),
+    ).toBe(true);
+  });
+  it('queues a human follow-up to the receiving bot while its delegated reply is running', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    mode = 'delegate-slow';
+    const pending = api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Work first.',
+      new AbortController().signal,
+    );
+    await waitFor(() => expect(heldChildren).toHaveLength(1));
+    const conversation = (await request<Conversation[]>('/conversations?kind=bot')).data[0];
+    const followupId = randomUUID();
+    const queued = await request<{ botId: string }[]>(
+      `/conversations/${conversation.id}/followups`,
+      'POST',
+      {
+        id: followupId,
+        text: 'Now answer me directly.',
+        botId: main.id,
+      },
+    );
+    expect(queued.status).toBe(201);
+    expect(queued.data[0].botId).toBe(child.id);
+    mode = 'normal';
+    heldChildren[0]('Delegated reply done.');
+    await pending;
+    await waitFor(async () =>
+      expect(
+        (await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`)).data,
+      ).toMatchObject([
+        { botId: main.id },
+        { botId: child.id },
+        { botId: '', authorName: 'You', requestId: followupId },
+        { botId: child.id, status: 'complete', requestId: followupId },
+      ]),
+    );
+    expect(
+      calls
+        .at(-1)!
+        .messages.some((message) =>
+          message.content?.includes('This message is coming from another bot'),
+        ),
+    ).toBe(false);
   });
   it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
     const main = await bot();

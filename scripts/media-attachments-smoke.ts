@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
@@ -23,7 +23,14 @@ async function main() {
           created: 1,
           model: 'media',
           choices: [
-            { index: 0, delta: { content: 'Media request completed.' }, finish_reason: 'stop' },
+            {
+              index: 0,
+              delta: {
+                content:
+                  'Media request completed.\n\n[Play audio](recording.wav) · [Play video](preview.webm) · [Read PDF](sample.pdf) · [Unsupported video](broken.mp4)',
+              },
+              finish_reason: 'stop',
+            },
           ],
           usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
         }) +
@@ -98,6 +105,38 @@ async function main() {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${api.url}/#mukai-connect=${api.browserSession!.connectToken}`);
+    const video = await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 160;
+      canvas.height = 90;
+      const drawing = canvas.getContext('2d')!;
+      drawing.fillStyle = '#12232e';
+      drawing.fillRect(0, 0, canvas.width, canvas.height);
+      const stream = canvas.captureStream(10);
+      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (event) => chunks.push(event.data);
+      const stopped = new Promise<void>((done) => (recorder.onstop = () => done()));
+      recorder.start();
+      for (let frame = 0; frame < 6; frame++) {
+        drawing.fillStyle = frame % 2 ? '#369b82' : '#12232e';
+        drawing.fillRect(0, 0, canvas.width, canvas.height);
+        await new Promise((done) => setTimeout(done, 100));
+      }
+      recorder.stop();
+      await stopped;
+      stream.getTracks().forEach((track) => track.stop());
+      return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));
+    });
+    await Promise.all([
+      writeFile(join(project, 'recording.wav'), wavFixture()),
+      writeFile(join(project, 'preview.webm'), Buffer.from(video)),
+      writeFile(join(project, 'broken.mp4'), mp4Fixture()),
+      writeFile(
+        join(project, 'sample.pdf'),
+        '%PDF-1.1\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF',
+      ),
+    ]);
     const input = page.getByLabel('Upload chat attachments');
     await input.waitFor({ state: 'attached' });
     assert((await input.getAttribute('accept'))?.includes('.wav,.mp3'));
@@ -138,6 +177,52 @@ async function main() {
       .waitFor({ state: 'hidden' });
     assert(JSON.stringify(calls.at(-1)).includes('input_audio'));
     assert(JSON.stringify(calls.at(-1)).includes('video_url'));
+    await page.getByRole('button', { name: 'Play audio', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await page.waitForFunction(
+      () => (document.querySelector<HTMLAudioElement>('dialog audio')?.readyState || 0) >= 1,
+    );
+    assert(await dialog.locator('audio').evaluate((audio: HTMLAudioElement) => audio.controls));
+    assert(await dialog.locator('audio').evaluate((audio: HTMLAudioElement) => !audio.autoplay));
+    await dialog.locator('audio').evaluate((audio: HTMLAudioElement) => audio.play());
+    await page.waitForFunction(
+      () => document.querySelector<HTMLAudioElement>('dialog audio')?.ended,
+    );
+    await page.screenshot({ path: 'artifacts/media-preview-audio.png' });
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+
+    await page.getByRole('button', { name: 'Play video', exact: true }).click();
+    await page.waitForFunction(
+      () => (document.querySelector<HTMLVideoElement>('dialog video')?.readyState || 0) >= 1,
+    );
+    assert(await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.controls));
+    await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.play());
+    await page.waitForFunction(
+      () => document.querySelector<HTMLVideoElement>('dialog video')?.ended,
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await page.screenshot({ path: 'artifacts/media-preview-video-mobile.png' });
+    await page.setViewportSize({ width: 1480, height: 980 });
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+
+    await page.getByRole('button', { name: 'Unsupported video', exact: true }).click();
+    await dialog.getByRole('status').filter({ hasText: 'could not be played here' }).waitFor();
+    assert(await dialog.getByRole('link', { name: 'Download', exact: true }).isVisible());
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
+
+    await page.getByRole('button', { name: 'Read PDF', exact: true }).click();
+    const openPdf = dialog.getByRole('link', { name: 'Open in browser' });
+    await openPdf.waitFor();
+    const pdfUrl = await openPdf.getAttribute('href');
+    assert(pdfUrl?.startsWith('blob:'));
+    const popup = page.waitForEvent('popup');
+    await openPdf.click();
+    const pdfTab = await popup;
+    await pdfTab.waitForURL('blob:**');
+    assert(pdfTab.url().startsWith('blob:'));
+    await pdfTab.close();
+    await dialog.getByRole('button', { name: 'Close dialog' }).click();
     await selectModel('Text model');
     await composer.fill('Continue after switching to text only.');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
@@ -154,7 +239,7 @@ async function main() {
     assert.deepEqual(errors, []);
     await page.screenshot({ path: 'artifacts/media-attachments-chat.png' });
     console.log(
-      'PASS media attachments UI: capability-aware picker, pending media blocked after model switch, retained uploads, real SDK media delivery, and safe historical media fallback.',
+      'PASS media attachments UI: audio/video playback, unsupported-codec fallback, PDF browser tab, mobile preview, capability-aware picker, retained uploads, SDK media delivery, and historical media fallback.',
     );
   } finally {
     await browser?.close();

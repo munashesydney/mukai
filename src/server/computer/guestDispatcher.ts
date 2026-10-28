@@ -19,6 +19,7 @@ import { guestBrowserExecutable } from './guestBrowser';
 import { ComputerUseService } from '../services/computerUseService';
 import { NativeDesktopBackend } from './computer_use/nativeBackend';
 import { computerUseDefinition } from '../tools/computer_use/definition';
+import { ARTIFACT_CHUNK_BYTES, ARTIFACT_DOWNLOAD_LIMIT } from '../../shared/artifacts';
 
 /** The same dispatcher can run locally in tests or inside the Linux guest. */
 export class GuestDispatcher implements Computer {
@@ -207,22 +208,30 @@ export class GuestDispatcher implements Computer {
         return result;
       }
       case 'download': {
-        const { path, maxBytes } = z
+        const { path, maxBytes, offset, length, version } = z
           .object({
             path: z.string().min(1).max(4000),
-            maxBytes: z
-              .number()
-              .int()
-              .min(1)
-              .max(10 * 1024 * 1024)
-              .optional(),
+            maxBytes: z.number().int().min(1).max(ARTIFACT_DOWNLOAD_LIMIT).optional(),
+            offset: z.number().int().min(0).max(ARTIFACT_DOWNLOAD_LIMIT).optional(),
+            length: z.number().int().min(1).max(ARTIFACT_CHUNK_BYTES).optional(),
+            version: z.string().max(200).optional(),
           })
+          .refine(
+            (value) => (value.offset === undefined) === (value.length === undefined),
+            'Chunk offset and length must be supplied together.',
+          )
+          .refine(
+            (value) => value.offset !== undefined || (value.maxBytes ?? 0) <= 10 * 1024 * 1024,
+            'Large downloads require chunked transfer.',
+          )
           .parse(input);
         const file = await new WorkspaceFileService(this.folder, this.dataDir).download(
           path,
           maxBytes,
+          signal,
+          offset !== undefined && length !== undefined ? { offset, length, version } : undefined,
         );
-        return { name: file.name, bytes: file.bytes.toString('base64') };
+        return { ...file, bytes: file.bytes.toString('base64') };
       }
     }
   }

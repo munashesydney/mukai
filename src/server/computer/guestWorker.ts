@@ -1,10 +1,11 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import type { RuntimeOwner } from '../../shared/runtime';
 import {
   encodeFrame,
   helperRequest,
+  guestResponse,
+  decodeGuestError,
   type Computer,
   type ComputerMethod,
   type ComputerHelper,
@@ -65,18 +66,12 @@ export class GuestWorker implements Computer {
           );
           return;
         }
-        const frame = z
-          .object({
-            id: z.string().uuid(),
-            result: z.unknown().optional(),
-            error: z.string().optional(),
-          })
-          .parse(raw);
+        const frame = guestResponse.parse(raw);
         const pending = this.pending.get(frame.id);
         if (!pending) return;
         this.pending.delete(frame.id);
         pending.cleanup();
-        if (frame.error) pending.reject(new Error(frame.error));
+        if (frame.error) pending.reject(decodeGuestError(frame));
         else pending.resolve(frame.result);
       } catch {
         child.kill();

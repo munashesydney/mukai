@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { GuestWorker } from './guestWorker';
-import { guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from './protocol';
+import { encodeGuestError, guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from './protocol';
 import { collectGuestHealth, GuestHealthLog, GUEST_HEALTH_INTERVAL_MS } from './guestHealth';
 import { GuestTransport, openGuestChannel } from './guestTransport';
 import { GuestHelpers } from './helpers';
@@ -102,7 +102,7 @@ const transport = new GuestTransport({
       .catch((error) =>
         transport.send({
           id: request.id,
-          error: error instanceof Error ? error.message : 'Guest operation failed.',
+          ...encodeGuestError(error, 'Guest operation failed.'),
         }),
       )
       .finally(() => {

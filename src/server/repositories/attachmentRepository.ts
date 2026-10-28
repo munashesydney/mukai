@@ -9,22 +9,30 @@ export class AttachmentRepository {
     return row ? attachmentRecord(row) : undefined;
   }
   forBot(botId: string, pending: boolean) {
+    if (pending) return this.pending('bot-' + botId);
     return this.database
       .all(
-        `SELECT * FROM attachments WHERE bot_id = ? AND message_id IS ${pending ? '' : 'NOT '}NULL`,
+        `SELECT * FROM attachments WHERE bot_id = ? AND (message_id IS NOT NULL OR EXISTS (
+          SELECT 1 FROM followup_attachments fa JOIN chat_followups f ON f.id=fa.followup_id
+          WHERE fa.attachment_id=attachments.id AND f.state='applied'))`,
         botId,
       )
       .map(attachmentRecord);
   }
   forMessage(id: string) {
     return this.database
-      .all('SELECT * FROM attachments WHERE message_id = ?', id)
+      .all(
+        `SELECT a.* FROM attachments a LEFT JOIN followup_attachments fa ON fa.attachment_id=a.id
+        WHERE a.message_id = ? ORDER BY COALESCE(fa.position,a.rowid)`,
+        id,
+      )
       .map(attachmentRecord);
   }
   pending(conversationId: string) {
     return this.database
       .all(
-        'SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL',
+        `SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM followup_attachments fa WHERE fa.attachment_id=attachments.id)`,
         conversationId,
       )
       .map(attachmentRecord);
@@ -32,7 +40,9 @@ export class AttachmentRepository {
   forConversation(id: string) {
     return this.database
       .all(
-        'SELECT a.* FROM attachments a JOIN messages m ON m.id=a.message_id WHERE m.conversation_id=?',
+        `SELECT a.* FROM attachments a JOIN messages m ON m.id=a.message_id
+          LEFT JOIN followup_attachments fa ON fa.attachment_id=a.id
+          WHERE m.conversation_id=? ORDER BY m.sequence,COALESCE(fa.position,a.rowid)`,
         id,
       )
       .map(attachmentRecord);
@@ -40,7 +50,8 @@ export class AttachmentRepository {
   pendingCount(botId: string, conversationId = 'bot-' + botId) {
     return Number(
       this.database.get(
-        'SELECT COUNT(*) AS count FROM attachments WHERE conversation_id = ? AND message_id IS NULL',
+        `SELECT COUNT(*) AS count FROM attachments WHERE conversation_id = ? AND message_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM followup_attachments fa WHERE fa.attachment_id=attachments.id)`,
         conversationId,
       )?.count,
     );
@@ -49,6 +60,21 @@ export class AttachmentRepository {
     return this.database
       .all('SELECT storage_name FROM attachments WHERE bot_id = ?', botId)
       .map((row) => String(row.storage_name));
+  }
+  followupOwner(id: string) {
+    return this.database.get(
+      'SELECT followup_id FROM followup_attachments WHERE attachment_id=?',
+      id,
+    )?.followup_id;
+  }
+  forFollowup(id: string) {
+    return this.database
+      .all(
+        `SELECT a.* FROM attachments a JOIN followup_attachments fa
+      ON fa.attachment_id=a.id WHERE fa.followup_id=? ORDER BY fa.position`,
+        id,
+      )
+      .map(attachmentRecord);
   }
   create(file: AttachmentRecord) {
     this.database.run(

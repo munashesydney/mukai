@@ -20,6 +20,7 @@ import { IconButton } from '../ui/IconButton';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
 import { BotPairConversationsSidebar } from '../../features/ai/BotPairConversationsSidebar';
+import { activeConversationGroup } from '../../features/ai/conversationSidebar';
 import { PopupMenu } from '../ui/PopupMenu';
 
 export function WorkspaceSidebar({
@@ -66,7 +67,18 @@ export function WorkspaceSidebar({
   onCreateWorkspace: () => void;
 }) {
   const [spacesOpen, setSpacesOpen] = useState(true);
-  const [directOpen, setDirectOpen] = useState(true);
+  const locationKey = JSON.stringify(location);
+  const [expansion, setExpansion] = useState<{ locationKey: string; group: string | null }>();
+  const expandedGroup =
+    expansion?.locationKey === locationKey
+      ? expansion.group
+      : activeConversationGroup(location, botPairConversations);
+  const directOpen = expandedGroup === 'pairs' || Boolean(expandedGroup?.startsWith('pair:'));
+  const toggleGroup = (group: string) =>
+    setExpansion({
+      locationKey,
+      group: expandedGroup === group ? (group.startsWith('pair:') ? 'pairs' : null) : group,
+    });
   const isSelected = (item: string) => location.item === item;
   const pausedPursuits = pursuits.filter((pursuit) => pursuit.status === 'paused');
   const unpausedPursuits = pursuits.filter((pursuit) => pursuit.status !== 'paused');
@@ -182,23 +194,6 @@ export function WorkspaceSidebar({
                 </button>
               </div>
             )}
-            <div className="sidebar-section-heading">
-              <button onClick={() => setDirectOpen(!directOpen)} aria-expanded={directOpen}>
-                {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>Bot conversations</span>
-              </button>
-            </div>
-            {directOpen && (
-              <BotPairConversationsSidebar
-                bots={bots}
-                conversations={botPairConversations}
-                location={location}
-                onSelect={onSelect}
-                loading={botPairLoading}
-                error={botPairError}
-                onRefresh={onRefreshBotPairs}
-              />
-            )}
             {!!inMotion.length && (
               <>
                 <div className="sidebar-section-heading plain-heading">
@@ -240,9 +235,39 @@ export function WorkspaceSidebar({
               bots={bots}
               conversations={[...botConversations, ...botPairConversations]}
               location={location}
-              onSelect={onSelect}
+              onSelect={(next) => {
+                setExpansion(undefined);
+                onSelect(next);
+              }}
               onCreate={onCreateConversation}
+              expandedGroup={expandedGroup}
+              onToggleGroup={toggleGroup}
             />
+            <div className="sidebar-section-heading bot-pair-section-heading">
+              <button
+                onClick={() => setExpansion({ locationKey, group: directOpen ? null : 'pairs' })}
+                aria-expanded={directOpen}
+              >
+                {directOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <span>Bot conversations</span>
+              </button>
+            </div>
+            {directOpen && (
+              <BotPairConversationsSidebar
+                bots={bots}
+                conversations={botPairConversations}
+                location={location}
+                onSelect={(next) => {
+                  setExpansion(undefined);
+                  onSelect(next);
+                }}
+                loading={botPairLoading}
+                error={botPairError}
+                onRefresh={onRefreshBotPairs}
+                expandedGroup={expandedGroup}
+                onToggleGroup={toggleGroup}
+              />
+            )}
           </>
         )}
         {location.section === 'pursuits' && (

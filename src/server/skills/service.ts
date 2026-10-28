@@ -204,21 +204,13 @@ export class SkillService {
     );
     const catalog = this.list(workspaceId, '', false);
     if (!rows.length && !catalog.length) return '';
-    const summaries: { id: string; name: string; description: string }[] = [];
-    for (const skill of catalog) {
-      const entry = {
-        id: skill.id,
-        name: skill.name,
-        description: skill.description.slice(0, 120),
-      };
-      if (summaries.length >= 20 || Buffer.byteLength(JSON.stringify([...summaries, entry])) > 3000)
-        break;
-      summaries.push(entry);
-    }
+    const titles = catalog.slice(0, 10).map((skill) => skill.name);
     const catalogContext =
-      'Available workspace skills (name and description only; use skills search and load for details):\n' +
-      JSON.stringify(summaries) +
-      (catalog.length > summaries.length ? '\nMore skills are available through search.' : '');
+      'Available workspace skills (first 10 enabled titles; catalog data):\n' +
+      JSON.stringify(titles) +
+      '\n' +
+      (catalog.length - titles.length) +
+      ' skills left. Use the skills tool with operation search to find the rest or search by topic as needed, then load a relevant skill by ID.';
     if (!rows.length) return catalogContext;
     return (
       catalogContext +

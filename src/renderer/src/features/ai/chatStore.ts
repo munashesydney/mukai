@@ -92,7 +92,7 @@ export const chatStore = {
     try {
       const [messages, files, followups] = await Promise.all([
         chatService.history(id),
-        id.startsWith('space:') ? Promise.resolve([]) : attachmentService.pending(id),
+        attachmentService.pending(id),
         chatService.followups(id),
       ]);
       if (active.has(id) || get(id).messages !== previous.messages) return;
@@ -136,13 +136,8 @@ export const chatStore = {
   },
   async queue(id: string, botId?: string | null) {
     const state = get(id);
-    if (state.submittingFollowup || state.uploading || !state.text.trim()) return;
-    if (state.files.length) {
-      update(id, {
-        error: 'Send attachments after this response finishes. Follow-ups currently support text.',
-      });
+    if (state.submittingFollowup || state.uploading || (!state.text.trim() && !state.files.length))
       return;
-    }
     update(id, { submittingFollowup: true, error: '' });
     followupWatching.add(id);
     const version = followupVersions.get(id) || 0;
@@ -150,6 +145,7 @@ export const chatStore = {
       const followups = await chatService.queue(id, {
         id: state.requestId,
         text: state.text.trim(),
+        attachmentIds: state.files.map((file) => file.id),
         ...(botId ? { botId } : {}),
       });
       update(id, {
@@ -157,6 +153,9 @@ export const chatStore = {
         ...(get(id).requestId === state.requestId
           ? {
               text: get(id).text === state.text ? '' : get(id).text,
+              files: get(id).files.filter(
+                (file) => !state.files.some((sent) => sent.id === file.id),
+              ),
               requestId: crypto.randomUUID(),
             }
           : {}),
@@ -184,7 +183,7 @@ export const chatStore = {
     }
   },
   async upload(id: string, files: File[]) {
-    if (get(id).uploading || get(id).busy) return;
+    if (get(id).uploading || get(id).submittingFollowup) return;
     if (get(id).files.length + files.length > ATTACHMENT_LIMIT) {
       update(id, { error: 'Attach up to four files per message.' });
       return;
@@ -206,6 +205,7 @@ export const chatStore = {
     }
   },
   async removeFile(id: string, fileId: string) {
+    if (get(id).submittingFollowup || get(id).uploading) return;
     try {
       await attachmentService.remove(fileId);
       update(id, { files: get(id).files.filter((file) => file.id !== fileId) });

@@ -8,6 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { HealthResponse } from '../../shared/contracts';
 import { UPLOAD_LIMIT } from '../../shared/ai';
 import { ApiError } from '../config';
+import { ARTIFACT_DOWNLOAD_LIMIT } from '../../shared/artifacts';
 import type { BotService } from '../services/botService';
 import type { ProviderService } from '../services/providerService';
 import type { AttachmentService } from '../services/attachmentService';
@@ -49,9 +50,32 @@ import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
 import type { UpdateController } from '../../shared/updates';
 
-const followupText = z.string().trim().min(1).max(16000);
+const followupText = z.string().trim().max(16000);
+const followupAttachments = z
+  .array(z.string().uuid())
+  .max(4)
+  .refine((ids) => new Set(ids).size === ids.length, 'Attach different files.');
+const followupInputSchema = z
+  .object({
+    id: z.string().uuid(),
+    text: followupText,
+    attachmentIds: followupAttachments.default([]),
+    botId: z.string().optional(),
+  })
+  .strict()
+  .refine(
+    (input) => !!input.text || !!input.attachmentIds.length,
+    'Write a message or attach a file.',
+  );
 const followupActionSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('edit'), id: z.string().uuid(), text: followupText }).strict(),
+  z
+    .object({
+      action: z.literal('edit'),
+      id: z.string().uuid(),
+      text: followupText,
+      attachmentIds: followupAttachments.optional(),
+    })
+    .strict(),
   z.object({ action: z.enum(['delete', 'send']), id: z.string().uuid() }).strict(),
   z
     .object({
@@ -596,6 +620,7 @@ export function createRoutes({
               input.href,
               input.image,
               AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+              ARTIFACT_DOWNLOAD_LIMIT,
             );
             response.setHeader('Content-Type', file.mediaType);
             response.setHeader(
@@ -613,28 +638,27 @@ export function createRoutes({
         }
         if (action === 'followups') {
           if (method === 'GET') return send(response, chats.listFollowups(id));
-          if (conversation.kind === 'bot')
-            throw new ApiError(403, 'Bot conversations are read-only for users.');
           if (method === 'PUT')
             return send(
               response,
               chats.updateFollowup(id, followupActionSchema.parse(await jsonBody(request))),
             );
           if (method === 'POST') {
-            const input = z
-              .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
-              .strict()
-              .parse(await jsonBody(request));
+            const input = followupInputSchema.parse(await jsonBody(request));
             const bot =
-              conversation.kind === 'private'
-                ? conversations.privateBot(id)
+              conversation.kind === 'private' || conversation.kind === 'bot'
+                ? conversations.userChatBot(id)
                 : bots.require(input.botId || '');
             if (
               !conversation.botIds.includes(String(bot.id)) ||
               bot.workspaceId !== conversation.workspaceId
             )
               throw new ApiError(400, 'Choose a bot from this conversation.');
-            return send(response, chats.enqueueFollowup(id, bot, input.id, input.text), 201);
+            return send(
+              response,
+              chats.enqueueFollowup(id, bot, input.id, input.text, input.attachmentIds),
+              201,
+            );
           }
           throw new ApiError(405, 'Method not allowed.');
         }
@@ -682,7 +706,11 @@ export function createRoutes({
           return send(response, conversations.history(id));
         if (action === 'chat' && method === 'POST') {
           if (conversation.kind === 'bot')
-            throw new ApiError(403, 'Bot conversations are read-only for users.');
+            return conversations.sendToBot(
+              id,
+              chatSchema.parse(await jsonBody(request)),
+              chatOutput(response),
+            );
           if (conversation.kind === 'private')
             return conversations.sendPrivate(
               id,
@@ -696,11 +724,12 @@ export function createRoutes({
           );
         }
         if (action === 'attachments' && method === 'GET') {
-          conversations.privateBot(id);
+          if (conversation.kind === 'space') return send(response, []);
+          conversations.userChatBot(id);
           return send(response, attachments.pending(id));
         }
         if (action === 'attachments' && method === 'POST') {
-          const bot = conversations.privateBot(id);
+          const bot = conversations.userChatBot(id);
           return send(
             response,
             await attachments.upload(
@@ -811,15 +840,26 @@ export function createRoutes({
     } else if (resource === 'tools' && !id && method === 'GET') {
       return send(response, tools.list(url.searchParams.get('workspaceId') || 'default'));
     } else if (resource === 'artifacts' && id && !action && method === 'GET') {
-      const file = await artifacts.read(id);
-      response.setHeader('Content-Type', file.mediaType);
-      response.setHeader('X-Content-Type-Options', 'nosniff');
-      response.setHeader(
-        'Content-Disposition',
-        `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-      );
-      response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-      response.writeHead(200).end(file.bytes);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      response.once('close', cancel);
+      try {
+        const file = await artifacts.read(
+          id,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+          ARTIFACT_DOWNLOAD_LIMIT,
+        );
+        response.setHeader('Content-Type', file.mediaType);
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader(
+          'Content-Disposition',
+          `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        );
+        response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        response.writeHead(200).end(file.bytes);
+      } finally {
+        response.off('close', cancel);
+      }
       return;
     } else if (resource === 'providers') {
       if (id === 'chatgpt-auth') {
@@ -877,13 +917,10 @@ export function createRoutes({
         const conversationId = 'bot-' + bot.id;
         if (method === 'GET') return send(response, chats.listFollowups(conversationId));
         if (method === 'POST') {
-          const input = z
-            .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
-            .strict()
-            .parse(await jsonBody(request));
+          const input = followupInputSchema.parse(await jsonBody(request));
           return send(
             response,
-            chats.enqueueFollowup(conversationId, bot, input.id, input.text),
+            chats.enqueueFollowup(conversationId, bot, input.id, input.text, input.attachmentIds),
             201,
           );
         }

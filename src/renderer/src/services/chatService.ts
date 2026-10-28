@@ -12,8 +12,10 @@ export const chatService = {
   history: (id: string) => api<ChatMessage[]>(`${root(id)}/messages`),
   stop: (id: string) => api<{ ok: boolean }>(`${root(id)}/stop`, 'POST'),
   followups: (id: string) => api<ChatFollowup[]>(`${root(id)}/followups`),
-  queue: (id: string, input: { id: string; text: string; botId?: string }) =>
-    api<ChatFollowup[]>(`${root(id)}/followups`, 'POST', input),
+  queue: (
+    id: string,
+    input: { id: string; text: string; attachmentIds?: string[]; botId?: string },
+  ) => api<ChatFollowup[]>(`${root(id)}/followups`, 'POST', input),
   updateFollowup: (id: string, input: FollowupAction) =>
     api<ChatFollowup[]>(`${root(id)}/followups`, 'PUT', input),
   async stream(
@@ -26,7 +28,12 @@ export const chatService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(
         id.startsWith('space:')
-          ? { requestId: input.requestId, text: input.text, botId: input.botId ?? null }
+          ? {
+              requestId: input.requestId,
+              text: input.text,
+              botId: input.botId ?? null,
+              attachmentIds: input.attachmentIds,
+            }
           : input,
       ),
     });

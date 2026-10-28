@@ -18,6 +18,17 @@ beforeEach(() => vi.stubGlobal('window', {}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Chat service stream transport', () => {
+  it('includes attachments when sending a human message in a bot pair thread', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      async () => new Response(JSON.stringify({ type: 'done', message }) + '\n'),
+    );
+    vi.stubGlobal('fetch', fetch);
+    await chatService.stream('space:pair-chat', { ...input, attachmentIds: ['file-id'] }, () => {});
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toMatchObject({
+      text: 'Hello',
+      attachmentIds: ['file-id'],
+    });
+  });
   it('decodes split UTF-8 and split event lines, including a final line without a newline', async () => {
     const events: ChatEvent[] = [
       { type: 'delta', id: message.id, text: message.content },

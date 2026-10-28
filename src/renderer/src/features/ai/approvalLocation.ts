@@ -11,6 +11,6 @@ export function approvalLocation(request: ToolApproval): Location {
     };
   if (request.target?.kind === 'space') return { section: 'spaces', item: request.conversationId };
   if (request.target?.kind === 'bot')
-    return { section: 'spaces', item: 'bot-conversations', conversationId: request.conversationId };
+    return { section: 'bots', item: 'bot-conversations', conversationId: request.conversationId };
   return { section: 'bots', item: request.botId, conversationId: request.conversationId };
 }

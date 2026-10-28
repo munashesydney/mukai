@@ -9,6 +9,8 @@ import { buildBotSystemPrompt } from '../../shared/botSystemPrompt';
 import { BotRepository } from '../repositories/botRepository';
 import { ArtifactRepository } from '../repositories/artifactRepository';
 import { scoutBot } from '../services/botService';
+import { ApiError } from '../config';
+import { GuestDispatcher } from './guestDispatcher';
 vi.mock('node:os', async (original) => ({
   ...(await original<typeof import('node:os')>()),
   arch: () => 'x64',
@@ -42,6 +44,51 @@ async function request<T = Record<string, unknown>>(path: string, method = 'GET'
   return { status: response.status, data: (await response.json()) as T };
 }
 describe('workspace computer choice', () => {
+  it('serves a 29 MiB guest artifact through UI download and file-reference routes', async () => {
+    const { data: workspace } = await request<Workspace>('/workspaces', 'POST', {
+      name: 'Large media',
+      computer: 'qemu',
+    });
+    new BotRepository(api.store).create(scoutBot(workspace.id, 'media-bot'));
+    api.store
+      .run(`INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at)
+      VALUES('media-message','media-bot','bot-media-bot','media-request','assistant','Media ready.','complete','now')`);
+    new ArtifactRepository(api.store).save({
+      id: 'media-artifact',
+      botId: 'media-bot',
+      messageId: 'media-message',
+      path: 'recording.mp3',
+      name: 'recording.mp3',
+      createdAt: 'now',
+    });
+    const expected = Buffer.alloc(29 * 1024 * 1024, 5);
+    expected.set([0xff, 0xfb, 0x90, 0]);
+    await writeFile(join(directory, 'recording.mp3'), expected);
+    const dispatcher = new GuestDispatcher(directory, join(directory, 'data'));
+    vi.spyOn(api.computers.guest(workspace), 'request').mockImplementation((...args) =>
+      dispatcher.request(...args),
+    );
+    try {
+      for (const href of [undefined, 'mukai://artifact/media-artifact', 'recording.mp3']) {
+        const response = await fetch(
+          api.url + (href ? '/conversations/bot-media-bot/reference' : '/artifacts/media-artifact'),
+          {
+            method: href ? 'POST' : 'GET',
+            headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+            ...(href ? { body: JSON.stringify({ href }) } : {}),
+          },
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Content-Type')).toBe('audio/mpeg');
+        expect(Buffer.from(await response.arrayBuffer()).equals(expected)).toBe(true);
+      }
+      await expect(
+        api.conversationArtifacts.bytes(workspace.id, { artifactId: 'media-artifact' }),
+      ).rejects.toMatchObject({ status: 413 });
+    } finally {
+      await dispatcher.shutdown();
+    }
+  });
   it('shows an unavailable-file message for stale VM artifacts and can read them again if restored', async () => {
     const { data: workspace } = await request<Workspace>('/workspaces', 'POST', {
       name: 'VM files',
@@ -67,9 +114,30 @@ describe('workspace computer choice', () => {
     expect(missing.data.error).toContain('no longer available in the workspace VM');
     expect(missing.data.error).toContain('moved, deleted, or become inaccessible');
     expect(missing.data.error).not.toContain('server could not complete');
+    download.mockRejectedValue(
+      new ApiError(413, 'This file exceeds the 100 MiB file limit. Use a smaller file.'),
+    );
+    const oversized = await request('/artifacts/vm-artifact');
+    expect(oversized.status).toBe(413);
+    expect(oversized.data.error).toContain('100 MiB');
+    const oversizedReference = await request('/conversations/bot-vm-bot/reference', 'POST', {
+      href: 'mukai://artifact/vm-artifact',
+    });
+    expect(oversizedReference.status).toBe(413);
+    expect(oversizedReference.data.error).toBe(oversized.data.error);
+    download.mockRejectedValue(
+      new Error('This artifact is unavailable or exceeds the file limit.'),
+    );
+    const legacy = await request('/artifacts/vm-artifact');
+    expect(legacy.status).toBe(400);
+    expect(legacy.data.error).toContain('Restart the workspace VM');
     download.mockResolvedValue({
       name: '_diag_bool.py',
       bytes: Buffer.from('print("restored")').toString('base64'),
+      offset: 0,
+      size: Buffer.byteLength('print("restored")'),
+      version: 'restored-version',
+      nextOffset: null,
     });
     const restored = await fetch(api.url + '/artifacts/vm-artifact', {
       headers: { Authorization: `Bearer ${api.token}` },

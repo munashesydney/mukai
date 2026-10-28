@@ -1,6 +1,8 @@
 import type { ChatFollowup } from '../../shared/ai';
 import type { Database, Row } from '../db/database';
 import { ApiError } from '../config';
+import { AttachmentRepository } from './attachmentRepository';
+import { publicAttachment } from '../models/entities';
 
 function followup(row: Row): ChatFollowup {
   return {
@@ -17,13 +19,22 @@ function followup(row: Row): ChatFollowup {
 
 export class ChatFollowupRepository {
   constructor(private database: Database) {}
+  exists(id: string) {
+    return !!this.database.get('SELECT id FROM chat_followups WHERE id=?', id);
+  }
+  private project = (row: Row): ChatFollowup => {
+    const attachments = new AttachmentRepository(this.database)
+      .forFollowup(String(row.id))
+      .map(publicAttachment);
+    return { ...followup(row), ...(attachments.length ? { attachments } : {}) };
+  };
   list(conversationId: string) {
     return this.database
       .all(
         "SELECT * FROM chat_followups WHERE conversation_id=? AND state IN ('queued','steering','sending') ORDER BY sequence",
         conversationId,
       )
-      .map(followup);
+      .map(this.project);
   }
   require(conversationId: string, id: string) {
     const row = this.database.get(
@@ -32,29 +43,48 @@ export class ChatFollowupRepository {
       id,
     );
     if (!row) throw new ApiError(404, 'Follow-up not found in this conversation.');
-    return followup(row);
+    return this.project(row);
   }
-  enqueue(conversationId: string, botId: string, id: string, text: string) {
+  enqueue(
+    conversationId: string,
+    botId: string,
+    id: string,
+    text: string,
+    attachmentIds: string[] = [],
+  ) {
     const previous = this.database.get('SELECT * FROM chat_followups WHERE id=?', id);
     if (previous) {
       if (
         previous.conversation_id !== conversationId ||
         previous.bot_id !== botId ||
-        previous.text !== text
+        previous.text !== text ||
+        JSON.stringify(
+          new AttachmentRepository(this.database).forFollowup(id).map((file) => file.id),
+        ) !== JSON.stringify(attachmentIds)
       )
         throw new ApiError(409, 'This follow-up ID already belongs to a different message.');
-      return followup(previous);
+      return this.project(previous);
     }
     if (this.list(conversationId).length >= 20)
       throw new ApiError(400, 'Queue up to twenty follow-ups per chat.');
-    this.database.run(
-      "INSERT INTO chat_followups(id,conversation_id,bot_id,text,state,created_at) VALUES(?,?,?,?,'queued',?)",
-      id,
-      conversationId,
-      botId,
-      text,
-      new Date().toISOString(),
-    );
+    this.database.transaction(() => {
+      this.database.run(
+        "INSERT INTO chat_followups(id,conversation_id,bot_id,text,state,created_at) VALUES(?,?,?,?,'queued',?)",
+        id,
+        conversationId,
+        botId,
+        text,
+        new Date().toISOString(),
+      );
+      attachmentIds.forEach((attachmentId, position) =>
+        this.database.run(
+          'INSERT INTO followup_attachments VALUES(?,?,?)',
+          id,
+          attachmentId,
+          position,
+        ),
+      );
+    });
     return this.require(conversationId, id);
   }
   state(
@@ -76,15 +106,45 @@ export class ChatFollowupRepository {
       id,
     );
   }
-  edit(conversationId: string, id: string, text: string) {
+  edit(conversationId: string, id: string, text: string, attachmentIds?: string[]) {
     if (this.require(conversationId, id).state !== 'queued')
       throw new ApiError(409, 'Only queued messages can be edited.');
-    this.database.run(
-      'UPDATE chat_followups SET text=?,error=NULL WHERE conversation_id=? AND id=?',
-      text,
-      conversationId,
-      id,
-    );
+    const removed: string[] = [];
+    this.database.transaction(() => {
+      if (attachmentIds) {
+        const files = new AttachmentRepository(this.database).forFollowup(id);
+        this.database.run('DELETE FROM followup_attachments WHERE followup_id=?', id);
+        for (const file of files) {
+          if (attachmentIds.includes(file.id)) continue;
+          this.database.run('DELETE FROM attachments WHERE id=? AND message_id IS NULL', file.id);
+          removed.push(file.storageName);
+        }
+        attachmentIds.forEach((attachmentId, position) =>
+          this.database.run(
+            'INSERT INTO followup_attachments VALUES(?,?,?)',
+            id,
+            attachmentId,
+            position,
+          ),
+        );
+      }
+      this.database.run(
+        'UPDATE chat_followups SET text=?,error=NULL WHERE conversation_id=? AND id=?',
+        text,
+        conversationId,
+        id,
+      );
+    });
+    return removed;
+  }
+  cancel(conversationId: string, id: string) {
+    const files = new AttachmentRepository(this.database).forFollowup(id);
+    this.database.transaction(() => {
+      this.state(conversationId, id, 'cancelled');
+      for (const file of files)
+        this.database.run('DELETE FROM attachments WHERE id=? AND message_id IS NULL', file.id);
+    });
+    return files.filter((file) => !file.messageId).map((file) => file.storageName);
   }
   forMessage(id: string, state: 'steering' | 'applied') {
     return this.database
@@ -93,7 +153,7 @@ export class ChatFollowupRepository {
         id,
         state,
       )
-      .map(followup);
+      .map(this.project);
   }
   commitApplied(items: ChatFollowup[], save: () => void) {
     // The working checkpoint and delivery receipts must advance together.

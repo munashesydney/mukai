@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
-import { Frames, encodeFrame, FRAME_LIMIT, GUEST_REVISION } from './protocol';
+import {
+  Frames,
+  encodeFrame,
+  FRAME_LIMIT,
+  GUEST_REVISION,
+  encodeGuestError,
+  decodeGuestError,
+} from './protocol';
+import { ApiError } from '../config';
 import { GuestDispatcher } from './guestDispatcher';
 import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
@@ -33,6 +41,20 @@ afterEach(async () => {
 });
 
 describe('computer framing', () => {
+  it('preserves actionable status through both guest error hops without reclassifying unexpected failures', () => {
+    const error = new ApiError(413, 'This file exceeds the 100 MiB file limit.');
+    const worker = decodeGuestError(
+      JSON.parse(JSON.stringify(encodeGuestError(error, 'Worker failed.'))),
+    );
+    const host = decodeGuestError(
+      JSON.parse(JSON.stringify(encodeGuestError(worker, 'Guest failed.'))),
+    );
+    expect(host).toBeInstanceOf(ApiError);
+    expect(host).toMatchObject({ status: 413, message: error.message });
+    expect(
+      decodeGuestError(encodeGuestError(new Error('Unexpected failure'), 'Failed.')),
+    ).not.toBeInstanceOf(ApiError);
+  });
   it('handles partial UTF-8, multiple frames and oversized input', () => {
     const frames = new Frames();
     const bytes = encodeFrame({ text: '🌱' });
@@ -330,6 +352,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
             continue;
           }
           if(request.input.command === 'hang') continue;
+          if(request.input.command === 'api-error') { socket.write(JSON.stringify({id:request.id,error:'File is too large.',errorStatus:413})+'\\n'); continue; }
           socket.write(JSON.stringify({id:request.id,result:{method:request.method,input:request.input,owner:request.owner}})+'\\n');
         }
       });
@@ -389,6 +412,12 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     });
     await vm.request('terminal', { command: 'ls' }, owner, signal(), helper);
     expect(helper).toHaveBeenCalledOnce();
+  });
+  it('restores actionable guest errors after a real socket round trip', async () => {
+    const { vm } = await fixture();
+    await expect(
+      vm.request('terminal', { command: 'api-error' }, owner, signal()),
+    ).rejects.toMatchObject({ status: 413, message: 'File is too large.' });
   });
   it('permanently disposes a running VM so retained viewers and recovery cannot restart it', async () => {
     const { vm, launch } = await fixture();

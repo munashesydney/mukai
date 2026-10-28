@@ -2,6 +2,7 @@ import type { FileChangeSummary } from './fileChanges';
 import type { VmResources } from './computer';
 import type { BotAvatar } from './mascots';
 import type { TerminalSnapshot } from './terminal';
+import type { CustomReasoning, ReasoningEffort, ReasoningLevel } from './reasoning';
 
 export type ProviderKind = 'openai' | 'chatgpt' | 'anthropic' | 'google' | 'compatible';
 export interface ChatGPTAccount {
@@ -11,6 +12,7 @@ export interface ChatGPTAccount {
   planEnabled: boolean;
 }
 export interface ProviderModel {
+  reasoningEfforts?: ReasoningLevel[];
   supportsAudio?: boolean | null;
   supportsVideo?: boolean | null;
   id: string;
@@ -20,6 +22,9 @@ export interface ProviderModel {
   supportsImages: boolean | null;
 }
 export interface SavedProviderModel {
+  reasoningEfforts?: ReasoningLevel[];
+  reasoningEffort?: ReasoningEffort;
+  customReasoning?: CustomReasoning;
   supportsAudio?: boolean;
   supportsVideo?: boolean;
   id: string;
@@ -71,6 +76,7 @@ export interface ProviderModelsInput {
   defaultModel: string;
 }
 export interface Bot {
+  reasoningEffort?: ReasoningEffort | null;
   id: string;
   workspaceId: string;
   name: string;
@@ -82,6 +88,7 @@ export interface Bot {
   avatar: BotAvatar;
   createdAt: string;
   isMain: boolean;
+  /** Current reporting parent; retained under the legacy storage field name. */
   createdBy: string | null;
   contextWindowTokens?: number | null;
   maxOutputTokens?: number | null;
@@ -89,7 +96,7 @@ export interface Bot {
 export type BotInput = Omit<Bot, 'id' | 'createdAt' | 'workspaceId' | 'isMain' | 'createdBy'>;
 export type BotModelInput = Pick<
   Bot,
-  'providerId' | 'model' | 'supportsImages' | 'contextWindowTokens'
+  'providerId' | 'model' | 'supportsImages' | 'contextWindowTokens' | 'reasoningEffort'
 >;
 export const mainBotRole = 'Main Bot/Orchestrator';
 export interface Workspace {
@@ -118,7 +125,15 @@ export interface ChatActivity {
   path: string;
   status: 'running' | 'complete' | 'failed' | 'interrupted';
   summary: string;
-  delegation?: { botId: string; botName: string; conversationId: string; requestId: string };
+  delegation?: {
+    botId: string;
+    botName: string;
+    conversationId: string;
+    requestId: string;
+    avatar?: BotAvatar;
+    mode?: 'wait' | 'fire_and_forget';
+    status?: MessageStatus;
+  };
   createdBotId?: string;
   attachmentId?: string;
   artifactId?: string;
@@ -158,7 +173,7 @@ export interface Attachment {
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
 export type ResponsePart =
-  | { id: string; type: 'steering'; text: string; createdAt?: string }
+  | { id: string; type: 'steering'; text: string; createdAt?: string; attachments?: Attachment[] }
   | { id: string; type: 'text'; text: string; continuationOf?: string; final?: boolean }
   | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
   | {
@@ -228,9 +243,10 @@ export interface ChatFollowup {
   targetMessageId: string | null;
   createdAt: string;
   error: string | null;
+  attachments?: Attachment[];
 }
 export type FollowupAction =
-  | { action: 'edit'; id: string; text: string }
+  | { action: 'edit'; id: string; text: string; attachmentIds?: string[] }
   | { action: 'delete' | 'send'; id: string }
   | { action: 'steer'; id: string; expectedRequestId: string };
 export interface ProviderTestResult {

@@ -72,7 +72,7 @@ export function ArtifactsView({
         </p>
       )}
       {files.map((file) => (
-        <ArtifactCard key={file.id} artifact={file} />
+        <ArtifactCard key={file.id} artifact={file} collection={files} />
       ))}
       {!!attachments.length && (
         <div className="ai-attachments artifacts-uploads">
@@ -94,15 +94,18 @@ export function ArtifactsView({
 export function ArtifactCard({
   artifact,
   compact = false,
+  collection,
 }: {
   artifact: FileArtifact;
   compact?: boolean;
+  collection?: FileArtifact[];
 }) {
-  const [preview, setPreview] = useState(false),
+  const [preview, setPreview] = useState<FileArtifact | null>(null),
     [imageUrl, setImageUrl] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const isImage = artifactIsImage(artifact);
+  const previewIndex = collection?.findIndex((file) => file.id === preview?.id) ?? -1;
   useEffect(() => {
     if (compact || artifact.kind !== 'image') return;
     const controller = new AbortController();
@@ -126,7 +129,7 @@ export function ArtifactCard({
   }, [artifact.id, artifact.kind, compact]);
   async function open(download = false) {
     if (!download) {
-      setPreview(true);
+      setPreview(artifact);
       return;
     }
     setBusy(true);
@@ -182,7 +185,7 @@ export function ArtifactCard({
             <button
               className="artifact-thumbnail"
               aria-label={`Preview ${artifact.name}`}
-              onClick={() => setPreview(true)}
+              onClick={() => setPreview(artifact)}
             >
               <img src={imageUrl} alt={artifact.name} />
             </button>
@@ -220,7 +223,27 @@ export function ArtifactCard({
           {error}
         </p>
       )}
-      {preview && <ArtifactPreview artifact={artifact} onClose={() => setPreview(false)} />}
+      {preview && (
+        <ArtifactPreview
+          key={preview.id}
+          artifact={preview}
+          navigation={
+            collection && previewIndex >= 0
+              ? {
+                  index: previewIndex,
+                  total: collection.length,
+                  previous:
+                    previewIndex > 0 ? () => setPreview(collection[previewIndex - 1]) : undefined,
+                  next:
+                    previewIndex < collection.length - 1
+                      ? () => setPreview(collection[previewIndex + 1])
+                      : undefined,
+                }
+              : undefined
+          }
+          onClose={() => setPreview(null)}
+        />
+      )}
     </>
   );
 }

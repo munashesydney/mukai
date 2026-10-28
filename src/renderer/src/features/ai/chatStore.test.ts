@@ -36,6 +36,78 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('Durable chat drafts and transport recovery', () => {
+  it('uploads while working, retains files on queue failure, and clears only an accepted attachment draft', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json([])),
+    );
+    const { chatStore, useChat } = await import('./chatStore');
+    const { chatService } = await import('../../services/chatService');
+    const { attachmentService } = await import('../../services/attachmentService');
+    const id = 'private:attachment-queue';
+    await chatStore.load(id);
+    let finish!: () => void;
+    vi.spyOn(chatService, 'stream').mockImplementation(async (_id, input, emit) => {
+      emit({
+        type: 'start',
+        user: user(input.requestId),
+        assistant: assistant(input.requestId, 'streaming'),
+      });
+      await new Promise<void>((resolve) => {
+        finish = () => {
+          emit({ type: 'done', message: assistant(input.requestId) });
+          resolve();
+        };
+      });
+    });
+    chatStore.draft(id, 'Original task');
+    const running = chatStore.send(id);
+    const file = {
+      id: crypto.randomUUID(),
+      botId: 'scout',
+      messageId: null,
+      name: 'guidance.txt',
+      mediaType: 'text/plain',
+      kind: 'text' as const,
+      size: 10,
+      warning: null,
+    };
+    const uploads = vi.spyOn(attachmentService, 'upload').mockResolvedValue(file);
+    await chatStore.upload(id, [new File(['guidance'], file.name)]);
+    let state!: ChatState;
+    const inspect = () => {
+      renderToStaticMarkup(
+        createElement(() => {
+          state = useChat(id);
+          return null;
+        }),
+      );
+      return state;
+    };
+    expect(uploads).toHaveBeenCalledOnce();
+    expect(inspect().files).toEqual([file]);
+    const queue = vi.spyOn(chatService, 'queue').mockRejectedValueOnce(new Error('Offline'));
+    await chatStore.send(id);
+    expect(queue.mock.calls[0][1]).toMatchObject({ text: '', attachmentIds: [file.id] });
+    expect(inspect().files).toEqual([file]);
+    let accept!: () => void;
+    queue.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        accept = resolve;
+      });
+      return [];
+    });
+    const submitting = chatStore.send(id);
+    chatStore.draft(id, 'New detail typed during submission');
+    await chatStore.upload(id, [new File(['later'], 'later.txt')]);
+    expect(uploads).toHaveBeenCalledOnce();
+    accept();
+    await submitting;
+    expect(inspect().files).toEqual([]);
+    expect(inspect().text).toBe('New detail typed during submission');
+    finish();
+    await running;
+  });
   it('queues during an active run and preserves text typed while the queue request is in flight', async () => {
     vi.stubGlobal(
       'fetch',

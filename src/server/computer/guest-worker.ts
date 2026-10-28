@@ -1,5 +1,5 @@
 import { GuestDispatcher } from './guestDispatcher';
-import { encodeFrame, guestRequest } from './protocol';
+import { encodeFrame, encodeGuestError, guestRequest } from './protocol';
 import { GuestHelpers } from './helpers';
 
 // Only the unprivileged worker executes bot tools. It never receives the boot token or serial FD.
@@ -42,7 +42,7 @@ process.on('message', (raw) => {
     .catch((error) =>
       send({
         id: request.id,
-        error: error instanceof Error ? error.message : 'Guest tool failed.',
+        ...encodeGuestError(error, 'Guest tool failed.'),
       }),
     )
     .finally(() => {

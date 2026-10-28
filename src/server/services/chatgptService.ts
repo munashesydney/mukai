@@ -548,10 +548,35 @@ export class ChatGPTService {
         return [];
       seen.add(model.slug);
       const capacity = model.context_window ?? model.context_window_tokens;
+      const rawEfforts = model.supported_reasoning_levels ?? model.supported_reasoning_efforts;
+      const advertised = Array.isArray(rawEfforts)
+        ? rawEfforts.map((value) =>
+            typeof value === 'string'
+              ? value
+              : value && typeof value === 'object'
+                ? (value as { effort?: unknown }).effort
+                : undefined,
+          )
+        : undefined;
       const modalities = model.input_modalities;
       return [
         {
           id: model.slug,
+          ...(advertised
+            ? {
+                reasoningEfforts: [
+                  ...new Set(
+                    advertised.filter(
+                      (value): value is import('../../shared/reasoning').ReasoningLevel =>
+                        typeof value === 'string' &&
+                        ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(
+                          value,
+                        ),
+                    ),
+                  ),
+                ],
+              }
+            : {}),
           name: typeof model.display_name === 'string' ? model.display_name : model.slug,
           category: classifyChatGPTModel(model.slug),
           contextWindowTokens:

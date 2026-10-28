@@ -154,7 +154,12 @@ let n=0; const timer=setInterval(()=>{console.log('Processed batch '+(++n));if(f
         .filter({ hasText: /^Running$/ })
         .isVisible(),
     );
-    assert(await page.getByText('Failed · exit 2', { exact: true }).isVisible());
+    const failed = page.locator('.terminal-card--failed');
+    assert.equal(await failed.locator('.terminal-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(await failed.locator('.terminal-panel').count(), 0);
+    await failed.locator('.terminal-toggle').click();
+    assert(await failed.getByText('Failed · exit 2', { exact: true }).isVisible());
+    assert((await failed.locator('.terminal-transcript').innerText()).includes('No such file'));
     assert(!(await page.locator('.terminal-transcript').first().innerText()).includes(secret));
     assert((await page.locator('.terminal-transcript').first().innerText()).includes('[redacted]'));
     await page.evaluate(() => {

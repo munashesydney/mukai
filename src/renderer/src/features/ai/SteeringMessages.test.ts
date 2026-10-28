@@ -75,3 +75,38 @@ it('shows active steering when work is collapsed and uses the message time for l
   );
   expect(html).toContain('dateTime="2026-10-12T17:00:00Z"');
 });
+
+it('renders attachment-only steering in collapsed messages and expanded activity', () => {
+  const attached: ChatMessage = {
+    ...message,
+    parts: [
+      {
+        id: 'media-steer',
+        type: 'steering',
+        text: '',
+        attachments: [
+          {
+            id: 'recording',
+            botId: 'scout',
+            messageId: null,
+            name: 'recording.wav',
+            kind: 'audio',
+            mediaType: 'audio/wav',
+            size: 76,
+            warning: null,
+          },
+        ],
+      },
+    ],
+  };
+  for (const html of [
+    renderToStaticMarkup(createElement(SteeringMessages, { message: attached, collapsed: true })),
+    renderToStaticMarkup(
+      createElement(ResponseActivity, { message: attached, workExpanded: true }),
+    ),
+  ]) {
+    expect(html).toContain('recording.wav');
+    expect(html).toContain('Download recording.wav');
+    expect(html).toContain('Audio');
+  }
+});

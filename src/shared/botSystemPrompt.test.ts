@@ -34,6 +34,19 @@ it('explains autonomous pursuit runs, notification delivery, and historical conv
   expect(system).not.toContain('built-in ask tool');
 });
 
+it('recommends procedural self-improvement and explains available skill operations', () => {
+  const system = prompt({ skills: {} });
+  expect(system).toContain('\nSKILLS\n');
+  expect(system).toContain('It is strongly recommended');
+  expect(system).toContain('save it as a skill');
+  expect(system).toContain('improve existing skills');
+  expect(system).toContain('rather than creating a skill for every task');
+  expect(system).toContain('first 10 enabled skill titles');
+  expect(system).toContain('operation search');
+  expect(system).toContain('expectedVersion');
+  expect(prompt({})).not.toContain('operation search');
+});
+
 it('gives main bots coordination guidance and sub-bots context-specific restrictions', () => {
   const build = (isMain: boolean, delegated = false) =>
     buildBotSystemPrompt({

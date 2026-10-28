@@ -6,21 +6,13 @@ import {
   Info,
   LoaderCircle,
   MessageCirclePlus,
-  Paperclip,
   RotateCcw,
-  ArrowUp,
   SlidersHorizontal,
-  Square,
   X,
   ListTree,
 } from 'lucide-react';
 import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
-import {
-  acceptedAttachments,
-  inputCapabilityLabel,
-  modelInputCapabilities,
-  supportsAttachment,
-} from '../../../../shared/modelCapabilities';
+import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
 import { AttachmentCard } from './AttachmentCard';
@@ -32,19 +24,17 @@ import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { FileChanges } from './FileChanges';
 import { DiffDrawer } from './DiffDrawer';
 import { BrowserToggle } from '../browser/BrowserToggle';
-import { ContextMeter } from './ContextMeter';
-import { modelContextWindow } from '../../../../shared/modelLimits';
 import type { Conversation } from '../../../../shared/conversations';
-import { BotModelPicker } from './BotModelPicker';
-import { ApprovalModePicker, ToolApprovalCards } from './ToolApprovals';
+import { ToolApprovalCards } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { useApprovals } from './approvalStore';
 import { approvalBlocksConversation } from '../../../../shared/approvals';
 import { useChatActivity } from './useChatActivity';
 import { ChatActivityDrawer } from './ChatActivityDrawer';
-import { FollowupQueue } from './FollowupQueue';
+import { BotChatComposer } from './BotChatComposer';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
+import { responseStatus } from './responseStatus';
 
 export function BotChat({
   bot,
@@ -69,9 +59,26 @@ export function BotChat({
   onOpenBot?: (id: string) => Promise<void>;
   onViewComputer?: () => void;
 }) {
-  const readOnly = conversation.kind === 'bot';
-  const chatId = (readOnly ? 'space:' : 'private:') + conversation.id;
-  const state = useChat(chatId, readOnly);
+  const isBotConversation = conversation.kind === 'bot';
+  const joinKey = `mukai.joined-bot-chat.${conversation.workspaceId}.${conversation.id}`;
+  const [joined, setJoined] = useState(() => {
+    try {
+      return localStorage.getItem(joinKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const composerVisible = !isBotConversation || joined;
+  function joinChat() {
+    setJoined(true);
+    try {
+      localStorage.setItem(joinKey, '1');
+    } catch {
+      /* Keep the composer open for this visit. */
+    }
+  }
+  const chatId = (isBotConversation ? 'space:' : 'private:') + conversation.id;
+  const state = useChat(chatId, isBotConversation);
   const activity = useChatActivity(conversation.id, state.messages, bots, bot.id);
   const approvals = useApprovals();
   const hasRequests = approvals.pending.some((request) =>
@@ -81,7 +88,7 @@ export function BotChat({
     .sort()
     .map((id) => bots.find((item) => item.id === id))
     .filter((item): item is Bot => Boolean(item));
-  const title = readOnly ? participants.map((item) => item.name).join('/') : bot.name;
+  const title = isBotConversation ? participants.map((item) => item.name).join('/') : bot.name;
   const [creatingChat, setCreatingChat] = useState(false),
     [newChatError, setNewChatError] = useState('');
   async function createChat() {
@@ -99,27 +106,17 @@ export function BotChat({
     }
   }
   const [filesOpen, setFilesOpen] = useState(false),
-    [detailsOpen, setDetailsOpen] = useState(false),
-    [changingModel, setChangingModel] = useState(false);
+    [detailsOpen, setDetailsOpen] = useState(false);
   const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
     null,
   );
-  const fileInput = useRef<HTMLInputElement>(null),
-    feed = useRef<HTMLDivElement>(null),
+  const feed = useRef<HTMLDivElement>(null),
     follow = useRef(true);
   const provider = providers.find((provider) =>
     bot.providerId ? provider.id === bot.providerId : provider.isDefault,
   );
   const model = bot.model || provider?.defaultModel;
   const capabilities = modelInputCapabilities(bot, provider);
-  const blocked = state.files.some((file) => !supportsAttachment(file.kind, capabilities));
-  const blockedKinds = [
-    ...new Set(
-      state.files
-        .filter((file) => !supportsAttachment(file.kind, capabilities))
-        .map((file) => file.kind),
-    ),
-  ].join(', ');
   const files = state.messages.flatMap((message) => message.attachments);
   const latestAssistant = [...state.messages]
     .reverse()
@@ -128,15 +125,8 @@ export function BotChat({
     if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
   }, [state.messages, state.loading, bot.id]);
   function send() {
-    if (changingModel) return;
-    if (!provider) {
-      onProviders();
-      return;
-    }
-    if (provider && !blocked) {
-      follow.current = true;
-      void chatStore.send(chatId);
-    }
+    follow.current = true;
+    void chatStore.send(chatId);
   }
   const openReview = useCallback(
     (changes: FileChangeSummary[], selectedId: string) => setReview({ changes, selectedId }),
@@ -159,7 +149,7 @@ export function BotChat({
           <header className="conversation-header conversation-header--minimal">
             <div className="conversation-heading">
               <div className="heading-identity">
-                {readOnly ? (
+                {isBotConversation ? (
                   <span className="bot-pair-avatars">
                     {participants.map((item) => (
                       <Avatar key={item.id} person={item.avatar} />
@@ -171,14 +161,14 @@ export function BotChat({
                 <div>
                   <h1>
                     {title}
-                    {!readOnly && bot.isMain && <MainBotBadge />}
+                    {!isBotConversation && bot.isMain && <MainBotBadge />}
                   </h1>
                   <p title={conversation.name}>{conversation.name}</p>
                 </div>
               </div>
               <div className="header-actions">
-                {!readOnly && <BrowserToggle />}
-                {!readOnly && (
+                {!isBotConversation && <BrowserToggle />}
+                {!isBotConversation && (
                   <IconButton
                     label={`New conversation with ${bot.name}`}
                     disabled={creatingChat}
@@ -220,7 +210,7 @@ export function BotChat({
                 >
                   <Info size={18} />
                 </IconButton>
-                {!readOnly && (
+                {!isBotConversation && (
                   <IconButton label={`Edit ${bot.name}`} onClick={onEdit}>
                     <SlidersHorizontal size={18} />
                   </IconButton>
@@ -262,13 +252,13 @@ export function BotChat({
                       <Avatar person={bot.avatar} size="lg" />
                       <h2>A good place to start.</h2>
                       <p>
-                        {readOnly
+                        {isBotConversation
                           ? 'Messages between these bots will appear here.'
                           : provider
                             ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
                             : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
                       </p>
-                      {!readOnly && !provider && (
+                      {!isBotConversation && !provider && (
                         <button className="button button--primary" onClick={onProviders}>
                           Configure a provider
                         </button>
@@ -276,7 +266,7 @@ export function BotChat({
                     </div>
                   )
                 )}
-                {readOnly && state.error && (
+                {!composerVisible && state.error && (
                   <p className="ai-alert" role="alert">
                     {state.error}
                   </p>
@@ -286,16 +276,28 @@ export function BotChat({
                     key={message.id}
                     message={message}
                     bot={bot}
-                    author={readOnly ? bots.find((item) => item.id === message.botId) : undefined}
-                    readOnly={readOnly}
+                    author={
+                      isBotConversation ? bots.find((item) => item.id === message.botId) : undefined
+                    }
+                    isBotConversation={isBotConversation}
                     busy={state.busy}
-                    canRetry={!readOnly && message.id === latestAssistant?.id}
+                    canRetry={
+                      composerVisible &&
+                      message.id === latestAssistant?.id &&
+                      (!isBotConversation ||
+                        state.messages.some(
+                          (turn) =>
+                            turn.requestId === message.requestId &&
+                            turn.role === 'user' &&
+                            !turn.botId,
+                        ))
+                    }
                     onReview={openReview}
                     onRetry={retryResponse}
                   />
                 ))}
               </div>
-              {readOnly && hasRequests && (
+              {!composerVisible && hasRequests && (
                 <div className="bot-conversation-requests">
                   <ToolApprovalCards conversationId={conversation.id} />
                   <AskComposer
@@ -306,175 +308,26 @@ export function BotChat({
                   </AskComposer>
                 </div>
               )}
-              {!readOnly && (
-                <div className="composer-area ai-composer-area">
-                  <FollowupQueue chatId={chatId} state={state} />
-                  <ToolApprovalCards conversationId={conversation.id} />
-                  {newChatError && (
-                    <p className="ai-alert" role="alert">
-                      {newChatError}
-                    </p>
-                  )}
-                  {state.error && (
-                    <div className="ai-alert" role="alert">
-                      {state.error}
-                      {!state.busy && (
-                        <button className="text-button" onClick={() => void chatStore.load(chatId)}>
-                          Refresh chat
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {blocked && (
-                    <div className="ai-alert" role="alert">
-                      This model does not support {blockedKinds} input. Remove these attachments or
-                      choose a model that supports them before sending.
-                      <button className="text-button" onClick={onProviders}>
-                        Configure models
-                      </button>
-                    </div>
-                  )}
-                  <AskComposer
-                    conversationId={conversation.id}
-                    onCancel={() => void chatStore.stop(chatId)}
-                  >
-                    <div className="composer">
-                      {!!state.files.length && (
-                        <div className="ai-attachments ai-pending-attachments">
-                          {state.files.map((file) => (
-                            <AttachmentCard
-                              key={file.id}
-                              attachment={file}
-                              onRemove={
-                                !state.busy && !state.uploading
-                                  ? () => void chatStore.removeFile(chatId, file.id)
-                                  : undefined
-                              }
-                            />
-                          ))}
-                        </div>
-                      )}
-                      <textarea
-                        rows={2}
-                        aria-label={`Message ${bot.name}`}
-                        placeholder={
-                          state.busy ? 'Add a follow-up while working…' : `Message ${bot.name}…`
-                        }
-                        value={state.text}
-                        maxLength={16000}
-                        disabled={state.loading}
-                        onChange={(event) => chatStore.draft(chatId, event.target.value)}
-                        onPaste={(event) => {
-                          const files = Array.from(event.clipboardData.files);
-                          if (!files.length) return;
-
-                          // Keep ordinary text pastes intact, but turn copied files into pending attachments.
-                          event.preventDefault();
-                          void chatStore.upload(chatId, files);
-                        }}
-                        onKeyDown={(event) => {
-                          if (
-                            event.key === 'Enter' &&
-                            !event.shiftKey &&
-                            !event.nativeEvent.isComposing
-                          ) {
-                            event.preventDefault();
-                            send();
-                          }
-                        }}
-                      />
-                      <div className="composer-toolbar">
-                        <div className="composer-actions">
-                          <ApprovalModePicker />
-                          <IconButton
-                            label="Attach images or files"
-                            disabled={state.busy || state.uploading || state.loading}
-                            onClick={() => fileInput.current?.click()}
-                          >
-                            <Paperclip size={18} />
-                          </IconButton>
-                          {state.uploading ? (
-                            <span className="ai-model-label">Uploading & reading…</span>
-                          ) : (
-                            <BotModelPicker
-                              bot={bot}
-                              providers={providers}
-                              disabled={state.busy || state.loading}
-                              onSelected={onBotChanged}
-                              onSaving={setChangingModel}
-                              onProviders={onProviders}
-                            />
-                          )}
-                          <ContextMeter
-                            usage={latestAssistant?.contextUsage}
-                            window={modelContextWindow(bot, provider)}
-                            onConfigure={onProviders}
-                          />
-                        </div>
-                        {state.busy ? (
-                          <div className="followup-send-actions">
-                            <button
-                              className="send-button"
-                              aria-label="Queue follow-up"
-                              title="Queue follow-up"
-                              disabled={state.submittingFollowup || !state.text.trim()}
-                              onClick={send}
-                            >
-                              <ArrowUp size={18} />
-                            </button>
-                            <button
-                              className="send-button ai-stop"
-                              aria-label="Stop generation"
-                              onClick={() => void chatStore.stop(chatId)}
-                            >
-                              <Square size={13} fill="currentColor" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            className="send-button"
-                            aria-label="Send message"
-                            disabled={
-                              state.loading ||
-                              changingModel ||
-                              state.uploading ||
-                              blocked ||
-                              (!state.text.trim() && !state.files.length)
-                            }
-                            onClick={send}
-                          >
-                            <ArrowUp size={18} />
-                          </button>
-                        )}
-                      </div>
-                      <input
-                        ref={fileInput}
-                        className="visually-hidden"
-                        type="file"
-                        multiple
-                        accept={acceptedAttachments(capabilities)}
-                        tabIndex={-1}
-                        aria-label="Upload chat attachments"
-                        onChange={(event) => {
-                          void chatStore.upload(chatId, Array.from(event.target.files || []));
-                          event.target.value = '';
-                        }}
-                      />
-                    </div>
-                    <div className="composer-hint ai-composer-hint">
-                      <span>Enter to send · Shift + Enter for a new line</span>
-                      <span>
-                        Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
-                        {inputCapabilityLabel(capabilities)}
-                      </span>
-                    </div>
-                    {!provider && (
-                      <button className="text-button ai-configure-link" onClick={onProviders}>
-                        Set up a provider in Settings
-                      </button>
-                    )}
-                  </AskComposer>
+              {isBotConversation && !joined && (
+                <div className="bot-chat-join">
+                  <button className="bot-chat-join-pill" onClick={joinChat}>
+                    <MessageCirclePlus size={15} /> Jump in the chat
+                  </button>
                 </div>
+              )}
+              {composerVisible && (
+                <BotChatComposer
+                  bot={bot}
+                  providers={providers}
+                  conversationId={conversation.id}
+                  chatId={chatId}
+                  state={state}
+                  onSend={send}
+                  onProviders={onProviders}
+                  onBotChanged={onBotChanged}
+                  newChatError={newChatError}
+                  autoFocus={isBotConversation}
+                />
               )}
             </>
           )}
@@ -512,7 +365,7 @@ export function BotChat({
             <dl>
               <dt>Workspace role</dt>
               <dd>{bot.isMain ? 'Main bot' : 'Workspace bot'}</dd>
-              <dt>Created by</dt>
+              <dt>Reports to</dt>
               <dd>
                 {bot.createdBy
                   ? bots.find((parent) => parent.id === bot.createdBy)?.name || 'Unavailable bot'
@@ -534,7 +387,7 @@ export function BotChat({
               <dt>Reasoning</dt>
               <dd>Shown when your selected model shares reasoning or a thinking summary.</dd>
             </dl>
-            {!readOnly && (
+            {!isBotConversation && (
               <button className="button" onClick={onEdit}>
                 Edit bot
               </button>
@@ -552,7 +405,7 @@ const MessageRow = memo(function MessageRow({
   message,
   bot,
   author,
-  readOnly,
+  isBotConversation,
   busy,
   canRetry,
   onReview,
@@ -561,41 +414,24 @@ const MessageRow = memo(function MessageRow({
   message: ChatMessage;
   bot: Bot;
   author?: Bot;
-  readOnly: boolean;
+  isBotConversation: boolean;
   busy: boolean;
   canRetry: boolean;
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string) => void;
 }) {
   const disclosure = useWorkDisclosure(message);
-  const delegation = message.activity?.find(
-    (activity) => activity.status === 'running' && activity.delegation,
-  )?.delegation;
+  const botAuthored = isBotConversation ? Boolean(message.botId) : message.role === 'assistant';
   return (
     <>
       <SteeringMessages message={message} collapsed={!disclosure.workExpanded} />
       <article className={`ai-message ai-message--${message.role}`}>
-        <Avatar
-          person={
-            readOnly
-              ? author?.avatar || bot.avatar
-              : message.role === 'user'
-                ? 'munashe'
-                : bot.avatar
-          }
-          size="sm"
-        />
+        <Avatar person={botAuthored ? author?.avatar || bot.avatar : 'munashe'} size="sm" />
         <div className="ai-message-body">
           <div className="ai-message-meta">
-            <strong>
-              {readOnly
-                ? author?.name || message.authorName || 'Bot'
-                : message.role === 'user'
-                  ? 'You'
-                  : bot.name}
-            </strong>
+            <strong>{botAuthored ? author?.name || message.authorName || bot.name : 'You'}</strong>
             <TelegramSourceBadge message={message} />
-            {(readOnly || message.role === 'assistant') && (
+            {botAuthored && (
               <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
             )}
             <time dateTime={message.createdAt}>
@@ -622,15 +458,7 @@ const MessageRow = memo(function MessageRow({
                 <i />
                 <i />
               </span>
-              {delegation
-                ? `Waiting for ${delegation.botName}’s response…`
-                : message.activity?.some((activity) => activity.status === 'running')
-                  ? 'Working with files…'
-                  : message.content
-                    ? 'Responding…'
-                    : message.reasoning
-                      ? `${bot.name} is thinking…`
-                      : 'Waiting for the model…'}
+              {responseStatus(message)}…
             </div>
           )}
           {['failed', 'stopped', 'interrupted'].includes(message.status) && (

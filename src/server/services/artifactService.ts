@@ -13,6 +13,7 @@ import type { FileArtifact, Workspace } from '../../shared/ai';
 import type { FileMetadata } from '../../shared/fileMetadata';
 import { fileMetadata } from './fileMetadata';
 import { artifactHref } from '../../shared/responseReferences';
+import { downloadGuestFile } from '../computer/downloadFile';
 
 const SCREENSHOT_LIMIT = 16 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -184,20 +185,19 @@ export class ArtifactService {
       signal.throwIfAborted();
       const file =
         workspace.computer === 'qemu'
-          ? ((await this.workspaces
-              .computers!.guest(workspace)
-              .request(
-                'download',
-                { path: relativePath, maxBytes: Math.min(maxBytes, 10 * 1024 * 1024) },
-                { workspaceId, botId: 'reference-preview', conversationId: 'reference-preview' },
-                signal,
-              )) as { name: string; bytes: string })
+          ? await downloadGuestFile(
+              this.workspaces.computers!.guest(workspace),
+              relativePath,
+              { workspaceId, botId: 'reference-preview', conversationId: 'reference-preview' },
+              signal,
+              maxBytes,
+            )
           : await new WorkspaceFileService(workspace.folder!, this.dataDir).download(
               relativePath,
               maxBytes,
               signal,
             );
-      const bytes = typeof file.bytes === 'string' ? Buffer.from(file.bytes, 'base64') : file.bytes;
+      const bytes = file.bytes;
       return {
         name: file.name,
         bytes,
@@ -344,17 +344,16 @@ export class ArtifactService {
       }
     }
     if (workspace.computer === 'qemu') {
-      const result = (await this.workspaces
-        .computers!.guest(workspace)
-        .request(
-          'download',
-          { path: artifact.path, maxBytes: Math.min(maxBytes, 10 * 1024 * 1024) },
-          { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
-          signal,
-        )) as { name: string; bytes: string };
+      const result = await downloadGuestFile(
+        this.workspaces.computers!.guest(workspace),
+        artifact.path,
+        { workspaceId: workspace.id, botId: artifact.botId, conversationId: 'artifact-download' },
+        signal,
+        maxBytes,
+      );
       return {
         name: result.name,
-        bytes: Buffer.from(result.bytes, 'base64'),
+        bytes: result.bytes,
         mediaType: 'text/plain; charset=utf-8',
       };
     }

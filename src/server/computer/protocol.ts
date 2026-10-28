@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { RuntimeOwner } from '../../shared/runtime';
+import { ApiError } from '../config';
 
 export const PROTOCOL_VERSION = 1;
-export const GUEST_REVISION = 17;
+export const GUEST_REVISION = 18;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',
@@ -26,6 +27,22 @@ export const guestRequest = z.object({
   input: z.unknown(),
 });
 export type ComputerMethod = (typeof methods)[number];
+export const guestResponse = z.object({
+  id: z.string().uuid(),
+  result: z.unknown().optional(),
+  error: z.string().optional(),
+  errorStatus: z.number().int().min(400).max(599).optional(),
+});
+export function encodeGuestError(error: unknown, fallback: string) {
+  return {
+    error: error instanceof Error ? error.message : fallback,
+    ...(error instanceof ApiError ? { errorStatus: error.status } : {}),
+  };
+}
+export function decodeGuestError(reply: { error?: string; errorStatus?: number }) {
+  const message = reply.error || 'Guest request failed.';
+  return reply.errorStatus ? new ApiError(reply.errorStatus, message) : new Error(message);
+}
 export type ComputerHelper = (action: string, args: unknown[]) => Promise<unknown>;
 export const helperRequest = z.object({
   requestId: z.string().uuid(),

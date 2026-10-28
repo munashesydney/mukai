@@ -9,6 +9,7 @@ import type { Attachment, Bot, ChatMessage } from '../../shared/ai';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import { Database } from './database';
 import { seedTestBot } from '../testFixtures';
+import { ChatFollowupRepository } from '../repositories/chatFollowupRepository';
 
 let dir = '';
 afterEach(() => {
@@ -18,6 +19,69 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('adds attachment ownership while preserving existing text follow-ups', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    new ChatFollowupRepository(database).enqueue(
+      'bot-scout',
+      'scout',
+      'legacy-followup',
+      'Existing correction',
+    );
+    database.db.exec('DROP TABLE followup_attachments');
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('CREATE TABLE followup_attachments')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(new ChatFollowupRepository(database).list('bot-scout')).toMatchObject([
+        { id: 'legacy-followup', text: 'Existing correction', state: 'queued' },
+      ]);
+      expect(database.all('SELECT * FROM followup_attachments')).toEqual([]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
+  it('adds background result tracking without changing existing delegation records', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    database.run(
+      "INSERT INTO messages(id,bot_id,conversation_id,request_id,role,content,status,created_at) VALUES('parent','scout','bot-scout','request','assistant','','complete','now')",
+    );
+    database.run(
+      "INSERT INTO bot_delegations(parent_message_id,tool_call_id,caller_id,target_id,conversation_id,child_request_id,message,state) VALUES('parent','call','scout','scout','bot-scout','child-request','Task','complete')",
+    );
+    database.db.exec(
+      'ALTER TABLE bot_delegations DROP COLUMN result_json; ALTER TABLE bot_delegations DROP COLUMN delivered; ALTER TABLE bot_delegations DROP COLUMN mode;',
+    );
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('bot_delegations ADD COLUMN mode')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(
+        database.get(
+          "SELECT state,mode,delivered,result_json,child_request_id FROM bot_delegations WHERE parent_message_id='parent'",
+        ),
+      ).toEqual({
+        state: 'complete',
+        mode: 'wait',
+        delivered: 0,
+        result_json: null,
+        child_request_id: 'child-request',
+      });
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('adds Telegram media delivery without changing queued text replies', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

@@ -40,7 +40,7 @@ export function TerminalCard({ activity }: { activity: ChatActivity }) {
   const stopped = snapshot?.status === 'killed' || activity.status === 'interrupted';
   const unavailable = snapshot?.unavailable && snapshot.status === 'running';
   const successful = snapshot?.status === 'exited' && snapshot.exitCode === 0;
-  const open = expanded ?? (running || failed);
+  const open = expanded ?? running;
   const command = snapshot?.command || activity.path;
   const text = snapshot?.output ?? activity.summary;
   // Strip terminal control sequences; React renders the remaining output as plain text.

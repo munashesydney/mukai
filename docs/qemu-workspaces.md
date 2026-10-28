@@ -61,6 +61,8 @@ The viewer uses [noVNC](https://novnc.com/noVNC/docs/API.html) with [TigerVNC](h
 
 Text clipboard sharing works while controlling the focused viewer: Ctrl+V sends your local clipboard before pasting, and Ctrl+Shift+V pastes into a terminal. On macOS, Command+C/X/V maps to the Linux clipboard shortcuts. Copying inside the focused VM updates your local clipboard. The Clipboard toolbar panel provides manual text entry, terminal paste, and received text that can be selected and copied if browser permissions block clipboard access. Text is limited to 1 MiB of UTF-8; images and files are not transferred through the clipboard. Watch mode disables keyboard, pointer and clipboard input. Clipboard caches and pending pastes are cleared on disconnect or a workspace change, and the host clipboard is read only on a paste action. Guest revision 17 explicitly enables both clipboard directions and disables sharing of X11 primary selections (merely selecting text does not copy it to the host). Existing VMs receive these display settings through the normal guest update on their next start.
 
+UI artifact previews and downloads support files up to 100 MiB. Guest revision 18 transfers them in 4 MiB chunks, below the bridge frame limit, and preserves actionable file errors. Model-facing reads retain their existing smaller limits. Existing VMs receive this update on their next start; restart the workspace VM after updating Mukai to use large-file previews.
+
 ## Configure Mukai
 
 For manual setup, set absolute paths in Mukai's environment before launching. Automatic setup does not require these variables. PowerShell example:

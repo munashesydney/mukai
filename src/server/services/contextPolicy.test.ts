@@ -155,6 +155,39 @@ describe('working context', () => {
       if (call) expect(unit.some((message) => message.role === 'tool')).toBe(true);
     }
   });
+  it('pins attachment-only steering with media bytes and metadata through compaction', async () => {
+    const original = history();
+    const steering: ModelMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Attachment ID: steering-audio' },
+        {
+          type: 'file',
+          mediaType: 'audio/wav',
+          data: Buffer.from('steering audio').toString('base64'),
+        },
+      ],
+    };
+    const manager = new ContextManager(
+      131072,
+      2048,
+      100,
+      async () => 'Earlier operations completed.',
+    );
+    manager.pinRequests([original[3], steering]);
+    const compacted = await manager.prepare(
+      [
+        ...original,
+        steering,
+        ...pair('large-steering-history', 'findings '.repeat(60000)),
+        { role: 'user', content: 'Continue the original task.' },
+      ],
+      true,
+    );
+    expect(compacted).toContain(steering);
+    expect(compacted).toContainEqual(original[3]);
+    expect(manager.compactions).toBe(1);
+  });
   it('preserves omitted-image notices when additional tools force results into compaction', async () => {
     const summarize = vi.fn(async () => 'Continue the current task; earlier operations completed.');
     const manager = new ContextManager(10000, 8192, 5000, summarize);

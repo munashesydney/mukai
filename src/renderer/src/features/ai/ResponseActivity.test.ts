@@ -35,6 +35,84 @@ const message: ChatMessage = {
   ],
 };
 describe('Response activity disclosures', () => {
+  it('shows active delegated bots below a held response even after dispatch tools complete', () => {
+    const activity: ChatActivity[] = [
+      {
+        id: 'dispatch',
+        tool: 'manage_bot',
+        action: 'send_message',
+        path: 'Ada',
+        status: 'complete',
+        summary: 'Dispatched.',
+        delegation: {
+          botId: 'ada',
+          botName: 'Ada',
+          avatar: 'nova',
+          conversationId: 'pair',
+          requestId: 'child-request',
+          mode: 'fire_and_forget',
+          status: 'streaming',
+        },
+      },
+      {
+        id: 'waiting',
+        tool: 'manage_bot',
+        action: 'wait_for_bots',
+        path: '',
+        status: 'running',
+        summary: 'Waiting.',
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          status: 'streaming',
+          activity,
+          parts: activity.map((item) => ({
+            id: item.id,
+            type: 'tool' as const,
+            activityId: item.id,
+          })),
+        },
+      }),
+    );
+    expect(html).toContain('Waiting for bots');
+    expect(html).toContain('aria-label="Ada is working"');
+    expect(html).toContain('spawned-bot-name');
+    expect(html).toContain('typing-dots');
+  });
+  it('keeps returned bot text in a preview disclosure and does not replay typing indicators on history', () => {
+    const activity: ChatActivity = {
+      id: 'reply',
+      tool: 'manage_bot',
+      action: 'receive_message',
+      path: 'Ada',
+      status: 'complete',
+      summary: 'Verified result.\n\nMore detail.',
+      delegation: {
+        botId: 'ada',
+        botName: 'Ada',
+        conversationId: 'pair',
+        requestId: 'child-request',
+        status: 'complete',
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          activity: [activity],
+          parts: [{ id: 'reply', type: 'tool', activityId: 'reply' }],
+        },
+      }),
+    );
+    expect(html).toContain('response-tool--reply');
+    expect(html).toContain('response-bot-preview');
+    expect(html).toContain('More detail.');
+    expect(html).not.toContain('spawned-bot-name');
+    expect(html).not.toContain('typing-dots');
+  });
   it('shows one live terminal card for a run and its later process polls, using process status instead of tool completion', () => {
     const snapshot = {
       id: '68db9142-e774-4bdf-bbdb-1b95219dd12a',
@@ -89,7 +167,7 @@ describe('Response activity disclosures', () => {
     expect(html).not.toContain('Success');
     expect(html).toContain('aria-expanded="true"');
   });
-  it('expands terminal failures and displays their actual exit code', () => {
+  it('collapses terminal failures by default while keeping their failed command visible', () => {
     const activity: ChatActivity = {
       id: 'failed-run',
       tool: 'terminal',
@@ -117,9 +195,11 @@ describe('Response activity disclosures', () => {
         },
       }),
     );
-    expect(html).toContain('Failed · exit 2');
-    expect(html).toContain('Cannot open file.');
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('terminal-card--failed');
+    expect(html).toContain('Failed python broken.py');
+    expect(html).not.toContain('Cannot open file.');
+    expect(html).not.toContain('terminal-panel');
+    expect(html).toContain('aria-expanded="false"');
   });
   it.each(['compacting', 'complete', 'failed', 'interrupted'] as const)(
     'shows an ordered %s context divider between activity and resumed work',
@@ -227,7 +307,7 @@ describe('Response activity disclosures', () => {
         }),
       );
       expect(html).toContain('<details class="response-work" open="">');
-      expect(html).toContain('Working for 2m 31s');
+      expect(html).toContain('Responding for 2m 31s');
       expect(html).not.toContain('Worked for');
       expect(html).toContain('response-reasoning');
       expect(html).toContain('response-tool');
@@ -253,7 +333,7 @@ describe('Response activity disclosures', () => {
         }),
       );
       expect(html).toContain('<details class="response-work" open="">');
-      expect(html).toContain('Working for 0s');
+      expect(html).toContain('Thinking for 0s');
     } finally {
       vi.useRealTimers();
     }

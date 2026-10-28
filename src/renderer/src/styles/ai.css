@@ -48,6 +48,39 @@
   color: var(--text-secondary);
   font-size: 12px;
 }
+.popup-menu--pointer {
+  overflow: visible;
+}
+.popup-menu--pointer::before {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  pointer-events: none;
+}
+.popup-menu--pointer[data-pointer-side='left']::before {
+  left: -7px;
+  top: var(--popup-pointer-y);
+  transform: translateY(-50%) rotate(45deg);
+  border-top: 0;
+  border-right: 0;
+}
+.popup-menu--pointer[data-pointer-side='top']::before {
+  top: -7px;
+  left: var(--popup-pointer-x);
+  transform: translateX(-50%) rotate(45deg);
+  border-right: 0;
+  border-bottom: 0;
+}
+.popup-menu--pointer[data-pointer-side='bottom']::before {
+  bottom: -7px;
+  left: var(--popup-pointer-x);
+  transform: translateX(-50%) rotate(45deg);
+  border-top: 0;
+  border-left: 0;
+}
 .popup-menu > button {
   display: flex;
   align-items: center;
@@ -91,8 +124,38 @@
 .popup-menu .full-access {
   color: #ca7331;
 }
+.bot-conversation-confirmation {
+  padding: 16px;
+}
+.bot-conversation-confirmation > p {
+  margin: 0 0 16px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.bot-conversation-confirmation-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bot-conversation-confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
 .bot-model-menu {
   padding-bottom: 0;
+}
+.ai-model-controls {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 .bot-model-group {
   border-top: 1px solid var(--line);
@@ -992,6 +1055,72 @@
   display: inline-flex;
   gap: 4px;
 }
+.spawned-bots {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.spawned-bots:empty {
+  display: none;
+}
+.spawned-bot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: left;
+  position: relative;
+  z-index: 1;
+}
+.spawned-bot-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.spawned-bot-caption {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.spawned-bot .typing-dots {
+  margin-left: 3px;
+  color: var(--text-muted);
+}
+.spawned-bot--returning .typing-dots {
+  visibility: hidden;
+}
+.response-bot-preview {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 260px;
+}
+.response-tool--reply {
+  animation: delegated-reply-arrive 0.22s ease-out;
+}
+@keyframes delegated-reply-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .response-tool--reply {
+    animation: none;
+  }
+}
 .typing-dots i {
   width: 4px;
   height: 4px;
@@ -1178,6 +1307,16 @@
   max-height: 65vh;
   margin: 0 auto;
   object-fit: contain;
+}
+.artifact-media-preview {
+  display: block;
+  width: 100%;
+  max-height: 65vh;
+  margin: 0 auto;
+}
+video.artifact-media-preview {
+  background: #000;
+  border-radius: 8px;
 }
 .artifact-row-name {
   flex: 1;
@@ -1852,12 +1991,31 @@
   margin-top: 12px;
 }
 .ai-attachment {
+  position: relative;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   overflow: hidden;
   width: 280px;
   max-width: 100%;
   background: var(--surface);
+}
+.attachment-open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.attachment-open:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -3px;
+}
+.ai-attachment .icon-button {
+  position: relative;
+  z-index: 2;
 }
 .ai-attachment > img {
   width: 100%;
@@ -2580,6 +2738,33 @@
 .followup-copy {
   flex: 1;
   min-width: 0;
+}
+.followup-queue .ai-attachments {
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.followup-queue .ai-attachment {
+  width: 240px;
+}
+.followup-queue .ai-attachment--image {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  padding-left: 6px;
+}
+.followup-queue .ai-attachment > img,
+.followup-queue .attachment-preview-loading {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+.followup-queue .attachment-card-info {
+  padding: 8px;
+  min-width: 0;
+}
+.followup-queue .attachment-warning {
+  grid-column: 1 / -1;
 }
 .followup-copy p {
   margin: 0;

@@ -251,6 +251,44 @@ describe('Mukai memory integration', () => {
         .episodes.some((episode) => episode.content.includes('marmalade')),
     ).toBe(false);
   });
+  it('excludes saved facts from provider requests when memory is off, including prior recalls', async () => {
+    const imported = await request('/memory/import', 'POST', {
+      version: 1,
+      facts: [
+        {
+          subject: coffee.subject,
+          relation: coffee.relation,
+          object: coffee.object,
+          text: coffee.text,
+          validFrom: '2026-01-01T00:00:00Z',
+          validTo: null,
+          state: 'confirmed',
+        },
+      ],
+    });
+    expect(imported.response.ok).toBe(true);
+    // The saved fact never appears in user messages or the fixture's "OK" replies.
+    await chat('What coffee do I like?');
+    const enabled = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(enabled.messages)).toContain(coffee.text);
+    const settings = api.memory.settings('default');
+    await request('/memory/settings', 'PUT', { ...settings, enabled: false });
+    const recalls = api.memory.snapshot('default').recalls.length;
+    await chat('What coffee do I like?');
+    const disabled = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(disabled.messages)).not.toContain(coffee.text);
+    expect(JSON.stringify(disabled.messages)).not.toContain('Retrieved memory reference');
+    expect(JSON.stringify(disabled.messages)).toContain('Memory off');
+    expect(JSON.stringify(disabled.messages)).toContain('What coffee do I like?');
+    expect(disabled.tools?.some((entry) => entry.function.name === 'memory')).toBe(false);
+    expect(api.memory.snapshot('default').recalls).toHaveLength(recalls);
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    await request('/memory/settings', 'PUT', settings);
+    await chat('What coffee do I like?');
+    expect(JSON.stringify(calls.filter((call) => call.stream).at(-1)!.messages)).toContain(
+      coffee.text,
+    );
+  });
   it('serializes overlapping review requests across private and workspace conversations', async () => {
     api.memory.saveSettings('default', {
       ...api.memory.settings('default'),

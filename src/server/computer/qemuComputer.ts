@@ -26,6 +26,8 @@ import {
   type ComputerMethod,
   type ComputerHelper,
   helperRequest,
+  guestResponse,
+  decodeGuestError,
 } from './protocol';
 import { answerHelper } from './helpers';
 import { upgradeGuest } from './upgradeGuest';
@@ -794,18 +796,12 @@ export class QemuComputer implements Computer {
               );
               continue;
             }
-            const message = z
-              .object({
-                id: z.string().uuid(),
-                result: z.unknown().optional(),
-                error: z.string().optional(),
-              })
-              .parse(raw);
+            const message = guestResponse.parse(raw);
             const pending = this.pending.get(message.id);
             if (!pending) continue;
             this.pending.delete(message.id);
             pending.cleanup();
-            if (message.error) pending.reject(new Error(message.error));
+            if (message.error) pending.reject(decodeGuestError(message));
             else pending.resolve(message.result);
           }
         } catch (error) {
