@@ -1,4 +1,4 @@
-import { constants } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import {
   lstat,
   realpath,
@@ -21,6 +21,8 @@ import { fileMetadata } from './fileMetadata';
 
 const FILE_LIMIT = 256 * 1024;
 const OUTPUT_LIMIT = 24000;
+const downloadVersion = (info: Stats) =>
+  JSON.stringify([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]);
 const mutationLocks = new Map<string, Promise<void>>();
 const protectedNames = new Set([
   '.git',
@@ -152,25 +154,60 @@ export class WorkspaceFileService {
       );
     }
   }
-  async download(value: string, maxBytes = FILE_LIMIT, signal?: AbortSignal) {
+  async download(
+    value: string,
+    maxBytes = FILE_LIMIT,
+    signal?: AbortSignal,
+    range?: { offset: number; length: number; version?: string },
+  ) {
     signal?.throwIfAborted();
     const target = await this.path(value);
     const file = await open(target.absolute, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.nlink > 1 || info.size > maxBytes)
-        throw new ApiError(400, 'This artifact is unavailable or exceeds the file limit.');
-      const bytes = Buffer.alloc(Math.min(info.size + 1, maxBytes + 1));
+      if (!info.isFile() || info.nlink > 1)
+        throw new ApiError(400, 'Only regular, non-linked files can be downloaded.');
+      if (info.size > maxBytes)
+        throw new ApiError(
+          413,
+          `This file exceeds the ${maxBytes / (1024 * 1024)} MiB file limit. Use a smaller file.`,
+        );
+      const version = downloadVersion(info);
+      const changed = () =>
+        new ApiError(
+          409,
+          'This file changed while it was being read. Wait for it to finish writing, then try again.',
+        );
+      if (range && (range.offset > info.size || (range.version && range.version !== version)))
+        throw changed();
+      const expectedLength = range ? Math.min(range.length, info.size - range.offset) : info.size;
+      const bytes = Buffer.alloc(expectedLength);
       let length = 0;
       while (length < bytes.length) {
         signal?.throwIfAborted();
-        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null);
+        const { bytesRead } = await file.read(
+          bytes,
+          length,
+          bytes.length - length,
+          range ? range.offset + length : null,
+        );
         if (!bytesRead) break;
         length += bytesRead;
       }
-      if (length > info.size || length > maxBytes)
-        throw new ApiError(400, 'This artifact exceeds the file limit.');
-      return { name: basename(target.absolute), bytes: bytes.subarray(0, length) };
+      if (length !== expectedLength || downloadVersion(await file.stat()) !== version)
+        throw changed();
+      return {
+        name: basename(target.absolute),
+        bytes,
+        ...(range
+          ? {
+              offset: range.offset,
+              size: info.size,
+              version,
+              nextOffset: range.offset + length < info.size ? range.offset + length : null,
+            }
+          : {}),
+      };
     } finally {
       await file.close();
     }

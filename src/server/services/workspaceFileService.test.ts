@@ -39,7 +39,14 @@ describe('Workspace file boundaries and operations', () => {
       size: bytes.length,
     });
     expect(await service.inspect('empty.txt')).toEqual({ mediaType: 'text/plain', size: 0 });
-    await expect(service.download('report.pdf')).rejects.toThrow('file limit');
+    await expect(service.download('report.pdf')).rejects.toMatchObject({
+      status: 413,
+      message: expect.stringContaining('file limit'),
+    });
+    await expect(service.download('.')).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('regular'),
+    });
     await expect(service.inspect('.')).rejects.toThrow('regular workspace file');
     await expect(service.inspect('private-data/secret.txt')).rejects.toThrow('private');
   });

@@ -1308,6 +1308,16 @@
   margin: 0 auto;
   object-fit: contain;
 }
+.artifact-media-preview {
+  display: block;
+  width: 100%;
+  max-height: 65vh;
+  margin: 0 auto;
+}
+video.artifact-media-preview {
+  background: #000;
+  border-radius: 8px;
+}
 .artifact-row-name {
   flex: 1;
   min-width: 0;

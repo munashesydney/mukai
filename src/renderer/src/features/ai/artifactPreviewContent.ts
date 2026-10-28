@@ -1,6 +1,22 @@
 import type { FileArtifact } from '../../../../shared/ai';
 
 type PreviewFile = Pick<FileArtifact, 'name' | 'kind' | 'mediaType'>;
+const mediaTypes: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  flac: 'audio/flac',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  mov: 'video/quicktime',
+  pdf: 'application/pdf',
+};
 export function artifactIsImage(file: PreviewFile) {
   return (
     file.kind === 'image' ||
@@ -16,6 +32,7 @@ export async function artifactPreview(
   file: PreviewFile,
 ): Promise<
   | { kind: 'image'; mediaType: string }
+  | { kind: 'audio' | 'video' | 'pdf'; mediaType: string }
   | { kind: 'text'; content: string }
   | { kind: 'unavailable'; message: string }
 > {
@@ -29,6 +46,14 @@ export async function artifactPreview(
     String.fromCharCode(...header.slice(8, 12)) === 'WEBP'
   )
     mediaType = 'image/webp';
+  else if (String.fromCharCode(...header.slice(0, 5)) === '%PDF-') mediaType = 'application/pdf';
+  if (!mediaType || mediaType === 'application/octet-stream') {
+    const declaredType = file.mediaType?.split(';')[0].toLowerCase();
+    mediaType =
+      declaredType && declaredType !== 'application/octet-stream'
+        ? declaredType
+        : mediaTypes[file.name.split('.').at(-1)?.toLowerCase() || ''] || mediaType;
+  }
   if (
     mediaType.startsWith('image/') ||
     ((!mediaType || mediaType === 'application/octet-stream') && artifactIsImage(file))
@@ -39,6 +64,9 @@ export async function artifactPreview(
         ? mediaType
         : file.mediaType || 'application/octet-stream',
     };
+  if (mediaType.startsWith('audio/')) return { kind: 'audio', mediaType };
+  if (mediaType.startsWith('video/')) return { kind: 'video', mediaType };
+  if (mediaType === 'application/pdf') return { kind: 'pdf', mediaType };
   const unsupported = {
     kind: 'unavailable' as const,
     message: 'This file cannot be previewed here. Download it to open it on your computer.',

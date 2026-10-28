@@ -8,6 +8,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { HealthResponse } from '../../shared/contracts';
 import { UPLOAD_LIMIT } from '../../shared/ai';
 import { ApiError } from '../config';
+import { ARTIFACT_DOWNLOAD_LIMIT } from '../../shared/artifacts';
 import type { BotService } from '../services/botService';
 import type { ProviderService } from '../services/providerService';
 import type { AttachmentService } from '../services/attachmentService';
@@ -596,6 +597,7 @@ export function createRoutes({
               input.href,
               input.image,
               AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+              ARTIFACT_DOWNLOAD_LIMIT,
             );
             response.setHeader('Content-Type', file.mediaType);
             response.setHeader(
@@ -814,15 +816,26 @@ export function createRoutes({
     } else if (resource === 'tools' && !id && method === 'GET') {
       return send(response, tools.list(url.searchParams.get('workspaceId') || 'default'));
     } else if (resource === 'artifacts' && id && !action && method === 'GET') {
-      const file = await artifacts.read(id);
-      response.setHeader('Content-Type', file.mediaType);
-      response.setHeader('X-Content-Type-Options', 'nosniff');
-      response.setHeader(
-        'Content-Disposition',
-        `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
-      );
-      response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-      response.writeHead(200).end(file.bytes);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      response.once('close', cancel);
+      try {
+        const file = await artifacts.read(
+          id,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+          ARTIFACT_DOWNLOAD_LIMIT,
+        );
+        response.setHeader('Content-Type', file.mediaType);
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader(
+          'Content-Disposition',
+          `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        );
+        response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        response.writeHead(200).end(file.bytes);
+      } finally {
+        response.off('close', cancel);
+      }
       return;
     } else if (resource === 'providers') {
       if (id === 'chatgpt-auth') {

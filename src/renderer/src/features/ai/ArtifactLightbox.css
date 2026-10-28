@@ -1,0 +1,242 @@
+.artifact-lightbox {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #f4f4f5;
+  overflow: hidden;
+  color-scheme: dark;
+}
+.artifact-lightbox::backdrop {
+  background: #000e;
+}
+.artifact-lightbox-heading {
+  z-index: 3;
+  position: absolute;
+  top: 26px;
+  left: 32px;
+  right: 156px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  pointer-events: none;
+}
+.artifact-lightbox-heading h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: #d4d4d8;
+}
+.artifact-lightbox-heading > span {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+.artifact-lightbox-actions {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  right: 24px;
+  display: flex;
+  gap: 10px;
+}
+.artifact-lightbox-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  background: #303032;
+  color: #fafafa;
+  text-decoration: none;
+  cursor: pointer;
+}
+.artifact-lightbox-button:hover {
+  background: #454548;
+}
+.artifact-lightbox-button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.artifact-lightbox :is(button, a):focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+}
+.artifact-lightbox-stage {
+  position: absolute;
+  inset: 82px 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.artifact-lightbox .artifact-lightbox-image {
+  flex-shrink: 0;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  user-select: none;
+}
+.artifact-lightbox-previous,
+.artifact-lightbox-next {
+  position: absolute;
+  z-index: 3;
+  top: calc(50% - 21px);
+}
+.artifact-lightbox-previous {
+  left: 24px;
+}
+.artifact-lightbox-next {
+  right: 24px;
+}
+.artifact-lightbox-zoom {
+  position: fixed;
+  z-index: 3;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 28px;
+  background: #303032;
+  box-shadow: 0 4px 20px #0004;
+}
+.artifact-lightbox-zoom .artifact-lightbox-button {
+  width: 34px;
+  height: 34px;
+  background: #454548;
+}
+.artifact-lightbox-zoom .artifact-lightbox-button:hover {
+  background: #5b5b60;
+}
+.artifact-lightbox-zoom-value {
+  width: 66px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.artifact-lightbox .artifact-preview {
+  width: min(100%, 1000px);
+  max-height: 100%;
+  padding: 0;
+  overflow: visible;
+}
+.artifact-lightbox .artifact-preview > p {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: center;
+  font-size: 13px;
+  color: #d4d4d8;
+  line-height: 1.7;
+}
+.artifact-lightbox .artifact-preview > p > svg {
+  flex-shrink: 0;
+}
+.artifact-lightbox .artifact-preview pre {
+  max-height: calc(100dvh - 164px);
+  margin: 0;
+  padding: 28px;
+  border-color: #ffffff24;
+  background: #1c1c1f;
+  color: #ededf0;
+}
+.artifact-lightbox .reference-selected-line {
+  background: #ffffff20;
+}
+.artifact-lightbox .artifact-media-preview {
+  max-height: calc(100dvh - 180px);
+}
+.artifact-lightbox audio.artifact-media-preview {
+  max-width: 600px;
+}
+.artifact-lightbox .artifact-media-message {
+  padding: 20px 0;
+  text-align: center;
+  color: #d4d4d8;
+  font-size: 13px;
+}
+.artifact-lightbox .artifact-file-notice {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 32px;
+  text-align: center;
+  background: #202023;
+  border: 1px solid #ffffff1a;
+  border-radius: 16px;
+}
+.artifact-file-notice > svg {
+  margin: 0 auto 16px;
+  color: #a1a1aa;
+}
+.artifact-file-notice p {
+  color: #d4d4d8;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.artifact-file-notice a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 10px 16px;
+  border: 1px solid #ffffff30;
+  border-radius: 24px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .artifact-lightbox-actions {
+    top: 14px;
+    right: 14px;
+    gap: 8px;
+  }
+  .artifact-lightbox-heading {
+    top: 28px;
+    left: 18px;
+    right: 128px;
+    gap: 8px;
+  }
+  .artifact-lightbox-stage {
+    inset: 80px 16px 92px;
+  }
+  .artifact-lightbox-previous {
+    left: 12px;
+  }
+  .artifact-lightbox-next {
+    right: 12px;
+  }
+  .artifact-lightbox-previous,
+  .artifact-lightbox-next {
+    top: auto;
+    bottom: 26px;
+  }
+  .artifact-lightbox-zoom {
+    bottom: 24px;
+  }
+  .artifact-lightbox .artifact-preview pre {
+    max-height: calc(100dvh - 172px);
+    padding: 18px;
+  }
+  .artifact-lightbox .artifact-file-notice {
+    padding: 24px;
+  }
+}

@@ -32,6 +32,12 @@ export function ResponseImageGallery({
     images.findIndex((image) => image.key === selected),
   );
   const multiple = images.length > 1;
+  const openIndex = open ? images.findIndex((image) => image.key === open.key) : -1;
+  function stepPreview(position: number) {
+    const image = images[position];
+    setOpen(image);
+    onSelect(image.key);
+  }
   function step(direction: number) {
     onSelect(images[Math.max(0, Math.min(images.length - 1, index + direction))].key);
   }
@@ -169,7 +175,14 @@ export function ResponseImageGallery({
       )}
       {open && conversationId && (
         <ArtifactPreview
+          key={open.key}
           reference={{ conversationId, href: open.href, name: open.label }}
+          navigation={{
+            index: openIndex,
+            total: images.length,
+            previous: openIndex > 0 ? () => stepPreview(openIndex - 1) : undefined,
+            next: openIndex < images.length - 1 ? () => stepPreview(openIndex + 1) : undefined,
+          }}
           onClose={() => setOpen(null)}
         />
       )}

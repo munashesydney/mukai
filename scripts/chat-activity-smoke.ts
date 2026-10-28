@@ -491,6 +491,30 @@ async function main() {
       await wait(
         `document.querySelector('dialog .artifact-image-preview')?.naturalWidth===${width}`,
       );
+      if (alt === 'Uploaded preview') {
+        assert(
+          await evaluate(
+            'document.querySelector("dialog").classList.contains("artifact-lightbox")',
+          ),
+        );
+        await click('dialog button[aria-label="Zoom in"]');
+        await wait('document.querySelector(".artifact-lightbox-zoom-value").textContent==="125%"');
+        await click('dialog button[aria-label="Reset zoom"]');
+        await wait('document.querySelector(".artifact-lightbox-zoom-value").textContent==="100%"');
+        await click('dialog button[aria-label="Next artifact"]');
+        await wait('document.querySelector("dialog .artifact-image-preview")?.naturalWidth===600');
+        await wait(
+          'document.querySelector(".artifact-lightbox-heading > span").textContent==="2 / 2"',
+        );
+        await capture('artifact-lightbox-desktop');
+        await click('dialog button[aria-label="Previous artifact"]');
+        await wait('document.querySelector("dialog .artifact-image-preview")?.naturalWidth===320');
+        assert(
+          await evaluate(
+            `document.querySelector('dialog button[aria-label="Previous artifact"]').disabled`,
+          ),
+        );
+      }
       await click('dialog button[aria-label="Close dialog"]');
     }
     // Repeated references target the same slide; carousel controls and keyboard agree.
