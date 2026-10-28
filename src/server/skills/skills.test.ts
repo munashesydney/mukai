@@ -129,6 +129,32 @@ describe('skill bundles', () => {
 });
 
 describe('workspace skills', () => {
+  it.each([0, 3, 10, 13])(
+    'previews the first 10 enabled titles and counts the remainder for %i skills',
+    async (count) => {
+      const server = await setup();
+      const names = Array.from(
+        { length: count },
+        (_, index) => 'workflow-' + String(index).padStart(2, '0'),
+      );
+      for (const name of [...names].reverse()) server.skills.save('default', bundle(name));
+      const disabled = server.skills.save('default', bundle('disabled-workflow'));
+      server.skills.enable('default', disabled.id, false);
+
+      const context = server.skills.context('default', 'scout', 'bot-scout');
+      if (!count) {
+        expect(context).toBe('');
+        return;
+      }
+      expect(JSON.parse(context.split('\n')[1])).toEqual(names.slice(0, 10));
+      expect(context).toContain(`${Math.max(0, count - 10)} skills left.`);
+      expect(context).toContain('operation search');
+      expect(context).toContain('load a relevant skill by ID');
+      expect(context).not.toContain('disabled-workflow');
+      expect(context).not.toContain('Review code changes before merging.');
+    },
+  );
+
   it('creates, searches, updates with version checks, and isolates workspaces', async () => {
     const server = await setup();
     const created = await request('/skills', 'POST', bundle());
