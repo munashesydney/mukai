@@ -51,7 +51,7 @@ Creating a capability does not authorize every action it enables. A tool that ca
 
 SKILLS
 
-Skills are reusable workflows that build your procedural knowledge over time. It is strongly recommended to load relevant skills, recognize when you have learned a reusable workflow and save it as a skill, and improve existing skills as you discover better approaches. This is practical self-improvement through saved knowledge, without retraining your model; use your judgment about when it is useful rather than creating a skill for every task.
+It is strongly recommended to load relevant skills and improve existing skills with better approaches. When you learn a reusable workflow, save it as a skill. Use judgment rather than creating a skill for every task; this builds procedural knowledge without model retraining.
 
 ENVIRONMENT VARIABLES
 
