@@ -9,6 +9,7 @@ import type { Attachment, Bot, ChatMessage } from '../../shared/ai';
 import { WorkspaceRepository } from '../repositories/workspaceRepository';
 import { Database } from './database';
 import { seedTestBot } from '../testFixtures';
+import { ChatFollowupRepository } from '../repositories/chatFollowupRepository';
 
 let dir = '';
 afterEach(() => {
@@ -18,6 +19,33 @@ afterEach(() => {
   }
 });
 describe('Existing database upgrades', () => {
+  it('adds attachment ownership while preserving existing text follow-ups', () => {
+    dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
+    let database = new Database(dir);
+    seedTestBot(database);
+    new ChatFollowupRepository(database).enqueue(
+      'bot-scout',
+      'scout',
+      'legacy-followup',
+      'Existing correction',
+    );
+    database.db.exec('DROP TABLE followup_attachments');
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('CREATE TABLE followup_attachments')) + 1,
+    );
+    database.db.close();
+    database = new Database(dir);
+    try {
+      expect(new ChatFollowupRepository(database).list('bot-scout')).toMatchObject([
+        { id: 'legacy-followup', text: 'Existing correction', state: 'queued' },
+      ]);
+      expect(database.all('SELECT * FROM followup_attachments')).toEqual([]);
+      expect(database.all('PRAGMA foreign_key_check')).toEqual([]);
+    } finally {
+      database.db.close();
+    }
+  });
   it('adds background result tracking without changing existing delegation records', () => {
     dir = mkdtempSync(join(tmpdir(), 'mukai-upgrade-'));
     let database = new Database(dir);

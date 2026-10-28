@@ -173,7 +173,7 @@ export interface Attachment {
 }
 export type MessageStatus = 'complete' | 'streaming' | 'failed' | 'stopped' | 'interrupted';
 export type ResponsePart =
-  | { id: string; type: 'steering'; text: string; createdAt?: string }
+  | { id: string; type: 'steering'; text: string; createdAt?: string; attachments?: Attachment[] }
   | { id: string; type: 'text'; text: string; continuationOf?: string; final?: boolean }
   | { id: string; type: 'reasoning'; text: string; state?: 'streaming' | 'complete' }
   | {
@@ -243,9 +243,10 @@ export interface ChatFollowup {
   targetMessageId: string | null;
   createdAt: string;
   error: string | null;
+  attachments?: Attachment[];
 }
 export type FollowupAction =
-  | { action: 'edit'; id: string; text: string }
+  | { action: 'edit'; id: string; text: string; attachmentIds?: string[] }
   | { action: 'delete' | 'send'; id: string }
   | { action: 'steer'; id: string; expectedRequestId: string };
 export interface ProviderTestResult {

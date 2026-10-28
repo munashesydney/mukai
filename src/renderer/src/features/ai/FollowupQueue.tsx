@@ -2,10 +2,20 @@ import { useState } from 'react';
 import { CornerDownRight, ListPlus, Pencil, Trash2 } from 'lucide-react';
 import type { ChatState } from '../../models/chat';
 import { chatStore } from './chatStore';
+import { AttachmentCard } from './AttachmentCard';
+import { FollowupEditor } from './FollowupEditor';
+import type { InputCapabilities } from '../../../../shared/modelCapabilities';
 
-export function FollowupQueue({ chatId, state }: { chatId: string; state: ChatState }) {
+export function FollowupQueue({
+  chatId,
+  state,
+  capabilities,
+}: {
+  chatId: string;
+  state: ChatState;
+  capabilities?: InputCapabilities;
+}) {
   const [editing, setEditing] = useState<string | null>(null);
-  const [text, setText] = useState('');
   const active = [...state.messages]
     .reverse()
     .find((message) => message.role === 'assistant' && message.status === 'streaming');
@@ -16,41 +26,32 @@ export function FollowupQueue({ chatId, state }: { chatId: string; state: ChatSt
         <div className="followup-row" key={item.id}>
           <ListPlus size={15} className="followup-icon" />
           {editing === item.id ? (
-            <div className="followup-edit">
-              <textarea
-                aria-label="Edit queued message"
-                autoFocus
-                rows={2}
-                maxLength={16000}
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-              />
-              <div className="followup-edit-actions">
-                <button
-                  className="text-button"
-                  disabled={state.submittingFollowup || !text.trim()}
-                  onClick={async () => {
-                    if (
-                      await chatStore.followup(chatId, {
-                        action: 'edit',
-                        id: item.id,
-                        text: text.trim(),
-                      })
-                    )
-                      setEditing(null);
-                  }}
-                >
-                  Save
-                </button>
-                <button className="text-button" onClick={() => setEditing(null)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <FollowupEditor
+              key={item.id}
+              chatId={chatId}
+              item={item}
+              capabilities={
+                capabilities || {
+                  supportsImages: false,
+                  supportsAudio: false,
+                  supportsVideo: false,
+                }
+              }
+              allowAttachments={!!capabilities}
+              submitting={state.submittingFollowup}
+              onDone={() => setEditing(null)}
+            />
           ) : (
             <>
               <div className="followup-copy">
                 <p>{item.text}</p>
+                {!!item.attachments?.length && (
+                  <div className="ai-attachments">
+                    {item.attachments.map((file) => (
+                      <AttachmentCard key={file.id} attachment={file} />
+                    ))}
+                  </div>
+                )}
                 {item.state !== 'queued' && (
                   <span>
                     {item.state === 'steering'
@@ -93,7 +94,6 @@ export function FollowupQueue({ chatId, state }: { chatId: string; state: ChatSt
                     disabled={state.submittingFollowup}
                     onClick={() => {
                       setEditing(item.id);
-                      setText(item.text);
                     }}
                   >
                     <Pencil size={14} />

@@ -8,10 +8,15 @@ import { startApiServer } from './app';
 import { seedTestBot } from './testFixtures';
 import { ConversationRepository } from './repositories/conversationRepository';
 import { ChatFollowupRepository } from './repositories/chatFollowupRepository';
+import { ChatJobRepository } from './repositories/chatJobRepository';
 import type { ChatEvent, ChatMessage } from '../shared/ai';
+import type { Attachment } from '../shared/ai';
+import { wavFixture, mp3Fixture, mp4Fixture } from './testMediaFixtures';
+import sharp from 'sharp';
 
 type ProviderInput = {
   model: string;
+  tools?: { function: { name: string } }[];
   messages: {
     role: string;
     content: unknown;
@@ -47,6 +52,35 @@ async function queue(text: string, root = '/bots/scout') {
   const id = randomUUID();
   expect((await request(root + '/followups', 'POST', { id, text })).status).toBe(201);
   return id;
+}
+async function upload(name: string, bytes: Buffer, root = '/bots/scout') {
+  const response = await fetch(api.url + root + '/attachments', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + api.token, 'X-Filename': name },
+    body: new Uint8Array(bytes),
+  });
+  const file = (await response.json()) as Attachment;
+  expect(response.status, JSON.stringify(file)).toBe(201);
+  return file;
+}
+function mediaSupport(enabled: boolean) {
+  api.store.run(
+    'UPDATE providers SET models_json=?,supports_images=?,supports_audio=?,supports_video=?',
+    JSON.stringify([
+      {
+        id: 'test-chat',
+        name: 'Fixture',
+        contextWindowTokens: 262144,
+        maxOutputTokens: 4096,
+        supportsImages: enabled,
+        supportsAudio: enabled,
+        supportsVideo: enabled,
+      },
+    ]),
+    Number(enabled),
+    Number(enabled),
+    Number(enabled),
+  );
 }
 async function steer(id: string, expectedRequestId: string, root = '/bots/scout') {
   return request(root + '/followups', 'PUT', { action: 'steer', id, expectedRequestId });
@@ -526,4 +560,271 @@ it('recovers timestamps for steering saved before the message timestamp field ex
     text: 'Older saved correction',
     createdAt: timestamp,
   });
+});
+
+it.each(['txt', 'png', 'wav', 'mp3', 'mp4', 'mov'] as const)(
+  'delivers attachment-only %s steering, retains history and exposes the original to tools',
+  async (extension) => {
+    mediaSupport(true);
+    const bytes =
+      extension === 'png'
+        ? await sharp({ create: { width: 2, height: 2, channels: 3, background: '#0088cc' } })
+            .png()
+            .toBuffer()
+        : extension === 'wav'
+          ? wavFixture()
+          : extension === 'mp3'
+            ? mp3Fixture()
+            : extension === 'mp4' || extension === 'mov'
+              ? mp4Fixture()
+              : Buffer.from('Steering document contents');
+    const requestId = randomUUID();
+    const running = chat('Original task', requestId);
+    await waitFor(() => expect(held).toHaveLength(1));
+    const file = await upload('guidance.' + extension, bytes);
+    const id = randomUUID();
+    const queued = await request('/bots/scout/followups', 'POST', {
+      id,
+      text: '',
+      attachmentIds: [file.id],
+    });
+    expect(queued.status).toBe(201);
+    expect(queued.data[0].attachments).toMatchObject([{ id: file.id }]);
+    expect((await request('/bots/scout/attachments')).data).toEqual([]);
+    expect(() =>
+      api.conversationArtifacts.metadata('default', { attachmentId: file.id }),
+    ).toThrow();
+    mode = 'normal';
+    expect((await steer(id, requestId)).status).toBe(200);
+    await running;
+    expect(seen).toHaveLength(2);
+    const delivered = JSON.stringify(seen[1].messages);
+    expect(seen[0].tools?.some((tool) => tool.function.name === 'file_operations')).toBe(false);
+    expect(seen[1].tools?.some((tool) => tool.function.name === 'file_operations')).toBe(true);
+    expect(delivered).toContain(file.name);
+    expect(delivered).toContain(
+      extension === 'txt'
+        ? 'Steering document contents'
+        : extension === 'png'
+          ? 'image_url'
+          : extension === 'wav' || extension === 'mp3'
+            ? 'input_audio'
+            : 'video_url',
+    );
+    const part = (await history()).at(-1)?.parts?.find((part) => part.type === 'steering');
+    expect(part).toMatchObject({ id, text: '', attachments: [{ id: file.id }] });
+    expect(
+      (await api.conversationArtifacts.bytes('default', { attachmentId: file.id })).bytes,
+    ).toEqual(bytes);
+    expect((await request('/attachments/' + file.id, 'DELETE')).status).toBe(409);
+    await chat('Next task');
+    expect(JSON.stringify(seen.at(-1)?.messages)).toContain(file.name);
+    expect((await request('/bots/scout/attachments')).data).toEqual([]);
+  },
+);
+
+it('keeps independent attachment queues, rejects theft, and cleans edited and cancelled files', async () => {
+  const running = chat();
+  await waitFor(() => expect(held).toHaveLength(1));
+  const files = await Promise.all([
+    upload('a.txt', Buffer.from('First document')),
+    upload('b.txt', Buffer.from('Second document')),
+  ]);
+  const first = randomUUID();
+  const input = { id: first, text: '', attachmentIds: files.map((file) => file.id).reverse() };
+  expect((await request('/bots/scout/followups', 'POST', input)).status).toBe(201);
+  expect((await request('/bots/scout/followups', 'POST', input)).status).toBe(201);
+  expect(
+    (
+      await request('/bots/scout/followups', 'POST', {
+        ...input,
+        attachmentIds: files.map((file) => file.id),
+      })
+    ).status,
+  ).toBe(409);
+  expect(
+    (await request('/bots/scout/followups', 'POST', { ...input, id: randomUUID() })).status,
+  ).toBe(400);
+  expect((await request('/attachments/' + files[0].id, 'DELETE')).status).toBe(409);
+  expect(
+    (
+      await request('/bots/scout/followups', 'PUT', {
+        action: 'edit',
+        id: first,
+        text: '',
+        attachmentIds: [],
+      })
+    ).status,
+  ).toBe(400);
+  const nextFiles = [];
+  for (let i = 0; i < 4; i++)
+    nextFiles.push(await upload(`next-${i}.txt`, Buffer.from(`Next document ${i}`)));
+  const second = randomUUID();
+  expect(
+    (
+      await request('/bots/scout/followups', 'POST', {
+        id: second,
+        text: 'Next',
+        attachmentIds: nextFiles.map((file) => file.id),
+      })
+    ).status,
+  ).toBe(201);
+  const replacement = await upload('replacement.txt', Buffer.from('Replacement document'));
+  expect(
+    (
+      await request('/bots/scout/followups', 'PUT', {
+        action: 'edit',
+        id: first,
+        text: 'Revised',
+        attachmentIds: [files[1].id, replacement.id],
+      })
+    ).status,
+  ).toBe(200);
+  expect((await request('/attachments/' + files[0].id)).status).toBe(404);
+  expect(
+    (await request('/bots/scout/followups', 'PUT', { action: 'delete', id: second })).status,
+  ).toBe(200);
+  for (const file of nextFiles) expect((await request('/attachments/' + file.id)).status).toBe(404);
+  await request('/bots/scout/stop', 'POST');
+  await running;
+  mode = 'normal';
+  await request('/bots/scout/followups', 'PUT', { action: 'send', id: first });
+  await waitFor(async () => expect((await history()).at(-1)?.status).toBe('complete'));
+  expect(
+    (await history())
+      .find((message) => message.requestId === first && message.role === 'user')
+      ?.attachments.map((file) => file.id),
+  ).toEqual([files[1].id, replacement.id]);
+});
+
+it('validates capabilities and conversation ownership before claiming uploads or sending a waiting item', async () => {
+  const conversation = new ConversationRepository(api.store).createPrivate('default', 'scout');
+  const root = '/conversations/' + conversation.id;
+  const running = chat();
+  await waitFor(() => expect(held).toHaveLength(1));
+  const file = await upload('recording.wav', wavFixture());
+  const id = randomUUID();
+  const input = { id, text: '', attachmentIds: [file.id] };
+  expect((await request('/bots/scout/followups', 'POST', input)).status).toBe(400);
+  expect((await request(root + '/followups', 'POST', input)).status).toBe(400);
+  await request('/bots/scout/stop', 'POST');
+  await running;
+  mediaSupport(true);
+  expect((await request('/bots/scout/followups', 'POST', input)).status).toBe(201);
+  mediaSupport(false);
+  await request('/bots/scout/followups', 'PUT', { action: 'send', id });
+  await waitFor(async () =>
+    expect((await request('/bots/scout/followups')).data[0]).toMatchObject({
+      id,
+      state: 'queued',
+      error: expect.any(String),
+    }),
+  );
+  expect(await history()).toHaveLength(2);
+  expect((await request('/bots/scout/followups')).data[0].attachments[0].id).toBe(file.id);
+  mediaSupport(true);
+  mode = 'normal';
+  await request('/bots/scout/followups', 'PUT', { action: 'send', id });
+  await waitFor(async () => expect((await history()).at(-1)?.status).toBe('complete'));
+  expect(JSON.stringify(seen.at(-1)?.messages)).toContain('input_audio');
+});
+
+it('retains queued files across a restart and sends a late steer with its original attachment', async () => {
+  const requestId = randomUUID();
+  const running = chat('Original task', requestId);
+  await waitFor(() => expect(held).toHaveLength(1));
+  const file = await upload('restart.txt', Buffer.from('Durable attachment contents'));
+  const id = randomUUID();
+  await request('/bots/scout/followups', 'POST', { id, text: '', attachmentIds: [file.id] });
+  await request('/bots/scout/stop', 'POST');
+  await running;
+  await api.shutdown();
+  await close(api.server);
+  api.dispose();
+  api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+  expect((await request('/bots/scout/followups')).data[0].attachments).toMatchObject([
+    { id: file.id },
+  ]);
+  expect((await request('/bots/scout/attachments')).data).toEqual([]);
+  mode = 'normal';
+  expect((await steer(id, requestId)).status).toBe(200);
+  expect((await steer(id, requestId)).status).toBe(200);
+  await waitFor(async () => expect((await history()).at(-1)?.status).toBe('complete'));
+  expect(
+    (await history()).filter((message) => message.requestId === id && message.role === 'user'),
+  ).toHaveLength(1);
+  expect(JSON.stringify(seen.at(-1)?.messages)).toContain('Durable attachment contents');
+});
+
+it('restores attachment steering by its checkpoint identity after stopping and restarting the active task', async () => {
+  const requestId = randomUUID();
+  const running = chat('Original task', requestId);
+  await waitFor(() => expect(held).toHaveLength(1));
+  const file = await upload('resume.txt', Buffer.from('Resume this attachment exactly once'));
+  const id = randomUUID();
+  await request('/bots/scout/followups', 'POST', { id, text: '', attachmentIds: [file.id] });
+  await steer(id, requestId);
+  await waitFor(() => expect(held).toHaveLength(2));
+  const secondFile = await upload(
+    'resume-second.txt',
+    Buffer.from('Second attachment-only correction'),
+  );
+  const secondId = randomUUID();
+  await request('/bots/scout/followups', 'POST', {
+    id: secondId,
+    text: '',
+    attachmentIds: [secondFile.id],
+  });
+  await steer(secondId, requestId);
+  await waitFor(() => expect(held).toHaveLength(3));
+  const assistantId = (await history()).at(-1)!.id;
+  const fingerprint = api.store.get(
+    'SELECT fingerprint FROM chat_jobs WHERE message_id=?',
+    assistantId,
+  )?.fingerprint;
+  const saved = JSON.parse(
+    String(
+      api.store.get('SELECT checkpoint_json FROM chat_jobs WHERE message_id=?', assistantId)
+        ?.checkpoint_json,
+    ),
+  );
+  expect(saved.steeringRequests).toEqual([
+    { id, messageIndex: expect.any(Number) },
+    { id: secondId, messageIndex: expect.any(Number) },
+  ]);
+  expect(saved.steeringRequests[0].messageIndex).not.toBe(saved.steeringRequests[1].messageIndex);
+  expect(JSON.stringify(saved.messages[saved.steeringRequests[0].messageIndex])).toContain(file.id);
+  await request('/bots/scout/stop', 'POST');
+  await running;
+  await api.shutdown();
+  await close(api.server);
+  api.dispose();
+  api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+  mode = 'normal';
+  const resumedCheckpoint = vi.spyOn(ChatJobRepository.prototype, 'read');
+  await chat('Original task', requestId);
+  expect(resumedCheckpoint).toHaveBeenCalledWith(assistantId, fingerprint, false);
+  expect(resumedCheckpoint.mock.results[0].value).toMatchObject({
+    steeringRequests: saved.steeringRequests,
+  });
+  const requests = seen
+    .at(-1)!
+    .messages.filter(
+      (message) =>
+        message.role === 'user' &&
+        JSON.stringify(message.content).includes('Resume this attachment exactly once'),
+    );
+  expect(requests).toHaveLength(1);
+  expect(
+    seen
+      .at(-1)!
+      .messages.filter(
+        (message) =>
+          message.role === 'user' &&
+          JSON.stringify(message.content).includes('Second attachment-only correction'),
+      ),
+  ).toHaveLength(1);
+  expect(
+    (await history()).at(-1)?.parts?.filter((part) => part.type === 'steering' && part.id === id),
+  ).toHaveLength(1);
 });

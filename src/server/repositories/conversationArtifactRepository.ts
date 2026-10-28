@@ -14,6 +14,13 @@ const sources = `SELECT a.id,'attachment' AS source,a.name,NULL AS path,
   a.message_id,m.conversation_id,a.bot_id,m.created_at
   FROM attachments a JOIN messages m ON m.id=a.message_id
   UNION ALL
+  SELECT a.id,'attachment' AS source,a.name,NULL AS path,
+  CASE WHEN a.kind='image' THEN 'image' ELSE 'file' END AS kind,a.media_type,a.size,
+  'upload-storage' AS location,'recorded' AS metadata_status,
+  f.target_message_id,f.conversation_id,a.bot_id,f.created_at
+  FROM attachments a JOIN followup_attachments fa ON fa.attachment_id=a.id
+  JOIN chat_followups f ON f.id=fa.followup_id WHERE f.state='applied' AND a.message_id IS NULL
+  UNION ALL
   SELECT a.id,'artifact' AS source,a.name,CASE WHEN a.kind='image' THEN NULL ELSE a.path END AS path,
   CASE WHEN ${generatedMediaType} LIKE 'image/%' THEN 'image' ELSE 'file' END AS kind,
   ${generatedMediaType} AS media_type,a.size,
@@ -48,9 +55,9 @@ export class ConversationArtifactRepository {
   hasAttachments(workspaceId: string) {
     return Boolean(
       this.database.get(
-        `SELECT a.id FROM attachments a
-      JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id
-      WHERE c.workspace_id=? LIMIT 1`,
+        `SELECT a.id FROM (${sources}) a
+      JOIN conversations c ON c.id=a.conversation_id
+      WHERE c.workspace_id=? AND a.source='attachment' LIMIT 1`,
         workspaceId,
       ),
     );

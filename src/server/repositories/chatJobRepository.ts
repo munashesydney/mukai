@@ -4,6 +4,7 @@ import type { Database } from '../db/database';
 
 export interface ChatCheckpoint {
   messages: ModelMessage[];
+  steeringRequests?: { id: string; messageIndex: number }[];
   usage: ContextUsage;
   steps: number;
   emptyReplyRecoveries?: number;

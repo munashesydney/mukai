@@ -50,9 +50,32 @@ import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
 import type { UpdateController } from '../../shared/updates';
 
-const followupText = z.string().trim().min(1).max(16000);
+const followupText = z.string().trim().max(16000);
+const followupAttachments = z
+  .array(z.string().uuid())
+  .max(4)
+  .refine((ids) => new Set(ids).size === ids.length, 'Attach different files.');
+const followupInputSchema = z
+  .object({
+    id: z.string().uuid(),
+    text: followupText,
+    attachmentIds: followupAttachments.default([]),
+    botId: z.string().optional(),
+  })
+  .strict()
+  .refine(
+    (input) => !!input.text || !!input.attachmentIds.length,
+    'Write a message or attach a file.',
+  );
 const followupActionSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('edit'), id: z.string().uuid(), text: followupText }).strict(),
+  z
+    .object({
+      action: z.literal('edit'),
+      id: z.string().uuid(),
+      text: followupText,
+      attachmentIds: followupAttachments.optional(),
+    })
+    .strict(),
   z.object({ action: z.enum(['delete', 'send']), id: z.string().uuid() }).strict(),
   z
     .object({
@@ -621,10 +644,7 @@ export function createRoutes({
               chats.updateFollowup(id, followupActionSchema.parse(await jsonBody(request))),
             );
           if (method === 'POST') {
-            const input = z
-              .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
-              .strict()
-              .parse(await jsonBody(request));
+            const input = followupInputSchema.parse(await jsonBody(request));
             const bot =
               conversation.kind === 'private' || conversation.kind === 'bot'
                 ? conversations.userChatBot(id)
@@ -634,7 +654,11 @@ export function createRoutes({
               bot.workspaceId !== conversation.workspaceId
             )
               throw new ApiError(400, 'Choose a bot from this conversation.');
-            return send(response, chats.enqueueFollowup(id, bot, input.id, input.text), 201);
+            return send(
+              response,
+              chats.enqueueFollowup(id, bot, input.id, input.text, input.attachmentIds),
+              201,
+            );
           }
           throw new ApiError(405, 'Method not allowed.');
         }
@@ -893,13 +917,10 @@ export function createRoutes({
         const conversationId = 'bot-' + bot.id;
         if (method === 'GET') return send(response, chats.listFollowups(conversationId));
         if (method === 'POST') {
-          const input = z
-            .object({ id: z.string().uuid(), text: followupText, botId: z.string().optional() })
-            .strict()
-            .parse(await jsonBody(request));
+          const input = followupInputSchema.parse(await jsonBody(request));
           return send(
             response,
-            chats.enqueueFollowup(conversationId, bot, input.id, input.text),
+            chats.enqueueFollowup(conversationId, bot, input.id, input.text, input.attachmentIds),
             201,
           );
         }

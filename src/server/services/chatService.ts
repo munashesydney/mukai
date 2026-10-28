@@ -24,6 +24,7 @@ import type {
   ContextUsage,
   ChatMessage,
   FollowupAction,
+  ChatFollowup,
 } from '../../shared/ai';
 import {
   appendResponseText,
@@ -90,6 +91,7 @@ import {
 
 interface Generation {
   botId: string;
+  inputs: InputCapabilities;
   controller: AbortController;
   content: string;
   reasoning: string;
@@ -160,10 +162,27 @@ export class ChatService {
     const event: ChatEvent = { type: 'followups', followups: this.listFollowups(conversationId) };
     for (const output of this.active.get(conversationId)?.outputs || []) output.emit(event);
   }
-  enqueueFollowup(conversationId: string, bot: BotRecord, id: string, text: string) {
+  enqueueFollowup(
+    conversationId: string,
+    bot: BotRecord,
+    id: string,
+    text: string,
+    attachmentIds: string[] = [],
+  ) {
     if (!this.followups || this.closing || this.deletingWorkspaces.has(bot.workspaceId))
       throw new ApiError(409, 'This chat cannot accept follow-ups right now.');
-    this.followups.enqueue(conversationId, String(bot.id), id, text);
+    if (!text.trim() && !attachmentIds.length)
+      throw new ApiError(400, 'Write a message or attach a file.');
+    if (!this.followups.exists(id) && this.messages.forRequest(conversationId, id, 'user'))
+      throw new ApiError(409, 'This request ID already belongs to a sent message.');
+    if (!this.followups.exists(id) && attachmentIds.length)
+      this.attachments.select(
+        attachmentIds,
+        String(bot.id),
+        this.active.get(conversationId)?.inputs || this.providers.resolve(bot),
+        conversationId,
+      );
+    this.followups.enqueue(conversationId, String(bot.id), id, text, attachmentIds);
     this.publishFollowups(conversationId);
     // A response may finish between the UI's send and this request.
     if (!this.active.has(conversationId) && !this.suspended(conversationId))
@@ -179,8 +198,18 @@ export class ChatService {
       return this.listFollowups(conversationId);
     if (!['queued', 'steering'].includes(item.state))
       throw new ApiError(409, 'This follow-up has already been delivered.');
-    if (value.action === 'edit') this.followups.edit(conversationId, value.id, value.text);
-    else if (value.action === 'delete') this.followups.state(conversationId, value.id, 'cancelled');
+    if (value.action === 'edit') {
+      const ids = value.attachmentIds ?? (item.attachments || []).map((file) => file.id);
+      if (!value.text.trim() && !ids.length)
+        throw new ApiError(400, 'Write a message or attach a file.');
+      if (ids.length) this.validateFollowupFiles(item, ids);
+      this.followups
+        .edit(conversationId, value.id, value.text, value.attachmentIds)
+        .forEach((name) => this.attachments.removeFile(name));
+    } else if (value.action === 'delete')
+      this.followups
+        .cancel(conversationId, value.id)
+        .forEach((name) => this.attachments.removeFile(name));
     else if (value.action === 'steer') {
       const generation = this.active.get(conversationId);
       if (
@@ -189,6 +218,7 @@ export class ChatService {
       )
         throw new ApiError(409, 'The active response changed. This message is still queued.');
       if (generation && !generation.finalizing && !generation.controller.signal.aborted) {
+        this.validateFollowupFiles(item);
         this.followups.state(conversationId, value.id, 'steering', generation.assistantId);
         generation.interruptProvider?.();
         generation.wake?.();
@@ -208,6 +238,36 @@ export class ChatService {
     }
     this.publishFollowups(conversationId);
     return this.listFollowups(conversationId);
+  }
+  private validateFollowupFiles(
+    item: ChatFollowup,
+    ids = (item.attachments || []).map((file) => file.id),
+  ) {
+    if (!ids.length) return;
+    const bot = this.requireFollowupBot?.(item.botId);
+    if (!bot) throw new ApiError(409, 'Follow-up bot is unavailable.');
+    this.attachments.select(
+      ids,
+      item.botId,
+      this.active.get(item.conversationId)?.inputs || this.providers.resolve(bot),
+      item.conversationId,
+      item.id,
+    );
+  }
+  private followupContext(
+    item: ChatFollowup,
+    inputs: InputCapabilities,
+    botThread: boolean,
+  ): ModelMessage {
+    const text = (botThread ? '[Human user] ' : '') + item.text;
+    const files = this.attachments.forFollowup(item.id);
+    if (!files.length) return { role: 'user', content: text };
+    const content: Exclude<UserContent, string> = [
+      { type: 'text', text: text || 'Please review the attached files.' },
+    ];
+    for (const file of files)
+      content.push(...attachmentContext(file, inputs, () => this.attachments.bytes(file)));
+    return { role: 'user', content };
   }
   private async drainFollowups(conversationId: string, explicit = false, selectedId?: string) {
     if (
@@ -241,7 +301,12 @@ export class ChatService {
           this.followups.state(conversationId, item.id, 'sending');
           await this.respond(
             bot,
-            { requestId: item.id, text: item.text, attachmentIds: [] },
+            {
+              requestId: item.id,
+              text: item.text,
+              attachmentIds: (item.attachments || []).map((file) => file.id),
+              followupId: item.id,
+            },
             {
               start() {},
               end() {},
@@ -455,10 +520,9 @@ export class ChatService {
     const context: ModelMessage[] = rows.flatMap((row): ModelMessage[] => {
       if (row.role === 'assistant' || (botChat && row.botId === botId))
         return [
-          ...(this.followups?.forMessage(String(row.id), 'applied') || []).map((item) => ({
-            role: 'user' as const,
-            content: (botChat ? '[Human user] ' : '') + item.text,
-          })),
+          ...(this.followups?.forMessage(String(row.id), 'applied') || []).map((item) =>
+            this.followupContext(item, capabilities, botChat),
+          ),
           {
             role: row.botId === botId ? ('assistant' as const) : ('user' as const),
             content:
@@ -513,7 +577,7 @@ export class ChatService {
   }
   async respond(
     bot: BotRecord,
-    value: ChatInput & { source?: 'telegram' },
+    value: ChatInput & { source?: 'telegram'; followupId?: string },
     output: ChatOutput,
     conversationId = 'bot-' + bot.id,
     runtime?: {
@@ -594,7 +658,13 @@ export class ChatService {
     } else {
       if (!value.text && !value.attachmentIds.length)
         throw new ApiError(400, 'Write a message or attach a file.');
-      const files = this.attachments.select(value.attachmentIds, botId, config, conversationId);
+      const files = this.attachments.select(
+        value.attachmentIds,
+        botId,
+        config,
+        conversationId,
+        value.followupId,
+      );
       userId = randomUUID();
       assistantId = randomUUID();
       this.messages.createTurn({
@@ -615,6 +685,7 @@ export class ChatService {
     const botThread = this.messages.botConversation(conversationId);
     const generation: Generation = {
       botId,
+      inputs: config,
       controller: new AbortController(),
       content: recoveringStep ? retryMessage?.content || '' : '',
       reasoning: recoveringStep ? retryMessage?.reasoning || '' : '',
@@ -780,9 +851,17 @@ export class ChatService {
               },
             );
           },
+          true,
         ),
         ...runtime?.tools,
       };
+      // Keep one tool context/budget ready for the first upload arriving mid-run.
+      // Its schema enters the model context only when saved attachments exist.
+      const pendingFileOperations =
+        !runtime?.tools.file_operations && !this.tools.fileOperationsReady(bot.workspaceId)
+          ? tools.file_operations
+          : undefined;
+      if (pendingFileOperations) delete tools.file_operations;
       const decidingCustomCalls = new Set<string>();
       tools.confirm_custom_tool = tool({
         description:
@@ -972,7 +1051,12 @@ export class ChatService {
             video: config.supportsVideo,
             contextWindow: config.contextWindow,
             output: config.maxOutputTokens,
-            schemas: await toolDefinitions(tools),
+            schemas: (
+              await toolDefinitions({
+                ...tools,
+                ...(pendingFileOperations ? { file_operations: pendingFileOperations } : {}),
+              })
+            ).sort((left, right) => left.name.localeCompare(right.name)),
             runtime: runtime?.system,
           }),
         )
@@ -1004,6 +1088,7 @@ export class ChatService {
         existingUser && (!runtime || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
           : undefined;
+      const steeringRequests = new Map<string, ModelMessage>();
       if (existingUser && this.jobs.backgroundDelegations(assistantId).length && !checkpoint)
         throw new ChatCheckpointError(
           'The tools or model changed while delegated bots were running. Retry to review saved work.',
@@ -1059,12 +1144,15 @@ export class ChatService {
       }
       if (!checkpoint) {
         for (const item of this.followups?.forMessage(assistantId, 'applied') || []) {
-          messages.push({ role: 'user', content: (botThread ? '[Human user] ' : '') + item.text });
+          const message = this.followupContext(item, config, botThread);
+          messages.push(message);
+          steeringRequests.set(item.id, message);
           generation.parts = upsertResponsePart(generation.parts, {
             id: item.id,
             type: 'steering',
             text: item.text,
             createdAt: item.createdAt,
+            attachments: item.attachments,
           });
         }
         save();
@@ -1110,17 +1198,25 @@ export class ChatService {
         chatOutputReserve(config) - config.maxOutputTokens,
       );
       manager.compactions = usage.compactions;
-      const appliedTexts = new Set(
-        (this.followups?.forMessage(assistantId, 'applied') || []).map(
-          (item) => (botThread ? '[Human user] ' : '') + item.text,
-        ),
-      );
-      const pinnedRequests = messages.filter(
-        (message) =>
-          message.role === 'user' &&
-          typeof message.content === 'string' &&
-          appliedTexts.has(message.content),
-      );
+      if (checkpoint) {
+        const applied = this.followups?.forMessage(assistantId, 'applied') || [];
+        for (const saved of checkpoint.steeringRequests || []) {
+          const message = messages[saved.messageIndex];
+          if (message?.role === 'user' && applied.some((item) => item.id === saved.id))
+            steeringRequests.set(saved.id, message);
+        }
+        // Older checkpoints only contain text steering, without identity metadata.
+        if (!checkpoint.steeringRequests) {
+          const available = messages.filter((message) => message.role === 'user');
+          for (const item of applied) {
+            const index = available.findIndex(
+              (message) => message.content === (botThread ? '[Human user] ' : '') + item.text,
+            );
+            if (index >= 0) steeringRequests.set(item.id, available.splice(index, 1)[0]);
+          }
+        }
+      }
+      const pinnedRequests = [...steeringRequests.values()];
       // Preserve the original task as well as subsequent corrections through compaction.
       const originalRequest = [...messages]
         .reverse()
@@ -1138,7 +1234,12 @@ export class ChatService {
         if (!fallback.count) return false;
         for (let index = 0; index < pinnedRequests.length; index++) {
           const position = messages.indexOf(pinnedRequests[index]);
-          if (position >= 0) pinnedRequests[index] = fallback.messages[position];
+          if (position >= 0) {
+            for (const [id, request] of steeringRequests)
+              if (request === pinnedRequests[index])
+                steeringRequests.set(id, fallback.messages[position]);
+            pinnedRequests[index] = fallback.messages[position];
+          }
         }
         manager.pinRequests(pinnedRequests);
         messages = fallback.messages;
@@ -1157,6 +1258,10 @@ export class ChatService {
         diagnosticPhase = 'checkpoint';
         this.jobs.save(assistantId, fingerprint, {
           messages,
+          steeringRequests: [...steeringRequests].map(([id, message]) => ({
+            id,
+            messageIndex: messages.indexOf(message),
+          })),
           usage,
           steps: stepsUsed,
           emptyReplyRecoveries,
@@ -1575,18 +1680,18 @@ export class ChatService {
       const applySteering = () => {
         const items = this.followups?.forMessage(assistantId, 'steering') || [];
         if (!items.length) return false;
+        if (items.some((item) => item.attachments?.length)) mediaRecoveryUsed = false;
         for (const item of items) {
-          const message: ModelMessage = {
-            role: 'user',
-            content: (botThread ? '[Human user] ' : '') + item.text,
-          };
+          const message = this.followupContext(item, config, botThread);
           messages.push(message);
           pinnedRequests.push(message);
+          steeringRequests.set(item.id, message);
           generation.parts = upsertResponsePart(generation.parts, {
             id: item.id,
             type: 'steering',
             text: item.text,
             createdAt: item.createdAt,
+            attachments: item.attachments,
           });
         }
         manager.pinRequests(pinnedRequests);
@@ -1605,7 +1710,13 @@ export class ChatService {
           emit({
             type: 'part',
             id: assistantId,
-            part: { id: item.id, type: 'steering', text: item.text, createdAt: item.createdAt },
+            part: {
+              id: item.id,
+              type: 'steering',
+              text: item.text,
+              createdAt: item.createdAt,
+              attachments: item.attachments,
+            },
           });
         this.publishFollowups(conversationId);
         return true;
@@ -1727,6 +1838,12 @@ export class ChatService {
         }
         applySteering();
         collectDelegatedResults();
+        if (
+          pendingFileOperations &&
+          !tools.file_operations &&
+          this.tools.fileOperationsReady(bot.workspaceId)
+        )
+          guardTool('file_operations', pendingFileOperations);
         // Registration can change within this turn. Refresh only custom tools, keeping
         // built-in tool contexts, call budgets, and checkpoint guards intact.
         for (const name of customNames) delete tools[name];

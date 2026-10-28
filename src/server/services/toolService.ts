@@ -288,6 +288,14 @@ export class ToolService {
           : undefined,
     };
   }
+  fileOperationsReady(workspaceId: string) {
+    const workspace = this.workspaces.require(workspaceId);
+    return (
+      workspace.computer === 'qemu' ||
+      !!workspace.folder ||
+      !!this.conversationArtifacts?.hasAttachments(workspaceId)
+    );
+  }
   forBot(
     bot: Bot,
     messageId: string,
@@ -297,6 +305,7 @@ export class ToolService {
     resultBytes?: number,
     skillContextBytes?: number,
     ask?: AskHandler,
+    futureAttachments = false,
   ) {
     const capabilities =
       typeof inputs === 'boolean'
@@ -422,7 +431,9 @@ export class ToolService {
                 this.artifacts.recordScreenshot(bot.id, messageId, image, signal),
             })),
         ...(workspace.computer !== 'qemu' &&
-        (workspace.folder || this.conversationArtifacts?.hasAttachments(bot.workspaceId))
+        (workspace.folder ||
+          futureAttachments ||
+          this.conversationArtifacts?.hasAttachments(bot.workspaceId))
           ? toolsForBot({
               botId: bot.id,
               signal,

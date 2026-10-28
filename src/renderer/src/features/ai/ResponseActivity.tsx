@@ -19,6 +19,7 @@ import {
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
 import { MessageMarkdown } from './MessageMarkdown';
+import { AttachmentCard } from './AttachmentCard';
 import { ToolImagePreview } from './ToolImagePreview';
 import { ResponseReferenceContext } from './responseReferenceContext';
 import { TerminalCard } from './TerminalCard';
@@ -395,6 +396,13 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
             <div key={part.id} className="response-steering">
               <span>You steered this task</span>
               <p>{part.text}</p>
+              {!!part.attachments?.length && (
+                <div className="ai-attachments">
+                  {part.attachments.map((file) => (
+                    <AttachmentCard key={file.id} attachment={file} />
+                  ))}
+                </div>
+              )}
             </div>
           );
         if (part.type === 'text')

@@ -9,6 +9,8 @@ import react from '@vitejs/plugin-react';
 import { startApiServer } from '../src/server/app';
 import { seedTestBot } from '../src/server/testFixtures';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
+import { wavFixture, mp4Fixture } from '../src/server/testMediaFixtures';
+import sharp from 'sharp';
 
 async function close(server: Server) {
   server.closeAllConnections();
@@ -85,12 +87,14 @@ async function main() {
           {
             id: 'fixture',
             name: 'UI fixture',
-            contextWindowTokens: 32768,
+            contextWindowTokens: 262144,
             maxOutputTokens: 4096,
-            supportsImages: false,
+            supportsImages: true,
+            supportsAudio: true,
+            supportsVideo: true,
           },
         ],
-        supportsImages: false,
+        supportsImages: true,
         isDefault: true,
       }),
     });
@@ -120,7 +124,7 @@ async function main() {
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await page.getByRole('button', { name: 'Stop generation', exact: true }).waitFor();
     const liveWork = page.locator('.response-work > summary');
-    await liveWork.filter({ hasText: 'Working for' }).waitFor();
+    await liveWork.filter({ hasText: /(?:Thinking|Responding) for/ }).waitFor();
     const initialDuration = await liveWork.innerText();
     await page.waitForFunction(
       (initial) => document.querySelector('.response-work > summary')?.textContent !== initial,
@@ -133,19 +137,65 @@ async function main() {
       () => !document.querySelector('.response-work')?.hasAttribute('open'),
     );
     assert.equal(await composer.isEnabled(), true);
+    assert.equal(
+      await page.getByRole('button', { name: 'Attach images or files', exact: true }).isEnabled(),
+      true,
+    );
+    const png = await sharp({
+      create: { width: 24, height: 16, channels: 3, background: '#0088cc' },
+    })
+      .png()
+      .toBuffer();
+    await page.getByLabel('Upload chat attachments').setInputFiles([
+      {
+        name: 'guidance.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('Original reference document'),
+      },
+      { name: 'layout.png', mimeType: 'image/png', buffer: png },
+      { name: 'recording.wav', mimeType: 'audio/wav', buffer: wavFixture() },
+      { name: 'clip.mp4', mimeType: 'video/mp4', buffer: mp4Fixture() },
+    ]);
+    await page.waitForFunction(
+      () => document.querySelectorAll('.ai-pending-attachments .ai-attachment').length === 4,
+    );
     await composer.fill('Focus on the mobile layout.');
     await page.getByRole('button', { name: 'Queue follow-up', exact: true }).click();
     await page.getByRole('button', { name: 'Steer', exact: true }).waitFor();
+    assert.equal(await page.locator('.followup-row .ai-attachment').count(), 4);
+    assert.equal(await page.locator('.ai-pending-attachments .ai-attachment').count(), 0);
     await page.getByRole('button', { name: 'Edit queued message', exact: true }).click();
     await page
       .getByRole('textbox', { name: 'Edit queued message' })
       .fill('Use the mobile layout and keep the API stable.');
+    await page.getByRole('button', { name: 'Remove guidance.txt', exact: true }).click();
+    await page.getByLabel('Attach files to queued message').setInputFiles({
+      name: 'revised.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Revised reference document'),
+    });
+    await page.getByRole('button', { name: 'Download revised.txt', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await page
       .locator('.followup-copy')
       .filter({ hasText: 'Use the mobile layout and keep the API stable.' })
       .waitFor();
-    await composer.fill('Then summarize the changes.');
+    await page.getByRole('button', { name: 'Edit queued message', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove revised.txt', exact: true }).click();
+    await page.getByLabel('Attach files to queued message').setInputFiles({
+      name: 'cancelled.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Cancelled editor upload'),
+    });
+    await page.getByRole('button', { name: 'Download cancelled.txt', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Download revised.txt', exact: true }).waitFor();
+    await page.getByLabel('Upload chat attachments').setInputFiles({
+      name: 'discard.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Then summarize the changes.'),
+    });
+    await page.getByRole('button', { name: 'Download discard.txt', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Queue follow-up', exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll('.followup-row').length === 2);
     mkdirSync(resolve('artifacts'), { recursive: true });
@@ -191,7 +241,10 @@ async function main() {
     assert(contrast >= 4.5, `Steer needs readable contrast in dark mode (measured ${contrast}).`);
     await page.reload();
     await page.waitForFunction(() => document.querySelectorAll('.followup-row').length === 2);
-    await page.locator('.response-work > summary').filter({ hasText: 'Working for' }).waitFor();
+    await page
+      .locator('.response-work > summary')
+      .filter({ hasText: /(?:Thinking|Responding) for/ })
+      .waitFor();
     assert.equal(await page.locator('.response-work').getAttribute('open'), '');
     await page.locator('.response-work > summary').click();
     await page.waitForFunction(
@@ -205,10 +258,16 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('.followup-queue'));
     assert(inputs.at(-1)!.includes('Use the mobile layout and keep the API stable.'));
     assert(!inputs.at(-1)!.includes('Then summarize the changes.'));
+    assert(inputs.at(-1)!.includes('Revised reference document'));
+    assert(inputs.at(-1)!.includes('image_url'));
+    assert(inputs.at(-1)!.includes('input_audio'));
+    assert(inputs.at(-1)!.includes('video_url'));
+    assert(!inputs.at(-1)!.includes('Cancelled editor upload'));
     assert.equal(inputs.length, 2);
     const userSteer = page.locator('.ai-message--steering');
     await userSteer.waitFor();
-    assert.equal(await userSteer.locator('strong').innerText(), 'You');
+    assert.equal(await userSteer.locator('.ai-attachment').count(), 4);
+    assert.equal(await userSteer.locator('.ai-message-meta > strong').innerText(), 'You');
     const timestamp = api.store.get(
       "SELECT created_at FROM chat_followups WHERE state='applied'",
     )?.created_at;
@@ -225,6 +284,7 @@ async function main() {
     assert.match(await worked.innerText(), /^Worked for /);
     await worked.click();
     await page.locator('.response-steering').waitFor();
+    assert.equal(await page.locator('.response-steering .ai-attachment').count(), 4);
     await page.waitForFunction(() => !document.querySelector('.ai-message--steering'));
     await page.screenshot({ path: resolve('artifacts/steering-applied.png') });
     await worked.click();
@@ -235,7 +295,7 @@ async function main() {
     assert.equal(await userSteer.locator('time').getAttribute('datetime'), timestamp);
     assert.deepEqual(errors, []);
     console.log(
-      'Steering UI smoke passed: live timer and expandable steps, queue, edit, refresh, delete, steer, collapsed user messages and expanded history.',
+      'Steering UI smoke passed: upload while working, all media types, attachment-only queueing, attachment editing/cancellation, refresh, delete, steer, collapsed user messages and expanded history.',
     );
   } finally {
     await browser.close();

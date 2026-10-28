@@ -100,9 +100,7 @@ export class ConversationArtifactService {
     signal?.throwIfAborted();
     const metadata = this.metadata(workspaceId, input);
     if (metadata.source === 'attachment') {
-      const file = this.attachments
-        .forMessage(metadata.messageId)
-        .find((item) => item.id === metadata.id)!;
+      const file = this.attachments.record(metadata.id);
       try {
         return { metadata, bytes: this.attachments.bytes(file) };
       } catch (error) {
@@ -155,9 +153,7 @@ export class ConversationArtifactService {
     let content: string;
     let warning: string | null = null;
     if (metadata.source === 'attachment') {
-      const file = this.attachments
-        .forMessage(metadata.messageId)
-        .find((item) => item.id === metadata.id)!;
+      const file = this.attachments.record(metadata.id);
       if (file.kind === 'audio' || file.kind === 'video')
         throw new ToolFeedbackError(
           'media_requires_capable_model',

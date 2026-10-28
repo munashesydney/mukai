@@ -79,6 +79,9 @@ export class AttachmentService {
   forMessage(id: string) {
     return this.attachments.forMessage(id);
   }
+  forFollowup(id: string) {
+    return this.attachments.forFollowup(id);
+  }
   pending(conversationId: string) {
     return this.attachments.pending(conversationId).map(publicAttachment);
   }
@@ -202,6 +205,7 @@ export class AttachmentService {
     botId: string,
     capabilities: InputCapabilities | boolean,
     conversationId = 'bot-' + botId,
+    followupId?: string,
   ) {
     if (ids.length > ATTACHMENT_LIMIT || new Set(ids).size !== ids.length)
       throw new ApiError(400, 'Attach up to four different files.');
@@ -211,7 +215,9 @@ export class AttachmentService {
         !row ||
         row.botId !== botId ||
         row.conversationId !== conversationId ||
-        row.messageId !== null
+        row.messageId !== null ||
+        (this.attachments.followupOwner(id) !== undefined &&
+          this.attachments.followupOwner(id) !== followupId)
       )
         throw new ApiError(400, 'An attachment is missing or already sent. Upload it again.');
       const inputs =
@@ -228,15 +234,21 @@ export class AttachmentService {
       return row;
     });
   }
-  read(id: string) {
+  record(id: string) {
     const row = this.attachments.find(id);
     if (!row) throw new ApiError(404, 'Attachment not found.');
+    return row;
+  }
+  read(id: string) {
+    const row = this.record(id);
     return { row, bytes: this.bytes(row) };
   }
   remove(id: string) {
     const row = this.attachments.find(id);
     if (!row) throw new ApiError(404, 'Attachment not found.');
     if (row.messageId) throw new ApiError(409, 'Sent attachments are part of the chat history.');
+    if (this.attachments.followupOwner(id))
+      throw new ApiError(409, 'Edit or delete the queued message to remove its attachments.');
     this.attachments.delete(id);
     this.removeFile(String(row.storageName));
   }

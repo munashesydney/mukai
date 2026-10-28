@@ -446,6 +446,11 @@ export const migrations = [
   `ALTER TABLE bot_delegations ADD COLUMN mode TEXT NOT NULL DEFAULT 'wait' CHECK(mode IN ('wait','fire_and_forget'));
    ALTER TABLE bot_delegations ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1));
    ALTER TABLE bot_delegations ADD COLUMN result_json TEXT;`,
+  `CREATE TABLE followup_attachments (
+    followup_id TEXT NOT NULL REFERENCES chat_followups(id) ON DELETE CASCADE,
+    attachment_id TEXT NOT NULL UNIQUE REFERENCES attachments(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY(followup_id,position));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

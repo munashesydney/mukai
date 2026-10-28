@@ -2720,6 +2720,33 @@ video.artifact-media-preview {
   flex: 1;
   min-width: 0;
 }
+.followup-queue .ai-attachments {
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.followup-queue .ai-attachment {
+  width: 240px;
+}
+.followup-queue .ai-attachment--image {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  padding-left: 6px;
+}
+.followup-queue .ai-attachment > img,
+.followup-queue .attachment-preview-loading {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+.followup-queue .attachment-card-info {
+  padding: 8px;
+  min-width: 0;
+}
+.followup-queue .attachment-warning {
+  grid-column: 1 / -1;
+}
 .followup-copy p {
   margin: 0;
   font-size: 13px;

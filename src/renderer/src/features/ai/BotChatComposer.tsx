@@ -65,7 +65,7 @@ export function BotChatComposer({
   }
   return (
     <div className="composer-area ai-composer-area">
-      <FollowupQueue chatId={chatId} state={state} />
+      <FollowupQueue chatId={chatId} state={state} capabilities={capabilities} />
       <ToolApprovalCards conversationId={conversationId} />
       {newChatError && (
         <p className="ai-alert" role="alert">
@@ -100,7 +100,7 @@ export function BotChatComposer({
                   key={file.id}
                   attachment={file}
                   onRemove={
-                    !state.busy && !state.uploading
+                    !state.submittingFollowup && !state.uploading
                       ? () => void chatStore.removeFile(chatId, file.id)
                       : undefined
                   }
@@ -137,7 +137,7 @@ export function BotChatComposer({
               <ApprovalModePicker />
               <IconButton
                 label="Attach images or files"
-                disabled={state.busy || state.uploading || state.loading}
+                disabled={state.submittingFollowup || state.uploading || state.loading}
                 onClick={() => fileInput.current?.click()}
               >
                 <Paperclip size={18} />
@@ -166,7 +166,13 @@ export function BotChatComposer({
                   className="send-button"
                   aria-label="Queue follow-up"
                   title="Queue follow-up"
-                  disabled={state.submittingFollowup || !state.text.trim()}
+                  disabled={
+                    state.submittingFollowup ||
+                    state.uploading ||
+                    blocked ||
+                    changingModel ||
+                    (!state.text.trim() && !state.files.length)
+                  }
                   onClick={send}
                 >
                   <ArrowUp size={18} />
