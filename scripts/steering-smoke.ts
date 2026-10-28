@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromium } from 'playwright-core';
+import { chromium, type Locator } from 'playwright-core';
 import { createServer as createViteServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { startApiServer } from '../src/server/app';
@@ -118,11 +118,84 @@ async function main() {
       { id: conversation.id },
     );
     await page.goto(vite.resolvedUrls!.local[0]);
+    mkdirSync(resolve('artifacts'), { recursive: true });
+    async function checkAttachmentPreviews(scope: Locator, names: string[]) {
+      for (const name of names) {
+        const opener = scope.getByRole('button', { name: `Preview ${name}`, exact: true });
+        if (name.endsWith('.txt')) {
+          await opener.focus();
+          await opener.press('Enter');
+        } else await opener.click();
+        const dialog = page.getByRole('dialog', { name, exact: true });
+        try {
+          await dialog.getByRole('link', { name: 'Download', exact: true }).waitFor();
+        } catch (error) {
+          console.error(
+            'Attachment preview failed:',
+            name,
+            await page.getByRole('dialog').allTextContents(),
+          );
+          await page.screenshot({ path: resolve('artifacts/attachment-preview-failed.png') });
+          throw error;
+        }
+        if (name.endsWith('.png')) {
+          await dialog.locator('img').waitFor();
+          await page.waitForFunction(
+            () => (document.querySelector<HTMLImageElement>('dialog img')?.naturalWidth || 0) > 0,
+          );
+          await dialog.getByRole('button', { name: 'Zoom in', exact: true }).click();
+          assert.equal(
+            await dialog.getByRole('button', { name: 'Reset zoom', exact: true }).innerText(),
+            '125%',
+          );
+          await dialog.getByRole('button', { name: 'Reset zoom', exact: true }).click();
+          await page.screenshot({ path: resolve('artifacts/attachment-preview.png') });
+        } else if (name.endsWith('.wav') || name.endsWith('.mp4')) {
+          const player = dialog.locator(name.endsWith('.wav') ? 'audio' : 'video');
+          await player.waitFor();
+          assert(
+            await player.evaluate(
+              (element: HTMLMediaElement) => element.controls && !element.autoplay,
+            ),
+          );
+        } else {
+          await dialog.locator('pre').waitFor();
+          assert((await dialog.locator('pre').innerText()).includes('reference document'));
+        }
+        await page.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'hidden' });
+        assert(await opener.evaluate((element) => document.activeElement === element));
+      }
+    }
     const composer = page.locator('.ai-composer-area .composer > textarea');
     await composer.waitFor({ timeout: 15000 });
+    const png = await sharp({
+      create: { width: 24, height: 16, channels: 3, background: '#0088cc' },
+    })
+      .png()
+      .toBuffer();
+    await page.getByLabel('Upload chat attachments').setInputFiles([
+      {
+        name: 'original.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('Initial reference document'),
+      },
+      { name: 'original.png', mimeType: 'image/png', buffer: png },
+      { name: 'original.wav', mimeType: 'audio/wav', buffer: wavFixture() },
+      { name: 'original.mp4', mimeType: 'video/mp4', buffer: mp4Fixture() },
+    ]);
+    await page.waitForFunction(
+      () => document.querySelectorAll('.ai-pending-attachments .ai-attachment').length === 4,
+    );
     await composer.fill('Review the layout and explain your approach.');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await page.getByRole('button', { name: 'Stop generation', exact: true }).waitFor();
+    await checkAttachmentPreviews(page.locator('.ai-message--user').first(), [
+      'original.txt',
+      'original.png',
+      'original.wav',
+      'original.mp4',
+    ]);
     const liveWork = page.locator('.response-work > summary');
     await liveWork.filter({ hasText: /(?:Thinking|Responding) for/ }).waitFor();
     const initialDuration = await liveWork.innerText();
@@ -141,11 +214,6 @@ async function main() {
       await page.getByRole('button', { name: 'Attach images or files', exact: true }).isEnabled(),
       true,
     );
-    const png = await sharp({
-      create: { width: 24, height: 16, channels: 3, background: '#0088cc' },
-    })
-      .png()
-      .toBuffer();
     await page.getByLabel('Upload chat attachments').setInputFiles([
       {
         name: 'guidance.txt',
@@ -159,10 +227,17 @@ async function main() {
     await page.waitForFunction(
       () => document.querySelectorAll('.ai-pending-attachments .ai-attachment').length === 4,
     );
+    const previewNames = ['guidance.txt', 'layout.png', 'recording.wav', 'clip.mp4'];
+    await checkAttachmentPreviews(page.locator('.ai-pending-attachments'), previewNames);
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download guidance.txt', exact: true }).click();
+    assert.equal((await downloaded).suggestedFilename(), 'guidance.txt');
+    assert.equal(await page.getByRole('dialog').count(), 0);
     await composer.fill('Focus on the mobile layout.');
     await page.getByRole('button', { name: 'Queue follow-up', exact: true }).click();
     await page.getByRole('button', { name: 'Steer', exact: true }).waitFor();
     assert.equal(await page.locator('.followup-row .ai-attachment').count(), 4);
+    await checkAttachmentPreviews(page.locator('.followup-row').first(), previewNames);
     assert.equal(await page.locator('.ai-pending-attachments .ai-attachment').count(), 0);
     await page.getByRole('button', { name: 'Edit queued message', exact: true }).click();
     await page
@@ -267,6 +342,12 @@ async function main() {
     const userSteer = page.locator('.ai-message--steering');
     await userSteer.waitFor();
     assert.equal(await userSteer.locator('.ai-attachment').count(), 4);
+    await checkAttachmentPreviews(userSteer, [
+      'revised.txt',
+      'layout.png',
+      'recording.wav',
+      'clip.mp4',
+    ]);
     assert.equal(await userSteer.locator('.ai-message-meta > strong').innerText(), 'You');
     const timestamp = api.store.get(
       "SELECT created_at FROM chat_followups WHERE state='applied'",
@@ -285,6 +366,12 @@ async function main() {
     await worked.click();
     await page.locator('.response-steering').waitFor();
     assert.equal(await page.locator('.response-steering .ai-attachment').count(), 4);
+    await checkAttachmentPreviews(page.locator('.response-steering'), [
+      'revised.txt',
+      'layout.png',
+      'recording.wav',
+      'clip.mp4',
+    ]);
     await page.waitForFunction(() => !document.querySelector('.ai-message--steering'));
     await page.screenshot({ path: resolve('artifacts/steering-applied.png') });
     await worked.click();
@@ -295,7 +382,7 @@ async function main() {
     assert.equal(await userSteer.locator('time').getAttribute('datetime'), timestamp);
     assert.deepEqual(errors, []);
     console.log(
-      'Steering UI smoke passed: upload while working, all media types, attachment-only queueing, attachment editing/cancellation, refresh, delete, steer, collapsed user messages and expanded history.',
+      'Steering UI smoke passed: attachment modals in regular, draft, queued, collapsed and expanded steering; image zoom, media controls, text preview, independent downloads, keyboard access, editing/cancellation, refresh and delivery.',
     );
   } finally {
     await browser.close();

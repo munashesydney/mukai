@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, FileText, LoaderCircle } from 'lucide-react';
-import type { FileArtifact } from '../../../../shared/ai';
+import type { Attachment, FileArtifact } from '../../../../shared/ai';
 import { ArtifactLightbox, type ArtifactNavigation } from './ArtifactLightbox';
 import { artifactService } from '../../services/artifactService';
+import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
 import { artifactPreview } from './artifactPreviewContent';
 
@@ -18,22 +19,26 @@ type Preview =
 
 export function ArtifactPreview({
   artifact,
+  attachment,
   reference,
   navigation,
   onClose,
 }: {
   artifact?: FileArtifact;
+  attachment?: Attachment;
   reference?: { conversationId: string; href: string; name: string; line?: number };
   navigation?: ArtifactNavigation;
   onClose: () => void;
 }) {
   const [preview, setPreview] = useState<Preview>({ kind: 'loading' });
-  const { id, name, kind, mediaType } = artifact || {
-    id: '',
-    name: reference?.name || 'File',
-    kind: undefined,
-    mediaType: undefined,
-  };
+  const { id, name, mediaType } = artifact ||
+    attachment || {
+      id: '',
+      name: reference?.name || 'File',
+      mediaType: undefined,
+    };
+  const kind = artifact?.kind ?? (attachment?.kind === 'image' ? 'image' : undefined);
+  const attachmentId = attachment?.id;
   const conversationId = reference?.conversationId,
     href = reference?.href;
   const [fileName, setFileName] = useState(name);
@@ -42,8 +47,9 @@ export function ArtifactPreview({
     let url = '';
     void (async () => {
       try {
-        const source =
-          href && conversationId
+        const source = attachmentId
+          ? { blob: await attachmentService.blob(attachmentId, controller.signal), name }
+          : href && conversationId
             ? await artifactService.reference(conversationId, href, false, controller.signal)
             : { blob: await artifactService.blob(id, controller.signal), name };
         const { blob } = source;
@@ -62,7 +68,7 @@ export function ArtifactPreview({
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [id, name, kind, mediaType, conversationId, href]);
+  }, [id, name, kind, mediaType, conversationId, href, attachmentId]);
   useEffect(() => {
     if (preview.kind === 'text' && reference?.line)
       document

@@ -3,6 +3,7 @@ import { Download, FileText, LoaderCircle, X, AudioLines, Video } from 'lucide-r
 import type { Attachment } from '../../../../shared/ai';
 import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
+import { ArtifactPreview } from './ArtifactPreview';
 
 export function AttachmentCard({
   attachment,
@@ -14,6 +15,7 @@ export function AttachmentCard({
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     if (attachment.kind !== 'image') return;
     let disposed = false,
@@ -52,62 +54,71 @@ export function AttachmentCard({
     }
   }
   return (
-    <div className={`ai-attachment ${attachment.kind === 'image' ? 'ai-attachment--image' : ''}`}>
-      {attachment.kind === 'image' &&
-        (url ? (
-          <img src={url} alt={attachment.name} />
-        ) : (
-          <div className="attachment-preview-loading">
-            {error ? 'Preview unavailable' : <LoaderCircle size={20} className="is-spinning" />}
-          </div>
-        ))}
-      <div className="attachment-card-info">
-        {attachment.kind === 'audio' ? (
-          <AudioLines size={16} />
-        ) : attachment.kind === 'video' ? (
-          <Video size={16} />
-        ) : (
-          <FileText size={16} />
-        )}
-        <div>
-          <strong title={attachment.name}>{attachment.name}</strong>
-          <small>
-            {(attachment.size / 1024).toFixed(1)} KB ·{' '}
-            {attachment.kind === 'image'
-              ? 'Image'
-              : attachment.kind === 'audio'
-                ? 'Audio'
-                : attachment.kind === 'video'
-                  ? 'Video'
-                  : 'Extracted text'}
-          </small>
-        </div>
+    <>
+      <div className={`ai-attachment ${attachment.kind === 'image' ? 'ai-attachment--image' : ''}`}>
         <button
           type="button"
-          className="icon-button"
-          aria-label={`Download ${attachment.name}`}
-          disabled={busy}
-          onClick={() => void download()}
-        >
-          <Download size={16} />
-        </button>
-        {onRemove && (
+          className="attachment-open"
+          aria-label={`Preview ${attachment.name}`}
+          onClick={() => setOpen(true)}
+        />
+        {attachment.kind === 'image' &&
+          (url ? (
+            <img src={url} alt={attachment.name} />
+          ) : (
+            <div className="attachment-preview-loading">
+              {error ? 'Preview unavailable' : <LoaderCircle size={20} className="is-spinning" />}
+            </div>
+          ))}
+        <div className="attachment-card-info">
+          {attachment.kind === 'audio' ? (
+            <AudioLines size={16} />
+          ) : attachment.kind === 'video' ? (
+            <Video size={16} />
+          ) : (
+            <FileText size={16} />
+          )}
+          <div>
+            <strong title={attachment.name}>{attachment.name}</strong>
+            <small>
+              {(attachment.size / 1024).toFixed(1)} KB ·{' '}
+              {attachment.kind === 'image'
+                ? 'Image'
+                : attachment.kind === 'audio'
+                  ? 'Audio'
+                  : attachment.kind === 'video'
+                    ? 'Video'
+                    : 'Extracted text'}
+            </small>
+          </div>
           <button
             type="button"
             className="icon-button"
-            aria-label={`Remove ${attachment.name}`}
-            onClick={onRemove}
+            aria-label={`Download ${attachment.name}`}
+            disabled={busy}
+            onClick={() => void download()}
           >
-            <X size={15} />
+            <Download size={16} />
           </button>
+          {onRemove && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Remove ${attachment.name}`}
+              onClick={onRemove}
+            >
+              <X size={15} />
+            </button>
+          )}
+        </div>
+        {attachment.warning && <p className="attachment-warning">{attachment.warning}</p>}
+        {error && (
+          <p className="attachment-warning" role="alert">
+            {error}
+          </p>
         )}
       </div>
-      {attachment.warning && <p className="attachment-warning">{attachment.warning}</p>}
-      {error && (
-        <p className="attachment-warning" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
+      {open && <ArtifactPreview attachment={attachment} onClose={() => setOpen(false)} />}
+    </>
   );
 }

@@ -17,7 +17,7 @@ export const attachmentService = {
     return response.json() as Promise<Attachment>;
   },
   remove: (id: string) => api<{ ok: boolean }>(`/attachments/${encodeURIComponent(id)}`, 'DELETE'),
-  async blob(id: string) {
-    return (await apiFetch(`/attachments/${encodeURIComponent(id)}`)).blob();
+  async blob(id: string, signal?: AbortSignal) {
+    return (await apiFetch(`/attachments/${encodeURIComponent(id)}`, { signal })).blob();
   },
 };

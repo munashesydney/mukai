@@ -1991,12 +1991,31 @@ video.artifact-media-preview {
   margin-top: 12px;
 }
 .ai-attachment {
+  position: relative;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   overflow: hidden;
   width: 280px;
   max-width: 100%;
   background: var(--surface);
+}
+.attachment-open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.attachment-open:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -3px;
+}
+.ai-attachment .icon-button {
+  position: relative;
+  z-index: 2;
 }
 .ai-attachment > img {
   width: 100%;
