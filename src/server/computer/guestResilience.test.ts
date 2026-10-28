@@ -100,7 +100,7 @@ swapon() {
 }
 ${script.repeat(options.runs ?? 1)}`;
   try {
-    const result = spawnSync(shell, ['-c', harness], { encoding: 'utf8' });
+    const result = spawnSync(shell, ['-s'], { input: harness, encoding: 'utf8' });
     if (result.status !== 0) throw new Error(`Provisioning fixture failed: ${result.stderr}`);
     return {
       result,
@@ -120,7 +120,8 @@ ${script.repeat(options.runs ?? 1)}`;
 
 describe.skipIf(!existsSync(shell))('guest resilience provisioning', () => {
   it('rejects unprivileged execution before provisioning any paths', () => {
-    const result = spawnSync(shell, ['-c', `id() { printf 1001; }\n${source}`], {
+    const result = spawnSync(shell, ['-s'], {
+      input: `id() { printf 1001; }\n${source}`,
       encoding: 'utf8',
     });
     expect(result.status).toBe(1);

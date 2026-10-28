@@ -167,7 +167,7 @@ describe('Response activity disclosures', () => {
     expect(html).not.toContain('Success');
     expect(html).toContain('aria-expanded="true"');
   });
-  it('expands terminal failures and displays their actual exit code', () => {
+  it('collapses terminal failures by default while keeping their failed command visible', () => {
     const activity: ChatActivity = {
       id: 'failed-run',
       tool: 'terminal',
@@ -195,9 +195,11 @@ describe('Response activity disclosures', () => {
         },
       }),
     );
-    expect(html).toContain('Failed · exit 2');
-    expect(html).toContain('Cannot open file.');
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('terminal-card--failed');
+    expect(html).toContain('Failed python broken.py');
+    expect(html).not.toContain('Cannot open file.');
+    expect(html).not.toContain('terminal-panel');
+    expect(html).toContain('aria-expanded="false"');
   });
   it.each(['compacting', 'complete', 'failed', 'interrupted'] as const)(
     'shows an ordered %s context divider between activity and resumed work',
