@@ -37,7 +37,9 @@ install_linux_vm_dependencies() {
     fi
     admin=(sudo -n)
   fi
-  if ! "${admin[@]}" apt-get update </dev/null || ! "${admin[@]}" apt-get install -y qemu-system-x86 qemu-utils </dev/null; then
+  # ${admin[@]+...} keeps expansion safe when root leaves the array empty (bash <4.4 + set -u).
+  if ! ${admin[@]+"${admin[@]}"} apt-get update </dev/null ||
+    ! ${admin[@]+"${admin[@]}"} apt-get install -y qemu-system-x86 qemu-utils </dev/null; then
     echo 'QEMU installation failed. Resolve the package manager error above, then rerun the installer.' >&2
     return 1
   fi
