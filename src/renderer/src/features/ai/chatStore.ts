@@ -223,15 +223,79 @@ export const chatStore = {
     if (state.busy || state.uploading || (!retryId && !state.text.trim() && !state.files.length))
       return;
     const requestId = retryId || state.requestId;
+    const draft = { text: state.text, files: state.files, requestId: state.requestId };
+    const optimisticId = crypto.randomUUID();
     active.add(id);
-    update(id, { busy: true, error: '' });
+    // The composer belongs to the next message, not the one being sent: clear it and show the
+    // user turn right away. The request still carries the previous requestId, so a send the
+    // server never accepts can put the same prompt and the same requestId back.
+    if (!retryId) {
+      update(id, {
+        busy: true,
+        error: '',
+        text: '',
+        files: [],
+        requestId: crypto.randomUUID(),
+        messages: [
+          ...state.messages,
+          {
+            id: optimisticId,
+            requestId,
+            botId: '',
+            role: 'user',
+            content: draft.text,
+            status: 'complete',
+            error: null,
+            createdAt: new Date().toISOString(),
+            attachments: draft.files,
+            authorName: 'You',
+          },
+        ],
+      });
+    } else update(id, { busy: true, error: '' });
     let accepted = false;
     const accept = () => {
+      if (accepted) return;
       accepted = true;
-      if (!retryId) update(id, { text: '', files: [], requestId: crypto.randomUUID() });
+      if (retryId) return;
+      const current = get(id);
+      update(id, {
+        // The composer was already cleared when the send began; it only needs clearing again if a
+        // stall handed the prompt back. Anything the user typed since then stays untouched.
+        text: current.text.trim() === draft.text.trim() ? '' : current.text,
+        files: current.files.filter((file) => !draft.files.some((sent) => sent.id === file.id)),
+        requestId: crypto.randomUUID(),
+      });
     };
+    const restoreDraft = () => {
+      if (accepted || retryId) return;
+      const current = get(id);
+      // A prompt the user replaced with a newer one is theirs to keep, and it needs a fresh
+      // request ID. An untouched composer takes back the prompt and reuses its original request
+      // ID, so resending is idempotent and a late acceptance is recognised by the next refresh.
+      const typed = Boolean(current.text.trim());
+      update(id, {
+        text: typed ? current.text : draft.text,
+        files: current.files.length ? current.files : draft.files,
+        requestId: typed ? current.requestId : draft.requestId,
+        messages: current.messages.filter((message) => message.id !== optimisticId),
+      });
+    };
+    // A stream that never produces its first event must not keep this chat marked as
+    // mid-request: the normal refresh has to be able to show progress or the failure instead of
+    // waiting for the connection itself to close.
+    let received = false;
+    const firstEvent = setTimeout(() => {
+      if (received) return;
+      // Release the chat so the normal refresh can show server-side progress, and hand the
+      // prompt back to the composer. If the request turns out to have been accepted after all,
+      // the next refresh recognises its requestId in the history and clears the draft again.
+      active.delete(id);
+      restoreDraft();
+    }, 8000);
     try {
       const handle = (event: ChatEvent) => {
+        received = true;
         if (event.type === 'followups') {
           followupVersions.set(id, (followupVersions.get(id) || 0) + 1);
           if (event.followups.length) followupWatching.add(id);
@@ -343,8 +407,11 @@ export const chatStore = {
       } catch {
         /* Keep the draft and its request ID: resending is idempotent. */
       }
+      // A send the server never took still belongs to the user: put it back in the composer.
+      restoreDraft();
       update(id, { error: errorText(error) });
     } finally {
+      clearTimeout(firstEvent);
       active.delete(id);
       update(id, { busy: get(id).messages.some((message) => message.status === 'streaming') });
       if (followupWatching.has(id)) await chatStore.load(id);

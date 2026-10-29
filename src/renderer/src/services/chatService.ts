@@ -25,7 +25,7 @@ export const chatService = {
   ) {
     const response = await apiFetch(`${root(id)}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(
         id.startsWith('space:')
           ? {
@@ -43,8 +43,12 @@ export const chatService = {
     let buffer = '',
       finished = false;
     const dispatch = (line: string) => {
-      if (!line.trim()) return;
-      const event = JSON.parse(line) as ChatEvent;
+      const payload = line.trim();
+      // Blank lines end an SSE event and ':' lines are comments (keepalives).
+      if (!payload || payload.startsWith(':')) return;
+      const json = payload.startsWith('data:') ? payload.slice(5).trim() : payload;
+      if (!json) return;
+      const event = JSON.parse(json) as ChatEvent;
       onEvent(event);
       if (event.type === 'done' || event.type === 'error') finished = true;
     };

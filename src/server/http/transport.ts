@@ -25,27 +25,66 @@ export function send(response: ServerResponse, value: unknown, status = 200) {
   response.writeHead(status).end(JSON.stringify(value));
 }
 
-export function chatOutput(response: ServerResponse): ChatOutput {
+function wantsEventStream(request?: IncomingMessage): boolean {
+  const accept = request?.headers?.accept;
+  if (!accept) return false;
+  return /text\/event-stream/i.test(Array.isArray(accept) ? accept.join(',') : accept);
+}
+
+export function chatOutput(response: ServerResponse, request?: IncomingMessage): ChatOutput {
+  let ended = false;
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  const stopKeepalive = (): void => {
+    if (keepalive) clearInterval(keepalive);
+    keepalive = undefined;
+  };
+  // Negotiated per request. Only text/event-stream reliably crosses
+  // intermediaries unbuffered, so a browser that asks for it is streamed live;
+  // clients that read newline-delimited JSON keep the frame they can parse.
+  const sse = wantsEventStream(request);
   return {
     start() {
-      response.writeHead(200, {
-        'Content-Type': 'application/x-ndjson; charset=utf-8',
-        'X-Accel-Buffering': 'no',
-      });
+      if (ended) return;
+      response.writeHead(200, sse
+        ? {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            'X-Accel-Buffering': 'no',
+          }
+        : {
+            'Content-Type': 'application/x-ndjson; charset=utf-8',
+            'X-Accel-Buffering': 'no',
+          });
       response.flushHeaders();
+      if (!sse) return;
+      // Proxies release held bytes only once something arrives, so an idle
+      // generation (long tool call, approval wait) needs the channel kept open.
+      keepalive = setInterval(() => {
+        if (ended || response.destroyed || response.writableEnded) return stopKeepalive();
+        response.write(': keepalive\n\n');
+      }, 4_000);
+      keepalive.unref();
     },
     emit(event) {
-      if (!response.destroyed) response.write(JSON.stringify(event) + '\n');
+      if (ended || response.destroyed || response.writableEnded) return;
+      // Payloads are single-line JSON, so one event per write needs no
+      // continuation framing in either shape.
+      const payload = JSON.stringify(event);
+      response.write(sse ? `data: ${payload}\n\n` : `${payload}\n`);
     },
     onDisconnect(callback) {
       const close = () => {
+        stopKeepalive();
         if (!response.writableEnded) callback();
       };
       response.on('close', close);
       return () => response.off('close', close);
     },
     end() {
-      response.end();
+      if (ended) return;
+      ended = true;
+      stopKeepalive();
+      if (!response.writableEnded) response.end();
     },
   };
 }

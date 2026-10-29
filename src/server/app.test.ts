@@ -965,6 +965,44 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('streams live events for clients that ask for event-stream and keeps newline JSON for the rest', async () => {
+    await configure();
+    // Intermediaries such as CDNs buffer a plain body until the response ends,
+    // so a browser asking for text/event-stream must get real SSE frames.
+    const sse = await fetch(`${api.url}/bots/scout/chat`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${api.token}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ requestId: randomUUID(), text: 'Stream live', attachmentIds: [] }),
+    });
+    const sseBody = await sse.text();
+    expect(sse.status, sseBody).toBe(200);
+    expect(sse.headers.get('content-type')).toContain('text/event-stream');
+    const frames = sseBody
+      .split('\n\n')
+      .filter((block) => block.trim() !== '' && !block.startsWith(':'));
+    expect(frames.every((block) => block.startsWith('data: '))).toBe(true);
+    const events = frames.map((block) => JSON.parse(block.slice(6)) as ChatEvent);
+    expect(events.some((event) => event.type === 'start')).toBe(true);
+    expect(events.at(-1)?.type).toBe('done');
+
+    // Older clients parse bare JSON lines; they must keep receiving them.
+    const legacy = await fetch(`${api.url}/bots/scout/chat`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId: randomUUID(), text: 'Plain lines', attachmentIds: [] }),
+    });
+    expect(legacy.headers.get('content-type')).toContain('application/x-ndjson');
+    const plain = (await legacy.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as ChatEvent);
+    expect(plain.at(-1)?.type).toBe('done');
+  });
+
   it('waits before screenshot capture and persistence, and rejected captures create no artifact', async () => {
     await configure(true);
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });

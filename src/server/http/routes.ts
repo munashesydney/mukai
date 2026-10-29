@@ -709,18 +709,18 @@ export function createRoutes({
             return conversations.sendToBot(
               id,
               chatSchema.parse(await jsonBody(request)),
-              chatOutput(response),
+              chatOutput(response, request),
             );
           if (conversation.kind === 'private')
             return conversations.sendPrivate(
               id,
               chatSchema.parse(await jsonBody(request)),
-              chatOutput(response),
+              chatOutput(response, request),
             );
           return conversations.send(
             id,
             spaceChatSchema.parse(await jsonBody(request)),
-            chatOutput(response),
+            chatOutput(response, request),
           );
         }
         if (action === 'attachments' && method === 'GET') {
@@ -964,7 +964,7 @@ export function createRoutes({
         );
       }
       if (action === 'chat' && method === 'POST')
-        return chats.respond(bot, chatSchema.parse(await jsonBody(request)), chatOutput(response));
+        return chats.respond(bot, chatSchema.parse(await jsonBody(request)), chatOutput(response, request));
       if (action === 'stop' && method === 'POST') {
         chats.stop(id);
         return send(response, { ok: true });
