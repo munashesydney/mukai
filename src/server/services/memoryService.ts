@@ -109,11 +109,7 @@ function parseMemoryExtraction(
     fail(`the response was not valid JSON (${(error as Error).message})`);
   }
   const object = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const facts = Array.isArray(object.facts)
-    ? object.facts
-    : Array.isArray(raw)
-      ? raw
-      : [];
+  const facts = Array.isArray(object.facts) ? object.facts : Array.isArray(raw) ? raw : [];
   const dispositions = new Set(['assert', 'replace', 'correct', 'uncertain']);
   const normalized = {
     reviewSummary:
@@ -122,7 +118,9 @@ function parseMemoryExtraction(
         : 'No durable information needed saving.',
     facts: facts.map((entry) => {
       const fact = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
-      const disposition = String(fact.disposition ?? '').trim().toLowerCase();
+      const disposition = String(fact.disposition ?? '')
+        .trim()
+        .toLowerCase();
       return {
         subject: String(fact.subject ?? '').trim(),
         subjectId: coerceNullableId(fact.subjectId),
