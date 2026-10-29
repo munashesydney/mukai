@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import { isDevOrigin } from '../../shared/devOrigins';
 
 /** Served browsers use same-origin requests; native Desktop retains its loopback policy. */
 export function trustedLocalRequest(
@@ -38,7 +39,8 @@ export function trustedLocalRequest(
   return (
     origin === 'null' ||
     (allowFileOrigin && origin === 'file://') ||
-    /^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin)
+    // Dev-UI origins, so the Desktop renderer and the browser UI can share one backend.
+    isDevOrigin(origin, process.env)
   );
 }
 

@@ -174,7 +174,10 @@ export function createRoutes({
       return;
     }
     const url = new URL(request.url || '/', 'http://localhost');
-    const path = url.pathname;
+    // One path dialect for both UIs. The web handler lifts `/api` off before calling this
+    // router; the Desktop renderer calls the backend directly, so accept the prefix here too
+    // and one request can reach either backend unchanged.
+    const path = url.pathname.startsWith('/api/') ? url.pathname.slice(4) : url.pathname;
     const method = request.method || 'GET';
     if (path === '/health') {
       if (!['GET', 'HEAD'].includes(method)) {

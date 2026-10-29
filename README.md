@@ -34,7 +34,16 @@ npm run dev:server
 npm run dev:web
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 47831. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match. The desktop app uses port 47831 regardless of `PORT`; run desktop and standalone modes separately because they share the same default port.
+Open http://127.0.0.1:5273. Vite forwards `/api` to the authenticated service on port 47831, adding that backend's local token and presenting the request as the backend's own origin, so the browser UI needs no sign-in in development. A page on any other origin is forwarded with neither, and the backend refuses it. When nothing is listening, `dev:web` says which port to start a backend on. The server reads process environment variables, not `.env` files.
+
+The Desktop and browser UIs run at the same time against one backend, so they never compete for a port:
+
+```sh
+npm run dev # Desktop: backend on 47831, renderer on 5173
+npm run dev:web # Browser UI on 5273, proxied to that same backend
+```
+
+The desktop app always uses 47831 and holds the 5173 renderer port, so the browser UI defaults to 5273 and one backend serves both UIs: it accepts the renderer's direct paths and the browser UI's `/api` paths, and trusts both dev origins. Set `MUKAI_WEB_PORT` to move the browser UI, `MUKAI_DEV_ORIGINS` to a comma-separated list of extra loopback dev ports, `PORT` to move a standalone backend (pass it to `npm run dev:web` too so the proxy follows), and `MUKAI_API_PORT` to point only the proxy somewhere else. One backend owns a data directory at a time, and the refusal names the process holding it, so a second backend alongside the desktop app also needs its own `MUKAI_DATA_DIR`.
 
 Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:11434/v1` or `http://127.0.0.1:1234/v1`. Install a chat model in your local server first and enter its exact ID. Keys are optional for endpoints without authentication. Remote custom endpoints require HTTPS. Standard text chat and streaming chat-completions compatibility are required.
 

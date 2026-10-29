@@ -19,6 +19,7 @@ import type { WorkspaceService } from '../services/workspaceService';
 import { body } from '../http/transport';
 import type { Bot, ChatActivity } from '../../shared/ai';
 import { customToolPermissionModes } from '../../shared/customCapabilities';
+import { isDevOrigin } from '../../shared/devOrigins';
 import type {
   CapabilityDefinition,
   CapabilityRegistration,
@@ -880,7 +881,7 @@ export class CapabilityService {
       if (given.length !== expected.length || !timingSafeEqual(given, expected))
         throw new ApiError(401, 'API authentication required.');
       const origin = request.headers.origin;
-      if (origin && origin !== 'null' && !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
+      if (origin && origin !== 'null' && !isDevOrigin(origin, process.env))
         throw new ApiError(403, 'Untrusted request origin.');
     }
     const rawBody = await body(request, 1024 * 1024);

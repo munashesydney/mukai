@@ -64,7 +64,12 @@ export function acquireDataLock(dir: string) {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
       else throw error;
     }
-    if (alive) throw new Error('Another Mukai backend is using this data directory.');
+    if (alive)
+      throw new Error(
+        `Another Mukai backend is already using this data directory (pid ${pid}). Run the other ` +
+          'UI against that backend instead — `npm run dev:web` proxies to it — or give this one ' +
+          'its own directory with MUKAI_DATA_DIR / --data-dir.',
+      );
     unlinkSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
