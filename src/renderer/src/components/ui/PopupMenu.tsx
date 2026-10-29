@@ -108,9 +108,13 @@ export function PopupMenu({
       ref={root}
       className={className}
       onBlur={(event) => {
-        // Disabling a focused Save button can blur it to the document body.
-        // Keep rich editors open while their asynchronous save settles.
-        if (role === 'dialog' && !event.relatedTarget) return;
+        // Focus moving to the document body must not close the menu. On touch
+        // (e.g. iPadOS) taps and programmatic focus often fail to land on a
+        // button, so activeElement falls back to <body> and relatedTarget is
+        // null; a disabled focused action blurring mid-save does the same. The
+        // document-level pointerdown handler already dismisses on real taps
+        // outside the menu, so keeping the menu open here is safe.
+        if (!event.relatedTarget) return;
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
       onKeyDown={(event) => {
