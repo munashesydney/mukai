@@ -95,9 +95,16 @@
   font: inherit;
   cursor: pointer;
 }
-.popup-menu > button:hover,
-.popup-menu > button:focus-visible {
+.popup-menu > button:focus-visible,
+.popup-menu > button:active {
   background: var(--surface-muted);
+}
+/* Only show hover feedback on devices that actually hover; on touch, :hover
+   sticks after a tap and reads as a stuck/pressed state. */
+@media (hover: hover) {
+  .popup-menu > button:hover {
+    background: var(--surface-muted);
+  }
 }
 .popup-menu > button > span:not(.workspace-mini) {
   flex: 1;
@@ -183,9 +190,14 @@
   font-size: 13px;
   cursor: pointer;
 }
-.bot-model-group > button:hover,
-.bot-model-group > button:focus-visible {
+.bot-model-group > button:focus-visible,
+.bot-model-group > button:active {
   background: var(--surface-muted);
+}
+@media (hover: hover) {
+  .bot-model-group > button:hover {
+    background: var(--surface-muted);
+  }
 }
 .bot-model-group > button:disabled {
   opacity: 0.5;
@@ -353,11 +365,18 @@
   text-align: left;
   cursor: pointer;
 }
-.bot-pending-approvals:hover,
+.bot-pending-approvals:active,
 .bot-pending-approvals.is-selected {
   background:
     linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
     conic-gradient(from var(--approval-angle), #63cdb2, #b596ef, #f2b773, #63cdb2) border-box;
+}
+@media (hover: hover) {
+  .bot-pending-approvals:hover {
+    background:
+      linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
+      conic-gradient(from var(--approval-angle), #63cdb2, #b596ef, #f2b773, #63cdb2) border-box;
+  }
 }
 .bot-pending-approvals > svg {
   color: var(--teal);
@@ -430,10 +449,16 @@
     border-color 180ms,
     background-color 180ms;
 }
-.pending-approval-tile:hover,
-.pending-approval-tile:focus-visible {
+.pending-approval-tile:focus-visible,
+.pending-approval-tile:active {
   border-color: var(--theme-border);
   background: var(--theme-soft);
+}
+@media (hover: hover) {
+  .pending-approval-tile:hover {
+    border-color: var(--theme-border);
+    background: var(--theme-soft);
+  }
 }
 .pending-approval-tile-icon {
   color: var(--teal);
@@ -746,10 +771,15 @@
   position: relative;
   cursor: pointer;
 }
-.ask-option:hover,
+.ask-option:active,
 .ask-option.is-selected,
 .ask-answer-field:focus-within {
   background: var(--surface-muted);
+}
+@media (hover: hover) {
+  .ask-option:hover {
+    background: var(--surface-muted);
+  }
 }
 .ask-option:focus-within {
   outline: 2px solid var(--theme-border);

@@ -12,6 +12,11 @@
   color: #f4f4f5;
   overflow: hidden;
   color-scheme: dark;
+  /* Frameless Electron marks the top strip as a window-drag region (see
+     .title-bar). This full-viewport overlay pins its download/close controls
+     into that strip, so without an explicit no-drag the OS starts a window
+     drag on mouse-down and the click never reaches the buttons. */
+  -webkit-app-region: no-drag;
 }
 .artifact-lightbox::backdrop {
   background: #000e;
