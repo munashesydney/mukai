@@ -4,6 +4,7 @@ import type { Workspace } from '../../../../shared/ai';
 import { Modal } from '../../components/ui/Modal';
 import { workspaceService } from '../../services/workspaceService';
 import { errorText } from '../../utils/errors';
+import { startPoll } from '../../services/poll';
 import type { QemuSetup } from '../../../../shared/computer';
 import { VmSetupProgress } from './VmSetupProgress';
 
@@ -40,23 +41,26 @@ export function WorkspaceEditor({
   useEffect(() => {
     if (computer !== 'qemu') return;
     let active = true;
+    let previous: string | undefined;
     const refresh = () =>
       workspaceService
         .computerSetup()
         .then((value) => {
-          if (active) {
-            setSetup(value);
-            setSetupError('');
-          }
+          if (!active) return;
+          const snapshot = JSON.stringify(value);
+          const changed = snapshot !== previous;
+          previous = snapshot;
+          if (changed) setSetup(value);
+          setSetupError('');
+          return changed;
         })
         .catch((error) => {
           if (active) setSetupError(errorText(error));
         });
-    void refresh();
-    const timer = setInterval(() => void refresh(), 1500);
+    const poll = startPoll(() => refresh(), { interval: 1500, maxInterval: 6000 });
     return () => {
       active = false;
-      clearInterval(timer);
+      poll.stop();
     };
   }, [computer]);
   async function install() {

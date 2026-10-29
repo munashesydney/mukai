@@ -6,6 +6,7 @@ import { errorText } from '../../utils/errors';
 import { chatStore } from './chatStore';
 import { clearDeletedWorkspaceStorage, deletedChatKeys } from '../workspace/deletionStorage';
 import { workspaceService } from '../../services/workspaceService';
+import { startPoll } from '../../services/poll';
 
 export function useAIWorkspace() {
   const [workspaceId, setWorkspaceId] = useState(() => {
@@ -51,27 +52,35 @@ export function useAIWorkspace() {
   useEffect(() => {
     let alive = true,
       pending = false;
-    const timer = window.setInterval(async () => {
-      if (pending || !workspaceId) return;
-      pending = true;
-      const current = revision.current;
-      try {
-        const bots = await botService.list(workspaceId);
-        if (alive && current === revision.current)
-          setData((previous) =>
-            JSON.stringify(previous.bots) === JSON.stringify(bots)
-              ? previous
-              : { ...previous, bots },
-          );
-      } catch {
-        /* The main refresh reports connection errors. */
-      } finally {
-        pending = false;
-      }
-    }, 3000);
+    let lastBots: string | undefined;
+    // The sibling refresh effect already loads once on mount, so this poll stays on the
+    // original "first tick after one interval" cadence.
+    const poll = startPoll(
+      async () => {
+        if (pending || !workspaceId) return;
+        pending = true;
+        const current = revision.current;
+        try {
+          const bots = await botService.list(workspaceId);
+          const snapshot = JSON.stringify(bots);
+          const changed = snapshot !== lastBots;
+          lastBots = snapshot;
+          if (alive && current === revision.current)
+            setData((previous) =>
+              JSON.stringify(previous.bots) === snapshot ? previous : { ...previous, bots },
+            );
+          return changed;
+        } catch {
+          /* The main refresh reports connection errors. */
+        } finally {
+          pending = false;
+        }
+      },
+      { interval: 3000, maxInterval: 12000, immediate: false },
+    );
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      poll.stop();
     };
   }, [workspaceId]);
   useEffect(() => {

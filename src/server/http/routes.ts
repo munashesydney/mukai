@@ -30,7 +30,7 @@ import {
 import type { WorkspaceService } from '../services/workspaceService';
 import type { ArtifactService } from '../services/artifactService';
 import type { ToolService } from '../services/toolService';
-import { body, jsonBody, send, chatOutput } from './transport';
+import { body, jsonBody, send, sendRead, chatOutput } from './transport';
 import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
@@ -163,6 +163,9 @@ export function createRoutes({
     if (origin) {
       response.setHeader('Access-Control-Allow-Origin', origin);
       response.setHeader('Vary', 'Origin');
+      // Polled reads hand back a validator the renderer compares itself, and CORS
+      // hides ETag from a cross-origin script unless it is named here.
+      response.setHeader('Access-Control-Expose-Headers', 'ETag');
     }
     if (request.method === 'OPTIONS') {
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,HEAD');
@@ -205,7 +208,8 @@ export function createRoutes({
     if (parts.length > 3) throw new ApiError(404, 'Not found');
     if (resource === 'settings' && id === 'updates') {
       if (!action && method === 'GET')
-        return send(
+        return sendRead(
+          request,
           response,
           updates?.getState() ?? {
             status: 'disabled',
@@ -244,18 +248,18 @@ export function createRoutes({
         return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
     }
     if (resource === 'settings' && id === 'profile' && !action) {
-      if (method === 'GET') return send(response, settings.userProfile());
+      if (method === 'GET') return sendRead(request, response, settings.userProfile());
       if (method === 'PUT')
         return send(response, settings.saveUserProfile(await jsonBody(request)));
     }
     if (resource === 'settings' && id === 'appearance' && !action) {
-      if (method === 'GET') return send(response, settings.appearance());
+      if (method === 'GET') return sendRead(request, response, settings.appearance());
       if (method === 'PUT') return send(response, settings.saveAppearance(await jsonBody(request)));
       if (method === 'POST')
         return send(response, settings.saveAppearance(await jsonBody(request), true));
     }
     if (resource === 'limits' && !id) {
-      if (method === 'GET') return send(response, pursuits.limits());
+      if (method === 'GET') return sendRead(request, response, pursuits.limits());
       if (method === 'PUT') {
         const input = z
           .object({ pursuitConcurrency: z.number().int().min(1).max(MAX_PURSUIT_CONCURRENCY) })
@@ -267,7 +271,7 @@ export function createRoutes({
     if (resource === 'approvals') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
-      if (!id && method === 'GET') return send(response, approvals.state(workspaceId));
+      if (!id && method === 'GET') return sendRead(request, response, approvals.state(workspaceId));
       if (!id && method === 'PUT') {
         const input = z
           .object({ mode: z.enum(['ask-for-approval', 'full-access']) })
@@ -376,7 +380,7 @@ export function createRoutes({
           .min(0)
           .max(100000)
           .parse(url.searchParams.get('offset') || 0);
-        return send(response, notifications.list(workspaceId, offset));
+        return sendRead(request, response, notifications.list(workspaceId, offset));
       }
       if (id && method === 'POST') {
         if (action === 'read' || action === 'dismiss')
@@ -396,7 +400,8 @@ export function createRoutes({
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
       if (!id && method === 'GET')
-        return send(
+        return sendRead(
+          request,
           response,
           memory.snapshot(
             workspaceId,
@@ -468,7 +473,7 @@ export function createRoutes({
       workspaces.require(workspaceId);
       if (resource === 'environment') {
         if (!id && method === 'GET')
-          return send(response, capabilities.environment.list(workspaceId));
+          return sendRead(request, response, capabilities.environment.list(workspaceId));
         if (!id && method === 'PUT') {
           const input = z
             .object({
@@ -537,7 +542,7 @@ export function createRoutes({
       if (!id && method === 'GET') {
         const workspaceId = url.searchParams.get('workspaceId') || 'default';
         workspaces.require(workspaceId);
-        return send(response, await browsers.refresh(workspaceId));
+        return sendRead(request, response, await browsers.refresh(workspaceId));
       }
       if (id && action === 'screenshot' && method === 'GET') {
         response.setHeader('Content-Type', 'image/png');
@@ -552,8 +557,8 @@ export function createRoutes({
       }
     } else if (resource === 'pursuits') {
       if (!id && method === 'GET')
-        return send(response, pursuits.list(url.searchParams.get('workspaceId') || 'default'));
-      if (id && !action && method === 'GET') return send(response, pursuits.detail(id));
+        return sendRead(request, response, pursuits.list(url.searchParams.get('workspaceId') || 'default'));
+      if (id && !action && method === 'GET') return sendRead(request, response, pursuits.detail(id));
       if (id && action === 'workpad' && method === 'GET') {
         if (url.searchParams.has('entryId'))
           return send(
@@ -569,7 +574,7 @@ export function createRoutes({
             ? Number(url.searchParams.get('offset'))
             : undefined,
         });
-        return send(response, pursuits.workpad(id, query));
+        return sendRead(request, response, pursuits.workpad(id, query));
       }
       if (id && action === 'status' && method === 'PUT') {
         const input = z
@@ -637,7 +642,7 @@ export function createRoutes({
           return;
         }
         if (action === 'followups') {
-          if (method === 'GET') return send(response, chats.listFollowups(id));
+          if (method === 'GET') return sendRead(request, response, chats.listFollowups(id));
           if (method === 'PUT')
             return send(
               response,
@@ -663,10 +668,10 @@ export function createRoutes({
           throw new ApiError(405, 'Method not allowed.');
         }
         if (action === 'outputs' && method === 'GET')
-          return send(response, await chatOutputs.list(id));
+          return sendRead(request, response, await chatOutputs.list(id));
         if (action === 'terminal' && method === 'GET') {
           const sessionId = z.string().uuid().parse(url.searchParams.get('sessionId'));
-          return send(response, await chatOutputs.terminal(id, sessionId));
+          return sendRead(request, response, await chatOutputs.terminal(id, sessionId));
         }
         if (action === 'activity-image' && method === 'POST') {
           const input = z
@@ -703,7 +708,7 @@ export function createRoutes({
           return send(response, await chatOutputs.open(id, input.outputId));
         }
         if (action === 'messages' && method === 'GET')
-          return send(response, conversations.history(id));
+          return sendRead(request, response, conversations.history(id));
         if (action === 'chat' && method === 'POST') {
           if (conversation.kind === 'bot')
             return conversations.sendToBot(
@@ -724,9 +729,9 @@ export function createRoutes({
           );
         }
         if (action === 'attachments' && method === 'GET') {
-          if (conversation.kind === 'space') return send(response, []);
+          if (conversation.kind === 'space') return sendRead(request, response, []);
           conversations.userChatBot(id);
-          return send(response, attachments.pending(id));
+          return sendRead(request, response, attachments.pending(id));
         }
         if (action === 'attachments' && method === 'POST') {
           const bot = conversations.userChatBot(id);
@@ -746,7 +751,7 @@ export function createRoutes({
           return send(response, conversations.save(id, input.messageId, input.saved));
         }
         if (action === 'artifacts' && method === 'GET')
-          return send(response, artifacts.forConversation(id));
+          return sendRead(request, response, artifacts.forConversation(id));
         if (action === 'stop' && method === 'POST') {
           conversations.stop(id);
           return send(response, { ok: true });
@@ -781,7 +786,7 @@ export function createRoutes({
       if (id && action === 'computer') {
         const workspace = workspaces.require(id);
         if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
-        if (method === 'GET') return send(response, workspaces.computers.status(workspace));
+        if (method === 'GET') return sendRead(request, response, workspaces.computers.status(workspace));
         if (method === 'POST') {
           const value = z
             .object({ action: z.enum(['start', 'stop']) })
@@ -800,7 +805,7 @@ export function createRoutes({
           return send(response, workspaces.computers.status(workspace));
         }
       }
-      if (!id && method === 'GET') return send(response, workspaces.list());
+      if (!id && method === 'GET') return sendRead(request, response, workspaces.list());
       if (!id && method === 'POST')
         return send(
           response,
@@ -829,7 +834,7 @@ export function createRoutes({
         );
     } else if (resource === 'tools' && id === 'assignments') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
-      if (method === 'GET') return send(response, tools.assignments(workspaceId));
+      if (method === 'GET') return sendRead(request, response, tools.assignments(workspaceId));
       if (method === 'PUT') {
         const value = z
           .object({ botId: z.string().min(1), toolId: z.string().min(1), enabled: z.boolean() })
@@ -906,7 +911,7 @@ export function createRoutes({
         return send(response, await providers.test(id));
     } else if (resource === 'bots') {
       if (!id && method === 'GET')
-        return send(response, bots.list(url.searchParams.get('workspaceId') || 'default'));
+        return sendRead(request, response, bots.list(url.searchParams.get('workspaceId') || 'default'));
       if (!id && method === 'POST') {
         const value = createBotSchema.parse(await jsonBody(request));
         await providers.validateModel(value.providerId, value.model);
@@ -915,7 +920,7 @@ export function createRoutes({
       const bot = bots.require(id || '');
       if (action === 'followups') {
         const conversationId = 'bot-' + bot.id;
-        if (method === 'GET') return send(response, chats.listFollowups(conversationId));
+        if (method === 'GET') return sendRead(request, response, chats.listFollowups(conversationId));
         if (method === 'POST') {
           const input = followupInputSchema.parse(await jsonBody(request));
           return send(
@@ -950,12 +955,12 @@ export function createRoutes({
         bots.remove(id);
         return send(response, { ok: true });
       }
-      if (action === 'messages' && method === 'GET') return send(response, chats.history(id));
+      if (action === 'messages' && method === 'GET') return sendRead(request, response, chats.history(id));
       if (action === 'files' && method === 'GET')
-        return send(response, attachments.list(id, false));
-      if (action === 'artifacts' && method === 'GET') return send(response, artifacts.list(id));
+        return sendRead(request, response, attachments.list(id, false));
+      if (action === 'artifacts' && method === 'GET') return sendRead(request, response, artifacts.list(id));
       if (action === 'attachments' && method === 'GET')
-        return send(response, attachments.list(id, true));
+        return sendRead(request, response, attachments.list(id, true));
       if (action === 'attachments' && method === 'POST') {
         return send(
           response,

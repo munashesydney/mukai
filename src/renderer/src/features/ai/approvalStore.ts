@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { ApprovalMode, ApprovalState } from '../../../../shared/approvals';
 import { approvalService } from '../../services/approvalService';
+import { startPoll, type PollHandle } from '../../services/poll';
 import { errorText } from '../../utils/errors';
 
 interface State extends ApprovalState {
@@ -20,10 +21,18 @@ let state: State = {
   error: '',
 };
 const listeners = new Set<() => void>();
-let timer: ReturnType<typeof setInterval> | undefined;
+let poll: PollHandle | undefined;
 let version = 0;
 let modeRequest = 0;
 let refreshing = false;
+let lastPayload = '';
+
+/**
+ * What one refresh actually found. `unchanged` is the only answer that lets the
+ * poller wait longer; the others keep the base cadence (or, for `failed`, let the
+ * poller back off from an endpoint that is not answering).
+ */
+type RefreshResult = 'changed' | 'unchanged' | 'failed' | 'busy';
 function update(value: Partial<State>) {
   state = { ...state, ...value };
   listeners.forEach((listener) => listener());
@@ -33,18 +42,27 @@ export const approvalStore = {
     if (workspaceId === state.workspaceId) return;
     version++;
     modeRequest++;
+    lastPayload = ''; // a different workspace is different data, not unchanged data
     update({ workspaceId, loaded: false, saving: false, error: '' });
     void this.refresh();
   },
-  async refresh() {
-    if (refreshing) return;
+  async refresh(): Promise<RefreshResult> {
+    if (refreshing) return 'busy';
     refreshing = true;
     const currentVersion = version;
     try {
       const result = await approvalService.state(state.workspaceId);
-      if (currentVersion === version) update({ ...result, loaded: true, error: '' });
+      if (currentVersion !== version) return 'changed'; // a workspace switch owns this answer
+      const payload = JSON.stringify(result);
+      const unchanged = payload === lastPayload && state.loaded && !state.error;
+      lastPayload = payload;
+      // Identical bytes, identical state: skip the notify, so an idle approval list costs
+      // no re-renders, and tell the poller it may wait longer before asking again.
+      if (!unchanged) update({ ...result, loaded: true, error: '' });
+      return unchanged ? 'unchanged' : 'changed';
     } catch (caught) {
       if (currentVersion === version) update({ error: errorText(caught) });
+      return 'failed';
     } finally {
       refreshing = false;
     }
@@ -125,14 +143,19 @@ export const approvalStore = {
 function subscribe(listener: () => void) {
   listeners.add(listener);
   if (listeners.size === 1) {
-    void approvalStore.refresh();
-    timer = setInterval(() => void approvalStore.refresh(), 1000);
+    // A pending approval is worth looking for every second, but a list that has not
+    // moved in a while is not: it drifts to three seconds and comes straight back
+    // when anything changes, when the window is refocused, or after a local decision.
+    poll = startPoll(async () => {
+      const outcome = await approvalStore.refresh();
+      return outcome === 'changed' || outcome === 'busy';
+    }, { interval: 1000, maxInterval: 3000 });
   }
   return () => {
     listeners.delete(listener);
     if (!listeners.size) {
-      clearInterval(timer);
-      timer = undefined;
+      poll?.stop();
+      poll = undefined;
     }
   };
 }

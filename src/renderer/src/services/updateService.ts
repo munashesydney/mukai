@@ -1,5 +1,6 @@
 import type { DesktopUpdateState } from '../../../shared/contracts';
 import { api } from './http';
+import { startPoll } from './poll';
 
 const changed = 'mukai:update-state-changed';
 let browserVersion: string | undefined;
@@ -78,25 +79,30 @@ export const updateService = {
   onUpdateState(listener: (state: DesktopUpdateState) => void) {
     if (window.mukai) return window.mukai.onUpdateState(listener);
     let active = true;
-    let polling = false;
-    const refresh = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const state = await updateService.getUpdateState();
-        if (active) listener(state);
-      } catch {
-        /* Reconnect and authentication are handled by the existing app lifecycle. */
-      } finally {
-        polling = false;
-      }
-    };
     const receive = (event: Event) => listener((event as CustomEvent<DesktopUpdateState>).detail);
     window.addEventListener(changed, receive);
-    const timer = setInterval(() => void refresh(), 1500);
+    // Update state is interesting for a few seconds at a time: while something is
+    // downloading or installing it moves on every tick, and otherwise it does not
+    // move at all. One poller covers both by backing off from its own readings.
+    let lastPayload = '';
+    const poll = startPoll(async () => {
+      let state: DesktopUpdateState;
+      try {
+        state = await updateService.getUpdateState();
+      } catch {
+        // Reconnect and authentication are handled by the existing app lifecycle;
+        // returning false just stops hammering a server that is not there yet.
+        return false;
+      }
+      const payload = JSON.stringify(state);
+      const unchanged = payload === lastPayload;
+      lastPayload = payload;
+      if (!unchanged && active) listener(state);
+      return !unchanged;
+    }, { interval: 1500, maxInterval: 30_000 });
     return () => {
       active = false;
-      clearInterval(timer);
+      poll.stop();
       window.removeEventListener(changed, receive);
     };
   },

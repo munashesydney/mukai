@@ -5,6 +5,7 @@ import { SettingsHeading } from './SettingsHeading';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Brain, Download, RefreshCw, Search, Upload, X } from 'lucide-react';
 import { memoryService } from '../../services/memoryService';
+import { startPoll } from '../../services/poll';
 import type { MemoryFact, MemorySettings, MemorySnapshot } from '../../../../shared/memory';
 import { errorText } from '../../utils/errors';
 import { MemoryGraph } from './MemoryGraph';
@@ -65,10 +66,16 @@ export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
       snapshot?.embedding.status !== 'loading'
     )
       return;
-    const timer = setInterval(() => {
-      void refresh().catch(() => {});
-    }, 3000);
-    return () => clearInterval(timer);
+    // The snapshot is in this effect's dependencies, so every accepted refresh restarts
+    // the poll; `immediate: false` keeps the restart from firing an extra request now.
+    const poll = startPoll(
+      () =>
+        refresh().catch(() => {
+          /* A failed read just means the next tick tries again. */
+        }),
+      { interval: 3000, immediate: false },
+    );
+    return () => poll.stop();
   }, [snapshot, refresh, view]);
   async function perform(action: () => Promise<unknown>, message: string) {
     setBusy(true);

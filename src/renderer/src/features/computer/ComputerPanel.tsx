@@ -4,6 +4,7 @@ import type RFB from '@novnc/novnc';
 import type { ComputerStatus } from '../../../../shared/computer';
 import { computerService } from '../../services/computerService';
 import { copyText, readClipboardText } from '../../services/clipboardService';
+import { startPoll } from '../../services/poll';
 import { bindComputerClipboard } from './computerClipboard';
 import { ComputerClipboardPanel } from './ComputerClipboardPanel';
 
@@ -43,6 +44,7 @@ export function ComputerPanel({
     if (container) resize.observe(container);
     const controller = new AbortController();
     let checking = false;
+    let previous: string | undefined;
     setState('connecting');
     setError('');
     setStatus(null);
@@ -54,15 +56,19 @@ export function ComputerPanel({
       checking = true;
       try {
         const value = await computerService.status(workspaceId, controller.signal);
-        if (alive) setStatus(value);
+        if (!alive) return;
+        const snapshot = JSON.stringify(value);
+        const changed = snapshot !== previous;
+        previous = snapshot;
+        if (changed) setStatus(value);
+        return changed;
       } catch {
         /* Connection errors are reported by the viewer request. */
       } finally {
         checking = false;
       }
     };
-    void check();
-    const timer = window.setInterval(() => void check(), 1500);
+    const poll = startPoll(() => check(), { interval: 1500, maxInterval: 6000 });
     void (async () => {
       try {
         const [session, { default: Viewer }] = await Promise.all([
@@ -113,7 +119,7 @@ export function ComputerPanel({
     return () => {
       alive = false;
       controller.abort();
-      window.clearInterval(timer);
+      poll.stop();
       window.clearTimeout(resizeTimer);
       resize.disconnect();
       clipboard.current?.dispose();

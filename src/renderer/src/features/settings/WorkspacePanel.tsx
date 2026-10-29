@@ -22,6 +22,7 @@ import {
   type VmResources,
 } from '../../../../shared/computer';
 import { errorText } from '../../utils/errors';
+import { startPoll } from '../../services/poll';
 
 export function WorkspacePanel({
   workspace,
@@ -187,12 +188,16 @@ function VmComputer({ workspace }: { workspace: Workspace }) {
   useEffect(() => {
     let active = true;
     let initialized = false;
+    let previous: string | undefined;
     const refresh = () =>
       workspaceService
         .computerStatus(workspace.id)
         .then((value) => {
           if (!active) return;
-          setStatus(value);
+          const snapshot = JSON.stringify(value);
+          const changed = snapshot !== previous;
+          previous = snapshot;
+          if (changed) setStatus(value);
           if (!initialized) {
             const resources =
               value.resources || workspace.computerResources || DEFAULT_VM_RESOURCES;
@@ -201,15 +206,15 @@ function VmComputer({ workspace }: { workspace: Workspace }) {
             setCpus(String(resources.vcpus));
             initialized = true;
           }
+          return changed;
         })
         .catch((error) => {
           if (active) setError(errorText(error));
         });
-    void refresh();
-    const timer = setInterval(() => void refresh(), 3000);
+    const poll = startPoll(() => refresh(), { interval: 3000, maxInterval: 10000 });
     return () => {
       active = false;
-      clearInterval(timer);
+      poll.stop();
     };
   }, [workspace.id, workspace.computerResources]);
   const parsed = vmResourcesSchema.safeParse({

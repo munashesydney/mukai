@@ -8,6 +8,7 @@ import { errorText } from '../../utils/errors';
 import type { ChatState, ChatDraft } from '../../models/chat';
 import { conversationService } from '../../services/conversationService';
 import { chatConversationId } from '../../services/chatTarget';
+import { startPoll } from '../../services/poll';
 import { approvalStore } from './approvalStore';
 
 const states = new Map<string, ChatState>();
@@ -84,9 +85,15 @@ export const chatStore = {
     }
     listeners.forEach((listener) => listener());
   },
-  async load(id: string) {
-    if (forgotten.has(id)) return;
-    if (active.has(id) || loading.has(id) || get(id).uploading) return;
+  /**
+   * Re-read a conversation. Resolves to false only when the read ran to
+   * completion and left the stored state untouched — the signal a poller needs
+   * to idle back. Every other outcome (read skipped, failed, or productive)
+   * resolves to true so the caller keeps its base cadence.
+   */
+  async load(id: string): Promise<boolean> {
+    if (forgotten.has(id)) return true;
+    if (active.has(id) || loading.has(id) || get(id).uploading) return true;
     loading.add(id);
     const previous = get(id);
     try {
@@ -95,7 +102,7 @@ export const chatStore = {
         attachmentService.pending(id),
         chatService.followups(id),
       ]);
-      if (active.has(id) || get(id).messages !== previous.messages) return;
+      if (active.has(id) || get(id).messages !== previous.messages) return true;
       const accepted = messages.find(
         (message) => message.role === 'user' && message.requestId === previous.requestId,
       );
@@ -105,6 +112,20 @@ export const chatStore = {
         .find((part) => part.type === 'steering' && part.id === previous.requestId);
       if (!messages.some((message) => message.status === 'streaming') && !followups.length)
         followupWatching.delete(id);
+      const current = get(id);
+      if (
+        !current.loading &&
+        !current.error &&
+        !accepted &&
+        !acceptedFollowup &&
+        !appliedFollowup &&
+        current.messages === messages &&
+        current.followups === followups &&
+        current.files === files
+      )
+        // An unchanged poll re-read hands back the very same arrays, so there is
+        // no new state to publish — and no transcript to rebuild at one hertz.
+        return false;
       update(id, {
         messages,
         followups,
@@ -125,8 +146,10 @@ export const chatStore = {
             }
           : {}),
       });
+      return true;
     } catch (error) {
       update(id, { loading: false, error: errorText(error) });
+      return true;
     } finally {
       loading.delete(id);
     }
@@ -455,10 +478,11 @@ export function useChatBusy(id: string) {
   useEffect(() => {
     if (!busy) return;
     // Keep a recovered/background response current after its chat view unmounts.
-    const timer = window.setInterval(() => {
-      if (!active.has(id)) void chatStore.load(id);
-    }, 1000);
-    return () => window.clearInterval(timer);
+    const poll = startPoll(() => (active.has(id) ? undefined : chatStore.load(id)), {
+      interval: 1000,
+      maxInterval: 4000,
+    });
+    return () => poll.stop();
   }, [id, busy]);
   return busy;
 }
@@ -470,20 +494,30 @@ export function useChat(id: string, readOnly = false) {
     () => get(id),
   );
   useEffect(() => {
-    void chatStore.load(id);
-    const timer = window.setInterval(() => {
-      if (
-        !active.has(id) &&
-        (get(id).busy || readOnly || get(id).followups.length || followupWatching.has(id))
-      )
-        void chatStore.load(id);
-    }, 1000);
+    // `loading` is true until the first read lands, so the opening tick always
+    // fetches; afterwards only a conversation with live work stays at full rate.
+    const poll = startPoll(
+      () => {
+        if (active.has(id)) return undefined;
+        const current = get(id);
+        return current.loading ||
+          current.busy ||
+          readOnly ||
+          current.followups.length ||
+          followupWatching.has(id)
+          ? chatStore.load(id)
+          : undefined;
+      },
+      // A read-only transcript has no local work to interleave, so it can idle
+      // much further back than a conversation the user is typing into.
+      { interval: readOnly ? 2500 : 1000, maxInterval: readOnly ? 20000 : 5000 },
+    );
     const refresh = () => {
       if (!active.has(id)) void chatStore.load(id);
     };
     window.addEventListener('focus', refresh);
     return () => {
-      window.clearInterval(timer);
+      poll.stop();
       window.removeEventListener('focus', refresh);
     };
   }, [id, readOnly]);

@@ -4,6 +4,7 @@ import { ChevronDown, Loader2 } from 'lucide-react';
 import type { TelegramAccessInput, TelegramStatus } from '../../../../shared/telegram';
 import { telegramService } from '../../services/telegramService';
 import { errorText } from '../../utils/errors';
+import { startPoll } from '../../services/poll';
 import { TelegramWorkspaceAccess } from './TelegramWorkspaceAccess';
 import { TelegramConnectionForm } from './TelegramConnectionForm';
 import { TelegramPairing } from './TelegramPairing';
@@ -47,13 +48,11 @@ export function TelegramPage() {
   useEffect(() => {
     mounted.current = true;
     generation.current++;
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 3000);
+    // The poller pauses while the tab is hidden, which replaces the old visibility check.
+    const poll = startPoll(() => refresh(), { interval: 3000, maxInterval: 12000 });
     return () => {
       mounted.current = false;
-      window.clearInterval(timer);
+      poll.stop();
     };
   }, [refresh]);
 

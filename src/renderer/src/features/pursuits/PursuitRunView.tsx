@@ -5,6 +5,7 @@ import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import type { PursuitRun } from '../../../../shared/pursuits';
 import { chatService } from '../../services/chatService';
 import { conversationService } from '../../services/conversationService';
+import { startPoll } from '../../services/poll';
 import { Avatar } from '../../components/ui/Avatar';
 import { ResponseActivity } from '../ai/ResponseActivity';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
@@ -35,15 +36,20 @@ export function PursuitRunView({
   useEffect(() => {
     let alive = true,
       pending = false;
+    let previous: string | undefined;
     const load = async () => {
       if (pending) return;
       pending = true;
       try {
         const values = await chatService.history('space:' + run.conversationId);
+        const snapshot = JSON.stringify(values);
+        const changed = snapshot !== previous;
+        previous = snapshot;
         if (alive) {
-          setMessages(values);
+          if (changed) setMessages(values);
           setError('');
         }
+        return changed;
       } catch (caught) {
         if (alive) setError(errorText(caught));
       } finally {
@@ -51,10 +57,13 @@ export function PursuitRunView({
       }
     };
     void load();
-    const timer = run.status === 'running' ? window.setInterval(() => void load(), 1500) : null;
+    const poll =
+      run.status === 'running'
+        ? startPoll(() => load(), { interval: 1500, maxInterval: 6000, immediate: false })
+        : null;
     return () => {
       alive = false;
-      if (timer) window.clearInterval(timer);
+      poll?.stop();
     };
   }, [run.conversationId, run.status]);
   async function save(message: ChatMessage) {

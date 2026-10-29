@@ -10,6 +10,7 @@ import {
   type ThemePreferences,
 } from './themes';
 import { settingsService } from '../../services/settingsService';
+import { startPoll } from '../../services/poll';
 import { errorText } from '../../utils/errors';
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -80,6 +81,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!ready) return;
     let disposed = false;
     let loading = false;
+    let previous: string | undefined;
     const refresh = async () => {
       if (loading || pending.current) return;
       const requestedGeneration = generation.current;
@@ -88,21 +90,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const result = await settingsService.appearance();
         if (disposed || pending.current || generation.current !== requestedGeneration) return;
         saved.current = result.appearance;
-        if (result.appearance) accept(result.appearance);
+        const snapshot = JSON.stringify(result.appearance ?? null);
+        const changed = snapshot !== previous;
+        previous = snapshot;
+        if (changed && result.appearance) accept(result.appearance);
+        return changed;
       } catch {
         /* Retain the confirmed preference during temporary disconnections. */
       } finally {
         loading = false;
       }
     };
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 5000);
-    window.addEventListener('focus', refresh);
+    const poll = startPoll(() => refresh(), { interval: 5000, maxInterval: 20000 });
+    const onFocus = () => poll.refresh();
+    window.addEventListener('focus', onFocus);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
-      window.removeEventListener('focus', refresh);
+      poll.stop();
+      window.removeEventListener('focus', onFocus);
     };
   }, [accept, ready]);
   const update = (patch: Partial<ThemePreferences>) => {

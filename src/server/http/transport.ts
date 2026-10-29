@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import type { ChatOutput } from '../services/chatService';
 import { ApiError } from '../config';
 import { z } from 'zod';
@@ -24,6 +26,95 @@ export async function jsonBody(request: IncomingMessage, limit?: number) {
 export function send(response: ServerResponse, value: unknown, status = 200) {
   response.writeHead(status).end(JSON.stringify(value));
 }
+
+/** Below this size the framing and CPU cost outweighs what compression can save. */
+const COMPRESS_FROM = 1024;
+
+/** Weak validators stay valid for the compressed variant an intermediary may swap in. */
+function fingerprint(payload: Buffer): string {
+  return `W/"${createHash('sha1').update(payload).digest('base64url')}"`;
+}
+
+function validator(value: string): string {
+  return value.trim().replace(/^W\//i, '').replace(/^"|"$/g, '');
+}
+
+function notModified(request: IncomingMessage, etag: string): boolean {
+  const header = request.headers['if-none-match'];
+  const candidates = (Array.isArray(header) ? header.join(',') : header || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  // An empty If-None-Match header from an intermediary must never read as a match.
+  return candidates.includes('*')
+    ? candidates.length === 1
+    : candidates.some((item) => validator(item) === validator(etag));
+}
+
+function acceptsGzip(request: IncomingMessage): boolean {
+  const header = request.headers['accept-encoding'];
+  return (Array.isArray(header) ? header.join(',') : header || '')
+    .split(',')
+    .some((item) => /^\s*gzip\s*(;|$)/i.test(item));
+}
+
+/** Keeps the CORS `Vary: Origin` set by the handler while adding our own dimension. */
+function vary(response: ServerResponse, addition: string): string {
+  const existing = response.getHeader('Vary');
+  const tokens = (Array.isArray(existing) ? existing.join(',') : typeof existing === 'string' ? existing : '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .concat(addition);
+  return [...new Map(tokens.map((item) => [item.toLowerCase(), item])).values()].join(', ');
+}
+
+/**
+ * Answers a polled read conditionally and compressed.
+ *
+ * The UI re-reads the same handful of endpoints every second, and one long
+ * conversation's history is megabytes, so re-sending unchanged bodies is what
+ * filled the tunnel and stalled the renderer. A digest of the serialized
+ * payload makes an unchanged read a body-less 304, and gzip keeps the changed
+ * ones small on the local link, where no edge compressor sits in front.
+ *
+ * `send` stays as-is for writes: only reads revalidate.
+ */
+export function sendRead(
+  request: IncomingMessage,
+  response: ServerResponse,
+  value: unknown,
+  status = 200,
+): void {
+  const serialized = JSON.stringify(value);
+  const payload = Buffer.from(serialized === undefined ? '' : serialized, 'utf8');
+  const etag = fingerprint(payload);
+  const varyHeaders = { ETag: etag, Vary: vary(response, 'Accept-Encoding') };
+  if (notModified(request, etag)) {
+    // Node omits the body (and length framing) for a 304 on its own.
+    response.writeHead(304, varyHeaders).end();
+    return;
+  }
+  if (request.method === 'HEAD') {
+    response.writeHead(status, { ...varyHeaders, 'Content-Length': String(payload.length) }).end();
+    return;
+  }
+  if (payload.length >= COMPRESS_FROM && acceptsGzip(request)) {
+    const compressed = gzipSync(payload, { level: 1 });
+    if (compressed.length < payload.length) {
+      response.writeHead(status, {
+        ...varyHeaders,
+        'Content-Encoding': 'gzip',
+        'Content-Length': String(compressed.length),
+      });
+      response.end(compressed);
+      return;
+    }
+  }
+  response.writeHead(status, { ...varyHeaders, 'Content-Length': String(payload.length) });
+  response.end(payload);
+}
+
 
 function wantsEventStream(request?: IncomingMessage): boolean {
   const accept = request?.headers?.accept;

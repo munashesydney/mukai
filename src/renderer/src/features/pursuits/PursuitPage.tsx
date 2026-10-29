@@ -8,6 +8,7 @@ import {
   type PursuitRun,
 } from '../../../../shared/pursuits';
 import { pursuitService } from '../../services/pursuitService';
+import { startPoll } from '../../services/poll';
 import { errorText } from '../../utils/errors';
 import { Avatar } from '../../components/ui/Avatar';
 import { WakeCountdown } from './WakeCountdown';
@@ -55,26 +56,30 @@ export function PursuitPage({
   useEffect(() => {
     let alive = true,
       pending = false;
+    let previous: string | undefined;
     const load = async () => {
       if (pending) return;
       pending = true;
       try {
         const value = await pursuitService.detail(id);
+        const snapshot = JSON.stringify(value);
+        const changed = snapshot !== previous;
+        previous = snapshot;
         if (alive) {
-          setDetail(value);
+          if (changed) setDetail(value);
           setError('');
         }
+        return changed;
       } catch (caught) {
         if (alive) setError(errorText(caught));
       } finally {
         pending = false;
       }
     };
-    void load();
-    const timer = window.setInterval(() => void load(), 2000);
+    const poll = startPoll(() => load(), { interval: 2000, maxInterval: 8000 });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      poll.stop();
     };
   }, [id]);
   async function action(fn: () => Promise<unknown>) {
