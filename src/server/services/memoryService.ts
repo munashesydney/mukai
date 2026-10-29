@@ -45,6 +45,113 @@ export const memoryReviewOutputSchema = extractionSchema.extend({
   reviewSummary: z.string().trim().min(1).max(3000),
 });
 
+// Compatible adapters cannot return schema-validated structured output (the SDK
+// only requests json_object), so the model's text is parsed defensively. This
+// salvages fenced or prefixed JSON and normalizes the shapes compatible chat
+// models commonly emit (empty/null sentinels, day-only dates, missing arrays)
+// before strict validation. Essential empty fields still fail and trigger the
+// repair loop, so no fact is invented.
+class ExtractionParseError extends Error {
+  constructor(
+    readonly issues: string,
+    // Raw output is kept only for byte-size diagnostics, mirroring
+    // AI_NoObjectGeneratedError; it is never logged verbatim.
+    readonly text: string,
+    readonly finishReason?: string,
+  ) {
+    super('Memory model output did not match the extraction schema.');
+    this.name = 'ExtractionParseError';
+  }
+}
+
+const NULLISH = /^(?:null|none|n\/a|unknown|undefined)$/i;
+function coerceNullableId(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value !== 'string') return value as string;
+  const trimmed = value.trim();
+  return !trimmed || NULLISH.test(trimmed) ? null : trimmed;
+}
+function coerceDatetime(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || NULLISH.test(trimmed)) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
+  const stamp = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/,
+  );
+  if (stamp) return `${stamp[1]}T${stamp[2]}:${stamp[3] || '00'}${stamp[4] || 'Z'}`;
+  return trimmed;
+}
+function coerceTextArray(value: unknown, max: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+function parseMemoryExtraction(
+  text: string,
+  finishReason?: string,
+): z.infer<typeof memoryReviewOutputSchema> {
+  const fail: (issues: string) => never = (issues) => {
+    throw new ExtractionParseError(issues, text, finishReason);
+  };
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const inner = (fence ? fence[1] : text).trim();
+  const start = inner.indexOf('{');
+  const end = inner.lastIndexOf('}');
+  if (start < 0 || end <= start) fail('the response contained no JSON object');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(inner.slice(start, end + 1));
+  } catch (error) {
+    fail(`the response was not valid JSON (${(error as Error).message})`);
+  }
+  const object = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const facts = Array.isArray(object.facts)
+    ? object.facts
+    : Array.isArray(raw)
+      ? raw
+      : [];
+  const dispositions = new Set(['assert', 'replace', 'correct', 'uncertain']);
+  const normalized = {
+    reviewSummary:
+      typeof object.reviewSummary === 'string' && object.reviewSummary.trim()
+        ? object.reviewSummary.trim().slice(0, 3000)
+        : 'No durable information needed saving.',
+    facts: facts.map((entry) => {
+      const fact = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+      const disposition = String(fact.disposition ?? '').trim().toLowerCase();
+      return {
+        subject: String(fact.subject ?? '').trim(),
+        subjectId: coerceNullableId(fact.subjectId),
+        subjectType: String(fact.subjectType ?? 'entity').trim() || 'entity',
+        subjectAliases: coerceTextArray(fact.subjectAliases, 8),
+        relation: String(fact.relation ?? '').trim(),
+        object: String(fact.object ?? '').trim(),
+        objectId: coerceNullableId(fact.objectId),
+        objectType: String(fact.objectType ?? 'entity').trim() || 'entity',
+        objectAliases: coerceTextArray(fact.objectAliases, 8),
+        text: String(fact.text ?? '').trim(),
+        validFrom: coerceDatetime(fact.validFrom),
+        validTo: coerceDatetime(fact.validTo),
+        disposition: dispositions.has(disposition) ? disposition : 'uncertain',
+        supersedes: coerceTextArray(fact.supersedes, 12),
+      };
+    }),
+  };
+  const parsed = memoryReviewOutputSchema.safeParse(normalized);
+  if (!parsed.success)
+    fail(
+      parsed.error.issues
+        .slice(0, 6)
+        .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
+        .join('; '),
+    );
+  return parsed.data;
+}
+
 export class MemoryService {
   readonly engine: MemoryEngine;
   readonly store: SQLiteMemoryStore;
@@ -155,9 +262,11 @@ export class MemoryService {
               try {
                 const result = await generateText({
                   model: config.model,
-                  output: Output.object({
-                    schema: memoryReviewOutputSchema,
-                  }),
+                  // Native adapters validate structured output themselves. Compatible
+                  // adapters ignore the schema, so parse the returned text instead.
+                  ...(compatible
+                    ? {}
+                    : { output: Output.object({ schema: memoryReviewOutputSchema }) }),
                   system,
                   prompt: JSON.stringify(data) + repair,
                   abortSignal,
@@ -173,6 +282,9 @@ export class MemoryService {
                     },
                     anthropic: { thinking: { type: 'disabled' } },
                     google: { thinkingConfig: { includeThoughts: false } },
+                    ...(compatible
+                      ? { mukaiCustom: { thinking: { type: 'disabled' }, enable_thinking: false } }
+                      : {}),
                   },
                 });
                 outputDetails = {
@@ -181,7 +293,9 @@ export class MemoryService {
                   outputTokens: result.usage.outputTokens,
                   reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
                 };
-                return result.output;
+                return compatible
+                  ? parseMemoryExtraction(result.text, result.finishReason)
+                  : result.output;
               } catch (error) {
                 if (NoObjectGeneratedError.isInstance(error))
                   outputDetails = {
@@ -196,7 +310,8 @@ export class MemoryService {
                   attempt === 0 &&
                   !signal?.aborted &&
                   !operationSignal.aborted &&
-                  (NoObjectGeneratedError.isInstance(error) ||
+                  (error instanceof ExtractionParseError ||
+                    NoObjectGeneratedError.isInstance(error) ||
                     NoOutputGeneratedError.isInstance(error) ||
                     timeoutSignal.aborted);
                 if (!signal?.aborted)
@@ -217,7 +332,11 @@ export class MemoryService {
                   );
                 if (!retry) throw error;
                 // Regenerate from the evidence rather than treating the rejected output as facts.
-                repair = repairInstructions;
+                repair =
+                  repairInstructions +
+                  (error instanceof ExtractionParseError
+                    ? '\nValidation issues to fix: ' + error.issues
+                    : '');
                 if (
                   outputDetails.finishReason === 'length' ||
                   NoOutputGeneratedError.isInstance(error)

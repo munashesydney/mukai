@@ -109,7 +109,7 @@ export class DiagnosticService {
       statusCode: typeof item.statusCode === 'number' ? item.statusCode : undefined,
       isRetryable: typeof item.isRetryable === 'boolean' ? item.isRetryable : undefined,
     };
-    if (name === 'AI_NoObjectGeneratedError') {
+    if (name === 'AI_NoObjectGeneratedError' || name === 'ExtractionParseError') {
       if (typeof item.text === 'string') value.generatedTextBytes = Buffer.byteLength(item.text);
       if (
         typeof item.finishReason === 'string' &&

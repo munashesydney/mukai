@@ -87,6 +87,7 @@ import {
   emptyReplyRecoveryMessages,
   canRetryProvider,
   interruptedResponseReport,
+  RESPONSE_IDLE_TIMEOUT_MS,
 } from './responsePolicy';
 
 interface Generation {
@@ -1957,7 +1958,7 @@ export class ChatService {
             Boolean(scheduling?.waiting()),
           stepController,
           RESPONSE_TIMEOUT_MS,
-          45000,
+          RESPONSE_IDLE_TIMEOUT_MS,
         );
         let textPartId = '',
           reasoningPartId = '';

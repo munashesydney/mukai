@@ -37,7 +37,12 @@ export function interruptedResponseReport(activity: ChatActivity[]): string {
 export const TOOL_STEP_LIMIT = 1000;
 export const RUNTIME_TOOL_CALL_LIMIT = 2000;
 export const FILE_TOOL_CALL_LIMIT = 2000;
-export const RESPONSE_TIMEOUT_MS = 180000;
+// Local/self-hosted models can spend a long time producing the first token on a
+// large prompt while they also serve background memory and compaction requests.
+// Keep the windows generous enough to survive cold inference but finite so a
+// genuinely dead connection still aborts.
+export const RESPONSE_TIMEOUT_MS = 300000;
+export const RESPONSE_IDLE_TIMEOUT_MS = 120000;
 // Five retries after the initial request. The SDK handles backoff and cancellation.
 export const PROVIDER_MAX_RETRIES = 5;
 export const EMPTY_REPLY_RECOVERY_LIMIT = 2;

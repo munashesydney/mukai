@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 import type { ProviderService } from './providerService';
 import { ContextError, contextLimits, estimateTokens, type Summarizer } from './contextPolicy';
-import { PROVIDER_MAX_RETRIES, RESPONSE_TIMEOUT_MS } from './responsePolicy';
+import { PROVIDER_MAX_RETRIES, RESPONSE_IDLE_TIMEOUT_MS, RESPONSE_TIMEOUT_MS } from './responsePolicy';
 
 type ModelConfig = ReturnType<ProviderService['resolve']>;
 type ProviderOptions = NonNullable<Parameters<typeof generateText>[0]['providerOptions']>;
@@ -19,10 +19,11 @@ function summaryOptions(config: ModelConfig): ProviderOptions {
     anthropic: { thinking: { type: 'disabled' } },
     google: { thinkingConfig: { includeThoughts: false } },
     // Compatible adapters use their own namespace; openai options do not apply.
-    // DeepSeek's chat API supports disabling thinking on its chat/flash models.
-    ...(config.provider.kind === 'compatible' &&
-    /(?:^|\/)deepseek-(?!reasoner|r1)/i.test(config.modelId)
-      ? { mukaiCustom: { thinking: { type: 'disabled' } } }
+    // Summary output budgets are tiny, so a thinking model must not spend them on
+    // hidden reasoning. Emit both known disable spellings; servers ignore the one
+    // they do not recognize (DeepSeek uses `thinking`, vLLM/Qwen use `enable_thinking`).
+    ...(config.provider.kind === 'compatible'
+      ? { mukaiCustom: { thinking: { type: 'disabled' }, enable_thinking: false } }
       : {}),
   };
 }
@@ -60,7 +61,7 @@ export function contextSummarizer(
         maxOutputTokens: output,
         maxRetries: PROVIDER_MAX_RETRIES,
         abortSignal: signal,
-        timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: 45000 },
+        timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: RESPONSE_IDLE_TIMEOUT_MS },
         providerOptions: summaryOptions(config),
         system,
         prompt: data,

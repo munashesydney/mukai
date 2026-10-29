@@ -41,6 +41,8 @@ let calls: {
   response_format?: unknown;
   max_tokens?: number;
   tools?: { function: { name: string } }[];
+  thinking?: { type: string };
+  enable_thinking?: boolean;
 }[];
 let invalidSchema = false;
 let extractionResponses: { content: string | null; finishReason: string; abort?: () => void }[];
@@ -883,9 +885,10 @@ describe('Mukai memory integration', () => {
     await chat('I prefer espresso every morning.');
     await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
     const extractionCall = calls.find((call) => !call.stream)!;
-    expect(extractionCall.response_format).toBeDefined();
+    expect(extractionCall.response_format).toBeUndefined();
+    expect(extractionCall.enable_thinking).toBe(false);
+    expect(extractionCall.thinking).toEqual({ type: 'disabled' });
     expect(JSON.stringify(extractionCall.messages[0])).toContain('untrusted data');
-    expect(extractionCall.response_format).toEqual({ type: 'json_object' });
     const system = String(extractionCall.messages[0].content);
     const schema = JSON.parse(
       system.split(
