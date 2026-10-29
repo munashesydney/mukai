@@ -40,6 +40,7 @@ let mode:
   | 'delegate'
   | 'delegate-slow'
   | 'delegate-many'
+  | 'delegate-fail'
   | 'delegate-approval'
   | 'delegate-tool-approval'
   | 'delegate-nested'
@@ -201,7 +202,7 @@ beforeEach(async () => {
       .at(-1)
       ?.content?.startsWith('[Mukai runtime continuation');
     if (mode === 'slow') return;
-    if ((mode === 'delegate-slow' || mode === 'delegate-many') && child) {
+    if ((mode === 'delegate-slow' || mode === 'delegate-many' || mode === 'delegate-fail') && child) {
       heldChildren.push((text) => {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         res.end(
@@ -417,6 +418,14 @@ beforeEach(async () => {
         ],
       });
       send({}, 'tool_calls');
+    } else if (
+      mode === 'delegate-fail' &&
+      !child &&
+      call.messages.some((item) => item.role === 'tool')
+    ) {
+      // The delegation already happened; now the response itself dies before it can deliver.
+      // Wire spelling: the provider maps OpenAI's 'content_filter' to the internal 'content-filter'.
+      send({ role: 'assistant', content: 'Blocked by the provider.' }, 'content_filter');
     } else {
       send({ role: 'assistant', content: 'Reviewed the notes successfully.' });
       send({}, 'stop');
@@ -1911,6 +1920,74 @@ describe('Bot architecture', () => {
     expect(() => api.botManagement.getLastMessage(main, child.id, 'bot-' + child.id)).toThrow(
       'between you and the target',
     );
+  });
+  it('keeps a background result when the parent response fails and delivers it on the next response', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-fail';
+    await chat(main);
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.status).toBe('failed');
+    // The response died before it could deliver anything, but a failure does not abandon
+    // delegated work, so the child is still running and its result is still owed.
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'waiting', delivered: 0 });
+    heldChildren[0]('Verified child finding: blueberry.');
+    await waitFor(() =>
+      expect(
+        api.store.get(
+          'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+          parent.id,
+        ),
+      ).toEqual({ state: 'complete', delivered: 0 }),
+    );
+    mode = 'normal';
+    await chat(main);
+    const delivered = JSON.stringify(calls.at(-1)!.messages);
+    expect(delivered).toContain('<delegated-results>');
+    expect(delivered).toContain('Verified child finding: blueberry.');
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'complete', delivered: 1 });
+    const finished = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(finished.status).toBe('complete');
+    expect(finished.id).not.toBe(parent.id);
+  });
+  it('cancels a background result when the user stops the parent', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const pending = chat(main);
+    await waitFor(() => expect(calls).toHaveLength(3));
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.status).toBe('streaming');
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'waiting', delivered: 0 });
+    await request(`/bots/${main.id}/stop`, 'POST');
+    await pending;
+    expect(
+      api.store.get(
+        'SELECT state,delivered FROM bot_delegations WHERE parent_message_id=?',
+        parent.id,
+      ),
+    ).toEqual({ state: 'cancelled', delivered: 0 });
   });
   async function waitingParent(main: Bot) {
     let parent!: ChatMessage;

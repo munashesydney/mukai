@@ -47,6 +47,11 @@ export interface BotDelegation {
   mode?: 'wait' | 'fire_and_forget';
 }
 
+export interface BackgroundDelivery {
+  messageId: string;
+  toolCallIds: string[];
+}
+
 export interface ApprovalStepCall {
   toolCallId: string;
   toolName: string;
@@ -145,15 +150,43 @@ export class ChatJobRepository {
             : undefined,
       }));
   }
-  consumeBackground(messageId: string, toolCallIds: string[], save: () => void) {
+  /**
+   * Ready background results still attached to a parent response that ended before it could
+   * collect them. A stop cancels its chain and an 'interrupted' parent keeps its own resume path,
+   * which collects results under the parent's own message id, so in practice these are parents
+   * whose response failed mid-flight. The wider status set only makes sure a parent that somehow
+   * ended with a row still waiting and uncancelled cannot lose it. The next response from the
+   * same bot in the same conversation delivers them.
+   */
+  orphanedBackgroundResults(conversationId: string, botId: string, messageId: string) {
+    const parents = this.database
+      .all(
+        `SELECT p.id FROM messages p WHERE p.conversation_id=? AND p.bot_id=? AND p.id!=?
+       AND p.status IN ('complete','failed','stopped')
+       AND EXISTS (SELECT 1 FROM bot_delegations d WHERE d.parent_message_id=p.id
+         AND d.mode='fire_and_forget' AND d.delivered=0 AND d.state!='cancelled')
+       ORDER BY p.sequence`,
+        conversationId,
+        botId,
+        messageId,
+      )
+      .map((row) => String(row.id));
+    return parents.flatMap((parentMessageId) =>
+      this.backgroundDelegations(parentMessageId)
+        .filter((child) => child.result)
+        .map((child) => ({ ...child, parentMessageId })),
+    );
+  }
+  consumeBackground(deliveries: BackgroundDelivery[], save: () => void) {
     this.database.transaction(() => {
       save();
-      for (const id of toolCallIds)
-        this.database.run(
-          'UPDATE bot_delegations SET delivered=1 WHERE parent_message_id=? AND tool_call_id=?',
-          messageId,
-          id,
-        );
+      for (const delivery of deliveries)
+        for (const toolCallId of delivery.toolCallIds)
+          this.database.run(
+            'UPDATE bot_delegations SET delivered=1 WHERE parent_message_id=? AND tool_call_id=?',
+            delivery.messageId,
+            toolCallId,
+          );
     });
   }
   cancelDelegations(messageId: string) {
