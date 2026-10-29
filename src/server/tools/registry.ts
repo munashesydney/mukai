@@ -36,6 +36,7 @@ import { mediaDefinition } from './media/definition';
 import { mediaTools } from './media/execute';
 import { computerUseDefinition } from './computer_use/definition';
 import { computerUseTools, type ComputerUseContext } from './computer_use/execute';
+import { systemDefinition } from './system/definition';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
   const actions = context.management.actionsFor(context.bot, context.messageId);
@@ -246,6 +247,7 @@ export function toolCatalog() {
       communicateDefinition,
       conversationsDefinition,
       skillsDefinition,
+      systemDefinition,
     ].map((definition) => ({
       id: definition.name,
       name: definition.title,

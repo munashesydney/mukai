@@ -2303,11 +2303,12 @@ describe('Mukai bots and AI API', () => {
   });
   it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
     await configure(false, {
-      contextWindowTokens: 26000,
+      contextWindowTokens: 27000,
       maxOutputTokens: 1024,
     });
     await chat('Short request fits');
-    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('complete');
+    const fits = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(fits.status, fits.error || undefined).toBe('complete');
     expect(calls).toHaveLength(1);
     const text = 'Exact input '.repeat(1300);
     await chat(text);
@@ -2615,8 +2616,9 @@ describe('Mukai bots and AI API', () => {
   }, 20000);
   // Leave room for current instructions and tool schemas. The fixture results
   // still greatly exceed both context windows and must be bounded. The lower
-  // fixture leaves room for the expanded attachment discovery/copy schemas.
-  it.each([26000, 28000])(
+  // fixture leaves room for the expanded attachment discovery/copy schemas and
+  // the read-only System tool family.
+  it.each([27000, 28000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
       await configure(true, {

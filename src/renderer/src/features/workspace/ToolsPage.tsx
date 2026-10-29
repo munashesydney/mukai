@@ -10,6 +10,7 @@ import {
   Image,
   Puzzle,
   Search,
+  Settings2,
   Target,
   Terminal,
   Users,
@@ -31,6 +32,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'conversations') return <Search size={size} />;
   if (toolId === 'manage_pursuit') return <Target size={size} />;
   if (toolId === 'manage_bot') return <Users size={size} />;
+  if (toolId === 'system') return <Settings2 size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
   if (toolId === 'computer_use') return <Monitor size={size} />;
   if (toolId === 'media') return <Image size={size} />;
@@ -50,6 +52,7 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
   if (tool.id === 'manage_bot')
     return 'Required for all bots · Actions depend on bot and conversation';
+  if (tool.id === 'system') return 'Workspace environment variables · Names and status only';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'computer_use') return 'Local desktop · Mouse, keyboard and screenshots';
   if (tool.id === 'media')
