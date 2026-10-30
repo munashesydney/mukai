@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { defaultSkills } from '../../skills';
@@ -25,7 +25,9 @@ it.each(['desktop', 'cli', 'server'] as const)(
         entryPoints: [
           'src/skills/index.ts',
           'src/skills/bundle.ts',
-          'src/skills/mukai-custom-routes-authenticated-websites/index.ts',
+          ...(await readdir('src/skills', { withFileTypes: true }))
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => join('src/skills', entry.name, 'index.ts')),
         ],
         outbase: 'src/skills',
         outdir: output,

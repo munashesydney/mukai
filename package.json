@@ -112,6 +112,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.0.0",
     "prettier": "^3.9.9",
+    "stripe": "^23.1.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.46.0",

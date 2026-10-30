@@ -31,8 +31,10 @@ it('discovers bundled skills through existing HTTP and bot search/load/read path
   });
   expect(response.status).toBe(200);
   const catalog = await response.json();
-  expect(catalog).toHaveLength(1);
-  const skill = catalog[0];
+  expect(catalog).toHaveLength(defaultSkills.length);
+  const skill = catalog.find(
+    (item: { name: string }) => item.name === 'mukai-custom-routes-authenticated-websites',
+  );
   expect(skill).toMatchObject({
     name: 'mukai-custom-routes-authenticated-websites',
     enabled: true,
@@ -53,10 +55,14 @@ it('discovers bundled skills through existing HTTP and bot search/load/read path
   expect(api.skills.context('default', 'scout', 'bot-scout')).toContain('/api/bots/{botId}/chat');
 });
 it('seeds each workspace independently and preserves edits, disabled state and removals across service restarts', () => {
-  const first = api.skills.list('default')[0];
-  expect(new SkillService(api.store, api.workspaces).list('default')).toHaveLength(1);
+  const first = api.skills
+    .list('default')
+    .find((item) => item.name === 'mukai-custom-routes-authenticated-websites')!;
+  expect(new SkillService(api.store, api.workspaces).list('default')).toHaveLength(
+    defaultSkills.length,
+  );
   const other = api.workspaces.create({ name: 'Other', folder: root });
-  const second = api.skills.list(other.id)[0];
+  const second = api.skills.list(other.id).find((item) => item.name === first.name)!;
   expect(second.id).not.toBe(first.id);
   const edited = api.skills.save('default', updated('Personal workflow.'), first.id, first.version);
   api.skills.enable('default', first.id, false);
@@ -66,14 +72,18 @@ it('seeds each workspace independently and preserves edits, disabled state and r
     version: edited.version,
   });
   restarted.remove('default', first.id);
-  expect(new SkillService(api.store, api.workspaces).list('default')).toEqual([]);
-  expect(api.skills.list(other.id)).toHaveLength(1);
+  expect(
+    new SkillService(api.store, api.workspaces).list('default').map((item) => item.name),
+  ).not.toContain(first.name);
+  expect(api.skills.list(other.id)).toHaveLength(defaultSkills.length);
 });
 it('refreshes untouched bundled copies while preserving pinned loads and disabled state', () => {
-  const first = api.skills.list('default')[0];
+  const first = api.skills
+    .list('default')
+    .find((item) => item.name === 'mukai-custom-routes-authenticated-websites')!;
   const original = api.skills.load('default', 'scout', 'bot-scout', first.id);
   const next = new SkillService(api.store, api.workspaces, [updated('New bundled guidance.')]);
-  const refreshed = next.list('default')[0];
+  const refreshed = next.list('default').find((item) => item.name === first.name)!;
   expect(refreshed.id).toBe(first.id);
   expect(refreshed.version).not.toBe(first.version);
   expect(next.context('default', 'scout', 'bot-scout')).not.toContain('New bundled guidance.');
@@ -91,7 +101,9 @@ it('refreshes untouched bundled copies while preserving pinned loads and disable
   );
 });
 it('does not overwrite personal modifications or a pre-existing same-named user skill on an upgrade', () => {
-  const first = api.skills.list('default')[0];
+  const first = api.skills
+    .list('default')
+    .find((item) => item.name === 'mukai-custom-routes-authenticated-websites')!;
   api.skills.save('default', updated('My personal edits.'), first.id, first.version);
   const next = new SkillService(api.store, api.workspaces, [updated('Upgraded bundled guidance.')]);
   expect(next.inspect('default', first.id).files[0].content).toContain('My personal edits.');
