@@ -61,7 +61,9 @@ function acceptsGzip(request: IncomingMessage): boolean {
 /** Keeps the CORS `Vary: Origin` set by the handler while adding our own dimension. */
 function vary(response: ServerResponse, addition: string): string {
   const existing = response.getHeader('Vary');
-  const tokens = (Array.isArray(existing) ? existing.join(',') : typeof existing === 'string' ? existing : '')
+  const tokens = (
+    Array.isArray(existing) ? existing.join(',') : typeof existing === 'string' ? existing : ''
+  )
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
@@ -115,7 +117,6 @@ export function sendRead(
   response.end(payload);
 }
 
-
 function wantsEventStream(request?: IncomingMessage): boolean {
   const accept = request?.headers?.accept;
   if (!accept) return false;
@@ -136,16 +137,19 @@ export function chatOutput(response: ServerResponse, request?: IncomingMessage):
   return {
     start() {
       if (ended) return;
-      response.writeHead(200, sse
-        ? {
-            'Content-Type': 'text/event-stream; charset=utf-8',
-            'Cache-Control': 'no-cache, no-transform',
-            'X-Accel-Buffering': 'no',
-          }
-        : {
-            'Content-Type': 'application/x-ndjson; charset=utf-8',
-            'X-Accel-Buffering': 'no',
-          });
+      response.writeHead(
+        200,
+        sse
+          ? {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              'X-Accel-Buffering': 'no',
+            }
+          : {
+              'Content-Type': 'application/x-ndjson; charset=utf-8',
+              'X-Accel-Buffering': 'no',
+            },
+      );
       response.flushHeaders();
       if (!sse) return;
       // Proxies release held bytes only once something arrives, so an idle

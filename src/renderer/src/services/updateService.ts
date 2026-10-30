@@ -85,21 +85,24 @@ export const updateService = {
     // downloading or installing it moves on every tick, and otherwise it does not
     // move at all. One poller covers both by backing off from its own readings.
     let lastPayload = '';
-    const poll = startPoll(async () => {
-      let state: DesktopUpdateState;
-      try {
-        state = await updateService.getUpdateState();
-      } catch {
-        // Reconnect and authentication are handled by the existing app lifecycle;
-        // returning false just stops hammering a server that is not there yet.
-        return false;
-      }
-      const payload = JSON.stringify(state);
-      const unchanged = payload === lastPayload;
-      lastPayload = payload;
-      if (!unchanged && active) listener(state);
-      return !unchanged;
-    }, { interval: 1500, maxInterval: 30_000 });
+    const poll = startPoll(
+      async () => {
+        let state: DesktopUpdateState;
+        try {
+          state = await updateService.getUpdateState();
+        } catch {
+          // Reconnect and authentication are handled by the existing app lifecycle;
+          // returning false just stops hammering a server that is not there yet.
+          return false;
+        }
+        const payload = JSON.stringify(state);
+        const unchanged = payload === lastPayload;
+        lastPayload = payload;
+        if (!unchanged && active) listener(state);
+        return !unchanged;
+      },
+      { interval: 1500, maxInterval: 30_000 },
+    );
     return () => {
       active = false;
       poll.stop();

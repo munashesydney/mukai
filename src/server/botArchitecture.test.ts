@@ -202,7 +202,10 @@ beforeEach(async () => {
       .at(-1)
       ?.content?.startsWith('[Mukai runtime continuation');
     if (mode === 'slow') return;
-    if ((mode === 'delegate-slow' || mode === 'delegate-many' || mode === 'delegate-fail') && child) {
+    if (
+      (mode === 'delegate-slow' || mode === 'delegate-many' || mode === 'delegate-fail') &&
+      child
+    ) {
       heldChildren.push((text) => {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         res.end(
