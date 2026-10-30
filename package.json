@@ -44,6 +44,7 @@
     "test:memory-ui": "tsx scripts/run-memory-smoke.ts",
     "test:chat-activity-ui": "tsx scripts/run-chat-activity-smoke.ts",
     "test:delegation-ui": "node --import tsx scripts/delegation-ui-smoke.ts",
+    "test:response-activity-ui": "node --import tsx scripts/response-activity-smoke.ts",
     "test:terminal-ui": "npm run build:web && tsx scripts/terminal-smoke.ts",
     "test:steering-ui": "tsx scripts/steering-smoke.ts",
     "build": "npm run typecheck && npm run build:computer-use && npm run build:guest && electron-vite build && tsc -p tsconfig.server.json",

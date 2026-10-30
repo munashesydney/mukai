@@ -34,7 +34,6 @@ import { ChatActivityDrawer } from './ChatActivityDrawer';
 import { BotChatComposer } from './BotChatComposer';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
-import { responseStatus } from './responseStatus';
 
 export function BotChat({
   bot,
@@ -228,10 +227,10 @@ export function BotChat({
             <>
               <div
                 ref={feed}
-                className="ai-message-feed"
+                className={`ai-message-feed${state.loading ? ' is-loading' : ''}`}
                 role="log"
                 aria-label={`${title} chat`}
-                aria-busy={state.busy}
+                aria-busy={state.loading || state.busy}
                 onScroll={() => {
                   if (feed.current)
                     follow.current =
@@ -242,7 +241,7 @@ export function BotChat({
                 }}
               >
                 {state.loading ? (
-                  <div className="ai-chat-empty">
+                  <div className="ai-chat-empty ai-chat-loading" role="status">
                     <LoaderCircle className="is-spinning" size={24} />
                     <p>Loading your chat…</p>
                   </div>
@@ -449,16 +448,6 @@ const MessageRow = memo(function MessageRow({
               {message.attachments.map((file) => (
                 <AttachmentCard attachment={file} key={file.id} />
               ))}
-            </div>
-          )}
-          {message.status === 'streaming' && (
-            <div className="ai-response-status" role="status">
-              <span className="typing-dots">
-                <i />
-                <i />
-                <i />
-              </span>
-              {responseStatus(message)}…
             </div>
           )}
           {['failed', 'stopped', 'interrupted'].includes(message.status) && (

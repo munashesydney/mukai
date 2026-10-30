@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../../../../shared/ai';
+import type { ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { ResponseActivity } from './ResponseActivity';
 import type { ChatActivity } from '../../../../shared/ai';
 
@@ -113,7 +113,7 @@ describe('Response activity disclosures', () => {
     expect(html).not.toContain('spawned-bot-name');
     expect(html).not.toContain('typing-dots');
   });
-  it('shows one live terminal card for a run and its later process polls, using process status instead of tool completion', () => {
+  it('keeps a running terminal collapsed and combines its process polls into one card', () => {
     const snapshot = {
       id: '68db9142-e774-4bdf-bbdb-1b95219dd12a',
       command: 'python report.py',
@@ -162,10 +162,131 @@ describe('Response activity disclosures', () => {
     );
     expect(html.match(/class="terminal-card"/g)).toHaveLength(1);
     expect(html).toContain('Running python report.py');
-    expect(html).toContain('Latest output &lt;script&gt;');
+    expect(html).not.toContain('Latest output');
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('Success');
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('terminal-panel');
+  });
+  it('groups mixed tools and intervening reasoning between text updates into collapsed one-liners', () => {
+    const activities: ChatActivity[] = [
+      { ...message.activity![0], id: 'read', path: 'src/app.ts' },
+      {
+        id: 'run',
+        tool: 'terminal',
+        action: 'run',
+        path: 'npm test',
+        status: 'complete',
+        summary: 'Tests passed.',
+      },
+      { ...message.activity![0], id: 'next', path: 'src/useChatActivity.ts', status: 'running' },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          status: 'streaming',
+          activity: activities,
+          parts: [
+            { id: 'intro', type: 'text', text: 'I will inspect the code.' },
+            { id: 'read', type: 'tool', activityId: 'read' },
+            {
+              id: 'reasoning',
+              type: 'reasoning',
+              text: 'Inspecting the tests.',
+              state: 'complete',
+            },
+            { id: 'run', type: 'tool', activityId: 'run' },
+            {
+              id: 'update',
+              type: 'text',
+              text: 'The tests pass. Checking the activity view next.',
+            },
+            { id: 'next', type: 'tool', activityId: 'next' },
+          ],
+        },
+      }),
+    );
+    expect(html.match(/class="response-tool-group"/g)).toHaveLength(2);
+    expect(html).not.toContain('class="response-tool-group" open');
+    expect(html).toContain('Read files, ran commands');
+    expect(html).toContain('Reading useChatActivity.ts');
+    expect(html.match(/class="response-tool-group-label is-working"/g)).toHaveLength(1);
+    expect(html.indexOf('I will inspect the code.')).toBeLessThan(
+      html.indexOf('Read files, ran commands'),
+    );
+    expect(html.indexOf('The tests pass.')).toBeLessThan(
+      html.indexOf('Reading useChatActivity.ts'),
+    );
+  });
+  it('replaces the live title with a summary when the next text block starts', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: { ...message, status: 'streaming' },
+      }),
+    );
+    expect(html).toContain('response-tool-group-label');
+    expect(html).toContain('Read files');
+    expect(html).not.toContain('response-tool-group-label is-working');
+    expect(html).toContain('response-shimmer');
+    expect(html).not.toContain('typing-dots');
+  });
+  it('ignores newline-only provider text between tool calls in saved responses', () => {
+    const activity: ChatActivity[] = [
+      { ...message.activity![0], id: 'edit-1', action: 'patch' },
+      { ...message.activity![0], id: 'edit-2', action: 'patch' },
+      { ...message.activity![0], id: 'command-1', tool: 'terminal', action: 'run' },
+      { ...message.activity![0], id: 'command-2', tool: 'terminal', action: 'run' },
+    ];
+    const parts: ResponsePart[] = [{ id: 'intro', type: 'text', text: 'Fixing the store.' }];
+    activity.forEach((item, index) =>
+      parts.push(
+        { id: `tool-${index}`, type: 'tool', activityId: item.id },
+        {
+          id: `reasoning-${index}`,
+          type: 'reasoning',
+          text: 'Checking the next step.',
+          state: 'complete',
+        },
+        { id: `separator-${index}`, type: 'text', text: index % 2 ? '\n\n\n' : ' \n\n' },
+      ),
+    );
+    parts.push({ id: 'final', type: 'text', text: 'The store is fixed.' });
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: { ...message, activity, parts },
+      }),
+    );
+    expect(html.match(/class="response-tool-group"/g)).toHaveLength(1);
+    expect(html).toContain('Edited files, ran commands');
+    expect(html).not.toMatch(/class="ai-markdown"><p>\s*<\/p>/);
+  });
+  it('stops shimmering tool groups when a final answer begins streaming', () => {
+    const parts = message.parts!.map((part) =>
+      part.type === 'text' && part.id === 'answer' ? { ...part, final: true } : part,
+    );
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: { ...message, status: 'streaming', parts },
+      }),
+    );
+    expect(html).not.toContain('response-tool-group-label is-working');
+    expect(html).toMatch(/<\/details><div class="ai-markdown"><p>Final answer/);
+  });
+  it('puts even the first pending tool behind a collapsed shimmer disclosure', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          status: 'streaming',
+          activity: [],
+          parts: [{ id: 'pending', type: 'tool', activityId: 'pending' }],
+        },
+      }),
+    );
+    expect(html).toContain('<details class="response-tool-group">');
+    expect(html).toContain('Calling tools');
+    expect(html).toContain('response-tool-group-label is-working');
   });
   it('collapses terminal failures by default while keeping their failed command visible', () => {
     const activity: ChatActivity = {
@@ -307,7 +428,7 @@ describe('Response activity disclosures', () => {
         }),
       );
       expect(html).toContain('<details class="response-work" open="">');
-      expect(html).toContain('Responding for 2m 31s');
+      expect(html).toContain('Working for 2m 31s');
       expect(html).not.toContain('Worked for');
       expect(html).toContain('response-reasoning');
       expect(html).toContain('response-tool');
@@ -333,11 +454,90 @@ describe('Response activity disclosures', () => {
         }),
       );
       expect(html).toContain('<details class="response-work" open="">');
-      expect(html).toContain('Thinking for 0s');
+      expect(html).toContain('<summary><span>Working for 0s</span>');
+      expect(html).toContain('class="response-tool-group-label is-working" role="status">Thinking');
     } finally {
       vi.useRealTimers();
     }
   });
+  it('separates consecutive image views from ordinary tools on both sides', () => {
+    const activity: ChatActivity[] = [
+      { ...message.activity![0], id: 'read-before' },
+      ...Array.from({ length: 3 }, (_, index): ChatActivity => ({
+        id: `image-${index}`,
+        tool: index === 1 ? 'image' : 'media',
+        action: index === 1 ? 'view' : 'view_image',
+        path: `image-${index}.png`,
+        status: 'complete',
+        summary: 'Viewed the image.',
+      })),
+      { ...message.activity![0], id: 'command-after', tool: 'terminal', action: 'run' },
+    ];
+    const parts: ResponsePart[] = [{ id: 'intro', type: 'text', text: 'Checking the layout.' }];
+    activity.forEach((item, index) =>
+      parts.push(
+        { id: `tool-${index}`, type: 'tool', activityId: item.id },
+        {
+          id: `reasoning-${index}`,
+          type: 'reasoning',
+          text: 'Inspecting the next result.',
+          state: 'complete',
+        },
+        { id: `separator-${index}`, type: 'text', text: '\n\n' },
+      ),
+    );
+    parts.push({ id: 'final', type: 'text', text: 'The layout is checked.' });
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: { ...message, activity, parts },
+      }),
+    );
+    expect(html.match(/class="response-tool-group"/g)).toHaveLength(3);
+    expect(html).toContain('Viewed 3 images');
+    expect(html.indexOf('Read files')).toBeLessThan(html.indexOf('Viewed 3 images'));
+    expect(html.indexOf('Viewed 3 images')).toBeLessThan(html.indexOf('Ran commands'));
+  });
+  it.each([
+    ['listen_audio', 'Listened to 2 audio clips', 'Listening to 2 audio clips'],
+    ['view_video', 'Viewed 2 videos', 'Viewing 2 videos'],
+    ['view_image', 'Viewed 2 images', 'Viewing 2 images'],
+  ])(
+    'counts %s calls in a dedicated completed and active media group',
+    (action, completed, active) => {
+      const activity: ChatActivity[] = [0, 1].map((index) => ({
+        id: `media-${index}`,
+        tool: 'media',
+        action,
+        path: `media-${index}`,
+        status: 'complete',
+        summary: '',
+      }));
+      const parts: ResponsePart[] = activity.map((item) => ({
+        id: item.id,
+        type: 'tool',
+        activityId: item.id,
+      }));
+      const html = renderToStaticMarkup(
+        createElement(ResponseActivity, {
+          message: { ...message, activity, parts },
+        }),
+      );
+      expect(html).toContain(completed);
+      const streaming = renderToStaticMarkup(
+        createElement(ResponseActivity, {
+          message: {
+            ...message,
+            activity: activity.map((item) => ({ ...item, status: 'running' as const })),
+            parts,
+            status: 'streaming',
+          },
+        }),
+      );
+      expect(streaming).toContain(active);
+      expect(streaming).toContain('response-tool-group-label is-working');
+      expect(streaming).toContain('Working for');
+    },
+  );
   it('keeps failed tool output and stopped response status visible on expansion', () => {
     const html = renderToStaticMarkup(
       createElement(ResponseActivity, {

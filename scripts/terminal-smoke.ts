@@ -139,6 +139,11 @@ let n=0; const timer=setInterval(()=>{console.log('Processed batch '+(++n));if(f
     await page.goto(api.url);
     await page.getByText('The report is running in the background.', { exact: true }).waitFor();
     await page.locator('.response-work > summary').click();
+    await page.locator('.response-tool-group > summary').click();
+    const report = page.locator('.terminal-card').first();
+    assert.equal(await report.locator('.terminal-toggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.locator('.terminal-panel').count(), 0);
+    await report.locator('.terminal-toggle').click();
     await page
       .locator('.terminal-transcript')
       .filter({ hasText: 'Preparing report for October' })
@@ -186,18 +191,14 @@ let n=0; const timer=setInterval(()=>{console.log('Processed batch '+(++n));if(f
       'Terminal cards must not create page overflow.',
     );
     await page.setViewportSize({ width: 1480, height: 940 });
-    const report = page.locator('.terminal-card').first();
     await report.getByRole('button', { name: 'Copy command', exact: true }).click();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), command);
     await writeFile(join(directory, 'finish-report'), 'done');
     await api.processes.wait(owner, session.id, 20000, new AbortController().signal);
-    await page.waitForFunction(
-      () =>
-        document.querySelector('.terminal-card .terminal-toggle')?.getAttribute('aria-expanded') ===
-        'false',
-      undefined,
-      { timeout: 20000 },
-    );
+    await report.getByText('Success', { exact: true }).waitFor({ timeout: 20000 });
+    assert.equal(await report.locator('.terminal-toggle').getAttribute('aria-expanded'), 'true');
+    await report.locator('.terminal-toggle').click();
+    assert.equal(await report.locator('.terminal-panel').count(), 0);
     await report.locator('.terminal-toggle').click();
     await report.getByText('Success', { exact: true }).waitFor();
     assert((await report.locator('.terminal-transcript').innerText()).includes('Report saved.'));

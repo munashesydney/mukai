@@ -197,12 +197,13 @@ async function main() {
       'original.mp4',
     ]);
     const liveWork = page.locator('.response-work > summary');
-    await liveWork.filter({ hasText: /(?:Thinking|Responding) for/ }).waitFor();
+    await liveWork.filter({ hasText: /Working for/ }).waitFor();
     const initialDuration = await liveWork.innerText();
     await page.waitForFunction(
       (initial) => document.querySelector('.response-work > summary')?.textContent !== initial,
       initialDuration.trim(),
     );
+    await page.locator('.response-tool-group > summary').first().click();
     await page.locator('.response-reasoning').waitFor();
     assert.equal(await page.locator('.response-work').getAttribute('open'), '');
     await liveWork.click();
@@ -318,7 +319,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('.followup-row').length === 2);
     await page
       .locator('.response-work > summary')
-      .filter({ hasText: /(?:Thinking|Responding) for/ })
+      .filter({ hasText: /Working for/ })
       .waitFor();
     assert.equal(await page.locator('.response-work').getAttribute('open'), '');
     await page.locator('.response-work > summary').click();

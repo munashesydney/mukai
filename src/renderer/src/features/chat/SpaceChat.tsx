@@ -393,11 +393,6 @@ const MessageRow = memo(function MessageRow({
           ) : (
             <MessageMarkdown text={message.content} mentionBots={members} onMention={onMention} />
           )}
-          {message.status === 'streaming' && (
-            <p className="ai-response-status" role="status">
-              {bot?.name || 'Bot'} is responding…
-            </p>
-          )}
           {['failed', 'stopped', 'interrupted'].includes(message.status) && (
             <div className="ai-response-status">
               <span>{message.error || 'Response stopped.'}</span>

@@ -17,6 +17,7 @@ import { ToolApprovalCards, ApprovalModePicker } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { BotModelPicker } from './BotModelPicker';
 import { ContextMeter } from './ContextMeter';
+import { useAttachmentInput } from './useAttachmentInput';
 
 export function BotChatComposer({
   bot,
@@ -47,6 +48,11 @@ export function BotChatComposer({
     bot.providerId ? provider.id === bot.providerId : provider.isDefault,
   );
   const capabilities = modelInputCapabilities(bot, provider);
+  const attachmentInput = useAttachmentInput({
+    capabilities,
+    disabled: state.loading || state.uploading || state.submittingFollowup || changingModel,
+    onUpload: (files) => chatStore.upload(chatId, files),
+  });
   const blocked = state.files.some((file) => !supportsAttachment(file.kind, capabilities));
   const blockedKinds = [
     ...new Set(
@@ -91,8 +97,16 @@ export function BotChatComposer({
           </button>
         </div>
       )}
+      {attachmentInput.error && (
+        <p className="ai-alert" role="alert">
+          {attachmentInput.error}
+        </p>
+      )}
       <AskComposer conversationId={conversationId} onCancel={() => void chatStore.stop(chatId)}>
-        <div className="composer">
+        <div
+          className={`composer${attachmentInput.dragging ? ' is-dragging-files' : ''}`}
+          {...attachmentInput.dragProps}
+        >
           {!!state.files.length && (
             <div className="ai-attachments ai-pending-attachments">
               {state.files.map((file) => (
@@ -117,14 +131,7 @@ export function BotChatComposer({
             maxLength={16000}
             disabled={state.loading}
             onChange={(event) => chatStore.draft(chatId, event.target.value)}
-            onPaste={(event) => {
-              const files = Array.from(event.clipboardData.files);
-              if (!files.length) return;
-
-              // Keep ordinary text pastes intact, but turn copied files into pending attachments.
-              event.preventDefault();
-              void chatStore.upload(chatId, files);
-            }}
+            onPaste={attachmentInput.onPaste}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -137,7 +144,9 @@ export function BotChatComposer({
               <ApprovalModePicker />
               <IconButton
                 label="Attach images or files"
-                disabled={state.submittingFollowup || state.uploading || state.loading}
+                disabled={
+                  state.submittingFollowup || state.uploading || state.loading || changingModel
+                }
                 onClick={() => fileInput.current?.click()}
               >
                 <Paperclip size={18} />
@@ -211,7 +220,7 @@ export function BotChatComposer({
             tabIndex={-1}
             aria-label="Upload chat attachments"
             onChange={(event) => {
-              void chatStore.upload(chatId, Array.from(event.target.files || []));
+              void attachmentInput.upload(Array.from(event.target.files || []));
               event.target.value = '';
             }}
           />
@@ -219,7 +228,7 @@ export function BotChatComposer({
         <div className="composer-hint ai-composer-hint">
           <span>Enter to send · Shift + Enter for a new line</span>
           <span>
-            Paste files with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
+            Drop files or paste with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
             {inputCapabilityLabel(capabilities)}
           </span>
         </div>

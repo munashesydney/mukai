@@ -9,6 +9,7 @@ import { attachmentService } from '../../services/attachmentService';
 import { errorText } from '../../utils/errors';
 import { AttachmentCard } from './AttachmentCard';
 import { chatStore } from './chatStore';
+import { useAttachmentInput } from './useAttachmentInput';
 
 export function FollowupEditor({
   chatId,
@@ -41,6 +42,11 @@ export function FollowupEditor({
   }, []);
   const blocked = files.some((file) => !supportsAttachment(file.kind, capabilities));
   const busy = uploading || submitting;
+  const attachmentInput = useAttachmentInput({
+    capabilities,
+    disabled: busy || !allowAttachments,
+    onUpload: upload,
+  });
   async function upload(selected: File[]) {
     if (busy || !selected.length) return;
     if (files.length + selected.length > ATTACHMENT_LIMIT)
@@ -77,7 +83,10 @@ export function FollowupEditor({
     }
   }
   return (
-    <div className="followup-edit">
+    <div
+      className={`followup-edit${attachmentInput.dragging ? ' is-dragging-files' : ''}`}
+      {...attachmentInput.dragProps}
+    >
       <textarea
         aria-label="Edit queued message"
         autoFocus
@@ -86,14 +95,7 @@ export function FollowupEditor({
         value={text}
         disabled={busy}
         onChange={(event) => setText(event.target.value)}
-        onPaste={(event) => {
-          if (!allowAttachments) return;
-          const selected = Array.from(event.clipboardData.files);
-          if (selected.length) {
-            event.preventDefault();
-            void upload(selected);
-          }
-        }}
+        onPaste={attachmentInput.onPaste}
       />
       {!!files.length && (
         <div className="ai-attachments">
@@ -106,9 +108,10 @@ export function FollowupEditor({
           ))}
         </div>
       )}
-      {(error || blocked) && (
+      {(error || attachmentInput.error || blocked) && (
         <p className="followup-error" role="alert">
           {error ||
+            attachmentInput.error ||
             'This model does not support these attachments. Remove them or choose a model that supports them.'}
         </p>
       )}
@@ -124,7 +127,7 @@ export function FollowupEditor({
               accept={acceptedAttachments(capabilities)}
               disabled={busy}
               onChange={(event) => {
-                void upload(Array.from(event.target.files || []));
+                void attachmentInput.upload(Array.from(event.target.files || []));
                 event.target.value = '';
               }}
             />
