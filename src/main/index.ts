@@ -1,4 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  powerMonitor,
+  session,
+  Menu,
+  Tray,
+  nativeImage,
+  shell,
+} from 'electron';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { startApiServer } from '../server/app';
 import { IPC } from '../shared/contracts';
@@ -8,6 +20,8 @@ import { z } from 'zod';
 import { registerDesktopActions } from './desktopActions';
 import electronUpdater from 'electron-updater';
 import { DesktopUpdater } from './desktopUpdater';
+import { startOrConnectBackend } from '../server/backendConnection';
+import type { DesktopUpdateState } from '../shared/contracts';
 
 let apiServer: Server | undefined;
 let apiUrl = '';
@@ -15,12 +29,16 @@ let shutdownApi: (() => Promise<void>) | undefined;
 let quitting = false;
 let shutdownPromise: Promise<void> | undefined;
 let desktopUpdater: DesktopUpdater | undefined;
+let tray: Tray | undefined;
+let desktopReady = false;
+let preferenceRefresh: ReturnType<typeof setInterval> | undefined;
 const embeddedBrowser = new MukaiBrowserHost();
 const appWindows = new Set<number>();
 
 function shutdownDesktop() {
   return (shutdownPromise ??= (async () => {
     desktopUpdater?.stop();
+    clearInterval(preferenceRefresh);
     await shutdownApi?.();
     if (apiServer) {
       const server = apiServer;
@@ -30,6 +48,7 @@ function shutdownDesktop() {
       });
       apiServer = undefined;
     }
+    tray?.destroy();
   })());
 }
 
@@ -59,6 +78,12 @@ function createWindow() {
     },
   });
   window.once('ready-to-show', () => window.show());
+  window.on('close', (event) => {
+    if (!quitting) {
+      event.preventDefault();
+      window.hide();
+    }
+  });
   const contentsId = window.webContents.id;
   appWindows.add(contentsId);
   window.on('closed', () => appWindows.delete(contentsId));
@@ -71,19 +96,60 @@ function createWindow() {
   else void window.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
+function showWindow() {
+  if (!desktopReady) return;
+  const window = BrowserWindow.getAllWindows().find((entry) =>
+    appWindows.has(entry.webContents.id),
+  );
+  if (!window) return createWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function createTray(connectionUrl: string) {
+  const icon = nativeImage
+    .createFromPath(
+      join(
+        app.getAppPath(),
+        app.isPackaged ? 'out/renderer/mukai-logo.png' : 'src/renderer/public/mukai-logo.png',
+      ),
+    )
+    .resize({ width: 18, height: 18 });
+  tray = new Tray(icon);
+  tray.setToolTip('Mukai');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Mukai', click: showWindow },
+      {
+        label: 'Open in browser',
+        click: () => {
+          void shell.openExternal(connectionUrl);
+        },
+      },
+      { type: 'separator' },
+      { label: 'Quit Mukai', click: () => app.quit() },
+    ]),
+  );
+  tray.on('double-click', showWindow);
+}
+
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => {
-    const window = BrowserWindow.getAllWindows()[0];
-    if (window?.isMinimized()) window.restore();
-    window?.focus();
+    showWindow();
   });
   app
     .whenReady()
     .then(async () => {
-      const api = await startApiServer(47831, {
+      const dataDir = process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data');
+      const webDir = app.isPackaged
+        ? join(process.resourcesPath, 'web')
+        : join(app.getAppPath(), 'dist', 'web');
+      const apiOptions = {
         version: app.getVersion(),
-        dataDir: process.env.MUKAI_DATA_DIR || join(app.getPath('userData'), 'data'),
+        dataDir,
+        webDir,
         embeddedBrowser,
         desktopHelperDir: app.isPackaged
           ? join(process.resourcesPath, 'computer_use')
@@ -91,16 +157,60 @@ else {
         guestBundleDir: app.isPackaged
           ? join(process.resourcesPath, 'guest')
           : join(app.getAppPath(), 'dist', 'guest'),
+        updates: {
+          getState: (): DesktopUpdateState =>
+            desktopUpdater?.getState() ?? {
+              status: 'disabled',
+              currentVersion: app.getVersion(),
+              automaticUpdates: true,
+              message: 'The desktop app is starting.',
+            },
+          check: () => desktopUpdater!.check(),
+          setAutomaticUpdates: (enabled: boolean) => desktopUpdater!.setAutomaticUpdates(enabled),
+          restart: async () => {
+            await desktopUpdater!.restart();
+          },
+        },
+      };
+      const result = await startOrConnectBackend(dataDir, app.getVersion(), async () => {
+        if (!existsSync(join(webDir, 'index.html')))
+          throw new Error('Mukai browser UI is missing. Run npm run build:web or reinstall Mukai.');
+        try {
+          return await startApiServer(47831, apiOptions);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+          // Another directory may own the default port. Never attach to it by address.
+          return startApiServer(0, apiOptions);
+        }
       });
-      apiServer = api.server;
-      shutdownApi = api.shutdown;
-      apiUrl = api.url;
+      const api = result.owned ? result.api : undefined;
+      const state = result.owned ? result.api.state! : result.connection.state;
+      const token = result.owned ? result.api.token : result.connection.token;
+      apiServer = api?.server;
+      shutdownApi = api?.shutdown;
+      apiUrl = state.url;
+      const backendRequest = async <T>(
+        path: string,
+        method = 'GET',
+        value?: unknown,
+      ): Promise<T> => {
+        const response = await fetch(`${apiUrl}/api${path}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          ...(value === undefined ? {} : { body: JSON.stringify(value) }),
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error',
+        });
+        if (!response.ok) throw new Error(`Mukai backend request failed (${response.status}).`);
+        return response.json() as Promise<T>;
+      };
       // Sleep can leave a guest bridge unable to reconnect on its own. Once the host
       // wakes, give the guest a moment to thaw, then reconnect it — or restart the VM
       // if it stays silent. The guest health monitor covers missing resume events.
-      powerMonitor.on('resume', () => {
-        setTimeout(() => void api.computers.hostResumed(), 10000).unref();
-      });
+      if (api)
+        powerMonitor.on('resume', () => {
+          setTimeout(() => void api.computers.hostResumed(), 10000).unref();
+        });
       session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
         callback(false),
       );
@@ -120,7 +230,7 @@ else {
       ipcMain.on(IPC.minimize, (event) => senderWindow(event)?.minimize());
       ipcMain.handle(IPC.apiConnection, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
-        return { url: apiUrl, token: api.token };
+        return { url: `${apiUrl}/api`, token };
       });
       ipcMain.handle(IPC.browserBounds, (event, value: unknown) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
@@ -156,9 +266,11 @@ else {
         updatesEnabled ? electronUpdater.autoUpdater : undefined,
         app.getVersion(),
         {
-          automaticUpdates: api.settings.automaticUpdates(),
+          automaticUpdates: api
+            ? api.settings.automaticUpdates()
+            : (await backendRequest<DesktopUpdateState>('/settings/updates')).automaticUpdates,
           saveAutomaticUpdates: (enabled) => {
-            api.settings.saveAutomaticUpdates(enabled);
+            api?.settings.saveAutomaticUpdates(enabled);
           },
           notify: (state) => {
             for (const window of BrowserWindow.getAllWindows())
@@ -188,6 +300,18 @@ else {
             : 'Automatic updates are available in installed releases.',
         },
       );
+      if (!api) {
+        const refreshPreference = async () => {
+          try {
+            const state = await backendRequest<DesktopUpdateState>('/settings/updates');
+            if (!quitting && state.automaticUpdates !== desktopUpdater!.getState().automaticUpdates)
+              desktopUpdater!.setAutomaticUpdates(state.automaticUpdates);
+          } catch {
+            // A stopped backend must not disable the desktop's own update controls.
+          }
+        };
+        preferenceRefresh = setInterval(() => void refreshPreference(), 30_000).unref();
+      }
       ipcMain.handle(IPC.updateState, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
         return desktopUpdater!.getState();
@@ -196,9 +320,11 @@ else {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
         return desktopUpdater!.check();
       });
-      ipcMain.handle(IPC.setAutomaticUpdates, (event, value: unknown) => {
+      ipcMain.handle(IPC.setAutomaticUpdates, async (event, value: unknown) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
-        return desktopUpdater!.setAutomaticUpdates(z.boolean().parse(value));
+        const enabled = z.boolean().parse(value);
+        if (!api) await backendRequest('/settings/updates', 'PUT', { enabled });
+        return desktopUpdater!.setAutomaticUpdates(enabled);
       });
       ipcMain.handle(IPC.restartToUpdate, (event) => {
         if (!senderWindow(event)) throw new Error('Untrusted IPC sender');
@@ -210,22 +336,27 @@ else {
         else window?.maximize();
       });
       ipcMain.on(IPC.close, (event) => senderWindow(event)?.close());
-      createWindow();
+      desktopReady = true;
+      showWindow();
+      createTray(state.connectionUrl);
       desktopUpdater.start();
-      app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-      });
+      app.on('activate', showWindow);
     })
     .catch((error) => {
       console.error('Mukai startup failed:', error);
+      dialog.showErrorBox(
+        'Mukai could not start',
+        error instanceof Error ? error.message : String(error),
+      );
       app.quit();
     });
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    /* The tray owns the background lifetime. */
   });
   app.on('before-quit', (event) => {
-    if (!quitting && apiServer) {
+    if (!quitting) {
       event.preventDefault();
+      quitting = true;
       void shutdownDesktop()
         .catch(console.error)
         .finally(() => {

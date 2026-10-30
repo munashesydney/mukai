@@ -14,10 +14,11 @@ Usage:
   mukai --version
   mukai --help
 
-serve runs locally in the foreground. Ctrl+C stops it.
+serve starts a local foreground backend, or reuses the one for its data directory.
+Ctrl+C stops a backend started by this command. A reused serve prints its address and exits.
 --port 0 selects an available port. PORT sets the default port.
 Data defaults to the desktop app's data directory, or MUKAI_DATA_DIR.
-One backend per data directory. --data-dir selects a separate installation.
+One backend per data directory, shared with desktop. --data-dir selects separate data.
 Run mukai update to upgrade; it preserves application data.`;
 
 export async function main(args = process.argv.slice(2)) {

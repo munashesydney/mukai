@@ -69,7 +69,7 @@ export class CliUpdater implements UpdateController {
     await this.pending;
   }
   setAutomaticUpdates(enabled: boolean) {
-    if (!this.host) return this.getState();
+    // The preference is shared with desktop even when this CLI cannot install updates.
     this.options.saveAutomaticUpdates(enabled);
     this.state.automaticUpdates = enabled;
     if (enabled) this.start();

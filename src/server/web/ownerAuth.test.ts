@@ -166,6 +166,15 @@ it('protects APIs, rejects cross-origin and public bearer/bootstrap access, pers
     request.end();
   });
   expect(bearer).toBe(401);
+  for (const origin of ['null', 'file://']) {
+    expect(
+      (
+        await fetch(api!.url + '/api/workspaces', {
+          headers: { Origin: origin, Authorization: 'Bearer ' + api!.token },
+        })
+      ).status,
+    ).toBe(200);
+  }
   expect((await call('/api/auth/login', { ...login, password: 'wrong' })).status).toBe(401);
   const another = await call('/api/auth/login', login);
   expect(another.status).toBe(200);

@@ -15,7 +15,7 @@ npm ci
 npm run dev
 ```
 
-The Electron app starts its backend at `http://127.0.0.1:47831` using a fixed local port. Custom routes share this server, so their URLs stay stable across restarts (for example, `http://127.0.0.1:47831/custom/events`). Port 47831 must be available; startup fails if it is already in use. Add your first bot from the empty workspace; suggested names start with **Mukai** and **Scout**. Provider setup can wait until after bot creation. Sending without a provider opens **Settings → Providers**. Add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the default used by bots without an explicit connection. Connection tests make a small billable request for paid providers.
+The Electron app connects to the backend for its data directory or starts one, preferring `http://127.0.0.1:47831` and choosing an available port when that address is occupied. Use `mukai status` to find its actual address. Custom routes share this server; use the reported address when configuring their URLs. Add your first bot from the empty workspace; suggested names start with **Mukai** and **Scout**. Provider setup can wait until after bot creation. Sending without a provider opens **Settings → Providers**. Add OpenAI, Anthropic, Google, or an OpenAI-compatible endpoint, enter an exact chat model ID, and use **Save & test**. The first provider becomes the default used by bots without an explicit connection. Connection tests make a small billable request for paid providers.
 
 Provider inactivity and generation deadlines pause during tool execution and human approvals. Temporary provider failures can recover automatically before any action or visible answer starts in that step; completed earlier steps stay saved. Recovery is bounded per model step and respects Stop. If a response cannot finish, Mukai provides a saved-progress report and marks unresolved operations for verification before repeating them. Memory extraction starts with up to 12,000 output tokens within the configured model allowance; compatible providers get one repair attempt with a fresh two-minute deadline, within a four-minute operation limit. A failed memory save returns an error to the bot so it can still report completed work.
 
@@ -34,7 +34,7 @@ npm run dev:server
 npm run dev:web
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 47831. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match. The desktop app uses port 47831 regardless of `PORT`; run desktop and standalone modes separately because they share the same default port.
+Open http://127.0.0.1:5173. Vite proxies `/api` to the authenticated service on port 47831. The server reads process environment variables, not `.env` files. Set `PORT` to change the standalone port and update the proxy target to match. The low-level `dev:server` launcher owns its backend directly; use `mukai serve` for shared desktop/browser startup and discovery.
 
 Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:11434/v1` or `http://127.0.0.1:1234/v1`. Install a chat model in your local server first and enter its exact ID. Keys are optional for endpoints without authentication. Remote custom endpoints require HTTPS. Standard text chat and streaming chat-completions compatibility are required.
 
@@ -90,6 +90,10 @@ File Operations works with UTF-8 text files up to 256 KB, returns at most 200 li
 Custom tools and routes use saved `.ts`/`.js` modules on the existing Node backend. The Tools page retains built-in tools and adds Custom tools and Routes sections with registration, inspection, live updates, testing, and recent runs. Settings → Environment variables stores encrypted, workspace-scoped configuration. Bots can register modules and call them on the next model step without a new conversation. See [the module contracts, examples, runtime limits, and webhook setup](docs/custom-capabilities/README.md).
 
 Desktop and CLI use the same per-user data directory: `%APPDATA%/mukai/data` on Windows, `~/Library/Application Support/mukai/data` on macOS, and `${XDG_CONFIG_HOME:-~/.config}/mukai/data` on Linux. The lowercase folder name matches Electron's application name and existing desktop installations. Set **`MUKAI_DATA_DIR`** for another location, or use CLI **`--data-dir`**. Run one backend per data directory. Older standalone data in `~/.mukai` is preserved and can still be selected explicitly.
+
+Desktop and `mukai serve` can run together. Both discover the backend for their selected data directory and verify its identity before connecting, including backends started with `--port 0`. A repeated `serve` prints the existing connection address and exits; requesting a different port does not start another backend for the same directory. Different directories can run independent backends on different ports. Desktop uses its selected directory, never whichever backend happens to occupy port 47831. When desktop starts a backend and that port is busy, it chooses an available port. Desktop and backend versions must match; update both or explicitly stop the older backend before reconnecting.
+
+Closing the desktop window hides it while bots, tools, and browser connections continue. Use the Mukai tray menu to reopen the window, open the web interface, or explicitly quit. Quitting a desktop-owned backend disconnects its browser clients. Quitting a desktop attached to a CLI backend leaves that backend running; Ctrl+C in its original terminal explicitly stops it. A CLI-owned backend uses Chrome for browser tools; an Electron-owned backend also supports the embedded Mukai browser. Opening another interface does not move existing browser sessions between hosts.
 
 Appearance is saved in the existing `app_settings` table, alongside the public custom-route URL. The Limits tab's pursuit concurrency is also saved in SQLite. On the first updated desktop launch, its previous appearance preference is imported from local storage only if no shared appearance exists. Browser local storage is only a startup cache; shared preferences override it across browser ports and desktop launches.
 
@@ -243,8 +247,8 @@ reuse it. The installer bundles Electron/Node and works without a separate Node
 installation or a running development server; AI providers and optional downloads
 still need their usual network access and setup.
 
-For a local test, close any development copy of Mukai before launching the
-installed app: both use port 47831. Check first launch, workspace folder selection,
+For an isolated local test, select a disposable `MUKAI_DATA_DIR` before launching the
+installed app. Check first launch, workspace folder selection,
 provider setup/chat, saved settings after restarting, shortcuts, and uninstall.
 The local build is unsigned, so Windows may show an unknown-publisher warning.
 

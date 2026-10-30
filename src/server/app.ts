@@ -55,6 +55,7 @@ import { ApiError } from './config';
 import { ZodError } from 'zod';
 import { createWebHandler } from './web/handler';
 import { BrowserSession } from './web/session';
+import { publishServerState, unpublishServerState, type ServerState } from './backendState';
 import { OwnerAuth } from './web/ownerAuth';
 import { localBrowserRequest } from './web/origin';
 import { CapabilityService } from './capabilities/service';
@@ -340,7 +341,14 @@ export function createApiServer(options: ApiOptions = {}) {
     if (ownerAuth) diagnostics.registerSecret(ownerAuth.setupCode);
     const handler =
       options.webDir && browserSession
-        ? createWebHandler(options.webDir, token, browserSession, route, ownerAuth)
+        ? createWebHandler(
+            options.webDir,
+            token,
+            browserSession,
+            route,
+            ownerAuth,
+            options.version ?? '0.1.0',
+          )
         : route;
     const server = createServer((request, response) => {
       void handler(request, response).catch((error) => {
@@ -357,8 +365,12 @@ export function createApiServer(options: ApiOptions = {}) {
     const dispose = () => {
       if (!closed) {
         closed = true;
-        store.db.close();
-        releaseLock();
+        try {
+          store.db.close();
+          if (browserSession) unpublishServerState(dir, browserSession.instanceId);
+        } finally {
+          releaseLock();
+        }
       }
     };
     let shutdownPromise: Promise<void> | undefined;
@@ -454,6 +466,26 @@ export async function startApiServer(port = 0, options: ApiOptions = {}) {
   }
   const address = api.server.address();
   if (!address || typeof address === 'string') throw new Error('Unable to bind the Mukai API');
-  api.capabilities.setLocalBaseUrl(`http://127.0.0.1:${address.port}`);
-  return { ...api, url: `http://127.0.0.1:${address.port}` };
+  const url = `http://127.0.0.1:${address.port}`;
+  api.capabilities.setLocalBaseUrl(url);
+  const state: ServerState | undefined = api.browserSession
+    ? {
+        pid: process.pid,
+        instanceId: api.browserSession.instanceId,
+        version: options.version ?? '0.1.0',
+        url,
+        connectionUrl: api.ownerAuth!.configured()
+          ? `${url}/`
+          : `${url}/#mukai-setup=${api.ownerAuth!.setupCode}`,
+      }
+    : undefined;
+  try {
+    if (state) publishServerState(api.store.dir, state);
+  } catch (error) {
+    await api.shutdown();
+    api.server.closeAllConnections();
+    await new Promise<void>((done) => api.server.close(() => done()));
+    throw error;
+  }
+  return { ...api, url, state };
 }

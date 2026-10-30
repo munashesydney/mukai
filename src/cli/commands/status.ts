@@ -3,7 +3,7 @@ import { runningServer } from '../serverState';
 export async function status(dataDir: string) {
   const state = await runningServer(dataDir);
   if (!state) {
-    console.log(`No Mukai CLI server is running for ${dataDir}.`);
+    console.log(`No Mukai backend is running for ${dataDir}.`);
     return 1;
   }
   console.log(

@@ -115,12 +115,18 @@ describe('CLI updater lifecycle', () => {
     await updater.shutdown();
   });
   it('keeps unmanaged installations disabled', async () => {
+    const save = vi.fn();
     const updater = new CliUpdater('0.1.0', undefined, {
-      saveAutomaticUpdates: vi.fn(),
+      saveAutomaticUpdates: save,
       restart: vi.fn(),
     });
     updater.initialize(true);
     expect(updater.check().status).toBe('disabled');
+    expect(updater.setAutomaticUpdates(false)).toMatchObject({
+      status: 'disabled',
+      automaticUpdates: false,
+    });
+    expect(save).toHaveBeenCalledWith(false);
     await updater.restart();
     await updater.shutdown();
   });

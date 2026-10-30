@@ -44,7 +44,7 @@ import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
-import { trustedLocalRequest } from '../web/origin';
+import { trustedLocalRequest, nativeClientRequest } from '../web/origin';
 import type { SettingsService } from '../services/settingsService';
 import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
@@ -158,7 +158,7 @@ export function createRoutes({
       return capabilities.dispatch(request, response, token);
     }
     const origin = request.headers.origin;
-    if (!trustedLocalRequest(request, browserMode))
+    if (!trustedLocalRequest(request, browserMode) && !nativeClientRequest(request))
       throw new ApiError(403, 'Untrusted request origin.');
     if (origin) {
       response.setHeader('Access-Control-Allow-Origin', origin);
@@ -783,7 +783,13 @@ export function createRoutes({
       if (id && action === 'computer-view' && method === 'POST') {
         const workspace = workspaces.require(id);
         if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
-        return send(response, await desktops.session(workspaces.computers.guest(workspace)));
+        return send(
+          response,
+          await desktops.session(
+            workspaces.computers.guest(workspace),
+            nativeClientRequest(request),
+          ),
+        );
       }
       if (id && action === 'computer-resources' && method === 'PUT') {
         return send(

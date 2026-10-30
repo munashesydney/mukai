@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join, posix, win32 } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 
 /** Match Electron's default app.getPath('userData')/data without requiring Electron in the CLI. */
 export function desktopDataDir(
@@ -51,7 +52,41 @@ export class ApiError extends Error {
   }
 }
 
+export class DataDirectoryInUseError extends Error {
+  constructor() {
+    super('Another Mukai backend is using this data directory.');
+  }
+}
+
 export function acquireDataLock(dir: string) {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let lease: DatabaseSync | undefined;
+  try {
+    // SQLite's OS lock is released even after a crash. It also serializes stale
+    // PID-file recovery: two launchers can never unlink each other's new lock.
+    lease = new DatabaseSync(join(dir, 'server-lease.sqlite'));
+    lease.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;');
+    const releasePid = acquirePidLock(dir);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      try {
+        releasePid();
+      } finally {
+        lease!.close();
+      }
+    };
+  } catch (error) {
+    lease?.close();
+    const code = (error as { errcode?: number }).errcode;
+    if (code !== undefined && [5, 6].includes(code & 0xff)) throw new DataDirectoryInUseError();
+    throw error;
+  }
+}
+
+/** Retained alongside the OS lease for discovery and older Mukai releases. */
+function acquirePidLock(dir: string) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, 'server.lock');
   try {
@@ -64,12 +99,17 @@ export function acquireDataLock(dir: string) {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
       else throw error;
     }
-    if (alive) throw new Error('Another Mukai backend is using this data directory.');
+    if (alive) throw new DataDirectoryInUseError();
     unlinkSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  writeFileSync(path, String(process.pid), { flag: 'wx', mode: 0o600 });
+  try {
+    writeFileSync(path, String(process.pid), { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new DataDirectoryInUseError();
+    throw error;
+  }
   return () => {
     try {
       if (readFileSync(path, 'utf8') === String(process.pid)) unlinkSync(path);

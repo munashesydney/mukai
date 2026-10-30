@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { QemuComputer } from './qemuComputer';
 import type { ComputerViewSession } from '../../shared/computer';
-import { trustedLocalRequest } from '../web/origin';
+import { trustedLocalRequest, nativeClientRequest } from '../web/origin';
 
 /** Authenticated HTTP issues short-lived, single-use viewer tickets. No API token in websocket URLs. */
 export class DesktopTransport {
@@ -15,7 +15,7 @@ export class DesktopTransport {
   ) {}
   private tickets = new Map<
     string,
-    { computer: QemuComputer; port: number; password: string; expires: number }
+    { computer: QemuComputer; port: number; password: string; expires: number; native: boolean }
   >();
   private sockets = new WebSocketServer({
     noServer: true,
@@ -36,7 +36,7 @@ export class DesktopTransport {
       if (ticket.computer === computer) this.tickets.delete(key);
     for (const [viewer, owner] of this.viewers) if (owner === computer) viewer.terminate();
   }
-  async session(computer: QemuComputer): Promise<ComputerViewSession> {
+  async session(computer: QemuComputer, native = false): Promise<ComputerViewSession> {
     if (this.closed) throw new Error('Desktop views are shutting down.');
     try {
       await computer.start();
@@ -56,7 +56,7 @@ export class DesktopTransport {
       throw new Error('Too many pending desktop views. Try again shortly.');
     const connection = computer.desktopConnection();
     const ticket = randomBytes(32).toString('hex');
-    this.tickets.set(ticket, { computer, ...connection, expires: Date.now() + 30000 });
+    this.tickets.set(ticket, { computer, ...connection, expires: Date.now() + 30000, native });
     return { path: '/computer-view?ticket=' + ticket, password: connection.password };
   }
   attach(server: Server) {
@@ -67,8 +67,7 @@ export class DesktopTransport {
     const reject = () => {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
     };
-    if (this.closed || !trustedLocalRequest(request, this.browserMode, true)) return reject();
-    if (this.authenticate && !this.authenticate(request)) return reject();
+    if (this.closed) return reject();
     let url: URL;
     try {
       url = new URL(request.url || '/', 'http://localhost');
@@ -84,6 +83,9 @@ export class DesktopTransport {
       ticket.expires <= Date.now()
     )
       return reject();
+    const native = ticket.native && nativeClientRequest(request);
+    if (!native && !trustedLocalRequest(request, this.browserMode, true)) return reject();
+    if (!native && this.authenticate && !this.authenticate(request)) return reject();
     this.tickets.delete(key);
     try {
       const current = ticket.computer.desktopConnection();
@@ -94,7 +96,8 @@ export class DesktopTransport {
     if (this.sockets.clients.size >= 4) return reject();
     this.sockets.handleUpgrade(request, socket, head, (viewer) => {
       this.viewers.set(viewer, ticket.computer);
-      this.viewerRequests.set(viewer, request);
+      // Native tickets were issued by bearer-authenticated HTTP, not a revocable cookie.
+      if (!native) this.viewerRequests.set(viewer, request);
       viewer.once('close', () => {
         this.viewers.delete(viewer);
         this.viewerRequests.delete(viewer);

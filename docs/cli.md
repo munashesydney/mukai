@@ -24,7 +24,7 @@ The Linux installer also checks `/dev/kvm` access, including when QEMU is alread
 
 Installers verify SHA-256 checksums before activation. Unix installations live in `~/.local/share/mukai/versions`, with a command in `~/.local/bin`; Windows uses `%LOCALAPPDATA%/MukaiCLI`, registering its `bin` directory in the current user's PATH. Mukai's user files do not require administrator installation; system dependencies and KVM membership may require approval. Existing unrelated `mukai` commands are not overwritten.
 
-Run `mukai update` to download and activate the latest CLI release. Updates verify the release's SHA-256 checksum, platform, version, and bundled Node runtime before switching the launcher atomically. Previous installation directories remain available, and a running server finishes using its existing version. Stop and start that server to use a terminal-installed update. An already-running backend must be stopped before launching another against the same data directory.
+Run `mukai update` to download and activate the latest CLI release. Updates verify the release's SHA-256 checksum, platform, version, and bundled Node runtime before switching the launcher atomically. Previous installation directories remain available, and a running server finishes using its existing version. Stop and start that server to use a terminal-installed update. A newer client reports a version mismatch until the backend is restarted on the matching version.
 
 Re-running the installer also upgrades or repairs the active CLI through a fresh version directory. Set `MUKAI_VERSION` to a published version to install that version instead of latest. Set `MUKAI_NO_MODIFY_PATH=1` to install without changing shell profiles or user PATH.
 
@@ -42,7 +42,7 @@ mukai --version
 mukai --help
 ```
 
-`serve` runs in the foreground. Ctrl+C stops requests, tools, browser/VM connections, and scheduling, then releases the database lock. The default port is 47831; `PORT` changes it, and `--port` takes precedence. Port 0 selects an available port. `--open` launches your default browser; otherwise open the printed connection link.
+`serve` starts a foreground backend or reuses the running backend for its selected data directory. Reuse prints the existing connection address and exits without taking shutdown ownership. A different requested port does not start another backend for the same directory. For a newly started backend, Ctrl+C stops requests, tools, browser/VM connections, and scheduling, then releases the data lock. The default port is 47831; `PORT` changes it, and `--port` takes precedence. Port 0 selects an available port. `--open` launches your default browser with the new or existing connection link.
 
 In installer-managed CLI releases, **Settings → Updates** supports manual checks, download progress, and the persisted automatic-update preference. Background checks run after 15 seconds and every four hours when enabled. Downloads wait for **Restart to update**; a confirmation explains that running bots and tools will stop. A foreground supervisor shuts down the old backend, releases its data lock, and starts the new bundled runtime with the same data directory and bound port (including `--port 0`). The browser reconnects and reloads the bundled UI. Ctrl+C still stops the replacement server. Logged-in owner sessions persist across this restart; an unclaimed installation requires its new terminal setup code. Terminal updates do not interrupt running servers.
 
@@ -56,15 +56,17 @@ The server still exposes a port on `127.0.0.1`. You manage any tunneling or prox
 
 For a forgotten username or password, stop the backend and run `mukai auth-reset` with the same data directory. This removes the owner login and revokes browser sessions while preserving workspace data. Restart `mukai serve` to obtain a new setup code. Recovery requires local access to the machine and cannot run while Desktop or the CLI is using the database.
 
-`status` checks a private descriptor, data lock, and authenticated server identity before reporting its connection link. It does not inspect or manage a desktop backend. `doctor` checks the runtime and bundled UI/helpers; it reports the server state. The connection link is private: do not share it or terminal output containing it.
+`status` checks a private descriptor, data lock, and authenticated server identity before reporting its connection link, whether the backend was started by desktop or CLI. `doctor` checks the runtime and bundled UI/helpers; it reports the server state. The connection link is private: do not share it or terminal output containing it.
 
 ## Data and desktop compatibility
 
-CLI data defaults to the desktop application's existing data directory: `%APPDATA%/mukai/data` on Windows, `~/Library/Application Support/mukai/data` on macOS, and `${XDG_CONFIG_HOME:-~/.config}/mukai/data` on Linux. The lowercase application name is intentional. `MUKAI_DATA_DIR` selects another location, and `--data-dir` takes precedence. Stop Desktop before starting the CLI against the same database. Older CLI data in `~/.mukai` remains untouched; pass that location explicitly to keep using it. There is no automatic database merge or replacement. Database schema checks prevent opening newer data with an older runtime.
+CLI data defaults to the desktop application's existing data directory: `%APPDATA%/mukai/data` on Windows, `~/Library/Application Support/mukai/data` on macOS, and `${XDG_CONFIG_HOME:-~/.config}/mukai/data` on Linux. The lowercase application name is intentional. `MUKAI_DATA_DIR` selects another location, and `--data-dir` takes precedence. Desktop and `serve` share one backend per directory, verified by its PID lock, local API token, instance ID, and version. A separate OS lease protects concurrent startup and stale-lock recovery. Desktop discovers the actual port, including `--port 0`, and never selects a different directory just because it occupies port 47831. Versions must match before attaching. Older CLI data in `~/.mukai` remains untouched; pass that location explicitly to keep using it. There is no automatic database merge or replacement. Database schema checks prevent opening newer data with an older runtime.
 
-Appearance now lives in the existing `app_settings` SQLite table. Open the updated desktop once to import its previous theme and color mode, then stop it before opening the CLI. Initialization never overwrites an already-saved shared appearance. Browser storage is only a startup cache; the shared setting wins across ports, browsers, and desktop launches. Changes save automatically and open clients refresh periodically or when focused. Public base URL and pursuit limits already persist in the database, so selecting the shared data directory also shares those settings.
+Closing a desktop window hides it and keeps its backend and embedded browser alive. The Mukai tray menu reopens the window, opens the web interface, or explicitly quits Mukai. Quitting an attached desktop leaves its CLI backend running. Explicitly quitting a desktop-owned backend or pressing Ctrl+C in the owning CLI terminal disconnects all of that backend's clients.
 
-Core screens, chat, settings, files, and workflows reuse the desktop renderer. Browser mode uses entered server-side folder paths instead of the native folder picker. Native window controls are hidden. The Electron embedded browser remains desktop-only; Chrome tools and VM desktop viewing use their existing backend mechanisms. Native computer-use permission prompts identify the CLI runtime rather than the desktop application on macOS.
+Appearance lives in the existing `app_settings` SQLite table. Open the updated desktop once to import its previous theme and color mode. Initialization never overwrites an already-saved shared appearance. Browser storage is only a startup cache; the shared setting wins across ports, browsers, and desktop launches. Changes save automatically and open clients refresh periodically or when focused. Public base URL and pursuit limits also persist in the database, so selecting the shared data directory shares those settings.
+
+Core screens, chat, settings, files, and workflows reuse the desktop renderer. Browser mode uses entered server-side folder paths instead of the native folder picker. Native window controls are hidden. Browser capabilities follow the backend host: a desktop-owned backend supports the embedded Mukai browser, while a CLI-owned backend uses Chrome even when a desktop UI connects. Opening another interface does not move running browser sessions. VM desktop viewing remains available to both interfaces. Native computer-use permission prompts identify the owning runtime on macOS.
 
 ## Development and release
 
@@ -75,6 +77,7 @@ npm run package:cli
 npm run test:cli:packaged
 npm run test:cli:updates
 npm run test:settings-ui
+npm run test:shared-backend
 ```
 
 CLI code lives in `src/cli`; it delegates to `src/server/app.ts`. Production browser transport lives in `src/server/web`. Build and release scripts live in `scripts/cli`. The staged production dependency installation does not modify the source checkout. Each package is built on its target OS/architecture from the lockfile. `dist/cli` is a build output, not a second source package.

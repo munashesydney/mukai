@@ -4,7 +4,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { ApiError } from '../config';
-import { trustedLocalRequest, localBrowserRequest } from './origin';
+import { trustedLocalRequest, localBrowserRequest, nativeClientRequest } from './origin';
 import { BrowserSession, matches } from './session';
 import { send } from '../http/transport';
 import type { OwnerAuth } from './ownerAuth';
@@ -30,6 +30,7 @@ export function createWebHandler(
   session: BrowserSession,
   route: Route,
   owner?: OwnerAuth,
+  version?: string,
 ) {
   const root = realpath(resolve(directory));
   // Startup validates the directory; retain any later I/O failure for the request boundary.
@@ -37,6 +38,20 @@ export function createWebHandler(
   return async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url || '/', 'http://localhost');
     if (url.pathname.startsWith('/custom/')) return route(request, response);
+    // Native clients keep their local bearer credential; browser cookies never
+    // authorize a file/null/dev origin. Preflights carry no bearer credential.
+    if (
+      url.pathname.startsWith('/api/') &&
+      url.pathname !== '/api/instance' &&
+      !url.pathname.startsWith('/api/auth/') &&
+      url.pathname !== '/api/session' &&
+      nativeClientRequest(request) &&
+      (request.method === 'OPTIONS' ||
+        matches(request.headers.authorization || '', `Bearer ${token}`))
+    ) {
+      request.url = url.pathname.slice(4) + url.search;
+      return route(request, response);
+    }
     if (!trustedLocalRequest(request, true)) throw new ApiError(403, 'Untrusted request origin.');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -63,7 +78,7 @@ export function createWebHandler(
         throw new ApiError(401, 'API authentication required.');
       response.setHeader('Cache-Control', 'no-store');
       response.setHeader('Content-Type', 'application/json; charset=utf-8');
-      send(response, { instanceId: session.instanceId });
+      send(response, { instanceId: session.instanceId, version });
       return;
     }
     if (url.pathname.startsWith('/api/')) {

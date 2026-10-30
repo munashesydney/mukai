@@ -48,3 +48,14 @@ export function localBrowserRequest(request: IncomingMessage) {
     trustedLocalRequest(request, true)
   );
 }
+
+/** Native renderers must still supply the local API token (or a native viewer ticket). */
+export function nativeClientRequest(request: IncomingMessage) {
+  const origin = request.headers.origin;
+  return (
+    Boolean(origin) &&
+    origin !== `http://${request.headers.host}` &&
+    trustedLocalRequest(request, false, true) &&
+    Number((request.headers.host || '').split(':')[1] || '80') === request.socket.localPort
+  );
+}
