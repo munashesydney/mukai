@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { ApprovalMode, ApprovalState } from '../../../../shared/approvals';
 import { approvalService } from '../../services/approvalService';
 import { startPoll, type PollHandle } from '../../services/poll';
-import { errorText } from '../../utils/errors';
+import { errorText, isCancellation } from '../../utils/errors';
 
 interface State extends ApprovalState {
   workspaceId: string;
@@ -25,6 +25,8 @@ let poll: PollHandle | undefined;
 let version = 0;
 let modeRequest = 0;
 let refreshing = false;
+/** A refresh pressed while another look is in flight; that pass owes us one more. */
+let retryRequested = false;
 let lastPayload = '';
 
 /**
@@ -47,7 +49,19 @@ export const approvalStore = {
     void this.refresh();
   },
   async refresh(): Promise<RefreshResult> {
-    if (refreshing) return 'busy';
+    if (refreshing) {
+      // A look already in flight must not swallow this one. Without this the
+      // "Refresh permissions" button was a no-op whenever it landed during a poll —
+      // which, at one request per second against a server that is slow rather than
+      // dead, is most of the time.
+      retryRequested = true;
+      return 'busy';
+    }
+    // This pass is the immediate look the caller asked for, so the poll does not need
+    // nudging. Nudging it here would look harmless and not be: `poll.refresh()` runs its
+    // tick synchronously up to the first await, and that tick re-enters this method while
+    // `refreshing` is still false, so one press would fire two requests at once and the
+    // first `finally` would clear the flag out from under the second pass.
     refreshing = true;
     const currentVersion = version;
     try {
@@ -61,10 +75,21 @@ export const approvalStore = {
       if (!unchanged) update({ ...result, loaded: true, error: '' });
       return unchanged ? 'unchanged' : 'changed';
     } catch (caught) {
+      // A cancelled look is not an outage. The polls that keep this panel live are
+      // routinely aborted by the browser — a navigation, a view that unmounted, the
+      // caller's own signal — and reading that as "start the backend" raised the banner
+      // over a server answering every other request with 200s. Nothing was learned, so
+      // keep the last good answer and the same cadence, exactly as a busy pass does.
+      if (isCancellation(caught)) return 'busy';
       if (currentVersion === version) update({ error: errorText(caught) });
       return 'failed';
     } finally {
       refreshing = false;
+      if (retryRequested) {
+        // One extra pass per request, however many presses arrived during it.
+        retryRequested = false;
+        void this.refresh();
+      }
     }
   },
   async setMode(mode: ApprovalMode) {
@@ -146,10 +171,13 @@ function subscribe(listener: () => void) {
     // A pending approval is worth looking for every second, but a list that has not
     // moved in a while is not: it drifts to three seconds and comes straight back
     // when anything changes, when the window is refocused, or after a local decision.
-    poll = startPoll(async () => {
-      const outcome = await approvalStore.refresh();
-      return outcome === 'changed' || outcome === 'busy';
-    }, { interval: 1000, maxInterval: 3000 });
+    poll = startPoll(
+      async () => {
+        const outcome = await approvalStore.refresh();
+        return outcome === 'changed' || outcome === 'busy';
+      },
+      { interval: 1000, maxInterval: 3000 },
+    );
   }
   return () => {
     listeners.delete(listener);
