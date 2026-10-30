@@ -15,6 +15,8 @@ export type DiagnosticPhase =
   | 'computer';
 export interface DiagnosticContext {
   workspaceId?: string;
+  capabilityId?: string;
+  redactionCount?: number;
   providerId?: string;
   providerKind?: string;
   model?: string;
@@ -58,7 +60,7 @@ export class DiagnosticService {
         .split(encodeURIComponent(secret))
         .join('[redacted]');
     }
-    return value;
+    return value.replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]');
   }
   private text(value: unknown, limit = 2048): string | undefined {
     if (typeof value !== 'string') return undefined;
@@ -68,6 +70,7 @@ export class DiagnosticService {
       text = text.split(encodeURIComponent(secret)).join('[redacted]');
     }
     text = text
+      .replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]')
       .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
       .replace(/\bsk-[a-z0-9_-]+/gi, '[redacted]')
       .replace(
@@ -188,6 +191,7 @@ export class DiagnosticService {
       const metadata: Record<string, unknown> = {};
       for (const key of [
         'workspaceId',
+        'capabilityId',
         'providerId',
         'providerKind',
         'model',
@@ -201,6 +205,7 @@ export class DiagnosticService {
         if (context[key] !== undefined) metadata[key] = this.text(context[key], 512);
       for (const key of [
         'step',
+        'redactionCount',
         'contextWindow',
         'usedTokens',
         'generatedTextBytes',

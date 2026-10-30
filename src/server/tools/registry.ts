@@ -20,6 +20,8 @@ import type { BrowserService } from '../services/browserService';
 import { resultPreview } from '../services/toolResultPolicy';
 import { registerCustomToolDefinition } from './register-custom-tool/definition';
 import { executeRegisterCustomTool } from './register-custom-tool/execute';
+import { registerCustomJobDefinition } from './register-custom-job/definition';
+import { executeRegisterCustomJob } from './register-custom-job/execute';
 import { registerCustomRouteDefinition } from './register-custom-route/definition';
 import { executeRegisterCustomRoute } from './register-custom-route/execute';
 import type { RegistrationContext } from './custom-registration/shared';
@@ -59,6 +61,11 @@ export function customRegistrationTools(context: RegistrationContext): ToolSet {
       description: registerCustomToolDefinition.description,
       inputSchema: registerCustomToolDefinition.inputSchema,
       execute: (input, options) => executeRegisterCustomTool(input, context, options.toolCallId),
+    }),
+    [registerCustomJobDefinition.name]: tool({
+      description: registerCustomJobDefinition.description,
+      inputSchema: registerCustomJobDefinition.inputSchema,
+      execute: (input, options) => executeRegisterCustomJob(input, context, options.toolCallId),
     }),
     [registerCustomRouteDefinition.name]: tool({
       description: registerCustomRouteDefinition.description,
@@ -243,6 +250,7 @@ export function toolCatalog() {
       webSearchDefinition,
       registerCustomToolDefinition,
       registerCustomRouteDefinition,
+      registerCustomJobDefinition,
       memoryDefinition,
       communicateDefinition,
       conversationsDefinition,

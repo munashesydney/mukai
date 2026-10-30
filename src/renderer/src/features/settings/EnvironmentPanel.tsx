@@ -1,5 +1,6 @@
+import { Dropdown } from '../../components/ui/Dropdown';
 import { SettingsHeading } from './SettingsHeading';
-import { KeyRound, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, Trash2, Download } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
@@ -8,8 +9,10 @@ import { parseDotEnv } from '../../../../shared/dotEnv';
 import { errorText } from '../../utils/errors';
 
 export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
+  const [developerView, setDeveloperView] = useState(false);
   const [editor, setEditor] = useState<'variable' | 'import' | null>(null);
   const [variables, setVariables] = useState<EnvironmentVariable[]>([]);
+  const [secret, setSecret] = useState(true);
   const [name, setName] = useState(''),
     [value, setValue] = useState(''),
     [block, setBlock] = useState('');
@@ -23,9 +26,14 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   );
   useEffect(() => {
     setName('');
+    setSecret(true);
     setValue('');
     setBlock('');
     setPreview([]);
+    setDeveloperView(false);
+    setVariables([]);
+    setError('');
+    setNotice('');
     void refresh().catch((error) => setError(errorText(error)));
   }, [refresh]);
   async function perform(action: () => Promise<unknown>) {
@@ -43,18 +51,40 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
       setBusy(false);
     }
   }
+  async function exportEnvironment() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const file = await capabilityService.exportEnvironment(workspaceId);
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'mukai-environment.env';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('Environment export downloaded.');
+    } catch (error) {
+      setError(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <section className="provider-panel capability-panel">
       <SettingsHeading
         eyebrow="WORKSPACE CONFIGURATION"
         title="Environment Variables"
-        description="Private configuration for this workspace’s custom tools, routes, and terminal runs. Values are encrypted and supplied only when requested."
+        description="Private configuration for this workspace’s custom tools, routes, jobs, and terminal runs. Values are encrypted and supplied only when requested."
         actions={
           <>
             <button
               className="button button--primary"
               onClick={() => {
                 setName('');
+                setSecret(true);
                 setValue('');
                 setError('');
                 setEditor('variable');
@@ -75,6 +105,27 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           </>
         }
       />
+      <details
+        className="environment-developer-view"
+        open={developerView}
+        onToggle={(event) => setDeveloperView(event.currentTarget.open)}
+      >
+        <summary>Developer view</summary>
+        <div className="ai-form">
+          <p className="ai-caption">
+            Export the saved variables for this workspace. The downloaded file contains plaintext
+            secrets; keep it private. Missing required values are omitted.
+          </p>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || !variables.length}
+            onClick={() => void exportEnvironment()}
+          >
+            <Download size={15} aria-hidden="true" /> {busy ? 'Exporting…' : 'Export .env'}
+          </button>
+        </div>
+      </details>
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -98,7 +149,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               onSubmit={(event) => {
                 event.preventDefault();
                 void perform(async () => {
-                  await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
+                  await capabilityService.saveEnvironment(workspaceId, [{ name, value, secret }]);
                   setName('');
                   setValue('');
                 });
@@ -116,9 +167,25 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 />
               </label>
               <label>
+                Sensitivity
+                <Dropdown
+                  label="Variable sensitivity"
+                  value={secret ? 'secret' : 'configuration'}
+                  onChange={(value) => setSecret(value === 'secret')}
+                  options={[
+                    { value: 'secret', label: 'Secret' },
+                    { value: 'configuration', label: 'Configuration' },
+                  ]}
+                />
+                <span className="ai-caption">
+                  Secret values are masked in custom responses. Configuration values may be returned
+                  by modules. Both are stored encrypted.
+                </span>
+              </label>
+              <label>
                 New value
                 <input
-                  type="password"
+                  type={secret ? 'password' : 'text'}
                   value={value}
                   onChange={(event) => setValue(event.target.value)}
                   autoComplete="new-password"
@@ -203,16 +270,38 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               </span>
               <div>
                 <strong>{variable.name}</strong>
-                <p>{variable.configured ? '•••••••• · Configured' : 'Needs configuration'}</p>
+                <p>
+                  {variable.configured ? '•••••••• · Configured' : 'Needs configuration'} ·{' '}
+                  {variable.secret === false ? 'Configuration' : 'Secret'}
+                </p>
                 <small>Used by: {variable.usedBy.join(', ') || 'No registrations yet'}</small>
               </div>
             </div>
             <div className="ai-form-actions">
+              <Dropdown
+                label={'Sensitivity for ' + variable.name}
+                value={variable.secret === false ? 'configuration' : 'secret'}
+                disabled={busy || !variable.configured}
+                onChange={(value) =>
+                  void perform(() =>
+                    capabilityService.setEnvironmentSensitivity(
+                      workspaceId,
+                      variable.name,
+                      value === 'secret',
+                    ),
+                  )
+                }
+                options={[
+                  { value: 'secret', label: 'Secret' },
+                  { value: 'configuration', label: 'Configuration' },
+                ]}
+              />
               <button
                 className="button"
                 disabled={busy}
                 onClick={() => {
                   setName(variable.name);
+                  setSecret(variable.secret !== false);
                   setValue('');
                   setError('');
                   setEditor('variable');

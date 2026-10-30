@@ -1,3 +1,6 @@
+import { RouteCredentials } from './routeCredentials';
+import { customRouteReturnTo } from '../../shared/routeAccess';
+import { trustedLocalRequest } from '../web/origin';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
@@ -9,6 +12,7 @@ import {
 } from 'node:http';
 import { compileWorkspaceCapability } from './compilation';
 import { CapabilityWorkers } from './runtime';
+import { CapabilitySchedules } from './schedules';
 import { capabilityResult, compiledCapability } from '../computer/capabilityProtocol';
 import Ajv from 'ajv';
 import { jsonSchema, tool, type ToolSet } from 'ai';
@@ -20,6 +24,8 @@ import { body } from '../http/transport';
 import type { Bot, ChatActivity } from '../../shared/ai';
 import { customToolPermissionModes } from '../../shared/customCapabilities';
 import type {
+  CapabilityKind,
+  CustomJobEvent,
   CapabilityDefinition,
   CapabilityRegistration,
   CapabilityRun,
@@ -67,28 +73,77 @@ const reserved = new Set([
   'report_pursuit',
   'register_custom_tool',
   'register_custom_route',
+  'register_custom_job',
   'skills',
   'memory',
   'ask',
   'confirm_custom_tool',
 ]);
+export const jobTriggers = z
+  .array(
+    z.discriminatedUnion('type', [
+      z
+        .object({
+          type: z.literal('interval'),
+          intervalMs: z.number().int().min(1000).max(31536000000),
+        })
+        .strict(),
+      z.object({ type: z.literal('workspace_start') }).strict(),
+      z.object({ type: z.literal('once'), runAt: z.iso.datetime({ offset: true }) }).strict(),
+    ]),
+  )
+  .min(1)
+  .max(2)
+  .refine(
+    (items) => !items.some((item) => item.type === 'once') || items.length === 1,
+    'A once trigger must be the only trigger.',
+  )
+  .refine(
+    (items) => new Set(items.map((item) => item.type)).size === items.length,
+    'Each trigger type may appear only once.',
+  );
 const definitionSchema = z.object({
+  triggers: jobTriggers.optional(),
   permissionMode: z.enum(customToolPermissionModes).optional(),
-  name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/),
+  name: z
+    .string()
+    .regex(
+      /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/,
+      'name must be an identifier: start with a letter, then letters, numbers or underscores; maximum 64 characters.',
+    ),
   description: z.string().min(1).max(4000).optional(),
   inputSchema: z.record(z.string(), z.unknown()).optional(),
   requiredEnv: z.array(variableName).max(100),
   timeoutMs: z.number().int().min(100).max(30000),
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   path: z.string().max(512).optional(),
-  auth: z.enum(['mukai', 'handler', 'public']).optional(),
+  auth: z.enum(['mukai', 'session', 'handler', 'public']).optional(),
   hasJobHandler: z.boolean(),
 });
 
 export class CapabilityService {
   readonly environment: CapabilityEnvironment;
+  readonly routeCredentials: RouteCredentials;
+  private browserAuthenticated?: (request: IncomingMessage) => boolean;
+  setBrowserAuthentication(check: (request: IncomingMessage) => boolean) {
+    this.browserAuthenticated = check;
+  }
+  routeEnvironment(workspaceId: string, lifetimeMs: number, active?: () => Promise<boolean>) {
+    const workspace = this.workspaces.require(workspaceId);
+    if (!this.localBaseUrl) throw new ApiError(503, 'Mukai route listener is not ready.');
+    const url = new URL(this.localBaseUrl);
+    if (workspace.computer === 'qemu') url.hostname = '10.0.2.2';
+    return this.routeCredentials.issue(workspaceId, url.origin, lifetimeMs, active);
+  }
   private ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
   private runtime = new CapabilityWorkers((error) => this.error(error));
+  private readonly localRuntime = randomUUID();
+  readonly schedules: CapabilitySchedules;
+  private runtimeId(workspaceId: string) {
+    const workspace = this.workspaces.require(workspaceId);
+    if (workspace.computer === 'qemu') return this.workspaces.computers?.runtimeId(workspaceId);
+    return workspace.folder && existsSync(workspace.folder) ? this.localRuntime : undefined;
+  }
   private timer?: ReturnType<typeof setInterval>;
   private queueRun?: Promise<void>;
   private closing = false;
@@ -100,6 +155,7 @@ export class CapabilityService {
   private drainingWorkspace?: string;
   async stopWorkspace(id: string) {
     this.deletingWorkspaces.add(id);
+    this.routeCredentials.stopWorkspace(id);
     const tasks = [...this.workspaceTasks].filter(([, value]) => value.workspaceId === id);
     for (const [, value] of tasks) value.controller.abort();
     await Promise.allSettled(tasks.map(([task]) => task));
@@ -169,8 +225,17 @@ export class CapabilityService {
     private db: Database,
     private workspaces: WorkspaceService,
     registerSecret?: (value: string) => void,
+    private redactionNotice?: (workspaceId: string, capabilityId: string, count: number) => void,
   ) {
+    this.schedules = new CapabilitySchedules(
+      db,
+      (id) => this.runtimeId(id),
+      (id, event) => this.invoke(id, event, 'runJob'),
+    );
     this.environment = new CapabilityEnvironment(db, registerSecret);
+    this.routeCredentials = new RouteCredentials((token) =>
+      this.environment.trackRuntimeSecret(token),
+    );
     db.run(
       "UPDATE capability_runs SET status='interrupted',error='The server restarted during execution.' WHERE status='running'",
     );
@@ -183,7 +248,14 @@ export class CapabilityService {
     this.validateWakeTarget = callback;
   }
   start() {
+    if (this.timer || this.closing) return;
     this.timer = setInterval(() => {
+      const jobs = this.db
+        .all(
+          "SELECT c.* FROM capabilities c JOIN workspaces w ON w.id=c.workspace_id WHERE c.kind='job' AND c.enabled=1 AND w.deleting=0",
+        )
+        .map((row) => this.record(row));
+      this.schedules.tick(jobs);
       this.queueRun ??= this.drain()
         .catch(() => {})
         .finally(() => {
@@ -193,17 +265,19 @@ export class CapabilityService {
     this.timer.unref();
   }
   async shutdown() {
+    this.routeCredentials.close();
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     for (const { controller } of this.workspaceTasks.values()) controller.abort();
     await this.runtime.shutdown();
+    await this.schedules.shutdown();
     await Promise.allSettled([...this.workspaceTasks.keys()]);
     await this.queueRun;
   }
   private file(version: string) {
     return join(this.db.dir, 'capabilities', version, 'module.cjs');
   }
-  private record(row: Row): CapabilityRegistration {
+  private record(row: Row, includeHealth = false): CapabilityRegistration {
     const definition = JSON.parse(String(row.definition_json)) as CapabilityDefinition;
     const configured = this.environment.resolve(String(row.workspace_id), definition.requiredEnv);
     const missingEnv = definition.requiredEnv.filter((name) => !configured[name]);
@@ -217,11 +291,25 @@ export class CapabilityService {
       id: String(row.id),
       workspaceId: String(row.workspace_id),
       ownerBotId: row.owner_bot_id as string | null,
-      kind: row.kind as 'tool' | 'route',
+      kind: row.kind as CapabilityKind,
       modulePath: String(row.module_path),
       exportName: String(row.export_name),
       version: String(row.version),
       enabled,
+      ...(row.kind === 'job'
+        ? {
+            ...(includeHealth ? { health: this.jobHealth(String(row.id)) } : {}),
+            nextRunAt: (() => {
+              const next = this.db.get(
+                'SELECT next_at FROM capability_schedules WHERE capability_id=?',
+                String(row.id),
+              )?.next_at;
+              return !enabled || error || missingEnv.length || next == null
+                ? null
+                : new Date(Number(next)).toISOString();
+            })(),
+          }
+        : {}),
       definition,
       missingEnv,
       error,
@@ -234,6 +322,8 @@ export class CapabilityService {
             : 'ready',
       ...(definition.path
         ? {
+            urlNote:
+              'This URL is for the host/browser. Terminal HTTP uses the automatically supplied MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN; custom modules should prefer context.callRoute(routeId, request).',
             url:
               (this.routeSettings().publicBaseUrl || this.localBaseUrl).replace(/\/$/, '') +
               definition.path,
@@ -241,11 +331,44 @@ export class CapabilityService {
         : {}),
     };
   }
+  private jobHealth(id: string): NonNullable<CapabilityRegistration['health']> {
+    const last = this.db.get(
+      'SELECT * FROM capability_runs WHERE capability_id=? ORDER BY rowid DESC LIMIT 1',
+      id,
+    );
+    const finished = this.db.get(
+      "SELECT * FROM capability_runs WHERE capability_id=? AND status!='running' ORDER BY rowid DESC LIMIT 1",
+      id,
+    );
+    const success = this.db.get(
+      "SELECT rowid AS sequence FROM capability_runs WHERE capability_id=? AND status='complete' ORDER BY rowid DESC LIMIT 1",
+      id,
+    );
+    const failures = this.db.get(
+      "SELECT COUNT(*) AS count FROM capability_runs WHERE capability_id=? AND status IN ('failed','interrupted') AND rowid>?",
+      id,
+      Number(success?.sequence || 0),
+    );
+    return {
+      lastRun: last
+        ? {
+            id: String(last.id),
+            version: String(last.version),
+            status: String(last.status),
+            startedAt: String(last.started_at),
+            durationMs: last.duration_ms as number | null,
+            error: last.error ? this.environment.redact(String(last.error)) : null,
+          }
+        : null,
+      consecutiveFailures: Number(failures?.count || 0),
+      lastError: finished?.error ? this.environment.redact(String(finished.error)) : null,
+    };
+  }
   list(workspaceId: string) {
     this.workspaces.require(workspaceId);
     return this.db
       .all('SELECT * FROM capabilities WHERE workspace_id=? ORDER BY kind,name', workspaceId)
-      .map((row) => this.record(row));
+      .map((row) => this.record(row, true));
   }
   private require(id: string, workspaceId?: string) {
     const row = this.db.get('SELECT * FROM capabilities WHERE id=?', id);
@@ -254,7 +377,8 @@ export class CapabilityService {
     return this.record(row);
   }
   detail(id: string, workspaceId: string) {
-    const registration = this.require(id, workspaceId);
+    const found = this.require(id, workspaceId);
+    const registration = found.kind === 'job' ? { ...found, health: this.jobHealth(id) } : found;
     const sourcePath = join(this.db.dir, 'capabilities', registration.version, 'source.txt');
     const source = existsSync(sourcePath)
       ? readFileSync(sourcePath, 'utf8')
@@ -310,7 +434,7 @@ export class CapabilityService {
   private async validate(
     version: string,
     exportName: string,
-    kind: 'tool' | 'route',
+    kind: CapabilityKind,
     signal?: AbortSignal,
     workspaceId?: string,
   ) {
@@ -330,6 +454,12 @@ export class CapabilityService {
       )
         throw new ApiError(400, 'Tools require a description and an object inputSchema.');
       this.ajv.compile(definition.inputSchema);
+    } else if (kind === 'job') {
+      if (!definition.description || !definition.triggers)
+        throw new ApiError(
+          400,
+          'Jobs require a description and interval/workspace_start triggers, or a single once trigger.',
+        );
     } else if (
       !definition.method ||
       !definition.path ||
@@ -348,7 +478,7 @@ export class CapabilityService {
   async manage(
     workspaceId: string,
     ownerBotId: string | null,
-    kind: 'tool' | 'route',
+    kind: CapabilityKind,
     value: z.input<typeof registrationInput>,
     signal?: AbortSignal,
   ) {
@@ -368,13 +498,13 @@ export class CapabilityService {
   private async manageInternal(
     workspaceId: string,
     ownerBotId: string | null,
-    kind: 'tool' | 'route',
+    kind: CapabilityKind,
     value: z.input<typeof registrationInput>,
     signal?: AbortSignal,
   ) {
     signal?.throwIfAborted();
     const input = registrationInput.parse(value);
-    if (kind === 'route' && (input.permissionMode || input.operation === 'set_permission'))
+    if (kind !== 'tool' && (input.permissionMode || input.operation === 'set_permission'))
       throw new ApiError(400, 'Permission modes apply only to custom tools.');
     if (kind === 'tool' && input.operation === 'register' && !input.permissionMode)
       throw new ApiError(400, 'Choose permissionMode: auto_approve, ask_bot, or user_approval.');
@@ -384,10 +514,22 @@ export class CapabilityService {
     const previous =
       input.operation !== 'register' && input.id ? this.require(input.id, workspaceId) : undefined;
     if (previous && previous.kind !== kind)
-      throw new ApiError(400, 'Registration kind does not match the selected tool or route.');
+      throw new ApiError(400, 'Registration kind does not match the selected capability kind.');
     if (input.operation === 'inspect') {
       if (!previous) throw new ApiError(400, 'Choose a registration ID.');
       return this.detail(previous.id, workspaceId);
+    }
+    if (input.operation === 'run_now') {
+      if (kind !== 'job' || !previous)
+        throw new ApiError(400, 'Choose a custom job registration ID.');
+      return {
+        result: await this.invoke(
+          previous.id,
+          { trigger: 'manual', scheduledAt: new Date().toISOString() } satisfies CustomJobEvent,
+          'runJob',
+          signal,
+        ),
+      };
     }
     if (input.operation === 'set_permission') {
       if (!previous || !input.permissionMode)
@@ -427,6 +569,12 @@ export class CapabilityService {
         input.operation === 'enable' ? 1 : 0,
         previous.id,
       );
+      if (kind === 'job' && input.operation === 'enable')
+        this.schedules.configure(
+          this.require(previous.id),
+          !!previous.definition.triggers?.some((trigger) => trigger.type === 'interval'),
+          true,
+        );
       return this.require(previous.id);
     }
     if (input.operation === 'update' && !previous)
@@ -507,6 +655,13 @@ export class CapabilityService {
           definition.method || null,
           definition.path || null,
         );
+        if (kind === 'job')
+          this.schedules.configure(
+            this.require(id),
+            !previous ||
+              JSON.stringify(previous.definition.triggers) !== JSON.stringify(definition.triggers),
+            !previous?.definition.triggers?.some((trigger) => trigger.type === 'workspace_start'),
+          );
       });
       this.versions.set(version, definition);
       this.failures.delete(id);
@@ -524,16 +679,20 @@ export class CapabilityService {
     if (this.closing) throw new ApiError(503, 'Capability runtime is stopping.');
     const workspace = this.workspaces.require(workspaceId);
     if (!this.workspaces.computers) throw new ApiError(503, 'Guest computer is unavailable.');
+    const guest = this.workspaces.computers.guest(workspace);
+    const data = (input as { data?: { kind?: string; operation?: string } })?.data;
+    const request =
+      data?.kind === 'job' && data.operation !== 'validate'
+        ? guest.requestRunning.bind(guest)
+        : guest.request.bind(guest);
     const envelope = capabilityResult.parse(
-      await this.workspaces.computers
-        .guest(workspace)
-        .request(
-          'capability',
-          input,
-          { workspaceId, botId: 'mukai-capabilities', conversationId: 'capability-runtime' },
-          signal || new AbortController().signal,
-          helper,
-        ),
+      await request(
+        'capability',
+        input,
+        { workspaceId, botId: 'mukai-capabilities', conversationId: 'capability-runtime' },
+        signal || new AbortController().signal,
+        helper,
+      ),
     );
     if (!envelope.ok) throw new ApiError(envelope.status, envelope.error);
     return envelope.value;
@@ -565,7 +724,15 @@ export class CapabilityService {
         rpc,
       );
     }
-    return this.runtime.run(data, timeoutMs, signal, rpc);
+    return this.runtime.run(
+      {
+        ...data,
+        workspacePath: workspaceId ? this.workspaces.require(workspaceId).folder : undefined,
+      },
+      timeoutMs,
+      signal,
+      rpc,
+    );
   }
   private enqueue(
     registration: CapabilityRegistration,
@@ -602,7 +769,7 @@ export class CapabilityService {
   async invoke(
     id: string,
     input: unknown,
-    operation?: 'execute' | 'handle' | 'processJob',
+    operation?: 'execute' | 'handle' | 'processJob' | 'runJob',
     signal?: AbortSignal,
     version?: string,
     jobId?: string,
@@ -613,15 +780,18 @@ export class CapabilityService {
     if (this.deletingWorkspaces.has(registration.workspaceId))
       throw new ApiError(409, 'Workspace is being deleted.');
     const controller = new AbortController();
-    const task = this.invokeInternal(
-      id,
-      input,
-      operation,
-      signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
-      version,
-      jobId,
-      routeChain || { ancestors: [id], budget: { remaining: MAX_ROUTE_CALLS } },
-    );
+    const execute = () => {
+      return this.invokeInternal(
+        id,
+        input,
+        operation,
+        signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+        version,
+        jobId,
+        routeChain || { ancestors: [id], budget: { remaining: MAX_ROUTE_CALLS } },
+      );
+    };
+    const task = registration.kind === 'job' ? this.schedules.run(id, execute) : execute();
     this.workspaceTasks.set(task, { workspaceId: registration.workspaceId, controller });
     void task
       .finally(() => {
@@ -634,7 +804,7 @@ export class CapabilityService {
   private async invokeInternal(
     id: string,
     input: unknown,
-    operation?: 'execute' | 'handle' | 'processJob',
+    operation?: 'execute' | 'handle' | 'processJob' | 'runJob',
     signal?: AbortSignal,
     version?: string,
     jobId?: string,
@@ -648,16 +818,19 @@ export class CapabilityService {
           ? 'Needs configuration: ' + registration.missingEnv.join(', ')
           : registration.error || 'Capability is disabled.',
       );
-    operation ||= registration.kind === 'tool' ? 'execute' : 'handle';
+    operation ||=
+      registration.kind === 'tool' ? 'execute' : registration.kind === 'job' ? 'runJob' : 'handle';
     // The controller has already authenticated HTTP or internal Mukai calls.
     // Never forward its management credential to custom code, including in a VM.
-    if (operation === 'handle' && registration.definition.auth === 'mukai') {
+    if (operation === 'handle' && ['mukai', 'session'].includes(registration.definition.auth!)) {
       const request = input as { headers?: Record<string, unknown> };
       input = {
         ...request,
         headers: Object.fromEntries(
           Object.entries(request.headers || {}).filter(
-            ([name]) => name.toLowerCase() !== 'authorization',
+            ([name]) =>
+              name.toLowerCase() !== 'authorization' &&
+              (registration.definition.auth !== 'session' || name.toLowerCase() !== 'cookie'),
           ),
         ),
       };
@@ -680,6 +853,14 @@ export class CapabilityService {
     const runId = randomUUID(),
       started = Date.now();
     let wakeSequence = 0;
+    let inheritedRedactions = 0;
+    signal?.throwIfAborted();
+    if (
+      registration.kind === 'job' &&
+      operation === 'runJob' &&
+      definition.triggers?.some((trigger) => trigger.type === 'once')
+    )
+      this.db.run('UPDATE capability_schedules SET next_at=NULL WHERE capability_id=?', id);
     this.db.run(
       "INSERT INTO capability_runs VALUES(?,?,?,'running',?,NULL,NULL)",
       runId,
@@ -687,13 +868,18 @@ export class CapabilityService {
       selectedVersion,
       new Date().toISOString(),
     );
+    let routeLease: ReturnType<CapabilityService['routeEnvironment']> | undefined;
     try {
+      routeLease = this.localBaseUrl
+        ? this.routeEnvironment(registration.workspaceId, definition.timeoutMs + 1000)
+        : undefined;
       const value = await this.worker(
         {
           file: this.file(selectedVersion),
           exportName: manifest.exportName,
           operation,
-          env,
+          kind: registration.kind,
+          env: { ...env, ...routeLease?.env },
           input,
           workspaceId: registration.workspaceId,
         },
@@ -714,14 +900,25 @@ export class CapabilityService {
               throw new ApiError(429, 'Route call budget exceeded (16 calls).');
             const request = routeCallRequest(target.definition, args[1]);
             chain.budget.remaining--;
-            return this.invoke(routeId, request, 'handle', signal, undefined, undefined, {
-              ancestors: [...chain.ancestors, routeId],
-              budget: chain.budget,
-            });
+            const child = (await this.invoke(
+              routeId,
+              request,
+              'handle',
+              signal,
+              undefined,
+              undefined,
+              {
+                ancestors: [...chain.ancestors, routeId],
+                budget: chain.budget,
+              },
+            )) as CustomResponse;
+            inheritedRedactions += Number(child.headers?.['x-mukai-redacted'] || 0);
+            return child;
           }
           if (action === 'enqueue') {
             const [provider, eventId, payload] = args;
-            if (provider === '__mukai_wake') throw new ApiError(403, 'Reserved provider name.');
+            if (typeof provider === 'string' && provider.startsWith('__mukai_'))
+              throw new ApiError(403, 'Reserved provider name.');
             return this.enqueue(
               { ...registration, version: selectedVersion, definition },
               z.string().parse(provider),
@@ -758,27 +955,45 @@ export class CapabilityService {
         },
       );
       if (operation === 'handle') validateResponse(value);
+      // Redact body tokens before serialization, preserving HTTP framing and JSON syntax.
+      if (operation === 'handle') {
+        const response = validateResponse(value);
+        const contentType =
+          Object.entries(response.headers || {})
+            .find(([name]) => name.toLowerCase() === 'content-type')?.[1]
+            ?.trim() || '';
+        const json = /^(?:application\/json|[a-z0-9.+-]+\/[a-z0-9.+-]+\+json)(?:\s*;|$)/i.test(
+          contentType,
+        );
+        const result = this.environment.redactResponse(response.body, json);
+        let count = result.count + inheritedRedactions;
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(response.headers || {})) {
+          if (name.toLowerCase() === 'x-mukai-redacted') continue;
+          const redacted = this.environment.redactText(value);
+          headers[name] = redacted.value;
+          count += redacted.count;
+        }
+        if (count) {
+          headers['x-mukai-redacted'] = String(count);
+          this.redactionNotice?.(registration.workspaceId, id, count);
+        }
+        this.db.run(
+          "UPDATE capability_runs SET status='complete',duration_ms=? WHERE id=?",
+          Date.now() - started,
+          runId,
+        );
+        return {
+          status: response.status,
+          headers: Object.keys(headers).length ? headers : undefined,
+          body: result.value,
+        };
+      }
       this.db.run(
         "UPDATE capability_runs SET status='complete',duration_ms=? WHERE id=?",
         Date.now() - started,
         runId,
       );
-      // Preserve the HTTP envelope while filtering returned body/header data.
-      if (operation === 'handle') {
-        const response = validateResponse(value);
-        return {
-          status: response.status,
-          headers: response.headers
-            ? Object.fromEntries(
-                Object.entries(response.headers).map(([name, value]) => [
-                  name,
-                  this.environment.redact(value),
-                ]),
-              )
-            : undefined,
-          body: this.environment.publicValue(response.body),
-        };
-      }
       return this.environment.publicValue(value);
     } catch (error) {
       this.db.run(
@@ -789,6 +1004,8 @@ export class CapabilityService {
         runId,
       );
       throw new ApiError(error instanceof ApiError ? error.status : 500, this.error(error));
+    } finally {
+      routeLease?.release();
     }
   }
   private async drain() {
@@ -798,7 +1015,14 @@ export class CapabilityService {
         `SELECT j.* FROM capability_jobs j JOIN capabilities c ON c.id=j.capability_id JOIN workspaces w ON w.id=c.workspace_id WHERE j.status='pending' AND j.next_at<=? AND c.enabled=1 AND w.deleting=0 ORDER BY j.rowid LIMIT 100`,
         Date.now(),
       )
-      .find((row) => this.require(String(row.capability_id)).status === 'ready');
+      .find((row) => {
+        const registration = this.require(String(row.capability_id));
+        return (
+          registration.status === 'ready' &&
+          (registration.kind !== 'job' ||
+            (!this.schedules.busy(registration.id) && !!this.runtimeId(registration.workspaceId)))
+        );
+      });
     if (!job) return;
     const registration = this.require(String(job.capability_id));
     if (registration.status !== 'ready') return;
@@ -872,16 +1096,48 @@ export class CapabilityService {
     const host = request.headers.host || '';
     const base = this.routeSettings().publicBaseUrl;
     const publicHost = base ? new URL(base).host : null;
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host) && host !== publicHost)
+    const guestHost = host === `10.0.2.2:${request.socket.localPort}`;
+    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host) && !guestHost && host !== publicHost)
       throw new ApiError(403, 'Custom route host is not configured.');
     if (registration.definition.auth === 'mukai') {
       const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
       const expected = Buffer.from(token);
-      if (given.length !== expected.length || !timingSafeEqual(given, expected))
+      const scoped = await this.routeCredentials.authorized(
+        given.toString(),
+        registration.workspaceId,
+      );
+      if (!scoped && (given.length !== expected.length || !timingSafeEqual(given, expected)))
         throw new ApiError(401, 'API authentication required.');
       const origin = request.headers.origin;
       if (origin && origin !== 'null' && !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
         throw new ApiError(403, 'Untrusted request origin.');
+    }
+    if (registration.definition.auth === 'session') {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      if (
+        !trustedLocalRequest(request, true) ||
+        (!['GET', 'HEAD'].includes(request.method || 'GET') && !request.headers.origin)
+      )
+        throw new ApiError(403, 'Untrusted request origin.');
+      if (!this.browserAuthenticated?.(request)) {
+        const navigation =
+          ['GET', 'HEAD'].includes(request.method || 'GET') &&
+          /\btext\/html\b/i.test(request.headers.accept || '') &&
+          (!request.headers['sec-fetch-mode'] || request.headers['sec-fetch-mode'] === 'navigate');
+        const returnTo = customRouteReturnTo(request.url);
+        if (navigation && returnTo && this.browserAuthenticated) {
+          response.writeHead(302, { Location: '/?mukai-returnTo=' + encodeURIComponent(returnTo) });
+          response.end();
+          return;
+        }
+        throw new ApiError(
+          401,
+          this.browserAuthenticated
+            ? 'Sign in to Mukai.'
+            : 'Browser login requires the Mukai web server.',
+        );
+      }
     }
     const rawBody = await body(request, 1024 * 1024);
     let parsed: unknown;
@@ -918,6 +1174,10 @@ export class CapabilityService {
     }
     for (const [name, value] of Object.entries(result.headers || {})) {
       response.setHeader(name, value);
+    }
+    if (registration.definition.auth === 'session') {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
     }
     if (!Object.keys(result.headers || {}).some((name) => name.toLowerCase() === 'content-type'))
       response.setHeader(

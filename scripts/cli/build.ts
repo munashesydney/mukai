@@ -17,6 +17,7 @@ async function main() {
     define: { __MUKAI_VERSION__: JSON.stringify(manifest.version) },
     sourcemap: true,
   });
+  await cp('src/skills', 'dist/cli/app/src/skills', { recursive: true });
   await cp('dist/web', 'dist/cli/web', { recursive: true });
   await cp('dist/guest', 'dist/cli/resources/guest', { recursive: true });
   await cp('dist/computer_use', 'dist/cli/resources/computer_use', { recursive: true });

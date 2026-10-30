@@ -5,6 +5,7 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { QemuComputer, type QemuConfig } from '../src/server/computer/qemuComputer';
 import { startApiServer } from '../src/server/app';
+import { computerTools } from '../src/server/computer/tools';
 import { seedTestBot } from '../src/server/testFixtures';
 import type { CapabilityRegistration } from '../src/shared/customCapabilities';
 
@@ -46,6 +47,7 @@ async function main() {
     seedTestBot(api.store);
     api.store.run("UPDATE workspaces SET computer='qemu',folder=NULL WHERE id='default'");
     api.computers.guest = () => vm;
+    api.computers.runtimeId = () => vm.runtimeId();
     api.capabilities.setWake(async () => {});
     console.log('Registering a tool with a guest TypeScript dependency.');
     await write('math.ts', 'export function multiply(a:number,b:number){return a*b;}');
@@ -113,6 +115,76 @@ async function main() {
     };
     assert.equal(received.platform, 'linux');
     assert.equal(received.authorizationPresent, false);
+    console.log(
+      'Testing automatic route credentials against the real VM gateway and ephemeral port.',
+    );
+    await write(
+      'route-access.js',
+      `export default {name:'route_access',method:'GET',path:'/custom/route-access',auth:'mukai',handle(request){return {status:200,body:{ok:true,authorizationPresent:'authorization' in request.headers}}}};`,
+    );
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'route',
+      { operation: 'register', modulePath: 'route-access.js' },
+      signal,
+    );
+    await write(
+      'route-client.js',
+      `export default {name:'route_client',description:'VM route credentials',inputSchema:{type:'object'},async execute(args,context){
+      const url=context.env.MUKAI_ROUTES_URL;
+      const response=await fetch(url+'/custom/route-access',{headers:{Authorization:'Bearer '+context.env.MUKAI_ROUTES_TOKEN}});
+      return {url,status:response.status,body:await response.json(),token:context.env.MUKAI_ROUTES_TOKEN};
+    }};`,
+    );
+    const client = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'tool',
+      { operation: 'register', modulePath: 'route-client.js', permissionMode: 'auto_approve' },
+      signal,
+    )) as CapabilityRegistration;
+    const gateway = 'http://10.0.2.2:' + new URL(api.url).port;
+    assert.deepEqual(await api.capabilities.invoke(client.id, {}, 'execute', signal), {
+      url: gateway,
+      status: 200,
+      body: { ok: true, authorizationPresent: false },
+      token: '[redacted]',
+    });
+    const routeTools = computerTools({
+      owner,
+      signal,
+      onActivity: () => {},
+      budget: { remaining: 10 },
+      computer: vm,
+      vision: false,
+      fileBudget: { remaining: 10 },
+      recordChange: () => {},
+      recordFile: () => {},
+      saveScreenshot: async () => {
+        throw new Error('unused');
+      },
+      routeEnvironment: (ttl, active) => api!.capabilities.routeEnvironment('default', ttl, active),
+      isTerminalRunning: async (id) =>
+        (
+          (await vm.requestRunning(
+            'process',
+            { action: 'poll', sessionId: id },
+            owner,
+            signal,
+          )) as { status: string }
+        ).status === 'running',
+    });
+    const terminal = (await routeTools.terminal.execute!(
+      {
+        command:
+          'curl --fail --silent -H "Authorization: Bearer $MUKAI_ROUTES_TOKEN" "$MUKAI_ROUTES_URL/custom/route-access"',
+        yieldMs: 30000,
+      },
+      { toolCallId: 'vm-route-access', messages: [], context: undefined },
+    )) as { result: { exitCode: number; output: string } };
+    assert.equal(terminal.result.exitCode, 0);
+    assert.deepEqual(JSON.parse(terminal.result.output), { ok: true, authorizationPresent: false });
     console.log('Calling a protected route from a guest-created tool without a token.');
     await write(
       'call-route.js',
@@ -163,6 +235,71 @@ async function main() {
       signal,
     )) as { result: { content: string } };
     assert.equal(file.result.content, Buffer.from(raw).toString('hex'));
+    console.log('Registering and running a custom job through the upgraded guest bridge.');
+    api.capabilities.environment.save('default', [{ name: 'JOB_CHECK', value: 'job-smoke-value' }]);
+    await write(
+      'job.ts',
+      `import {appendFileSync} from 'node:fs'; import {join} from 'node:path';
+      export default {name:'guest_heartbeat',description:'Disposable job upgrade check',
+        triggers:[{type:'interval',intervalMs:1000},{type:'workspace_start'}],requiredEnv:['JOB_CHECK'],
+        run(event,context){
+          if(context.env.JOB_CHECK!=='job-smoke-value')throw new Error('Missing job environment');
+          if(context.workspacePath!=='/home/mukai/workspace')throw new Error('Missing guest workspacePath');
+          appendFileSync(join(context.workspacePath,'job-events.txt'),event.trigger+'\\n');
+          return {trigger:event.trigger,platform:process.platform,file:__filename};
+        }};`,
+    );
+    const job = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      {
+        operation: 'register',
+        modulePath: 'job.ts',
+      },
+      signal,
+    )) as CapabilityRegistration;
+    assert.equal(job.kind, 'job');
+    assert.equal(job.status, 'ready');
+    const manual = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      {
+        operation: 'run_now',
+        id: job.id,
+      },
+      signal,
+    )) as { result: { trigger: string; platform: string } };
+    assert.deepEqual(
+      { trigger: manual.result.trigger, platform: manual.result.platform },
+      { trigger: 'manual', platform: 'linux' },
+    );
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (
+        api.capabilities.detail(job.id, 'default').runs.filter((run) => run.status === 'complete')
+          .length >= 2
+      )
+        break;
+      await delay(100, undefined, { signal });
+    }
+    const jobLog = (await vm.request(
+      'files',
+      { action: 'read_file', path: 'job-events.txt' },
+      owner,
+      signal,
+    )) as { result: { content: string } };
+    assert.ok(
+      jobLog.result.content.includes('interval\n'),
+      'Expected an unattended interval execution.',
+    );
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'disable', id: job.id },
+      signal,
+    );
     console.log('Checking saved execution after workspace edits and a VM restart.');
     await write('math.ts', 'export function multiply(){return 999;}');
     await vm.stop();
@@ -174,8 +311,42 @@ async function main() {
     )) as { product: number; platform: string };
     assert.equal(restored.product, 15);
     assert.equal(restored.platform, 'linux');
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'enable', id: job.id },
+      signal,
+    );
+    // Enable during this runtime waits for the next VM start.
+    await vm.stop();
+    await vm.start();
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const log = (await vm.request(
+        'files',
+        { action: 'read_file', path: 'job-events.txt' },
+        owner,
+        signal,
+      )) as { result: { content: string } };
+      if (log.result.content.includes('workspace_start\n')) break;
+      await delay(100, undefined, { signal });
+    }
+    const afterStart = (await vm.request(
+      'files',
+      { action: 'read_file', path: 'job-events.txt' },
+      owner,
+      signal,
+    )) as { result: { content: string } };
+    assert.equal(afterStart.result.content.split('workspace_start\n').length - 1, 1);
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'disable', id: job.id },
+      signal,
+    );
     console.log(
-      'Linux VM tool registration, execution, route ingress, durable helpers, and restart passed.',
+      'Linux VM tools/routes/jobs, unattended intervals, startup execution, environment, and restart passed.',
     );
   } finally {
     if (api) {

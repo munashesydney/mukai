@@ -1,3 +1,4 @@
+import type { RouteEnvironmentLease } from '../../shared/routeAccess';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
@@ -32,6 +33,7 @@ function sameOwner(a: RuntimeOwner, b: RuntimeOwner) {
 export class ProcessService {
   constructor(
     private options: {
+      routeEnvironment?: (workspaceId: string, lifetimeMs: number) => RouteEnvironmentLease;
       resolveEnvironment?: (workspaceId: string, names: string[]) => Record<string, string>;
     } = {},
   ) {}
@@ -90,6 +92,7 @@ export class ProcessService {
     signal: AbortSignal,
     runtime: {
       settingsEnvironment?: Record<string, string>;
+      automaticEnvironment?: Record<string, string>;
       onStart?: (snapshot: TerminalSnapshot) => void | Promise<void>;
     } = {},
   ) {
@@ -157,7 +160,7 @@ export class ProcessService {
     }
     const env = Object.fromEntries(
       Object.entries(process.env).filter(
-        ([key]) => !/(TOKEN|SECRET|PASSWORD|API_KEY|MUKAI_DATA_DIR)/i.test(key),
+        ([key]) => !/(TOKEN|SECRET|PASSWORD|API_KEY|MUKAI_DATA_DIR|MUKAI_ROUTES_URL)/i.test(key),
       ),
     );
     for (const [name, value] of Object.entries(supplied)) {
@@ -167,16 +170,29 @@ export class ProcessService {
     }
     if (this.deletingWorkspaces.has(owner.workspaceId))
       throw new ApiError(409, 'Workspace is being deleted.');
-    const stdout = new ProcessRedactor(names.map((name) => configured[name]));
-    const stderr = new ProcessRedactor(names.map((name) => configured[name]));
-    const child =
-      process.platform === 'win32'
-        ? spawn(
-            'powershell.exe',
-            ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', input.command],
-            { cwd, env, windowsHide: true },
-          )
-        : spawn('/bin/sh', ['-c', input.command], { cwd, env, detached: true });
+    const routeLease = this.options.routeEnvironment?.(
+      owner.workspaceId,
+      (input.timeoutSeconds ?? (input.background ? 3600 : 300)) * 1000 + 1000,
+    );
+    const automatic = routeLease?.env ?? runtime.automaticEnvironment ?? {};
+    Object.assign(env, automatic);
+    const secrets = [...names.map((name) => configured[name]), automatic.MUKAI_ROUTES_TOKEN];
+    const stdout = new ProcessRedactor(secrets);
+    const stderr = new ProcessRedactor(secrets);
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child =
+        process.platform === 'win32'
+          ? spawn(
+              'powershell.exe',
+              ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', input.command],
+              { cwd, env, windowsHide: true },
+            )
+          : spawn('/bin/sh', ['-c', input.command], { cwd, env, detached: true });
+    } catch (error) {
+      routeLease?.release();
+      throw error;
+    }
     let finish!: () => void;
     let exited!: () => void;
     const entry: ManagedProcess = {
@@ -219,14 +235,14 @@ export class ProcessService {
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    const redactError = (text: string) =>
-      new ProcessRedactor(names.map((name) => configured[name])).write(text, true);
+    const redactError = (text: string) => new ProcessRedactor(secrets).write(text, true);
     child.stdout.on('data', (chunk) => append(stdout.write(chunk)));
     child.stderr.on('data', (chunk) => append(stderr.write(chunk)));
     child.stdin.on('error', (error) =>
       append(redactError('\nProcess input failed: ' + error.message)),
     );
     child.on('error', (error) => {
+      routeLease?.release();
       entry.info.status = 'failed';
       append(redactError(error.message));
       clearTimeout(entry.timer);
@@ -234,10 +250,12 @@ export class ProcessService {
       finish();
     });
     child.on('exit', (code) => {
+      routeLease?.release();
       entry.info.exitCode = code;
       exited();
     });
     child.on('close', (code) => {
+      routeLease?.release();
       append(stdout.finish());
       append(stderr.finish());
       if (entry.info.status === 'running') entry.info.status = 'exited';

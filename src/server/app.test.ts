@@ -59,6 +59,13 @@ let mode:
   | 'upstream-fail'
   | 'transient-stream'
   | 'transient-stream-always'
+  | 'malformed-stream'
+  | 'malformed-stream-always'
+  | 'malformed-stream-with-tool'
+  | 'malformed-stream-after-tool'
+  | 'incomplete-stream'
+  | 'malformed-http'
+  | 'malformed-stream-stop'
   | 'memory-failure'
   | 'slow'
   | 'tools'
@@ -355,15 +362,39 @@ beforeEach(async () => {
                   empty || truncated
                     ? ''
                     : JSON.stringify(body.messages).includes('Summarize working memory')
-                      ? (mode === 'oversized-results'
-                          ? // Leave the tight notebook budget for findings and omission notices.
-                            'Saved work. '
-                          : 'Earlier conversation notes: retain verified findings and completed actions. Continue the exact current request without repeating successful operations.') +
-                        (mode === 'oversized-results'
-                          ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED]
-                              .filter((finding) => JSON.stringify(body.messages).includes(finding))
-                              .join(' ')
-                          : '')
+                      ? (() => {
+                          const sources = JSON.parse(String(body.messages.at(-1)?.content)) as {
+                            id: string;
+                            text: string;
+                            evidence?: string;
+                          }[];
+                          const findings =
+                            mode === 'oversized-results'
+                              ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED].filter(
+                                  (finding) =>
+                                    sources.some((source) => source.text.includes(finding)),
+                                )
+                              : [];
+                          return JSON.stringify(
+                            findings.length
+                              ? findings.map((finding) => ({
+                                  sourceId: sources.find((source) => source.text.includes(finding))!
+                                    .id,
+                                  note: 'Saved work.',
+                                  quote: finding,
+                                }))
+                              : [
+                                  {
+                                    sourceId: sources[0].id,
+                                    note:
+                                      mode === 'oversized-results'
+                                        ? 'Saved work.'
+                                        : 'Earlier conversation notes: retain source provenance.',
+                                    quote: (sources[0].evidence ?? sources[0].text).slice(0, 16),
+                                  },
+                                ],
+                          );
+                        })()
                       : 'OK',
               },
               finish_reason: truncated
@@ -378,7 +409,94 @@ beforeEach(async () => {
       );
       return;
     }
+    if (mode === 'malformed-http' && calls.filter((call) => call.stream).length === 1) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({
+          error: { code: 'invalid_tool_call', message: 'PRIVATE_PROVIDER_PAYLOAD' },
+        }),
+      );
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (
+      [
+        'malformed-stream',
+        'malformed-stream-always',
+        'malformed-stream-with-tool',
+        'malformed-stream-after-tool',
+        'incomplete-stream',
+        'malformed-stream-stop',
+      ].includes(mode)
+    ) {
+      const streamCalls = calls.filter((call) => call.stream).length;
+      const send = (delta: unknown, finish_reason: string | null = null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'malformed-fixture', model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+        );
+      const delivered = body.messages.some((message: { role: string }) => message.role === 'tool');
+      if (
+        (mode === 'malformed-stream-with-tool' && streamCalls <= 2) ||
+        (!delivered && mode === 'malformed-stream-after-tool')
+      ) {
+        send({
+          tool_calls: [
+            {
+              index: 0,
+              id:
+                mode === 'malformed-stream-with-tool' && streamCalls === 1
+                  ? 'not-dispatched'
+                  : 'write-once',
+              type: 'function',
+              function: {
+                name: 'file_operations',
+                arguments: JSON.stringify({
+                  action: 'write_file',
+                  path: 'once.txt',
+                  content: 'Written once.',
+                }),
+              },
+            },
+          ],
+        });
+        if (mode === 'malformed-stream-after-tool' || streamCalls === 2) {
+          send({}, 'tool_calls');
+          res.end('data: [DONE]\n\n');
+          return;
+        }
+      }
+      const shouldFail =
+        mode === 'malformed-stream-always' ||
+        (mode === 'malformed-stream-after-tool' ? streamCalls === 2 : streamCalls === 1);
+      if (shouldFail) {
+        send({ content: 'I found the defect; fixing the pending/tickets mismatch next.' });
+        if (mode === 'malformed-stream-stop') {
+          const timer = setTimeout(
+            () =>
+              res.end(
+                `data: ${JSON.stringify({
+                  error: {
+                    code: 'invalid_tool_call',
+                    message: 'Malformed tool call.',
+                  },
+                })}\n\ndata: [DONE]\n\n`,
+              ),
+            200,
+          );
+          res.once('close', () => clearTimeout(timer));
+          return;
+        }
+        res.end(
+          `data: ${JSON.stringify({
+            error: {
+              code: mode === 'incomplete-stream' ? 'incomplete_tool_call' : 'invalid_tool_call',
+              type: 'server_error',
+              message: 'Model output contains an unrecoverable tool call. PRIVATE_PROVIDER_PAYLOAD',
+            },
+          })}\n\ndata: [DONE]\n\n`,
+        );
+        return;
+      }
+    }
     if (mode === 'transient-stream-always' || (mode === 'transient-stream' && calls.length === 1)) {
       res.end(
         'data: ' +
@@ -1970,6 +2088,88 @@ describe('Mukai bots and AI API', () => {
     expect(calls).toHaveLength(2);
     expect(calls[1].messages).toEqual(calls[0].messages);
     expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toContain('chat.provider_retry');
+  });
+
+  it.each(['malformed-stream', 'incomplete-stream', 'malformed-http'] as const)(
+    'explains %s to the model and continues even after visible commentary',
+    async (failureMode) => {
+      await configure();
+      mode = failureMode;
+      await chat('Fix the pending/tickets mismatch.');
+      const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      expect(reply.status, reply.error || '').toBe('complete');
+      if (failureMode !== 'malformed-http') expect(reply.content).toContain('I found the defect');
+      expect(reply.content).toContain('A real SDK response.');
+      expect(calls).toHaveLength(2);
+      const next = JSON.stringify(calls[1].messages);
+      expect(next).toContain(
+        failureMode === 'incomplete-stream' ? 'incomplete_tool_call' : 'invalid_tool_call',
+      );
+      expect(next).toContain('declared argument schema');
+      expect(next).toContain('Do not repeat completed calls');
+      if (failureMode !== 'malformed-http') expect(next).toContain('I found the defect');
+      expect(next).not.toContain('PRIVATE_PROVIDER_PAYLOAD');
+      const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+      expect(logs).toContain('chat.tool_call_recovery');
+      expect(logs).toContain('chat.tool_call_recovered');
+      expect(logs).not.toContain('chat.failed');
+    },
+  );
+
+  it.each(['malformed-stream-with-tool', 'malformed-stream-after-tool'] as const)(
+    'preserves successful tool results in %s without repeating the write',
+    async (failureMode) => {
+      await configure();
+      project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+      await request('/workspaces/default', 'PUT', { name: 'Tool recovery', folder: project });
+      mode = failureMode;
+      await chat('Write once, then finish.');
+      const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+      expect(reply.status, readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toBe('complete');
+      expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Written once.');
+      expect(reply.activity?.filter((item) => item.id === 'write-once')).toMatchObject([
+        { status: 'complete' },
+      ]);
+      expect(reply.changes).toHaveLength(1);
+      const next = calls.at(-1)!.messages;
+      expect(next.filter((message) => message.role === 'tool')).toHaveLength(
+        failureMode === 'malformed-stream-with-tool' ? 2 : 1,
+      );
+      expect(JSON.stringify(next)).toContain('Written once.');
+      expect(JSON.stringify(next)).toContain('invalid_tool_call');
+      expect(calls).toHaveLength(3);
+      if (failureMode === 'malformed-stream-with-tool')
+        expect(JSON.stringify(calls[1].messages)).toContain('failed before Mukai dispatched it');
+      expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+    },
+  );
+
+  it('bounds malformed-call repair and checkpoints the formatting feedback for manual Retry', async () => {
+    await configure();
+    mode = 'malformed-stream-always';
+    await chat('Recover from malformed calls.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(calls).toHaveLength(3);
+    expect(reply.status).toBe('failed');
+    expect(reply.error).toContain('two correction attempts');
+    expect(reply.error).not.toMatch(/credentials|balance/);
+    const row = api.store.get('SELECT * FROM chat_jobs WHERE message_id=?', reply.id)!;
+    expect(row.in_flight).toBe(0);
+    const checkpoint = JSON.parse(String(row.checkpoint_json));
+    expect(checkpoint.providerToolCallRecoveries).toBe(2);
+    expect(JSON.stringify(checkpoint.messages)).toContain('invalid_tool_call');
+    expect(JSON.stringify(checkpoint.messages)).not.toContain('PRIVATE_PROVIDER_PAYLOAD');
+  });
+
+  it('honors Stop while a malformed-call error is arriving and does not start a correction request', async () => {
+    await configure();
+    mode = 'malformed-stream-stop';
+    const running = chat('Stop this response.');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
   });
 
   it('returns a failed memory save to the model and still finishes the chat', async () => {

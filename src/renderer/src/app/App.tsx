@@ -415,7 +415,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 if (ai.workspace) setEditingWorkspace(ai.workspace);
               }}
               selectedToolId={
-                ['workspace-tools', 'custom-tools', 'custom-routes'].includes(location.item)
+                ['workspace-tools', 'custom-tools', 'custom-routes', 'custom-jobs'].includes(
+                  location.item,
+                )
                   ? null
                   : location.item
               }
@@ -424,7 +426,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                   ? 'tool'
                   : location.item === 'custom-routes'
                     ? 'route'
-                    : undefined
+                    : location.item === 'custom-jobs'
+                      ? 'job'
+                      : undefined
               }
               onSelectTool={(toolId) =>
                 select({ section: 'tools', item: toolId ?? 'workspace-tools' })

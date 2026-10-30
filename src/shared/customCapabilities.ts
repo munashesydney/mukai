@@ -1,3 +1,14 @@
+export type CapabilityKind = 'tool' | 'route' | 'job';
+export type CustomJobTrigger =
+  | { type: 'interval'; intervalMs: number }
+  | { type: 'workspace_start' }
+  | { type: 'once'; runAt: string };
+export interface CustomJobEvent {
+  trigger: 'interval' | 'workspace_start' | 'once' | 'manual';
+  scheduledAt: string;
+  runtimeId?: string;
+}
+
 /** Authoring contract for real .ts/.js capability modules. Imports may be type-only. */
 export const customToolPermissionModes = ['auto_approve', 'ask_bot', 'user_approval'] as const;
 export type CustomToolPermissionMode = (typeof customToolPermissionModes)[number];
@@ -32,6 +43,8 @@ export interface CapabilityContext {
   env: Record<string, string>;
   signal: AbortSignal;
   workspaceId: string;
+  /** Absolute workspace root on the computer executing this module. */
+  workspacePath: string;
   /** Commit a job before acknowledging a webhook. Duplicate event IDs return the same job. */
   enqueue(
     provider: string,
@@ -68,7 +81,7 @@ export interface CustomRouteModule {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   path: string;
   /** handler: verify the provider signature before work/enqueue; public: explicitly unauthenticated. */
-  auth: 'mukai' | 'handler' | 'public';
+  auth: 'mukai' | 'session' | 'handler' | 'public';
   requiredEnv?: string[];
   timeoutMs?: number;
   handle(
@@ -77,7 +90,17 @@ export interface CustomRouteModule {
   ): Promise<CustomResponse> | CustomResponse;
   processJob?(payload: unknown, context: CapabilityContext): Promise<unknown> | unknown;
 }
+export interface CustomJobModule {
+  name: string;
+  description: string;
+  triggers: CustomJobTrigger[];
+  requiredEnv?: string[];
+  timeoutMs?: number;
+  run(event: CustomJobEvent, context: CapabilityContext): Promise<unknown> | unknown;
+  processJob?(payload: unknown, context: CapabilityContext): Promise<unknown> | unknown;
+}
 export interface CapabilityDefinition {
+  triggers?: CustomJobTrigger[];
   permissionMode?: CustomToolPermissionMode;
   name: string;
   description?: string;
@@ -93,7 +116,7 @@ export interface CapabilityRegistration {
   id: string;
   workspaceId: string;
   ownerBotId: string | null;
-  kind: 'tool' | 'route';
+  kind: CapabilityKind;
   modulePath: string;
   exportName: string;
   version: string;
@@ -103,6 +126,13 @@ export interface CapabilityRegistration {
   missingEnv: string[];
   error: string | null;
   url?: string;
+  urlNote?: string;
+  nextRunAt?: string | null;
+  health?: {
+    lastRun: CapabilityRun | null;
+    consecutiveFailures: number;
+    lastError: string | null;
+  };
 }
 export interface CapabilityRun {
   id: string;
@@ -114,6 +144,7 @@ export interface CapabilityRun {
 }
 export interface EnvironmentVariable {
   name: string;
+  secret?: boolean;
   configured: boolean;
   usedBy: string[];
 }

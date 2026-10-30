@@ -11,6 +11,7 @@ export const workspaceToolIds = [
   'manage_pursuit',
   'manage_bot',
   'register_custom_tool',
+  'register_custom_job',
   'system',
 ] as const;
 export type ToolAssignment = { toolId: string; botId: string; enabled: boolean };

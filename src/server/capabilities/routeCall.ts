@@ -37,7 +37,11 @@ export function routeCallRequest(definition: CapabilityDefinition, raw: unknown)
     )
       throw new ApiError(400, 'Route call includes a reserved HTTP header.');
     if (key in headers) throw new ApiError(400, 'Route call includes duplicate header names.');
-    if (definition.auth === 'mukai' && key === 'authorization') continue;
+    if (
+      ['mukai', 'session'].includes(definition.auth || '') &&
+      (key === 'authorization' || (definition.auth === 'session' && key === 'cookie'))
+    )
+      continue;
     headers[key] = value;
   }
   const rawBody = Buffer.from(

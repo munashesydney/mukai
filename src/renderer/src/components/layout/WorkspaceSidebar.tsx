@@ -10,6 +10,7 @@ import {
   Puzzle,
   FileCode2,
   Webhook,
+  Clock,
   BookOpen,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -351,6 +352,13 @@ export function WorkspaceSidebar({
             >
               <Webhook size={18} />
               <span>Routes</span>
+            </button>
+            <button
+              className={`sidebar-row ${isSelected('custom-jobs') ? 'is-selected' : ''}`}
+              onClick={() => onSelect({ section: 'tools', item: 'custom-jobs' })}
+            >
+              <Clock size={18} />
+              <span>Custom jobs</span>
             </button>
             <button
               className={`sidebar-row ${isSelected('skills') ? 'is-selected' : ''}`}

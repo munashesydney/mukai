@@ -1,6 +1,13 @@
+import { routeEnvironmentNames } from './routeAccess';
 import { z } from 'zod';
 
-export const environmentVariableName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
+export const environmentVariableName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)
+  .refine(
+    (name) => !routeEnvironmentNames.some((reserved) => reserved === name.toUpperCase()),
+    'MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN are supplied by Mukai; do not set or select them.',
+  );
 export const terminalEnvironmentFields = {
   envFromSettings: z
     .array(environmentVariableName)

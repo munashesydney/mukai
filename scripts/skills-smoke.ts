@@ -112,6 +112,12 @@ async function main() {
     await click('Tools');
     await click('Skills');
     await wait(
+      'document.querySelector(".skills-page")?.textContent.includes("mukai-custom-routes-authenticated-websites")',
+    );
+    await capture('skills-bundled.png');
+    for (const skill of api.skills.list('default')) api.skills.remove('default', skill.id);
+    await evaluate(`document.querySelector('button[aria-label="Refresh skills"]').click()`);
+    await wait(
       'document.querySelector(".skills-page > .tools-empty")?.textContent.trim()==="No skills yet."',
     );
     assert(

@@ -61,15 +61,6 @@ export function AskRequestCard({
           )}
         </div>
       </header>
-      {delegated && (
-        <p className="ai-caption">
-          Your bot is waiting for {request.botName}’s response. This request is from{' '}
-          {request.botName}.
-        </p>
-      )}
-      <p className="ask-question" id={`ask-question-${request.id}`}>
-        {question.question}
-      </p>
       <form
         aria-labelledby={`ask-question-${request.id}`}
         onSubmit={(event) => {
@@ -79,75 +70,86 @@ export function AskRequestCard({
             void approvalStore.decide(request.id, false, reason.trim());
         }}
       >
-        <div className="ask-request-content" id={contentId} hidden={collapsed}>
-          {!clarification && denying && (
-            <label className={`ask-answer-field ${reason ? 'is-selected' : ''}`}>
-              <span className="ask-option-number" aria-hidden="true">
-                <SquarePen size={12} />
-              </span>
-              <textarea
-                aria-label="Reason for denying"
-                placeholder="Tell the bot why you’re denying this request…"
-                rows={reason.includes('\n') || reason.length > 100 ? 3 : 1}
-                value={reason}
-                maxLength={16000}
-                autoFocus
-                required
-                disabled={busy}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </label>
+        <div className="ask-request-scroll" role="region" aria-label="Request details" tabIndex={0}>
+          {delegated && (
+            <p className="ai-caption">
+              Your bot is waiting for {request.botName}’s response. This request is from{' '}
+              {request.botName}.
+            </p>
           )}
-          {clarification && (
-            <>
-              <fieldset className="ask-options" disabled={busy} aria-label="Suggested answers">
-                {question.options?.map((option, index) => (
-                  <label
-                    className={`ask-option ${selected === option.label && !typed ? 'is-selected' : ''}`}
-                    key={option.label}
-                  >
-                    <input
-                      className="visually-hidden"
-                      type="radio"
-                      name={`ask-option-${request.id}`}
-                      checked={selected === option.label && !typed}
-                      onChange={() => {
-                        setSelected(option.label);
-                        setTyped('');
-                      }}
-                    />
-                    <span className="ask-option-number" aria-hidden="true">
-                      {index + 1}
-                    </span>
-                    <span className="ask-option-copy">
-                      <strong>{option.label}</strong>
-                      {option.description && (
-                        <span className="ask-option-description">{option.description}</span>
-                      )}
-                      {option.recommended && <span className="ask-recommended">Recommended</span>}
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
-              <label className={`ask-answer-field ${typed ? 'is-selected' : ''}`}>
+          <p className="ask-question" id={`ask-question-${request.id}`}>
+            {question.question}
+          </p>
+          <div className="ask-request-content" id={contentId} hidden={collapsed}>
+            {!clarification && denying && (
+              <label className={`ask-answer-field ${reason ? 'is-selected' : ''}`}>
                 <span className="ask-option-number" aria-hidden="true">
                   <SquarePen size={12} />
                 </span>
                 <textarea
-                  aria-label="Type your answer"
-                  placeholder="Type your answer"
-                  rows={typed.includes('\n') || typed.length > 100 ? 3 : 1}
-                  value={typed}
+                  aria-label="Reason for denying"
+                  placeholder="Tell the bot why you’re denying this request…"
+                  rows={reason.includes('\n') || reason.length > 100 ? 3 : 1}
+                  value={reason}
                   maxLength={16000}
+                  autoFocus
+                  required
                   disabled={busy}
-                  onChange={(event) => {
-                    setTyped(event.target.value);
-                    setSelected('');
-                  }}
+                  onChange={(event) => setReason(event.target.value)}
                 />
               </label>
-            </>
-          )}
+            )}
+            {clarification && (
+              <>
+                <fieldset className="ask-options" disabled={busy} aria-label="Suggested answers">
+                  {question.options?.map((option, index) => (
+                    <label
+                      className={`ask-option ${selected === option.label && !typed ? 'is-selected' : ''}`}
+                      key={option.label}
+                    >
+                      <input
+                        className="visually-hidden"
+                        type="radio"
+                        name={`ask-option-${request.id}`}
+                        checked={selected === option.label && !typed}
+                        onChange={() => {
+                          setSelected(option.label);
+                          setTyped('');
+                        }}
+                      />
+                      <span className="ask-option-number" aria-hidden="true">
+                        {index + 1}
+                      </span>
+                      <span className="ask-option-copy">
+                        <strong>{option.label}</strong>
+                        {option.description && (
+                          <span className="ask-option-description">{option.description}</span>
+                        )}
+                        {option.recommended && <span className="ask-recommended">Recommended</span>}
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label className={`ask-answer-field ${typed ? 'is-selected' : ''}`}>
+                  <span className="ask-option-number" aria-hidden="true">
+                    <SquarePen size={12} />
+                  </span>
+                  <textarea
+                    aria-label="Type your answer"
+                    placeholder="Type your answer"
+                    rows={typed.includes('\n') || typed.length > 100 ? 3 : 1}
+                    value={typed}
+                    maxLength={16000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setTyped(event.target.value);
+                      setSelected('');
+                    }}
+                  />
+                </label>
+              </>
+            )}
+          </div>
         </div>
         <footer className="ask-request-footer">
           {navigation || <span className="ask-request-count">1/1</span>}

@@ -1,3 +1,4 @@
+import { defaultSkills } from '../../skills';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,6 +48,8 @@ async function setup() {
     memoryExtractor: async () => ({ facts: [] }),
   });
   seedTestBot(api.store);
+  // These cases exercise user-created catalogs, including their empty state.
+  for (const skill of api.skills.list('default')) api.skills.remove('default', skill.id);
   return api;
 }
 async function request(path: string, method = 'GET', value?: unknown) {
@@ -167,7 +170,9 @@ describe('workspace skills', () => {
       folder: dir,
     });
     expect(w.status).toBe(201);
-    expect((await request('/skills?workspaceId=' + w.data.id)).data).toEqual([]);
+    expect((await request('/skills?workspaceId=' + w.data.id)).data).toHaveLength(
+      defaultSkills.length,
+    );
     expect((await request('/skills/' + created.data.id + '?workspaceId=' + w.data.id)).status).toBe(
       404,
     );

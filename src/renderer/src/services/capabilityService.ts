@@ -1,4 +1,4 @@
-import { api } from './http';
+import { api, apiFetch } from './http';
 import type {
   CapabilityRegistration,
   CapabilityRun,
@@ -26,7 +26,7 @@ export const capabilityService = {
     api<CapabilityDetail>('/capabilities/' + encodeURIComponent(id) + scope(workspaceId)),
   manage: (
     workspaceId: string,
-    kind: 'tool' | 'route',
+    kind: 'tool' | 'route' | 'job',
     operation: string,
     values: {
       id?: string;
@@ -44,8 +44,20 @@ export const capabilityService = {
     ),
   environment: (workspaceId: string) =>
     api<EnvironmentVariable[]>('/environment' + scope(workspaceId)),
-  saveEnvironment: (workspaceId: string, entries: { name: string; value: string }[]) =>
-    api<EnvironmentVariable[]>('/environment' + scope(workspaceId), 'PUT', { entries }),
+  saveEnvironment: (
+    workspaceId: string,
+    entries: { name: string; value: string; secret?: boolean }[],
+  ) => api<EnvironmentVariable[]>('/environment' + scope(workspaceId), 'PUT', { entries }),
+  setEnvironmentSensitivity: (workspaceId: string, name: string, secret: boolean) =>
+    api<EnvironmentVariable[]>(
+      '/environment/' + encodeURIComponent(name) + scope(workspaceId),
+      'PATCH',
+      { secret },
+    ),
+  exportEnvironment: async (workspaceId: string) => {
+    const response = await apiFetch('/environment/export' + scope(workspaceId), { method: 'POST' });
+    return response.blob();
+  },
   removeEnvironment: (workspaceId: string, name: string) =>
     api('/environment/' + encodeURIComponent(name) + scope(workspaceId), 'DELETE'),
 };

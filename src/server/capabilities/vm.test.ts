@@ -16,7 +16,7 @@ let root: string, folder: string;
 function attachGuest() {
   return vi.spyOn(api.computers, 'guest').mockReturnValue(guest as unknown as QemuComputer);
 }
-async function register(kind: 'tool' | 'route', source: string, modulePath = 'module.ts') {
+async function register(kind: 'tool' | 'route' | 'job', source: string, modulePath = 'module.ts') {
   await writeFile(join(folder, modulePath), source);
   return (await api.capabilities.manage('default', 'scout', kind, {
     operation: 'register',
@@ -49,6 +49,54 @@ afterEach(async () => {
 });
 
 describe('VM capability registration and execution', () => {
+  it('runs custom jobs in the guest with shared helpers and only uses the already-running bridge', async () => {
+    const requestRunning = vi.fn(guest.request.bind(guest));
+    vi.spyOn(api.computers, 'guest').mockReturnValue({
+      request: guest.request.bind(guest),
+      requestRunning,
+    } as unknown as QemuComputer);
+    api.capabilities.environment.save('default', [
+      { name: 'JOB_ENV', value: 'guest-secret-value' },
+    ]);
+    const wake = vi.fn(async () => {});
+    api.capabilities.setWake(wake);
+    const item = await register(
+      'job',
+      `export default {name:'guest_job',description:'Guest job',
+      triggers:[{type:'workspace_start'}],requiredEnv:['JOB_ENV'],
+      async run(event,context){
+        if(context.env.JOB_ENV!=='guest-secret-value')throw new Error('Missing guest env');
+        await context.wakeBot('Guest job ready');
+        return {file:__filename,workspace:context.workspaceId,path:context.workspacePath,trigger:event.trigger,aborted:context.signal.aborted};
+      }};`,
+    );
+    const output = (await api.capabilities.manage('default', 'scout', 'job', {
+      operation: 'run_now',
+      id: item.id,
+    })) as { result: { file: string; workspace: string; trigger: string; aborted: boolean } };
+    expect(output.result.file.startsWith(join(root, 'guest-data', 'capability-staging'))).toBe(
+      true,
+    );
+    expect(output.result).toMatchObject({
+      workspace: 'default',
+      path: folder,
+      trigger: 'manual',
+      aborted: false,
+    });
+    expect(requestRunning).toHaveBeenCalledTimes(1);
+    // Deliver the durable wake in the host queue without starting a model.
+    vi.spyOn(api.computers, 'runtimeId').mockReturnValue('guest-boot');
+    await vi.waitFor(
+      () =>
+        expect(wake).toHaveBeenCalledWith(
+          'scout',
+          'default',
+          'Guest job ready',
+          expect.any(String),
+        ),
+      { timeout: 5000 },
+    );
+  });
   it('lets another workspace bot update and execute a guest tool without taking over its creator metadata', async () => {
     const peer = {
       ...scoutBot('default', 'peer'),
@@ -140,6 +188,7 @@ describe('VM capability registration and execution', () => {
       async handle(request,context){const job=await context.enqueue('fixture',request.headers['event-id'],{raw:request.rawBody.toString('hex')});return {status:202,body:job};},
       processJob(payload){appendFileSync(${JSON.stringify(completed)},payload.raw+'\\n');return {done:true};}};`,
     );
+    expect(item.urlNote).toContain('context.callRoute');
     const raw = '{ "value": "🌱" }\r\n';
     const call = (authorized: boolean) =>
       fetch(api.url + '/custom/guest-webhook', {

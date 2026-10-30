@@ -5,18 +5,31 @@ import { privateSecret } from '../config';
 import type { EnvironmentVariable } from '../../shared/customCapabilities';
 import { environmentVariableName, missingEnvironmentError } from '../../shared/terminal';
 import { ApiError } from '../config';
+import { CapabilityRedactor } from './redaction';
+import { serializeDotEnv } from '../../shared/dotEnv';
 
 export const variableName = environmentVariableName;
 export class CapabilityEnvironment {
   private key: Buffer;
   // Keep old values redacted too, including after rotation/deletion.
   private secrets = new Set<string>();
+  private retired = new Set<string>();
+  private runtimeSecrets = new Set<string>();
+  trackRuntimeSecret(value: string) {
+    this.runtimeSecrets.add(value);
+    this.refreshSecrets();
+    return () => {
+      this.runtimeSecrets.delete(value);
+      this.refreshSecrets();
+    };
+  }
+  private redactor = new CapabilityRedactor(new Set());
   constructor(
     private db: Database,
     private registerSecret: (value: string) => void = () => {},
   ) {
     this.key = privateSecret(db.dir, 'credentials.key', 32);
-    for (const row of db.all('SELECT value FROM capability_env')) this.decrypt(String(row.value));
+    this.refreshSecrets();
   }
   decrypt(value: string, trackSecret = true) {
     const data = Buffer.from(value, 'base64');
@@ -26,8 +39,9 @@ export class CapabilityEnvironment {
       'utf8',
     );
     if (result && trackSecret) {
-      this.secrets.add(result);
+      this.retired.add(result);
       this.registerSecret(result);
+      this.refreshSecrets();
     }
     return result;
   }
@@ -37,33 +51,82 @@ export class CapabilityEnvironment {
     const data = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
   }
-  save(workspaceId: string, entries: { name: string; value: string }[]) {
+  private refreshSecrets() {
+    this.secrets = new Set([...this.retired, ...this.runtimeSecrets]);
+    for (const row of this.db.all('SELECT value FROM capability_env WHERE secret=1')) {
+      const value = this.decrypt(String(row.value), false);
+      if (value) {
+        this.secrets.add(value);
+        this.registerSecret(value);
+      }
+    }
+    this.redactor = new CapabilityRedactor(this.secrets);
+  }
+  save(workspaceId: string, entries: { name: string; value: string; secret?: boolean }[]) {
     const values = z
-      .array(z.object({ name: variableName, value: z.string().max(16384) }))
+      .array(
+        z.object({
+          name: variableName,
+          value: z.string().max(16384),
+          secret: z.boolean().optional(),
+        }),
+      )
       .max(200)
       .parse(entries);
+    const retired: string[] = [];
     this.db.transaction(() => {
-      for (const { name, value } of values) {
-        const encrypted = this.encrypt(value);
-        this.db.run(
-          'INSERT INTO capability_env VALUES(?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET value=excluded.value',
+      for (const { name, value, secret } of values) {
+        const previous = this.db.get(
+          'SELECT value,secret FROM capability_env WHERE workspace_id=? AND name=?',
           workspaceId,
           name,
-          encrypted,
         );
-        if (value) {
-          this.secrets.add(value);
-          this.registerSecret(value);
-        }
+        const old = previous ? this.decrypt(String(previous.value), false) : '';
+        if (previous?.secret && old && old !== value) retired.push(old);
+        this.db.run(
+          'INSERT INTO capability_env(workspace_id,name,value,secret) VALUES(?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET value=excluded.value,secret=excluded.secret',
+          workspaceId,
+          name,
+          this.encrypt(value),
+          secret === undefined ? Number(previous?.secret ?? 1) : Number(secret),
+        );
       }
     });
+    for (const value of retired) this.retired.add(value);
+    this.refreshSecrets();
+  }
+  setSensitivity(workspaceId: string, name: string, secret: boolean) {
+    variableName.parse(name);
+    z.boolean().parse(secret);
+    if (
+      !this.db.get(
+        'SELECT name FROM capability_env WHERE workspace_id=? AND name=?',
+        workspaceId,
+        name,
+      )
+    )
+      throw new ApiError(404, 'Save this variable before changing its sensitivity.');
+    this.db.run(
+      'UPDATE capability_env SET secret=? WHERE workspace_id=? AND name=?',
+      Number(secret),
+      workspaceId,
+      name,
+    );
+    this.refreshSecrets();
   }
   remove(workspaceId: string, name: string) {
-    this.db.run(
-      'DELETE FROM capability_env WHERE workspace_id=? AND name=?',
+    variableName.parse(name);
+    const previous = this.db.get(
+      'SELECT value,secret FROM capability_env WHERE workspace_id=? AND name=?',
       workspaceId,
-      variableName.parse(name),
+      name,
     );
+    if (previous?.secret) {
+      const value = this.decrypt(String(previous.value), false);
+      if (value) this.retired.add(value);
+    }
+    this.db.run('DELETE FROM capability_env WHERE workspace_id=? AND name=?', workspaceId, name);
+    this.refreshSecrets();
   }
   list(workspaceId: string): EnvironmentVariable[] {
     const definitions = this.db
@@ -81,18 +144,36 @@ export class CapabilityEnvironment {
     return [...names].sort().map((name) => ({
       name,
       configured: Boolean(this.resolve(workspaceId, [name])[name]),
+      secret: Boolean(
+        this.db.get(
+          'SELECT secret FROM capability_env WHERE workspace_id=? AND name=?',
+          workspaceId,
+          name,
+        )?.secret ?? 1,
+      ),
       usedBy: definitions.filter((d) => d.requiredEnv.includes(name)).map((d) => d.name),
     }));
+  }
+  /** Explicit developer download only; ordinary discovery never returns values. */
+  export(workspaceId: string) {
+    return serializeDotEnv(
+      this.db
+        .all(
+          'SELECT name,value FROM capability_env WHERE workspace_id=? ORDER BY name',
+          workspaceId,
+        )
+        .map((row) => ({ name: String(row.name), value: this.decrypt(String(row.value), false) })),
+    );
   }
   resolve(workspaceId: string, names: string[]) {
     const result: Record<string, string> = Object.create(null);
     for (const name of names) {
       const row = this.db.get(
-        'SELECT value FROM capability_env WHERE workspace_id=? AND name=?',
+        'SELECT value,secret FROM capability_env WHERE workspace_id=? AND name=?',
         workspaceId,
         name,
       );
-      if (row) result[name] = this.decrypt(String(row.value));
+      if (row) result[name] = this.decrypt(String(row.value), false);
     }
     return result;
   }
@@ -103,28 +184,25 @@ export class CapabilityEnvironment {
     return values;
   }
   redact(text: string) {
-    for (const secret of this.secrets) {
-      text = text
-        .split(secret)
-        .join('[redacted]')
-        .split(encodeURIComponent(secret))
-        .join('[redacted]');
-      const encoded = Buffer.from(secret).toString('base64');
-      text = text.split(encoded).join('[redacted]');
-    }
-    return text;
+    return this.redactor.text(text).value;
+  }
+  redactText(text: string) {
+    return this.redactor.text(text);
   }
   publicValue(value: unknown): unknown {
-    // Transform strings and object keys without damaging JSON syntax.
-    const redact = (item: unknown): unknown => {
-      if (typeof item === 'string') return this.redact(item);
-      if (Array.isArray(item)) return item.map(redact);
-      if (item && typeof item === 'object')
-        return Object.fromEntries(
-          Object.entries(item).map(([key, value]) => [this.redact(key), redact(value)]),
+    return this.redactor.value(value ?? null).value;
+  }
+  redactResponse(value: unknown, json = false) {
+    if (typeof value === 'string') {
+      const parsed = this.redactor.json(value);
+      if (parsed) return parsed;
+      if (json)
+        throw new ApiError(
+          400,
+          'Route returned invalid JSON. Return an object or valid JSON text for a JSON content type.',
         );
-      return item;
-    };
-    return redact(value ?? null);
+      return this.redactor.text(value);
+    }
+    return this.redactor.value(value ?? null);
   }
 }
