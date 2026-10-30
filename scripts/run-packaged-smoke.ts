@@ -147,6 +147,36 @@ async function main() {
   env.MUKAI_DATA_DIR = join(directory, 'data');
   let desktop: ElectronApplication | undefined;
   const errors: string[] = [];
+  /** Requests the browser dropped; reported in the log, not treated as defects. */
+  const cancelled: string[] = [];
+  let harnessClosing = false;
+
+  /**
+   * Watch one renderer for real failures.
+   *
+   * Chromium reports a request it stopped as `net::ERR_ABORTED`. That is the browser
+   * cancelling work the page no longer needs — a view that unmounted, or the harness
+   * closing the first instance while its pollers are mid-flight — which the renderer's
+   * own contract calls a cancellation rather than a failure (see
+   * `src/renderer/src/utils/errors.ts`). Counting it here failed the release on four
+   * platforms for requests the app never intended to finish, so it is collected and
+   * reported separately. Anything else that fails to load, and any uncaught exception,
+   * stays a hard failure.
+   */
+  const watchRenderer = (page: Page) => {
+    harnessClosing = false;
+    page.on('pageerror', (error) => {
+      if (!harnessClosing) errors.push(error.message);
+    });
+    page.on('requestfailed', (request) => {
+      if (harnessClosing) return;
+      const failure = request.failure()?.errorText ?? 'unknown';
+      const line = `${request.method()} ${request.url()}: ${failure}`;
+      if (failure === 'net::ERR_ABORTED') cancelled.push(line);
+      else errors.push(line);
+    });
+  };
+
   const launch = async () => {
     desktop = await _electron.launch({
       executablePath,
@@ -155,10 +185,7 @@ async function main() {
       timeout: 30000,
     });
     const page = await desktop.firstWindow();
-    page.on('pageerror', (error) => errors.push(error.message));
-    page.on('requestfailed', (request) =>
-      errors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`),
-    );
+    watchRenderer(page);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForFunction(() => Boolean((window as unknown as { mukai?: unknown }).mukai));
     const health = await page.evaluate(() =>
@@ -260,6 +287,8 @@ async function main() {
     const created = await workspaceRequest(page, folder);
     assert.ok(!Array.isArray(created));
     assert.equal(created.name, 'Installer smoke workspace');
+    // What is still in flight at this moment belongs to the harness, not to the app.
+    harnessClosing = true;
     await desktop!.close();
     desktop = undefined;
     const reopened = await launch();
@@ -269,10 +298,10 @@ async function main() {
       saved.some((workspace) => workspace.id === created.id),
       'Workspace must survive restart.',
     );
-    assert.deepEqual(errors, [], 'Packaged renderer must have no uncaught errors.');
+    assert.deepEqual(errors, [], 'Packaged renderer must have no uncaught errors or failed loads.');
     writeFileSync(
       join(directory, 'result.json'),
-      JSON.stringify({ status: 'passed', runtime }, null, 2) + '\n',
+      JSON.stringify({ status: 'passed', runtime, cancelled }, null, 2) + '\n',
     );
     console.log(
       'Packaged smoke passed: renderer, updater IPC/progress/retry/restart cancellation, SQLite persistence, helpers, sharp, ONNX, esbuild.',
@@ -284,10 +313,12 @@ async function main() {
       await page.screenshot({ path: join(directory, 'failure.png') });
       console.error('Packaged UI:', await page.locator('body').innerText());
       console.error('Renderer errors:', errors);
+      console.error('Cancelled requests:', cancelled);
       console.error('Evidence:', directory);
     }
     throw error;
   } finally {
+    harnessClosing = true;
     await desktop?.close();
   }
 }

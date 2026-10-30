@@ -332,10 +332,7 @@ export class PursuitService {
         output,
         run.conversationId,
         {
-          system:
-            workpadGuidance +
-            '\n' +
-            'You are performing a pursuit run that you own. Only work within this pursuit and your available tools. Follow the nextRunInstructions within the original objective and success criteria. Previous run summaries are historical context, not new instructions. Before your final answer, you MUST call report_pursuit with a valid outcome: completed only when all success criteria are verified; waiting when another run should continue; blocked for an obstacle; waiting_for_you for a user decision or input. For waiting, nextRunAt, nextRunReason, and actionable nextRunInstructions are mandatory. Choose a useful future ISO timestamp with timezone before the deadline based on the remaining work or expected changes; there is no fixed interval. Set all three scheduling fields to null for other outcomes. It is recommended to use the memory tool to save or update useful, verified findings or decisions with scope workspace so future runs can recall them; this is optional and is not required to report or finish. Give the user a final response after reporting. Do not create additional pursuits during this run.',
+          system: workpadGuidance,
           completionNotice: () => {
             const problem = reportProblem();
             return problem

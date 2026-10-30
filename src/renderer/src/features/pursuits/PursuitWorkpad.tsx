@@ -26,6 +26,7 @@ import {
   type PursuitRun,
 } from '../../../../shared/pursuits';
 import { pursuitService } from '../../services/pursuitService';
+import { startPoll } from '../../services/poll';
 import { artifactService } from '../../services/artifactService';
 import { chatService } from '../../services/chatService';
 import { copyText } from '../../services/clipboardService';
@@ -68,6 +69,7 @@ export function PursuitWorkpad({
   useEffect(() => {
     let alive = true,
       pending = false;
+    let previous: string | undefined;
     const load = async () => {
       if (pending) return;
       pending = true;
@@ -78,28 +80,33 @@ export function PursuitWorkpad({
           includeArchived: archived,
           offset,
         });
+        const snapshot = JSON.stringify(value);
+        const changed = snapshot !== previous;
+        previous = snapshot;
         if (alive) {
           if (offset > 0 && !value.entries.length) {
             setOffset(Math.floor(Math.max(0, value.total - 1) / 20) * 20);
             return;
           }
-          setPage(value);
-          setSelected((current) =>
-            current ? value.entries.find((entry) => entry.id === current.id) || current : null,
-          );
+          if (changed) {
+            setPage(value);
+            setSelected((current) =>
+              current ? value.entries.find((entry) => entry.id === current.id) || current : null,
+            );
+          }
           setError('');
         }
+        return changed;
       } catch (caught) {
         if (alive) setError(errorText(caught));
       } finally {
         pending = false;
       }
     };
-    void load();
-    const timer = window.setInterval(() => void load(), 2000);
+    const poll = startPoll(() => load(), { interval: 2000, maxInterval: 8000 });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      poll.stop();
     };
   }, [id, type, status, archived, offset]);
   function reset() {

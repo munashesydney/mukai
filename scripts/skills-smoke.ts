@@ -31,6 +31,11 @@ async function main() {
   });
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, () => ({ status: 'ok' }));
+  ipcMain.handle(IPC.updateState, () => ({
+    status: 'disabled',
+    currentVersion: 'test',
+    automaticUpdates: false,
+  }));
   ipcMain.handle(IPC.browserBounds, () => {});
   const evaluate = <T>(code: string): Promise<T> => window.webContents.executeJavaScript(code);
   const wait = async (code: string) => {

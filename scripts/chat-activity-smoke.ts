@@ -388,7 +388,7 @@ async function main() {
     await evaluate(
       `localStorage.setItem('mukai.active-conversation.scout',${JSON.stringify(conversation.id)});`,
     );
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
     assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
     assert(
@@ -694,6 +694,10 @@ async function main() {
     await click('.response-work > summary');
     await click('.response-tool-group > summary');
     for (let index = 0; index < 2; index++) {
+      await evaluate(`(() => {
+        const group = document.querySelectorAll('.response-tool-image')[${index}].closest('.response-tool-group');
+        if (group && !group.open) group.querySelector(':scope > summary').click();
+      })()`);
       await evaluate(`document.querySelectorAll('.response-tool-image')[${index}].click()`);
       await wait('Boolean(document.querySelector("dialog .artifact-image-preview")?.naturalWidth)');
       assert.equal(
@@ -793,7 +797,16 @@ async function main() {
     await click('#browser-panel button[aria-label="Close browser tab"]');
     await wait('!document.querySelector("#browser-panel")');
     await click('button[aria-label="Close chat activity"]');
-    await window.reload();
+    await wait('!document.querySelector(".chat-activity-drawer")');
+    assert(
+      await evaluate(`(() => {
+        const card=document.querySelector('.file-changes');
+        const bounds=card.getBoundingClientRect(),parent=card.closest('.ai-message-body').getBoundingClientRect();
+        return Math.abs(bounds.right-parent.right)<1 && Math.abs(bounds.width-parent.width)<1;
+      })()`),
+      'The edited-files card must fill the message content width.',
+    );
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
@@ -804,7 +817,7 @@ async function main() {
       body: JSON.stringify({ mode: 'dark', theme: 'mukai' }),
     });
     assert(appearance.ok, await appearance.clone().text());
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(
       'document.querySelectorAll(".chat-activity-row").length===8 && document.documentElement.dataset.mode==="dark"',
     );
@@ -814,7 +827,7 @@ async function main() {
     await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
     await wait('!document.querySelector(".chat-activity-drawer")');
     // A saved desktop-open preference must not cover the chat on a narrow reload.
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
@@ -889,9 +902,10 @@ async function main() {
     // Return to the private chat and keep the final provider response open while
     // a real file tool completes. No page reload is involved in these updates.
     await click('button[aria-label="Go back"]');
-    await evaluate(
-      `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Bots').click()`,
-    );
+    // The Bots rail opens the first bot while viewing a space, which need not
+    // be Scout when the fixture bots share a creation timestamp. Return to the
+    // actual preceding private conversation instead.
+    await click('button[aria-label="Go back"]');
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
     await click('button[aria-label="Close chat activity"]');
     let finalResponse: ServerResponse | undefined;
@@ -984,7 +998,7 @@ async function main() {
         ).ok,
       );
       // Refresh the configured provider, then let the renderer send the live turn.
-      await window.reload();
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
       await wait(`Boolean(document.querySelector('button[aria-label="Send message"]'))`);
       await evaluate(
         `(() => { const input = document.querySelector('.ai-composer-area .composer > textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Create a live draft.'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,

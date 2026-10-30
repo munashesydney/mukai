@@ -4,6 +4,7 @@ import type { ChatServerOutput } from '../../../../shared/chatActivity';
 import { chatActivityService } from '../../services/chatActivityService';
 import { artifactService } from '../../services/artifactService';
 import { chatActivityData } from './chatActivityData';
+import { startPoll } from '../../services/poll';
 
 export function useChatActivity(
   conversationId: string,
@@ -36,6 +37,7 @@ export function useChatActivity(
   useEffect(() => {
     let alive = true,
       pending = false;
+    let previous: string | undefined;
     const load = async () => {
       if (pending) return;
       pending = true;
@@ -43,9 +45,18 @@ export function useChatActivity(
         chatActivityService.outputs(conversationId),
         artifactService.forConversation(conversationId),
       ]);
+      let changed = true;
       if (alive) {
-        if (results[0].status === 'fulfilled') setOutputs(results[0].value);
-        if (results[1].status === 'fulfilled') setArtifacts(results[1].value);
+        const snapshot = JSON.stringify([
+          results[0].status === 'fulfilled' ? results[0].value : null,
+          results[1].status === 'fulfilled' ? results[1].value : null,
+        ]);
+        changed = snapshot !== previous;
+        previous = snapshot;
+        if (changed) {
+          if (results[0].status === 'fulfilled') setOutputs(results[0].value);
+          if (results[1].status === 'fulfilled') setArtifacts(results[1].value);
+        }
         setError(
           results.some((result) => result.status === 'rejected')
             ? 'Some activity could not be refreshed. Retrying…'
@@ -53,14 +64,12 @@ export function useChatActivity(
         );
       }
       pending = false;
+      return changed;
     };
-    void load();
-    const timer = window.setInterval(() => {
-      if (!document.hidden) void load();
-    }, 3000);
+    const poll = startPoll(() => load(), { interval: 3000, maxInterval: 10000 });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      poll.stop();
     };
   }, [conversationId, revision]);
   const data = useMemo(

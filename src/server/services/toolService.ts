@@ -24,6 +24,7 @@ import type { CapabilityService } from '../capabilities/service';
 import type { MemoryService } from './memoryService';
 import { memoryTools } from '../tools/memory/execute';
 import { memoryDefinition } from '../tools/memory/definition';
+import { systemTools } from '../tools/system/execute';
 import { WebSearchService } from './webSearchService';
 import type { AskHandler } from '../tools/ask/execute';
 import { communicateTools } from '../tools/communicate/execute';
@@ -244,7 +245,7 @@ export class ToolService {
               ? Boolean(this.management)
               : tool.id === 'manage_pursuit'
                 ? Boolean(this.pursuits)
-                : tool.id.startsWith('register_custom_')
+                : tool.id === 'system' || tool.id.startsWith('register_custom_')
                   ? Boolean(this.capabilities)
                   : [
                         'browser',
@@ -378,6 +379,15 @@ export class ToolService {
               conversationId: conversationId!,
               messageId,
               memory: this.memory,
+              signal,
+              onActivity,
+            })
+          : {}),
+        ...(this.capabilities
+          ? systemTools({
+              bot,
+              conversationId: conversationId!,
+              environment: this.capabilities.environment,
               signal,
               onActivity,
             })

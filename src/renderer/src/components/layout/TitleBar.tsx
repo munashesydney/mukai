@@ -43,19 +43,46 @@ export function TitleBar({
   const [connection, setConnection] = useState('Connecting…');
   useEffect(() => {
     let disposed = false;
+    let timer = 0;
     const check = async () => {
+      let healthy = false;
       try {
         await getHealth();
-        if (!disposed) setConnection('All systems calm');
+        healthy = true;
       } catch {
-        if (!disposed) setConnection('Server unavailable');
+        healthy = false;
       }
+      if (disposed) return;
+      setConnection(healthy ? 'All systems calm' : 'Server unavailable');
+      // While the answer is bad, that is the one thing worth looking for again
+      // soon; once it is good, a heartbeat is plenty. Both halves matter: a long
+      // interval while unhealthy left the sidebar saying "Server unavailable" for
+      // half a minute after approvals had come back, and a long interval while
+      // healthy meant a backend that stopped was still reported calm — the two
+      // status readouts contradicting each other was the original complaint.
+      timer = window.setTimeout(() => void check(), healthy ? 10_000 : 2_000);
     };
     void check();
-    const timer = window.setInterval(() => void check(), 30000);
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      window.clearTimeout(timer);
+      void check();
+    };
+    // A lost network is worth saying out loud the moment the browser notices,
+    // without waiting for the next heartbeat; the recovery direction is left to
+    // the probe, because "the browser has a network" is not the same claim as
+    // "Mukai's server answers".
+    const onOffline = (): void => {
+      if (disposed) return;
+      setConnection('Server unavailable');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('offline', onOffline);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('offline', onOffline);
     };
   }, []);
   return (
@@ -95,7 +122,24 @@ export function TitleBar({
             <span>{computerOpen ? 'Exit computer' : 'View computer'}</span>
           </button>
         )}
-        <span className="workspace-state">
+        <span
+          className="workspace-state"
+          role="status"
+          title={
+            connection === 'Server unavailable'
+              ? window.mukai
+                ? 'Mukai’s server is not answering. Restart the Mukai window — this page notices on its own.'
+                : 'Mukai’s server is not answering. Start it with `mukai serve` — this page notices on its own.'
+              : connection === 'Connecting…'
+                ? 'Checking whether Mukai’s server answers.'
+                : 'Mukai’s server is answering.'
+          }
+          aria-label={
+            connection === 'Server unavailable'
+              ? 'Mukai’s server is not answering. Start the backend and try again.'
+              : connection
+          }
+        >
           <i /> {connection}
         </span>
         {window.mukai && !isMacDesktop && (

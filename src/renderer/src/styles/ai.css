@@ -960,12 +960,24 @@
   font-weight: 600;
   margin: 3px 0 0;
 }
+.ai-message-feed.is-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: 20px;
+}
+.ai-chat-loading {
+  min-height: 0;
+}
 .ai-chat-empty p {
   max-width: 410px;
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.7;
   margin: 0 0 10px;
+}
+.ai-chat-loading p {
+  margin: 0;
 }
 .ai-message {
   display: flex;
@@ -1187,6 +1199,10 @@
 }
 .ai-composer-area {
   flex-shrink: 0;
+}
+.is-dragging-files {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
 }
 .ai-composer-area .composer textarea {
   font-size: 14px;
@@ -2194,14 +2210,64 @@ video.artifact-media-preview {
 }
 
 .response-tool-group-content {
-  max-height: 280px;
+  max-height: min(280px, 45vh);
   overflow: auto;
-  margin-top: 7px;
-  padding-left: 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  margin-top: 3px;
+  padding: 0 5px 2px 0;
+}
+.response-tool-group-content .response-tool > summary,
+.response-tool-group-content .response-tool-image,
+.response-tool-group-content .terminal-toggle,
+.response-tool-group-content .response-reasoning > summary {
+  padding: 2px 0;
+  line-height: 1.5;
+}
+.response-tool-group-content .terminal-card {
+  margin: 0;
+}
+.response-tool-group-content:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.response-tool-group-problems {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.response-shimmer,
+.response-tool-group-label.is-working {
+  color: var(--text-muted);
+  background: linear-gradient(
+    100deg,
+    var(--text-muted) 35%,
+    var(--text-body) 50%,
+    var(--text-muted) 65%
+  );
+  background-size: 240% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: response-text-shimmer 1.8s linear infinite;
+}
+@keyframes response-text-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .response-chevron {
     transition: none;
+  }
+  .response-shimmer,
+  .response-tool-group-label.is-working {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
 .file-changes {
@@ -2209,7 +2275,7 @@ video.artifact-media-preview {
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   overflow: hidden;
-  max-width: 760px;
+  width: 100%;
   background: var(--surface);
 }
 .file-changes-header {

@@ -1,6 +1,31 @@
 import { expect, it } from 'vitest';
 import { providerPresets, providerPresetInput } from './providerPresets';
-import { acceptedAttachments, modelInputCapabilities } from './modelCapabilities';
+import {
+  acceptedAttachments,
+  attachmentInputError,
+  modelInputCapabilities,
+} from './modelCapabilities';
+
+it.each([
+  ['photo.PNG', '', 'image'],
+  ['recording.wav', 'application/octet-stream', 'audio'],
+  ['clip.MOV', '', 'video'],
+  ['clipboard', 'image/png', 'image'],
+  ['clipboard', 'audio/mpeg', 'audio'],
+  ['clipboard', 'video/mp4', 'video'],
+])('checks %s before accepting transferred files', (name, type, kind) => {
+  const file = { name, type };
+  const textOnly = { supportsImages: false, supportsAudio: false, supportsVideo: false };
+  expect(attachmentInputError([file], textOnly)).toContain(`does not support ${kind} input`);
+  expect(
+    attachmentInputError([file], {
+      supportsImages: true,
+      supportsAudio: true,
+      supportsVideo: true,
+    }),
+  ).toBe('');
+  expect(attachmentInputError([{ name: 'notes.txt', type: 'text/plain' }], textOnly)).toBe('');
+});
 it.each([
   ['deepseek', [false, false]],
   ['glm', [false, true]],

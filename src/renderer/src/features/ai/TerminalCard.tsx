@@ -23,7 +23,7 @@ export function TerminalCard({ activity }: { activity: ChatActivity }) {
   const sessionId = activity.processSessionId || saved?.id;
   const [live, setLive] = useState<TerminalSnapshot>();
   const [refreshError, setRefreshError] = useState('');
-  const [expanded, setExpanded] = useState<boolean>();
+  const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState('');
   const [copyError, setCopyError] = useState('');
   const bodyId = useId();
@@ -40,7 +40,7 @@ export function TerminalCard({ activity }: { activity: ChatActivity }) {
   const stopped = snapshot?.status === 'killed' || activity.status === 'interrupted';
   const unavailable = snapshot?.unavailable && snapshot.status === 'running';
   const successful = snapshot?.status === 'exited' && snapshot.exitCode === 0;
-  const open = expanded ?? running;
+  const open = expanded;
   const command = snapshot?.command || activity.path;
   const text = snapshot?.output ?? activity.summary;
   // Strip terminal control sequences; React renders the remaining output as plain text.
@@ -64,7 +64,9 @@ export function TerminalCard({ activity }: { activity: ChatActivity }) {
               : 'Result unavailable';
 
   useEffect(() => {
-    if (!sessionId || !conversationId) return;
+    // Saved conversations can contain hundreds of terminal calls. A collapsed
+    // card uses its saved snapshot; only an explicitly opened card needs live I/O.
+    if (!open || !sessionId || !conversationId) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
@@ -85,7 +87,7 @@ export function TerminalCard({ activity }: { activity: ChatActivity }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [conversationId, sessionId, saved?.status]);
+  }, [open, conversationId, sessionId, saved?.status]);
   useEffect(() => {
     if (following.current && output.current) output.current.scrollTop = output.current.scrollHeight;
   }, [visibleOutput, open]);

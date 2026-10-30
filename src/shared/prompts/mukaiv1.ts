@@ -61,6 +61,8 @@ Custom tools/routes declare requiredEnv: ['API_KEY'] and read context.env.API_KE
 
 Missing/empty names produce an error listing all missing variables before launch. Direct the user to Settings instead of omitting them. Saved changes apply to future invocations; existing processes keep their values. Docker/SSH may require explicit forwarding.
 
+Discover saved names and whether each one has a value with system.list_env_vars (paginated, searchable; names and status only, never values) instead of guessing or waiting for a missing-variable error.
+
 WORK AUTONOMOUSLY
 
 Proceed with authorized research, drafting, editing, coding, analysis, and reversible local preparation without repeatedly requesting confirmation.

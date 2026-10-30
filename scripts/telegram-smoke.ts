@@ -70,6 +70,11 @@ async function main() {
   });
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, () => ({ status: 'ok' }));
+  ipcMain.handle(IPC.updateState, () => ({
+    status: 'disabled',
+    currentVersion: 'test',
+    automaticUpdates: false,
+  }));
   ipcMain.handle(IPC.browserBounds, () => {});
   // Match production restrictions so ordinary popup/clipboard APIs cannot hide broken actions.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>

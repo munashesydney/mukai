@@ -127,9 +127,10 @@ async function main() {
       await page
         .locator('.response-tool--reply')
         .evaluate((element) => element.parentElement!.className),
-      'response-transcript',
+      'response-tool-group-content',
     );
     await page.screenshot({ path: join(output, 'partial-results.png') });
+    await page.locator('.response-tool-group > summary').click();
     await page.locator('.response-tool--reply > summary').click();
     assert(
       await page

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import type { BrowserSession } from '../../../../shared/runtime';
 import { browserService } from '../../services/browserService';
+import { startPoll } from '../../services/poll';
 import { BrowserPanelContext, useBrowserPanel } from './useBrowserPanel';
 import { BROWSER_WIDTH_KEY, browserPanelWidth, loadBrowserPanelWidth } from './panelWidth';
 
@@ -33,12 +34,17 @@ export function BrowserWorkspace({
   useEffect(() => {
     let alive = true,
       pending = false;
+    let previous: string | undefined;
     const load = async () => {
       if (pending) return;
       pending = true;
       try {
         const values = await browserService.list(workspaceId);
         if (!alive) return;
+        const snapshot = JSON.stringify(values);
+        const changed = snapshot !== previous;
+        previous = snapshot;
+        if (!changed) return false;
         const fresh = values.filter((tab) => !seen.current.has(tab.id));
         for (const tab of values) seen.current.add(tab.id);
         setTabs(values);
@@ -52,17 +58,17 @@ export function BrowserWorkspace({
           setSelected(requested.id);
           setVisible(true);
         }
+        return true;
       } catch {
         /* Chat connection errors have their own UI. */
       } finally {
         pending = false;
       }
     };
-    void load();
-    const timer = window.setInterval(() => void load(), 1000);
+    const poll = startPoll(() => load(), { interval: 1000, maxInterval: 4000 });
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      poll.stop();
       void window.mukai?.setBrowserBounds(null).catch(() => {});
     };
   }, [workspaceId]);

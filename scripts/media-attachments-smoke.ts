@@ -139,6 +139,118 @@ async function main() {
     ]);
     const input = page.getByLabel('Upload chat attachments');
     await input.waitFor({ state: 'attached' });
+    const composer = page.locator('.ai-composer-area textarea');
+    async function selectModel(name: string) {
+      await page.getByRole('button', { name: /Choose model for/ }).click();
+      await page.getByRole('menuitemradio', { name, exact: true }).click();
+      await page.getByRole('menuitemradio', { name, exact: true }).waitFor({ state: 'hidden' });
+      assert(
+        (await page.getByRole('button', { name: /Choose model for/ }).innerText()).includes(name),
+      );
+    }
+    let uploads = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && request.url().endsWith('/attachments')) uploads++;
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+afoQAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const transferred = [
+      { name: 'dropped.png', type: 'image/png', bytes: [...png] },
+      { name: 'pasted.wav', type: 'audio/wav', bytes: [...wavFixture()] },
+      { name: 'pasted.mp4', type: 'video/mp4', bytes: [...mp4Fixture()] },
+      { name: 'pasted.txt', type: 'text/plain', bytes: [...Buffer.from('Clipboard notes')] },
+    ];
+    async function transfer(
+      action: 'drop' | 'paste' | 'dragenter' | 'dragleave',
+      files = transferred,
+    ) {
+      return page.evaluate(
+        ({ action, files }) => {
+          const data = new DataTransfer();
+          for (const file of files)
+            data.items.add(new File([new Uint8Array(file.bytes)], file.name, { type: file.type }));
+          const event =
+            action === 'paste'
+              ? new ClipboardEvent(action, { bubbles: true, cancelable: true, clipboardData: data })
+              : new DragEvent(action, { bubbles: true, cancelable: true, dataTransfer: data });
+          document
+            .querySelector(
+              action === 'paste' ? '.ai-composer-area textarea' : '.ai-composer-area .composer',
+            )!
+            .dispatchEvent(event);
+          return event.defaultPrevented;
+        },
+        { action, files },
+      );
+    }
+    await composer.fill('Keep my draft.');
+    assert(await transfer('dragenter', transferred.slice(0, 1)));
+    await page.locator('.composer.is-dragging-files').waitFor();
+    assert(await transfer('dragleave', transferred.slice(0, 1)));
+    await page.locator('.composer.is-dragging-files').waitFor({ state: 'hidden' });
+    assert(await transfer('drop', transferred.slice(0, 1)));
+    await page.getByRole('button', { name: 'Remove dropped.png', exact: true }).waitFor();
+    assert(await transfer('paste', transferred.slice(1)));
+    await page.getByRole('button', { name: 'Remove pasted.txt', exact: true }).waitFor();
+    assert.equal(await page.locator('.ai-pending-attachments .ai-attachment').count(), 4);
+    assert.equal(await composer.inputValue(), 'Keep my draft.');
+    assert.equal(uploads, 4);
+    await mkdir('artifacts', { recursive: true });
+    await page.screenshot({ path: 'artifacts/composer-dropped-pasted-media.png' });
+    for (const file of transferred) {
+      await page.getByRole('button', { name: `Remove ${file.name}`, exact: true }).click();
+      await page
+        .getByRole('button', { name: `Remove ${file.name}`, exact: true })
+        .waitFor({ state: 'hidden' });
+    }
+    await selectModel('Text model');
+    for (const file of transferred.slice(0, 3)) {
+      for (const action of ['drop', 'paste'] as const) {
+        assert(await transfer(action, [file]));
+        await page
+          .getByRole('alert')
+          .filter({ hasText: /does not support .* input/ })
+          .waitFor();
+        assert.equal(await page.locator('.ai-pending-attachments .ai-attachment').count(), 0);
+        assert.equal(uploads, 4, 'Unsupported media must be rejected before upload.');
+      }
+    }
+    await input.setInputFiles({ name: 'blocked.mp4', mimeType: 'video/mp4', buffer: mp4Fixture() });
+    await page.getByRole('alert').filter({ hasText: 'does not support video input' }).waitFor();
+    assert.equal(uploads, 4, 'The picker must enforce the same restriction as paste and drop.');
+    await selectModel('Media model');
+    await page
+      .getByRole('alert')
+      .filter({ hasText: /does not support .* input/ })
+      .waitFor({ state: 'hidden' });
+    await selectModel('Text model');
+    // Text pastes still use the browser's normal keyboard handling.
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.evaluate(() => navigator.clipboard.writeText('Normal clipboard text'));
+    await composer.fill('');
+    await composer.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V');
+    await page.waitForFunction(
+      () =>
+        document.querySelector<HTMLTextAreaElement>('.ai-composer-area textarea')?.value ===
+        'Normal clipboard text',
+    );
+    assert(await transfer('paste', transferred.slice(3)));
+    await page.getByRole('button', { name: 'Remove pasted.txt', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Remove pasted.txt', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'Remove pasted.txt', exact: true })
+      .waitFor({ state: 'hidden' });
+    assert.equal(uploads, 5, 'Text documents remain available to text-only models.');
+    assert.deepEqual(errors, []);
+    if (process.argv.includes('--composer-only')) {
+      console.log(
+        'PASS composer transfers: image drop, audio/video/document paste, drag feedback, retained draft, native text paste, and unsupported media rejected before upload across picker/paste/drop.',
+      );
+      return;
+    }
+    await selectModel('Media model');
     assert((await input.getAttribute('accept'))?.includes('.wav,.mp3'));
     assert((await input.getAttribute('accept'))?.includes('.mp4,.mov'));
     await input.setInputFiles([
@@ -153,12 +265,7 @@ async function main() {
       .locator('.ai-composer-area .ai-attachment')
       .filter({ hasText: 'clip.mp4' })
       .waitFor();
-    const composer = page.locator('.ai-composer-area textarea');
     await composer.fill('Compare these recordings.');
-    async function selectModel(name: string) {
-      await page.getByRole('button', { name: /Choose model for/ }).click();
-      await page.getByRole('menuitemradio', { name, exact: true }).click();
-    }
     await selectModel('Text model');
     await page
       .getByRole('alert')
@@ -192,9 +299,24 @@ async function main() {
     await dialog.getByRole('button', { name: 'Close dialog' }).click();
 
     await page.getByRole('button', { name: 'Play video', exact: true }).click();
-    await page.waitForFunction(
-      () => (document.querySelector<HTMLVideoElement>('dialog video')?.readyState || 0) >= 1,
-    );
+    try {
+      await page.waitForFunction(
+        () => (document.querySelector<HTMLVideoElement>('dialog video')?.readyState || 0) >= 1,
+      );
+    } catch (error) {
+      console.error(
+        'Video preview state:',
+        await dialog.locator('video').evaluate((video: HTMLVideoElement) => ({
+          readyState: video.readyState,
+          networkState: video.networkState,
+          error: video.error?.message,
+          duration: video.duration,
+          source: video.currentSrc,
+        })),
+      );
+      await page.screenshot({ path: 'artifacts/media-preview-failure.png' });
+      throw error;
+    }
     assert(await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.controls));
     await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.play());
     await page.waitForFunction(

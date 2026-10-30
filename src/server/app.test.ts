@@ -965,6 +965,44 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 describe('Mukai bots and AI API', () => {
+  it('streams live events for clients that ask for event-stream and keeps newline JSON for the rest', async () => {
+    await configure();
+    // Intermediaries such as CDNs buffer a plain body until the response ends,
+    // so a browser asking for text/event-stream must get real SSE frames.
+    const sse = await fetch(`${api.url}/bots/scout/chat`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${api.token}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ requestId: randomUUID(), text: 'Stream live', attachmentIds: [] }),
+    });
+    const sseBody = await sse.text();
+    expect(sse.status, sseBody).toBe(200);
+    expect(sse.headers.get('content-type')).toContain('text/event-stream');
+    const frames = sseBody
+      .split('\n\n')
+      .filter((block) => block.trim() !== '' && !block.startsWith(':'));
+    expect(frames.every((block) => block.startsWith('data: '))).toBe(true);
+    const events = frames.map((block) => JSON.parse(block.slice(6)) as ChatEvent);
+    expect(events.some((event) => event.type === 'start')).toBe(true);
+    expect(events.at(-1)?.type).toBe('done');
+
+    // Older clients parse bare JSON lines; they must keep receiving them.
+    const legacy = await fetch(`${api.url}/bots/scout/chat`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId: randomUUID(), text: 'Plain lines', attachmentIds: [] }),
+    });
+    expect(legacy.headers.get('content-type')).toContain('application/x-ndjson');
+    const plain = (await legacy.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as ChatEvent);
+    expect(plain.at(-1)?.type).toBe('done');
+  });
+
   it('waits before screenshot capture and persistence, and rejected captures create no artifact', async () => {
     await configure(true);
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
@@ -2265,11 +2303,12 @@ describe('Mukai bots and AI API', () => {
   });
   it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
     await configure(false, {
-      contextWindowTokens: 26000,
+      contextWindowTokens: 27000,
       maxOutputTokens: 1024,
     });
     await chat('Short request fits');
-    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('complete');
+    const fits = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(fits.status, fits.error || undefined).toBe('complete');
     expect(calls).toHaveLength(1);
     const text = 'Exact input '.repeat(1300);
     await chat(text);
@@ -2577,8 +2616,9 @@ describe('Mukai bots and AI API', () => {
   }, 20000);
   // Leave room for current instructions and tool schemas. The fixture results
   // still greatly exceed both context windows and must be bounded. The lower
-  // fixture leaves room for the expanded attachment discovery/copy schemas.
-  it.each([26000, 28000])(
+  // fixture leaves room for the expanded attachment discovery/copy schemas and
+  // the read-only System tool family.
+  it.each([27000, 28000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
       await configure(true, {
@@ -2891,6 +2931,60 @@ describe('Mukai bots and AI API', () => {
       ).status,
     ).toBe(403);
   });
+  it.each(['http://localhost:5173', 'http://127.0.0.1:5173', 'null'])(
+    'allows conditional desktop polls from %s and returns changed permissions',
+    async (origin) => {
+      const path = api.url + '/approvals?workspaceId=default';
+      const preflight = await fetch(path, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization,if-none-match',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+      const allowed = preflight.headers.get('Access-Control-Allow-Headers')!.toLowerCase();
+      expect(allowed.split(',').map((header) => header.trim())).toEqual(
+        expect.arrayContaining(['authorization', 'if-none-match']),
+      );
+      const headers = { Origin: origin, Authorization: `Bearer ${api.token}` };
+      const first = await fetch(path, { headers });
+      expect(first.status).toBe(200);
+      const initial = (await first.json()) as ApprovalState;
+      const etag = first.headers.get('ETag')!;
+      expect(etag).toBeTruthy();
+      expect(first.headers.get('Access-Control-Expose-Headers')).toContain('ETag');
+      const conditional = { ...headers, 'If-None-Match': etag };
+      for (let poll = 0; poll < 3; poll++) {
+        const response = await fetch(path, { headers: conditional });
+        expect(response.status).toBe(304);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+        expect(await response.text()).toBe('');
+      }
+      const mode = initial.mode === 'full-access' ? 'ask-for-approval' : 'full-access';
+      expect(
+        (await request('/approvals?workspaceId=default', 'PUT', { mode })).response.status,
+      ).toBe(200);
+      const changed = await fetch(path, { headers: conditional });
+      expect(changed.status).toBe(200);
+      expect(changed.headers.get('ETag')).not.toBe(etag);
+      expect(await changed.json()).toMatchObject({ mode });
+    },
+  );
+  it('rejects conditional polling preflights from untrusted pages', async () => {
+    const response = await fetch(api.url + '/approvals?workspaceId=default', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5273',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,if-none-match',
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
   it('encrypts credentials, masks DTOs, tests a provider, and retains keys on edit', async () => {
     const provider = await configure();
     expect(provider.hasKey).toBe(true);
@@ -2953,6 +3047,8 @@ describe('Mukai bots and AI API', () => {
     expect(writerSystem).not.toMatch(/Current UTC time:|Runtime UTC now:/);
     expect(String(calls[1].messages.at(-1)?.content)).toContain('Runtime UTC now: ');
     expect(writerSystem).toContain('You are a workspace sub-bot.');
+    expect(writerSystem).not.toContain("You are the workspace's main bot");
+    expect(String(calls[0].messages[0].content)).toContain("You are the workspace's main bot");
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
     await close(api.server);

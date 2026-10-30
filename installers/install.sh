@@ -15,7 +15,8 @@ install_linux_vm_dependencies() {
     echo 'Install QEMU with your Linux package manager before creating a VM workspace.' >&2
     return 0
   fi
-  local admin=()
+  # Positional arguments also support an empty prefix under Bash 3's nounset.
+  set --
   if [[ "$(id -u)" != 0 ]]; then
     if ! command -v sudo >/dev/null; then
       echo 'QEMU is missing. Install it as an administrator: apt-get update && apt-get install -y qemu-system-x86 qemu-utils' >&2
@@ -35,11 +36,9 @@ install_linux_vm_dependencies() {
         return 1
       fi
     fi
-    admin=(sudo -n)
+    set -- sudo -n
   fi
-  # ${admin[@]+...} keeps expansion safe when root leaves the array empty (bash <4.4 + set -u).
-  if ! ${admin[@]+"${admin[@]}"} apt-get update </dev/null ||
-    ! ${admin[@]+"${admin[@]}"} apt-get install -y qemu-system-x86 qemu-utils </dev/null; then
+  if ! "$@" apt-get update </dev/null || ! "$@" apt-get install -y qemu-system-x86 qemu-utils </dev/null; then
     echo 'QEMU installation failed. Resolve the package manager error above, then rerun the installer.' >&2
     return 1
   fi
@@ -64,7 +63,8 @@ configure_linux_kvm() {
     echo 'KVM device permissions need administrator attention. VM setup can use slower software emulation.' >&2
     return 0
   fi
-  local username groups admin=()
+  local username groups
+  set --
   username=$(id -un)
   groups=$(id -nG "$username")
   case " $groups " in *' kvm '*)
@@ -83,9 +83,9 @@ configure_linux_kvm() {
         return 0
       fi
     fi
-    admin=(sudo -n)
+    set -- sudo -n
   fi
-  if "${admin[@]}" usermod -a -G kvm -- "$username" </dev/null; then
+  if "$@" usermod -a -G kvm -- "$username" </dev/null; then
     echo 'KVM group access granted. Log out and back in before starting Mukai to activate hardware acceleration.' >&2
   else
     echo 'KVM access could not be granted. VM setup can use slower software emulation.' >&2

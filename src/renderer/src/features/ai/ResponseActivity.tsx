@@ -15,6 +15,8 @@ import {
   Check,
   Minimize2,
   MessageCircleQuestion,
+  Headphones,
+  Video,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -25,6 +27,8 @@ import { ResponseReferenceContext } from './responseReferenceContext';
 import { TerminalCard } from './TerminalCard';
 import { SpawnedBots } from './SpawnedBots';
 import { responseStatus } from './responseStatus';
+import { mediaActivityKind, toolGroupLabel } from './toolGroupLabel';
+import { useWorkDisclosure } from './useWorkDisclosure';
 
 const actionLabels: Record<string, string> = {
   create_directory: 'Created folder',
@@ -84,7 +88,11 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
     activity.tool === 'ask'
       ? MessageCircleQuestion
       : activity.tool === 'image' || activity.tool === 'media'
-        ? Image
+        ? activity.action.includes('audio')
+          ? Headphones
+          : activity.action.includes('video')
+            ? Video
+            : Image
         : activity.tool === 'terminal'
           ? Terminal
           : activity.tool === 'browser'
@@ -189,64 +197,85 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
 function ToolGroup({
   parts,
   message,
+  active,
 }: {
-  parts: Extract<ResponsePart, { type: 'tool' }>[];
+  parts: Extract<ResponsePart, { type: 'tool' | 'reasoning' }>[];
   message: ChatMessage;
+  active: boolean;
 }) {
-  const [open, setOpen] = useState(message.status === 'streaming');
-  const labels = new Set<string>();
-  for (const part of parts) {
+  const [open, setOpen] = useState(false);
+  const tools = parts.filter((part) => part.type === 'tool');
+  const activities = tools.flatMap((part) => {
     const activity = message.activity?.find((item) => item.id === part.activityId);
-    if (activity)
-      labels.add(
-        activity.action === 'wait_for_bots' && activity.status === 'running'
-          ? 'Waiting for bots'
-          : activity.action === 'receive_message'
-            ? 'Bot replies'
-            : activity.status !== 'complete'
-              ? `${activity.status === 'running' ? 'Running' : activity.status === 'failed' ? 'Failed' : 'Interrupted'} tools`
-              : activity.tool === 'media'
-                ? actionLabels[activity.action] || 'Inspected media'
-                : activity.tool === 'image'
-                  ? activity.action === 'view'
-                    ? 'Viewed images'
-                    : 'Read image metadata'
-                  : activity.tool === 'manage_pursuit'
-                    ? 'Managed pursuits'
-                    : activity.tool === 'terminal'
-                      ? 'Ran commands'
-                      : activity.tool === 'browser'
-                        ? 'Used browser'
-                        : ['write_file', 'patch'].includes(activity.action)
-                          ? 'Edited files'
-                          : activity.action === 'search_files'
-                            ? 'Searched files'
-                            : activity.action === 'read_file'
-                              ? 'Read files'
-                              : activity.action === 'create_directory'
-                                ? 'Created folders'
-                                : activity.action === 'list'
-                                  ? 'Listed folders'
-                                  : 'Used tools',
-      );
-  }
+    return activity ? [activity] : [];
+  });
+  const label = tools.length
+    ? toolGroupLabel(activities, active)
+    : active
+      ? 'Thinking'
+      : 'Reasoned';
+  const problems = activities.filter((item) => ['failed', 'interrupted'].includes(item.status));
+  const media = mediaActivityKind(activities[0]);
+  const Icon = problems.length
+    ? CircleAlert
+    : media === 'image'
+      ? Image
+      : media === 'audio'
+        ? Headphones
+        : media === 'video'
+          ? Video
+          : tools.length
+            ? FileText
+            : Brain;
+  const sessions = new Set<string>();
   return (
     <details
       className="response-tool-group"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
-        <FileText size={14} />
-        <span>
-          {[...labels].join(', ') || 'Calling tools'} · {parts.length}
+      <summary
+        title={
+          tools.length
+            ? `${label} · ${tools.length} tool ${tools.length === 1 ? 'call' : 'calls'}`
+            : label
+        }
+      >
+        <Icon size={14} />
+        <span
+          className={`response-tool-group-label${active ? ' is-working' : ''}`}
+          role={active ? 'status' : undefined}
+        >
+          {label}
         </span>
+        {!!problems.length && (
+          <span className="response-tool-group-problems">· {problems.length} unsuccessful</span>
+        )}
         <ChevronDown size={13} className="response-chevron" />
       </summary>
-      <div className="response-tool-group-content">
-        {parts.map((part) => (
-          <ToolPart key={part.id} part={part} message={message} />
-        ))}
+      <div
+        className="response-tool-group-content"
+        role="region"
+        tabIndex={0}
+        aria-label="Tool calls"
+      >
+        {parts.map((part) => {
+          if (part.type === 'reasoning')
+            return (
+              <ReasoningPart
+                key={`${part.id}:${active && part.state === 'streaming'}`}
+                part={part}
+                active={active && part.state === 'streaming'}
+              />
+            );
+          const activity = activities.find((item) => item.id === part.activityId);
+          const sessionId = activity?.processSessionId || activity?.terminal?.id;
+          if (activity?.tool === 'terminal' && sessionId) {
+            if (sessions.has(sessionId)) return null;
+            sessions.add(sessionId);
+          }
+          return <ToolPart key={part.id} part={part} message={message} />;
+        })}
       </div>
     </details>
   );
@@ -301,8 +330,10 @@ function ReasoningPart({
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
-        {active ? <ActivitySpinner /> : <Brain size={14} />}
-        <span>{active ? 'Thinking' : 'Reasoning'}</span>
+        <Brain size={14} />
+        <span className={active ? 'response-shimmer' : undefined}>
+          {active ? 'Thinking' : 'Reasoning'}
+        </span>
         <ChevronDown size={13} className="response-chevron" />
       </summary>
       <div className="response-reasoning-detail">
@@ -354,43 +385,60 @@ function CompactionPart({
   );
 }
 
-function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message: ChatMessage }) {
+function ProcessTranscript({
+  parts,
+  message,
+  continuing,
+}: {
+  parts: ResponsePart[];
+  message: ChatMessage;
+  continuing: boolean;
+}) {
   const groups: ResponsePart[][] = [];
-  const sessions = new Set<string>();
-  const isTerminal = (part: ResponsePart) =>
-    part.type === 'tool' &&
-    message.activity?.some(
-      (item) => item.id === part.activityId && item.tool === 'terminal' && item.action !== 'list',
-    );
-  const isDelegatedResult = (part: ResponsePart) =>
-    part.type === 'tool' &&
-    message.activity?.some(
-      (item) =>
-        item.id === part.activityId && ['wait_for_bots', 'receive_message'].includes(item.action),
-    );
+  const activities = new Map(message.activity?.map((activity) => [activity.id, activity]));
+  const isWork = (part: ResponsePart) => part.type === 'tool' || part.type === 'reasoning';
+  const mediaKind = (part: ResponsePart) =>
+    part.type === 'tool' ? mediaActivityKind(activities.get(part.activityId)) : undefined;
   for (const part of parts) {
-    if (part.type === 'tool' && isTerminal(part)) {
-      const activity = message.activity?.find((item) => item.id === part.activityId);
-      const sessionId = activity?.processSessionId || activity?.terminal?.id;
-      if (sessionId && sessions.has(sessionId)) continue;
-      if (sessionId) sessions.add(sessionId);
-    }
     const previous = groups.at(-1);
+    const previousTool = previous?.find((item) => item.type === 'tool');
     if (
-      part.type === 'tool' &&
-      previous?.[0].type === 'tool' &&
-      !isTerminal(part) &&
-      !isTerminal(previous[0]) &&
-      !isDelegatedResult(part) &&
-      !isDelegatedResult(previous[0])
+      isWork(part) &&
+      previous &&
+      isWork(previous[0]) &&
+      (part.type === 'reasoning' ||
+        !previousTool ||
+        mediaKind(part) === mediaKind(previousTool) ||
+        (part.type === 'tool' && !activities.has(part.activityId)))
     )
       previous.push(part);
     else groups.push([part]);
   }
+  // Keep the initial Thinking disclosure in the same slot as the first work
+  // group, so it can gain reasoning and tool calls without changing its identity.
+  if (!groups.length && continuing) groups.push([]);
   return (
     <div className="response-transcript" aria-label="Response activity">
-      {groups.map((group) => {
+      {groups.map((group, index) => {
         const part = group[0];
+        if (!part || isWork(part)) {
+          const work = group.filter((item) => item.type === 'tool' || item.type === 'reasoning');
+          const running = work.some(
+            (item) =>
+              item.type === 'tool' &&
+              message.activity?.some(
+                (activity) => activity.id === item.activityId && activity.status === 'running',
+              ),
+          );
+          return (
+            <ToolGroup
+              key={`${index === 0 ? 'initial-work' : part.id}:${message.status === 'streaming' ? 'streaming' : 'finished'}`}
+              parts={work}
+              message={message}
+              active={continuing && (index === groups.length - 1 || running)}
+            />
+          );
+        }
         if (part.type === 'steering')
           return (
             <div key={part.id} className="response-steering">
@@ -417,19 +465,7 @@ function ProcessTranscript({ parts, message }: { parts: ResponsePart[]; message:
           return (
             <CompactionPart key={part.id} part={part} streaming={message.status === 'streaming'} />
           );
-        if (part.type === 'reasoning') {
-          const active =
-            message.status === 'streaming' &&
-            (part.state === 'streaming' || (!part.state && parts.at(-1)?.id === part.id));
-          // Reset the disclosure once on completion; manual toggles persist while text streams.
-          return <ReasoningPart key={`${part.id}:${active}`} part={part} active={active} />;
-        }
-        const tools = group.filter((item) => item.type === 'tool');
-        return tools.length > 1 ? (
-          <ToolGroup key={part.id} parts={tools} message={message} />
-        ) : (
-          <ToolPart key={part.id} part={part} message={message} />
-        );
+        return null;
       })}
     </div>
   );
@@ -440,13 +476,15 @@ function WorkProcess({
   message,
   expanded,
   onExpandedChange,
+  answerStarted,
 }: {
   parts: ResponsePart[];
   message: ChatMessage;
   expanded?: boolean;
   onExpandedChange?: (open: boolean) => void;
+  answerStarted: boolean;
 }) {
-  const [internalOpen, setOpen] = useState(message.status === 'streaming');
+  const { workExpanded: internalOpen, onWorkExpandedChange: setOpen } = useWorkDisclosure(message);
   const [now, setNow] = useState(() => Date.now());
   const streaming = message.status === 'streaming';
   useEffect(() => {
@@ -460,7 +498,7 @@ function WorkProcess({
     streaming ? new Date(now).toISOString() : message.finishedAt,
   );
   const label = streaming
-    ? responseStatus(message)
+    ? 'Working'
     : message.status === 'complete'
       ? 'Worked'
       : message.status === 'stopped'
@@ -481,8 +519,19 @@ function WorkProcess({
         </span>
         <ChevronDown size={13} className="response-chevron" />
       </summary>
-      <ProcessTranscript parts={parts} message={message} />
+      <ProcessTranscript parts={parts} message={message} continuing={streaming && !answerStarted} />
+      {streaming && !answerStarted && parts.at(-1)?.type === 'text' && (
+        <ResponseLoading message={message} />
+      )}
     </details>
+  );
+}
+
+function ResponseLoading({ message }: { message: ChatMessage }) {
+  return (
+    <div className="ai-response-status" role="status">
+      <span className="response-shimmer">{responseStatus(message)}</span>
+    </div>
   );
 }
 
@@ -496,20 +545,26 @@ export const ResponseActivity = memo(function ResponseActivity({
   onWorkExpandedChange?: (open: boolean) => void;
 }) {
   const { process, answer } = responsePresentation(message);
+  // Providers can emit separator newlines on otherwise tool-only steps. They
+  // are not commentary boundaries and must not split one tool loop into rows.
+  const visibleProcess = process.filter((part) => part.type !== 'text' || part.text.trim());
+  const hasAnswer = Boolean(answer.trim());
   return (
     <ResponseReferenceContext.Provider value={message.conversationId || 'bot-' + message.botId}>
-      {(!!process.length || message.status === 'streaming') && (
+      {(!!visibleProcess.length || message.status === 'streaming') && (
         <WorkProcess
           key={`${message.id}:${message.startedAt || ''}`}
-          parts={process}
+          parts={visibleProcess}
           message={message}
           expanded={workExpanded}
           onExpandedChange={onWorkExpandedChange}
+          answerStarted={hasAnswer}
         />
       )}
-      {!!answer && (
+      {hasAnswer && (
         <MessageMarkdown text={answer} streaming={message.status === 'streaming'} imageGallery />
       )}
+      {hasAnswer && message.status === 'streaming' && <ResponseLoading message={message} />}
       <SpawnedBots message={message} />
     </ResponseReferenceContext.Provider>
   );

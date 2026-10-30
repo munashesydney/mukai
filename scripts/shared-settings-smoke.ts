@@ -27,6 +27,11 @@ async function main() {
   await app.whenReady();
   const dataDir = join(root, 'data');
   let api = await startApiServer(0, { dataDir });
+  const conditionalDesktopReads: number[] = [];
+  api.server.on('request', (request, response) => {
+    if (request.url === '/settings/appearance' && request.headers['if-none-match'])
+      response.once('finish', () => conditionalDesktopReads.push(response.statusCode));
+  });
   const closingApis = new WeakMap<typeof api, Promise<void>>();
   const closeApi = () => {
     const current = api;
@@ -106,6 +111,14 @@ async function main() {
   try {
     await desktopWindow.loadFile(resolve('out/renderer/index.html'));
     await wait('Boolean(document.querySelector(".workspace-first-run"))');
+    // Exercise the renderer's real fetch/cache path under Chromium CORS. A first
+    // successful read alone misses regressions in conditional polling headers.
+    for (let attempt = 0; attempt < 50 && conditionalDesktopReads.length < 2; attempt++) {
+      await desktopWindow.webContents.executeJavaScript(`window.dispatchEvent(new Event('focus'))`);
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    assert.ok(conditionalDesktopReads.length >= 2, 'Desktop polls must reach the API repeatedly.');
+    assert.deepEqual(conditionalDesktopReads.slice(0, 2), [304, 304]);
     assert.equal(
       await desktopWindow.webContents.executeJavaScript('document.documentElement.dataset.theme'),
       'ocean',
