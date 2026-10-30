@@ -456,6 +456,7 @@ export const migrations = [
     next_at INTEGER, last_runtime TEXT);`,
   `CREATE INDEX capability_run_order ON capability_runs(capability_id);
    CREATE INDEX capability_run_status_order ON capability_runs(capability_id,status);`,
+  `ALTER TABLE capability_env ADD COLUMN secret INTEGER NOT NULL DEFAULT 1 CHECK(secret IN (0,1));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

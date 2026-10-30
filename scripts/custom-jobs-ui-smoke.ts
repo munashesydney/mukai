@@ -78,11 +78,36 @@ async function main() {
     const exportValues = [
       { name: 'UI_EXPORT_TOKEN', value: 'dummy-ui-only "quotes" \\n and\nnew line' },
       { name: 'UI_EMPTY', value: '' },
+      { name: 'UI_PORT', value: '993' },
     ];
     api.capabilities.environment.save('default', exportValues);
+    await writeFile(
+      join(folder, 'sensitivity-route.ts'),
+      `export default {name:'sensitivity_probe',method:'GET',path:'/custom/sensitivity-probe',auth:'public',handle(){return {status:200,headers:{'Content-Type':'application/json'},body:'{"port":993}'};}}`,
+    );
+    await api.capabilities.manage('default', 'scout', 'route', {
+      operation: 'register',
+      modulePath: 'sensitivity-route.ts',
+    });
     await page.getByRole('button', { name: 'Open settings', exact: true }).click();
     await page.getByRole('tab', { name: 'E Variables', exact: true }).click();
     await page.getByText('UI_EXPORT_TOKEN', { exact: true }).waitFor();
+    const masked = await page.evaluate(async () => {
+      const response = await fetch('/custom/sensitivity-probe');
+      return { body: await response.json(), count: response.headers.get('x-mukai-redacted') };
+    });
+    assert.deepEqual(masked, { body: { port: '[redacted]' }, count: '1' });
+    await page.getByRole('combobox', { name: 'Sensitivity for UI_PORT', exact: true }).click();
+    await page.getByRole('option', { name: 'Configuration', exact: true }).click();
+    await page
+      .getByRole('combobox', { name: 'Sensitivity for UI_PORT', exact: true })
+      .filter({ hasText: 'Configuration' })
+      .waitFor();
+    const clear = await page.evaluate(async () => {
+      const response = await fetch('/custom/sensitivity-probe');
+      return { body: await response.json(), count: response.headers.get('x-mukai-redacted') };
+    });
+    assert.deepEqual(clear, { body: { port: 993 }, count: null });
     assert.equal(
       await page.getByRole('button', { name: 'Export .env', exact: true }).isVisible(),
       false,
@@ -175,7 +200,7 @@ async function main() {
     assert.equal(api.approvals.state('default').pending.length, 0);
     assert.deepEqual(errors, []);
     console.log(
-      'Custom jobs workspace paths, failure health, developer environment export, and sticky approvals passed.',
+      'Custom jobs, sensitivity controls, JSON-safe route responses, developer export, and sticky approvals passed.',
     );
   } finally {
     controller.abort();

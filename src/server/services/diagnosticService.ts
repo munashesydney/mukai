@@ -15,6 +15,8 @@ export type DiagnosticPhase =
   | 'computer';
 export interface DiagnosticContext {
   workspaceId?: string;
+  capabilityId?: string;
+  redactionCount?: number;
   providerId?: string;
   providerKind?: string;
   model?: string;
@@ -188,6 +190,7 @@ export class DiagnosticService {
       const metadata: Record<string, unknown> = {};
       for (const key of [
         'workspaceId',
+        'capabilityId',
         'providerId',
         'providerKind',
         'model',
@@ -201,6 +204,7 @@ export class DiagnosticService {
         if (context[key] !== undefined) metadata[key] = this.text(context[key], 512);
       for (const key of [
         'step',
+        'redactionCount',
         'contextWindow',
         'usedTokens',
         'generatedTextBytes',

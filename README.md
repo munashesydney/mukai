@@ -115,6 +115,8 @@ The backend binds only to `127.0.0.1`, authenticates feature APIs with a local b
 
 Migrations are append-only, versioned, and transactional in `src/server/db/migrations.ts`, tracked in `schema_migrations`. Scout’s one-time seed is tracked separately so deleting it does not recreate it on restart. Startup marks unfinished assistant records interrupted.
 
+Environment variables can be marked **Secret** (the default) or **Configuration** in Settings. Secret masking preserves JSON syntax for object and pre-serialized route bodies; ordinary configuration such as ports can be returned unchanged. Route responses indicate substitutions with `x-mukai-redacted`, with payload-free diagnostics in the backend log. See [response redaction](docs/custom-capabilities/README.md#response-redaction-and-variable-sensitivity).
+
 ## Structure
 
 ```text

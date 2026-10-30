@@ -1,3 +1,4 @@
+import { Dropdown } from '../../components/ui/Dropdown';
 import { SettingsHeading } from './SettingsHeading';
 import { KeyRound, Plus, Trash2, Download } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
@@ -11,6 +12,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   const [developerView, setDeveloperView] = useState(false);
   const [editor, setEditor] = useState<'variable' | 'import' | null>(null);
   const [variables, setVariables] = useState<EnvironmentVariable[]>([]);
+  const [secret, setSecret] = useState(true);
   const [name, setName] = useState(''),
     [value, setValue] = useState(''),
     [block, setBlock] = useState('');
@@ -24,6 +26,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   );
   useEffect(() => {
     setName('');
+    setSecret(true);
     setValue('');
     setBlock('');
     setPreview([]);
@@ -81,6 +84,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               className="button button--primary"
               onClick={() => {
                 setName('');
+                setSecret(true);
                 setValue('');
                 setError('');
                 setEditor('variable');
@@ -145,7 +149,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               onSubmit={(event) => {
                 event.preventDefault();
                 void perform(async () => {
-                  await capabilityService.saveEnvironment(workspaceId, [{ name, value }]);
+                  await capabilityService.saveEnvironment(workspaceId, [{ name, value, secret }]);
                   setName('');
                   setValue('');
                 });
@@ -163,9 +167,25 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 />
               </label>
               <label>
+                Sensitivity
+                <Dropdown
+                  label="Variable sensitivity"
+                  value={secret ? 'secret' : 'configuration'}
+                  onChange={(value) => setSecret(value === 'secret')}
+                  options={[
+                    { value: 'secret', label: 'Secret' },
+                    { value: 'configuration', label: 'Configuration' },
+                  ]}
+                />
+                <span className="ai-caption">
+                  Secret values are masked in custom responses. Configuration values may be returned
+                  by modules. Both are stored encrypted.
+                </span>
+              </label>
+              <label>
                 New value
                 <input
-                  type="password"
+                  type={secret ? 'password' : 'text'}
                   value={value}
                   onChange={(event) => setValue(event.target.value)}
                   autoComplete="new-password"
@@ -250,16 +270,38 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               </span>
               <div>
                 <strong>{variable.name}</strong>
-                <p>{variable.configured ? '•••••••• · Configured' : 'Needs configuration'}</p>
+                <p>
+                  {variable.configured ? '•••••••• · Configured' : 'Needs configuration'} ·{' '}
+                  {variable.secret === false ? 'Configuration' : 'Secret'}
+                </p>
                 <small>Used by: {variable.usedBy.join(', ') || 'No registrations yet'}</small>
               </div>
             </div>
             <div className="ai-form-actions">
+              <Dropdown
+                label={'Sensitivity for ' + variable.name}
+                value={variable.secret === false ? 'configuration' : 'secret'}
+                disabled={busy || !variable.configured}
+                onChange={(value) =>
+                  void perform(() =>
+                    capabilityService.setEnvironmentSensitivity(
+                      workspaceId,
+                      variable.name,
+                      value === 'secret',
+                    ),
+                  )
+                }
+                options={[
+                  { value: 'secret', label: 'Secret' },
+                  { value: 'configuration', label: 'Configuration' },
+                ]}
+              />
               <button
                 className="button"
                 disabled={busy}
                 onClick={() => {
                   setName(variable.name);
+                  setSecret(variable.secret !== false);
                   setValue('');
                   setError('');
                   setEditor('variable');

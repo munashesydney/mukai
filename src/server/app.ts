@@ -109,8 +109,17 @@ export function createApiServer(options: ApiOptions = {}) {
     const settings = new SettingsService(new SettingsRepository(store));
     const computers = new ComputerManager(dir, options.guestBundleDir, diagnostics);
     const workspaces = new WorkspaceService(workspaceRepository, dir, computers);
-    const capabilities = new CapabilityService(store, workspaces, (value) =>
-      diagnostics.registerSecret(value),
+    const capabilities = new CapabilityService(
+      store,
+      workspaces,
+      (value) => diagnostics.registerSecret(value),
+      (workspaceId, capabilityId, count) =>
+        diagnostics.info('capability.response_redacted', 'Custom route response was redacted.', {
+          workspaceId,
+          capabilityId,
+          redactionCount: count,
+          phase: 'tool-execution',
+        }),
     );
     const artifacts = new ArtifactService(
       new ArtifactRepository(store),

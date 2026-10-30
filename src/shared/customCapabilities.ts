@@ -144,6 +144,7 @@ export interface CapabilityRun {
 }
 export interface EnvironmentVariable {
   name: string;
+  secret?: boolean;
   configured: boolean;
   usedBy: string[];
 }

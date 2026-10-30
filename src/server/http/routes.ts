@@ -168,7 +168,7 @@ export function createRoutes({
       response.setHeader('Access-Control-Expose-Headers', 'ETag');
     }
     if (request.method === 'OPTIONS') {
-      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,HEAD');
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,HEAD');
       response.setHeader(
         'Access-Control-Allow-Headers',
         'Authorization,Content-Type,X-Filename,If-None-Match',
@@ -489,10 +489,22 @@ export function createRoutes({
         if (!id && method === 'PUT') {
           const input = z
             .object({
-              entries: z.array(z.object({ name: z.string(), value: z.string() })).max(200),
+              entries: z
+                .array(
+                  z.object({ name: z.string(), value: z.string(), secret: z.boolean().optional() }),
+                )
+                .max(200),
             })
             .parse(await jsonBody(request, 1024 * 1024));
           capabilities.environment.save(workspaceId, input.entries);
+          return send(response, capabilities.environment.list(workspaceId));
+        }
+        if (id && !action && method === 'PATCH') {
+          const { secret } = z
+            .object({ secret: z.boolean() })
+            .strict()
+            .parse(await jsonBody(request));
+          capabilities.environment.setSensitivity(workspaceId, decodeURIComponent(id), secret);
           return send(response, capabilities.environment.list(workspaceId));
         }
         if (id && method === 'DELETE') {

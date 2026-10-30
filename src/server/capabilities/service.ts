@@ -209,6 +209,7 @@ export class CapabilityService {
     private db: Database,
     private workspaces: WorkspaceService,
     registerSecret?: (value: string) => void,
+    private redactionNotice?: (workspaceId: string, capabilityId: string, count: number) => void,
   ) {
     this.schedules = new CapabilitySchedules(
       db,
@@ -830,6 +831,7 @@ export class CapabilityService {
     const runId = randomUUID(),
       started = Date.now();
     let wakeSequence = 0;
+    let inheritedRedactions = 0;
     signal?.throwIfAborted();
     if (
       registration.kind === 'job' &&
@@ -872,10 +874,20 @@ export class CapabilityService {
               throw new ApiError(429, 'Route call budget exceeded (16 calls).');
             const request = routeCallRequest(target.definition, args[1]);
             chain.budget.remaining--;
-            return this.invoke(routeId, request, 'handle', signal, undefined, undefined, {
-              ancestors: [...chain.ancestors, routeId],
-              budget: chain.budget,
-            });
+            const child = (await this.invoke(
+              routeId,
+              request,
+              'handle',
+              signal,
+              undefined,
+              undefined,
+              {
+                ancestors: [...chain.ancestors, routeId],
+                budget: chain.budget,
+              },
+            )) as CustomResponse;
+            inheritedRedactions += Number(child.headers?.['x-mukai-redacted'] || 0);
+            return child;
           }
           if (action === 'enqueue') {
             const [provider, eventId, payload] = args;
@@ -917,27 +929,45 @@ export class CapabilityService {
         },
       );
       if (operation === 'handle') validateResponse(value);
+      // Redact body tokens before serialization, preserving HTTP framing and JSON syntax.
+      if (operation === 'handle') {
+        const response = validateResponse(value);
+        const contentType =
+          Object.entries(response.headers || {})
+            .find(([name]) => name.toLowerCase() === 'content-type')?.[1]
+            ?.trim() || '';
+        const json = /^(?:application\/json|[a-z0-9.+-]+\/[a-z0-9.+-]+\+json)(?:\s*;|$)/i.test(
+          contentType,
+        );
+        const result = this.environment.redactResponse(response.body, json);
+        let count = result.count + inheritedRedactions;
+        const headers: Record<string, string> = {};
+        for (const [name, value] of Object.entries(response.headers || {})) {
+          if (name.toLowerCase() === 'x-mukai-redacted') continue;
+          const redacted = this.environment.redactText(value);
+          headers[name] = redacted.value;
+          count += redacted.count;
+        }
+        if (count) {
+          headers['x-mukai-redacted'] = String(count);
+          this.redactionNotice?.(registration.workspaceId, id, count);
+        }
+        this.db.run(
+          "UPDATE capability_runs SET status='complete',duration_ms=? WHERE id=?",
+          Date.now() - started,
+          runId,
+        );
+        return {
+          status: response.status,
+          headers: Object.keys(headers).length ? headers : undefined,
+          body: result.value,
+        };
+      }
       this.db.run(
         "UPDATE capability_runs SET status='complete',duration_ms=? WHERE id=?",
         Date.now() - started,
         runId,
       );
-      // Preserve the HTTP envelope while filtering returned body/header data.
-      if (operation === 'handle') {
-        const response = validateResponse(value);
-        return {
-          status: response.status,
-          headers: response.headers
-            ? Object.fromEntries(
-                Object.entries(response.headers).map(([name, value]) => [
-                  name,
-                  this.environment.redact(value),
-                ]),
-              )
-            : undefined,
-          body: this.environment.publicValue(response.body),
-        };
-      }
       return this.environment.publicValue(value);
     } catch (error) {
       this.db.run(
