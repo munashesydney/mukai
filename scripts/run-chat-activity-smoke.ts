@@ -1,15 +1,16 @@
 import { build } from 'esbuild';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 const require = createRequire(join(process.cwd(), 'package.json'));
 async function main() {
-  const dir = mkdtempSync(join(tmpdir(), 'mukai-activity-smoke-'));
+  const temporaryRoot = realpathSync(tmpdir());
+  const dir = mkdtempSync(join(temporaryRoot, 'mukai-activity-smoke-'));
   const bundle = resolve('artifacts', `activity-smoke-${process.pid}.cjs`);
   if (
-    !resolve(dir).startsWith(resolve(tmpdir(), 'mukai-activity-smoke-')) ||
+    !resolve(dir).startsWith(resolve(temporaryRoot, 'mukai-activity-smoke-')) ||
     !bundle.startsWith(resolve('artifacts', 'activity-smoke-'))
   )
     throw new Error('Unexpected smoke paths; refusing cleanup.');

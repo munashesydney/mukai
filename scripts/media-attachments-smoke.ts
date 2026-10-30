@@ -192,9 +192,24 @@ async function main() {
     await dialog.getByRole('button', { name: 'Close dialog' }).click();
 
     await page.getByRole('button', { name: 'Play video', exact: true }).click();
-    await page.waitForFunction(
-      () => (document.querySelector<HTMLVideoElement>('dialog video')?.readyState || 0) >= 1,
-    );
+    try {
+      await page.waitForFunction(
+        () => (document.querySelector<HTMLVideoElement>('dialog video')?.readyState || 0) >= 1,
+      );
+    } catch (error) {
+      console.error(
+        'Video preview state:',
+        await dialog.locator('video').evaluate((video: HTMLVideoElement) => ({
+          readyState: video.readyState,
+          networkState: video.networkState,
+          error: video.error?.message,
+          duration: video.duration,
+          source: video.currentSrc,
+        })),
+      );
+      await page.screenshot({ path: 'artifacts/media-preview-failure.png' });
+      throw error;
+    }
     assert(await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.controls));
     await dialog.locator('video').evaluate((element: HTMLVideoElement) => element.play());
     await page.waitForFunction(

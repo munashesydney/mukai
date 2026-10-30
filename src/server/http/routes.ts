@@ -169,7 +169,10 @@ export function createRoutes({
     }
     if (request.method === 'OPTIONS') {
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,HEAD');
-      response.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-Filename');
+      response.setHeader(
+        'Access-Control-Allow-Headers',
+        'Authorization,Content-Type,X-Filename,If-None-Match',
+      );
       response.writeHead(204).end();
       return;
     }

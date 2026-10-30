@@ -122,10 +122,8 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
     const text = await response.text().catch(() => '');
     const detail = parseJson<{ error?: string }>(text);
     if (detail?.error) throw new Error(detail.error);
-    // A body that is not Mukai's error shape means something other than the
-    // server answered, and a 403 with nothing to say is the signature of a page
-    // whose origin the server refuses. Both need the address named, because both
-    // survive a refresh and neither blames the right thing otherwise.
+    // A non-JSON body may come from a proxy or static host. A bodyless 403 does
+    // not identify its cause, so name the request without assuming an origin ban.
     const target = await apiTarget(path);
     if (response.status === 403) {
       throw new Error(originBlockedMessage(target) ?? `The request failed (${response.status}).`);

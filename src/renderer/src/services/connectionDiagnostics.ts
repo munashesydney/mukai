@@ -87,20 +87,21 @@ export function diagnoseTransportFailure(target: ConnectionTarget, cause?: unkno
       'its server lives — its preload did not load. Restart the Mukai window.'
     );
   }
-  const blocked = originMismatch(target);
-  if (blocked) {
-    return (
-      `${prefix} This page runs on ${blocked.page}, a different origin, so the request leaves as ` +
-      `cross-origin and is refused before it can read the answer — Mukai answers only the address ` +
-      `it was started on, plus the desktop dev UI on port 5173. Open Mukai at ${blocked.server} — ` +
-      `the address \`mukai serve\` printed — instead of ${blocked.page}.`
-    );
-  }
   if (refused(cause)) {
     return `${prefix} ${withReason('Nothing is listening on that port')}. ${CONNECT_HINT}`;
   }
   if (notResolvable(cause)) {
     return `${prefix} ${withReason('That address does not resolve from this page')}. ${CONNECT_HINT}`;
+  }
+  const mismatch = originMismatch(target);
+  if (mismatch) {
+    return (
+      `${prefix} The cross-origin request from ${mismatch.page} could not complete` +
+      `${reason ? `: ${reason}` : ''}. Check the browser console for network or CORS details. ` +
+      (hasBridge()
+        ? 'If this persists, restart the Mukai window.'
+        : 'Check that the backend is running and accepts this page’s origin.')
+    );
   }
   return `${prefix} The request could not complete${reason ? `: ${reason}` : ''}. ${CONNECT_HINT}`;
 }
@@ -138,11 +139,10 @@ export function diagnoseNonJsonResponse(input: {
 /**
  * The page/server origin pair, when a request leaves the page's own origin.
  *
- * `web/origin.ts` answers a request from one address only: the address the
- * server was started on, plus the desktop dev UI on port 5173. A page anywhere
- * else is refused before it can read the answer, so this is the one failure the
- * banner can state as a certainty rather than a guess — and the one that survives
- * a refresh, since the repair is where the page was opened from.
+ * Different origins alone do not establish a CORS rejection. Desktop mode allows
+ * dev pages on port 5173, while browser mode has a same-origin policy. Even an
+ * allowed origin can fail because of a missing allowed header or a dead server;
+ * fetch does not expose enough information to distinguish those cases.
  *
  * A packaged desktop window is exempt: it is loaded from `file://`, reports no
  * origin at all, and is trusted on that basis.
@@ -156,19 +156,15 @@ function originMismatch(target: ConnectionTarget): { page: string; server: strin
 }
 
 /**
- * Explains a 403 that arrived with nothing readable in it.
- *
- * A refusal for origin arrives without CORS headers, so a browser normally hides
- * the body and rejects the fetch outright (see the transport failure wording).
- * This covers the variant that does get through: same repair, named once.
+ * Adds page context to a bodyless 403 without guessing whether authentication,
+ * origin policy, or an intermediary refused the request.
  */
 export function originBlockedMessage(target: ConnectionTarget): string | undefined {
   const mismatch = originMismatch(target);
   if (!mismatch) return undefined;
   return (
-    `Mukai refused this page’s origin (${mismatch.page}). It answers only the address it was ` +
-    `started on, plus the desktop dev UI on port 5173. Open Mukai at ${mismatch.server} — the ` +
-    `address \`mukai serve\` printed — instead of ${mismatch.page}.`
+    `The server at ${mismatch.server} returned 403 (Forbidden) for a request from ` +
+    `${mismatch.page}. Check authentication and origin permissions.`
   );
 }
 

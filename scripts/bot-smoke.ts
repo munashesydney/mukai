@@ -40,6 +40,11 @@ async function main() {
   let modelFixture: Server | undefined;
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
   ipcMain.handle(IPC.health, () => ({ status: 'ok' }));
+  ipcMain.handle(IPC.updateState, () => ({
+    status: 'disabled',
+    currentVersion: 'test',
+    automaticUpdates: false,
+  }));
   ipcMain.handle(IPC.browserBounds, () => {});
   const evaluate = async <T>(code: string): Promise<T> => {
     try {
@@ -92,11 +97,6 @@ async function main() {
   };
   try {
     if (process.argv.includes('--pair-chat-only')) {
-      ipcMain.handle(IPC.updateState, () => ({
-        status: 'disabled',
-        currentVersion: 'test',
-        automaticUpdates: false,
-      }));
       seedTestWorkspace(api.store);
       await request('/settings/appearance', 'PUT', { mode: 'dark', theme: 'mukai' });
       const modelCalls: { messages: unknown[] }[] = [];
@@ -1531,7 +1531,9 @@ async function main() {
         {
           id: 'fixture-default',
           name: 'fixture-default',
-          contextWindowTokens: 32768,
+          // This UI fixture streams replies only; leave room for the complete tool
+          // catalogue and approval history without invoking context compaction.
+          contextWindowTokens: 131072,
           maxOutputTokens: 8192,
           supportsImages: false,
         },
@@ -1545,7 +1547,7 @@ async function main() {
       ],
       isDefault: true,
       supportsImages: false,
-      contextWindowTokens: 32768,
+      contextWindowTokens: 131072,
       apiKey: '',
     });
     window.reload();
@@ -2112,6 +2114,8 @@ async function main() {
     const panStart = await evaluate<{ x: number; y: number; left: number }>(
       `(()=>{const e=document.querySelector('.bot-hierarchy-canvas'),r=e.getBoundingClientRect();return {x:Math.round(r.left+150),y:Math.round(r.top+15),left:e.scrollLeft};})()`,
     );
+    window.webContents.focus();
+    window.webContents.sendInputEvent({ type: 'mouseMove', x: panStart.x, y: panStart.y });
     window.webContents.sendInputEvent({
       type: 'mouseDown',
       x: panStart.x,
@@ -2119,7 +2123,17 @@ async function main() {
       button: 'left',
       clickCount: 1,
     });
-    window.webContents.sendInputEvent({ type: 'mouseMove', x: panStart.x - 80, y: panStart.y });
+    await wait('Boolean(document.querySelector(".bot-hierarchy-canvas.is-dragging"))');
+    window.webContents.sendInputEvent({
+      type: 'mouseMove',
+      x: panStart.x - 80,
+      y: panStart.y,
+      button: 'left',
+      modifiers: ['leftbuttondown'],
+    });
+    await wait(
+      `document.querySelector('.bot-hierarchy-canvas').scrollLeft > ${panStart.left + 50}`,
+    );
     window.webContents.sendInputEvent({
       type: 'mouseUp',
       x: panStart.x - 80,
@@ -2127,9 +2141,7 @@ async function main() {
       button: 'left',
       clickCount: 1,
     });
-    await wait(
-      `document.querySelector('.bot-hierarchy-canvas').scrollLeft > ${panStart.left + 50}`,
-    );
+    await wait('!document.querySelector(".bot-hierarchy-canvas.is-dragging")');
     await evaluate(`document.querySelector('button[aria-label="Center view"]').click()`);
     assert.equal(
       await evaluate(

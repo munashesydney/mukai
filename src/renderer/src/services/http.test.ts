@@ -184,14 +184,35 @@ describe('origin trust', () => {
     url: new URL('http://127.0.0.1:47831/approvals'),
   };
 
-  it('names both origins and the address to open instead, rather than blaming the backend', () => {
+  it('reports a refused connection even when the page has a different origin', () => {
     pageOn('http://localhost:5273');
     const text = diagnoseTransportFailure(foreign, { code: 'ECONNREFUSED' });
-    expect(text).toMatch(/This page runs on http:\/\/localhost:5273/);
-    expect(text).toMatch(/Open Mukai at http:\/\/127\.0\.0\.1:47831/);
-    // The repair is never "start the backend": it is running, on that other port.
-    expect(text).not.toMatch(/mukai serve` and try again/);
-    expect(originBlockedMessage(foreign)).toMatch(/refused this page’s origin/);
+    expect(text).toMatch(/ECONNREFUSED/);
+    expect(text).toMatch(/Nothing is listening/);
+    expect(text).not.toMatch(/origin.*refused|Open Mukai at/);
+  });
+
+  it.each(['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5273'])(
+    'does not invent an origin rejection for an opaque transport failure from %s',
+    (page) => {
+      pageOn(page);
+      const text = diagnoseTransportFailure(foreign, new TypeError('Failed to fetch'));
+      expect(text).toContain(page);
+      expect(text).toContain('http://127.0.0.1:47831');
+      expect(text).toMatch(/browser console/i);
+      expect(text).not.toMatch(/is refused|refused this page|Open Mukai at/);
+    },
+  );
+
+  it('preserves DNS failures for cross-origin requests', () => {
+    pageOn('http://localhost:5173');
+    expect(diagnoseTransportFailure(foreign, { code: 'ENOTFOUND' })).toMatch(/does not resolve/);
+  });
+
+  it('does not infer an origin rejection from a bodyless 403', () => {
+    pageOn('http://localhost:5173');
+    expect(originBlockedMessage(foreign)).toMatch(/403/);
+    expect(originBlockedMessage(foreign)).not.toMatch(/refused this page|Open Mukai at/);
   });
 
   it('stays quiet about origins for a same-origin page', () => {

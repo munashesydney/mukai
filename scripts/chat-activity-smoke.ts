@@ -388,7 +388,7 @@ async function main() {
     await evaluate(
       `localStorage.setItem('mukai.active-conversation.scout',${JSON.stringify(conversation.id)});`,
     );
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
     assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
     assert(
@@ -793,7 +793,7 @@ async function main() {
     await click('#browser-panel button[aria-label="Close browser tab"]');
     await wait('!document.querySelector("#browser-panel")');
     await click('button[aria-label="Close chat activity"]');
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
@@ -804,7 +804,7 @@ async function main() {
       body: JSON.stringify({ mode: 'dark', theme: 'mukai' }),
     });
     assert(appearance.ok, await appearance.clone().text());
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(
       'document.querySelectorAll(".chat-activity-row").length===8 && document.documentElement.dataset.mode==="dark"',
     );
@@ -814,7 +814,7 @@ async function main() {
     await wait('getComputedStyle(document.querySelector(".conversation")).display!=="none"');
     await wait('!document.querySelector(".chat-activity-drawer")');
     // A saved desktop-open preference must not cover the chat on a narrow reload.
-    await window.reload();
+    await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait(`Boolean(document.querySelector('button[aria-label="Show chat activity"]'))`);
     assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
     await click('button[aria-label="Show chat activity"]');
@@ -984,7 +984,7 @@ async function main() {
         ).ok,
       );
       // Refresh the configured provider, then let the renderer send the live turn.
-      await window.reload();
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
       await wait(`Boolean(document.querySelector('button[aria-label="Send message"]'))`);
       await evaluate(
         `(() => { const input = document.querySelector('.ai-composer-area .composer > textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Create a live draft.'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,

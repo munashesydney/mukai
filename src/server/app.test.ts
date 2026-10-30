@@ -2931,6 +2931,60 @@ describe('Mukai bots and AI API', () => {
       ).status,
     ).toBe(403);
   });
+  it.each(['http://localhost:5173', 'http://127.0.0.1:5173', 'null'])(
+    'allows conditional desktop polls from %s and returns changed permissions',
+    async (origin) => {
+      const path = api.url + '/approvals?workspaceId=default';
+      const preflight = await fetch(path, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization,if-none-match',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+      const allowed = preflight.headers.get('Access-Control-Allow-Headers')!.toLowerCase();
+      expect(allowed.split(',').map((header) => header.trim())).toEqual(
+        expect.arrayContaining(['authorization', 'if-none-match']),
+      );
+      const headers = { Origin: origin, Authorization: `Bearer ${api.token}` };
+      const first = await fetch(path, { headers });
+      expect(first.status).toBe(200);
+      const initial = (await first.json()) as ApprovalState;
+      const etag = first.headers.get('ETag')!;
+      expect(etag).toBeTruthy();
+      expect(first.headers.get('Access-Control-Expose-Headers')).toContain('ETag');
+      const conditional = { ...headers, 'If-None-Match': etag };
+      for (let poll = 0; poll < 3; poll++) {
+        const response = await fetch(path, { headers: conditional });
+        expect(response.status).toBe(304);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+        expect(await response.text()).toBe('');
+      }
+      const mode = initial.mode === 'full-access' ? 'ask-for-approval' : 'full-access';
+      expect(
+        (await request('/approvals?workspaceId=default', 'PUT', { mode })).response.status,
+      ).toBe(200);
+      const changed = await fetch(path, { headers: conditional });
+      expect(changed.status).toBe(200);
+      expect(changed.headers.get('ETag')).not.toBe(etag);
+      expect(await changed.json()).toMatchObject({ mode });
+    },
+  );
+  it('rejects conditional polling preflights from untrusted pages', async () => {
+    const response = await fetch(api.url + '/approvals?workspaceId=default', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5273',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,if-none-match',
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
   it('encrypts credentials, masks DTOs, tests a provider, and retains keys on edit', async () => {
     const provider = await configure();
     expect(provider.hasKey).toBe(true);
