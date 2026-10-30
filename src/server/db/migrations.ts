@@ -451,6 +451,11 @@ export const migrations = [
     attachment_id TEXT NOT NULL UNIQUE REFERENCES attachments(id) ON DELETE CASCADE,
     position INTEGER NOT NULL,
     PRIMARY KEY(followup_id,position));`,
+  `CREATE TABLE capability_schedules (
+    capability_id TEXT PRIMARY KEY REFERENCES capabilities(id) ON DELETE CASCADE,
+    next_at INTEGER, last_runtime TEXT);`,
+  `CREATE INDEX capability_run_order ON capability_runs(capability_id);
+   CREATE INDEX capability_run_status_order ON capability_runs(capability_id,status);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

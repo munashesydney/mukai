@@ -5,6 +5,7 @@ import { privateSecret } from '../config';
 import type { EnvironmentVariable } from '../../shared/customCapabilities';
 import { environmentVariableName, missingEnvironmentError } from '../../shared/terminal';
 import { ApiError } from '../config';
+import { serializeDotEnv } from '../../shared/dotEnv';
 
 export const variableName = environmentVariableName;
 export class CapabilityEnvironment {
@@ -83,6 +84,17 @@ export class CapabilityEnvironment {
       configured: Boolean(this.resolve(workspaceId, [name])[name]),
       usedBy: definitions.filter((d) => d.requiredEnv.includes(name)).map((d) => d.name),
     }));
+  }
+  /** Explicit developer download only; ordinary discovery never returns values. */
+  export(workspaceId: string) {
+    return serializeDotEnv(
+      this.db
+        .all(
+          'SELECT name,value FROM capability_env WHERE workspace_id=? ORDER BY name',
+          workspaceId,
+        )
+        .map((row) => ({ name: String(row.name), value: this.decrypt(String(row.value)) })),
+    );
   }
   resolve(workspaceId: string, names: string[]) {
     const result: Record<string, string> = Object.create(null);

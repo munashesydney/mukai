@@ -20,8 +20,8 @@ export const capabilityInput = z.discriminatedUnion('operation', [
     timeoutMs: z.number().int().min(100).max(30000),
     data: z.object({
       exportName: z.string().min(1).max(100),
-      kind: z.enum(['tool', 'route']).optional(),
-      operation: z.enum(['validate', 'execute', 'handle', 'processJob']),
+      kind: z.enum(['tool', 'route', 'job']).optional(),
+      operation: z.enum(['validate', 'execute', 'handle', 'processJob', 'runJob']),
       env: z.record(z.string(), z.string()),
       workspaceId: z.string(),
       input: z.unknown().optional(),

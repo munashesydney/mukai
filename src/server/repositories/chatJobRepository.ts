@@ -8,6 +8,7 @@ export interface ChatCheckpoint {
   usage: ContextUsage;
   steps: number;
   emptyReplyRecoveries?: number;
+  providerToolCallRecoveries?: number;
   response?: {
     content: string;
     reasoning: string;

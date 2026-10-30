@@ -26,6 +26,7 @@ import type { DiagnosticService } from './diagnosticService';
 import { ChatGPTService } from './chatgptService';
 import { chatGPTError } from './chatgptTransport';
 import { PROVIDER_MAX_RETRIES } from './responsePolicy';
+import { providerToolCallFailure } from './providerToolCallRecovery';
 import {
   effectiveReasoning,
   reasoningDefaultLabel,
@@ -107,6 +108,11 @@ function transportErrorMessage(error: unknown): string | undefined {
 
 export function safeProviderError(error: unknown) {
   if (error instanceof ApiError) return error.message;
+  const toolCallFailure = providerToolCallFailure(error);
+  if (toolCallFailure)
+    return toolCallFailure === 'incomplete_tool_call'
+      ? 'The provider generated an incomplete tool call that Mukai could not execute. Completed work is saved; retry to continue.'
+      : 'The provider generated a malformed tool call that Mukai could not execute. Completed work is saved; retry to continue.';
   const detail = error as {
     code?: string;
     data?: { error?: { code?: string } };

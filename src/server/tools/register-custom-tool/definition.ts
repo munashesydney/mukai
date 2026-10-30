@@ -8,6 +8,8 @@ export const registerCustomToolDefinition = {
   title: 'Custom Tool Registration',
   summary: 'Register and manage callable tools from saved workspace modules.',
   description: registrationDescription('tool'),
-  inputSchema: registrationInput,
-  actions: [...registrationActions],
+  inputSchema: registrationInput.extend({
+    operation: registrationInput.shape.operation.exclude(['run_now']),
+  }),
+  actions: registrationActions.filter((action) => action !== 'run_now'),
 };

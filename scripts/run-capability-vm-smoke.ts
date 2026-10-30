@@ -46,6 +46,7 @@ async function main() {
     seedTestBot(api.store);
     api.store.run("UPDATE workspaces SET computer='qemu',folder=NULL WHERE id='default'");
     api.computers.guest = () => vm;
+    api.computers.runtimeId = () => vm.runtimeId();
     api.capabilities.setWake(async () => {});
     console.log('Registering a tool with a guest TypeScript dependency.');
     await write('math.ts', 'export function multiply(a:number,b:number){return a*b;}');
@@ -163,6 +164,71 @@ async function main() {
       signal,
     )) as { result: { content: string } };
     assert.equal(file.result.content, Buffer.from(raw).toString('hex'));
+    console.log('Registering and running a custom job through the upgraded guest bridge.');
+    api.capabilities.environment.save('default', [{ name: 'JOB_CHECK', value: 'job-smoke-value' }]);
+    await write(
+      'job.ts',
+      `import {appendFileSync} from 'node:fs'; import {join} from 'node:path';
+      export default {name:'guest_heartbeat',description:'Disposable job upgrade check',
+        triggers:[{type:'interval',intervalMs:1000},{type:'workspace_start'}],requiredEnv:['JOB_CHECK'],
+        run(event,context){
+          if(context.env.JOB_CHECK!=='job-smoke-value')throw new Error('Missing job environment');
+          if(context.workspacePath!=='/home/mukai/workspace')throw new Error('Missing guest workspacePath');
+          appendFileSync(join(context.workspacePath,'job-events.txt'),event.trigger+'\\n');
+          return {trigger:event.trigger,platform:process.platform,file:__filename};
+        }};`,
+    );
+    const job = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      {
+        operation: 'register',
+        modulePath: 'job.ts',
+      },
+      signal,
+    )) as CapabilityRegistration;
+    assert.equal(job.kind, 'job');
+    assert.equal(job.status, 'ready');
+    const manual = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      {
+        operation: 'run_now',
+        id: job.id,
+      },
+      signal,
+    )) as { result: { trigger: string; platform: string } };
+    assert.deepEqual(
+      { trigger: manual.result.trigger, platform: manual.result.platform },
+      { trigger: 'manual', platform: 'linux' },
+    );
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (
+        api.capabilities.detail(job.id, 'default').runs.filter((run) => run.status === 'complete')
+          .length >= 2
+      )
+        break;
+      await delay(100, undefined, { signal });
+    }
+    const jobLog = (await vm.request(
+      'files',
+      { action: 'read_file', path: 'job-events.txt' },
+      owner,
+      signal,
+    )) as { result: { content: string } };
+    assert.ok(
+      jobLog.result.content.includes('interval\n'),
+      'Expected an unattended interval execution.',
+    );
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'disable', id: job.id },
+      signal,
+    );
     console.log('Checking saved execution after workspace edits and a VM restart.');
     await write('math.ts', 'export function multiply(){return 999;}');
     await vm.stop();
@@ -174,8 +240,42 @@ async function main() {
     )) as { product: number; platform: string };
     assert.equal(restored.product, 15);
     assert.equal(restored.platform, 'linux');
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'enable', id: job.id },
+      signal,
+    );
+    // Enable during this runtime waits for the next VM start.
+    await vm.stop();
+    await vm.start();
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const log = (await vm.request(
+        'files',
+        { action: 'read_file', path: 'job-events.txt' },
+        owner,
+        signal,
+      )) as { result: { content: string } };
+      if (log.result.content.includes('workspace_start\n')) break;
+      await delay(100, undefined, { signal });
+    }
+    const afterStart = (await vm.request(
+      'files',
+      { action: 'read_file', path: 'job-events.txt' },
+      owner,
+      signal,
+    )) as { result: { content: string } };
+    assert.equal(afterStart.result.content.split('workspace_start\n').length - 1, 1);
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'job',
+      { operation: 'disable', id: job.id },
+      signal,
+    );
     console.log(
-      'Linux VM tool registration, execution, route ingress, durable helpers, and restart passed.',
+      'Linux VM tools/routes/jobs, unattended intervals, startup execution, environment, and restart passed.',
     );
   } finally {
     if (api) {

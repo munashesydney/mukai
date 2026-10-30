@@ -475,6 +475,15 @@ export function createRoutes({
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
       if (resource === 'environment') {
+        if (id === 'export' && !action && method === 'POST') {
+          const file = capabilities.environment.export(workspaceId);
+          response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          response.setHeader('Content-Disposition', 'attachment; filename="mukai-environment.env"');
+          response.setHeader('Cache-Control', 'no-store');
+          response.setHeader('Pragma', 'no-cache');
+          response.writeHead(200).end(file);
+          return;
+        }
         if (!id && method === 'GET')
           return sendRead(request, response, capabilities.environment.list(workspaceId));
         if (!id && method === 'PUT') {
@@ -497,7 +506,7 @@ export function createRoutes({
         if (!id && method === 'POST') {
           const { kind, ownerBotId, ...input } = z
             .object({
-              kind: z.enum(['tool', 'route']),
+              kind: z.enum(['tool', 'route', 'job']),
               ownerBotId: z.string().optional(),
               ...registrationInput.shape,
             })
@@ -536,6 +545,11 @@ export function createRoutes({
               }),
             );
           }
+          if (registration.kind === 'job')
+            return send(
+              response,
+              await capabilities.manage(workspaceId, null, 'job', { operation: 'run_now', id }),
+            );
           return send(response, await capabilities.invoke(id, input));
         }
       }

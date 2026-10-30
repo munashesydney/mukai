@@ -1,4 +1,6 @@
-import { FileCode2, Webhook, ChevronRight } from 'lucide-react';
+import { startPoll } from '../../services/poll';
+import { JobHealth } from './JobHealth';
+import { FileCode2, Webhook, ChevronRight, Clock } from 'lucide-react';
 import { Dropdown } from '../../components/ui/Dropdown';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
@@ -21,13 +23,13 @@ export function CustomCapabilities({
   workspaceId: string;
   query: string;
   onSelect: (id: string) => void;
-  section?: 'tool' | 'route';
+  section?: 'tool' | 'route' | 'job';
   vm?: boolean;
 }) {
   const [items, setItems] = useState<CapabilityRegistration[]>([]);
-  const sections = section ? [section] : (['tool', 'route'] as const);
+  const sections = section ? [section] : (['tool', 'route', 'job'] as const);
   const [registering, setRegistering] = useState(false);
-  const [kind, setKind] = useState<'tool' | 'route'>('tool'),
+  const [kind, setKind] = useState<'tool' | 'route' | 'job'>('tool'),
     [modulePath, setModulePath] = useState('');
   const [exportName, setExportName] = useState('default');
   const [permissionMode, setPermissionMode] = useState<CustomToolPermissionMode>('ask_bot');
@@ -36,7 +38,8 @@ export function CustomCapabilities({
     [loading, setLoading] = useState(true);
   const refresh = useCallback(async () => {
     const items = await capabilityService.list(workspaceId);
-    setItems(items);
+    setItems((current) => (JSON.stringify(current) === JSON.stringify(items) ? current : items));
+    return items;
   }, [workspaceId]);
   useEffect(() => {
     setError('');
@@ -45,6 +48,20 @@ export function CustomCapabilities({
       .catch((error) => setError(errorText(error)))
       .finally(() => setLoading(false));
   }, [refresh]);
+  useEffect(() => {
+    if (section !== 'job') return;
+    let previous = '';
+    const poll = startPoll(
+      async () => {
+        const next = JSON.stringify(await refresh());
+        const changed = next !== previous;
+        previous = next;
+        return changed;
+      },
+      { interval: 3000, maxInterval: 10000, immediate: false },
+    );
+    return () => poll.stop();
+  }, [refresh, section]);
   async function perform(action: () => Promise<unknown>) {
     setBusy(true);
     setError('');
@@ -72,7 +89,9 @@ export function CustomCapabilities({
       {sections.map((section) => (
         <section key={section} className="tool-detail-section">
           <div className="capability-heading">
-            <h2>{section === 'tool' ? 'Custom tools' : 'Routes'}</h2>
+            <h2>
+              {section === 'tool' ? 'Custom tools' : section === 'job' ? 'Custom jobs' : 'Routes'}
+            </h2>
             <button className="text-button" disabled={busy} onClick={() => void perform(refresh)}>
               Refresh
             </button>
@@ -90,12 +109,18 @@ export function CustomCapabilities({
                     onClick={() => onSelect(item.id)}
                   >
                     <div className="tool-family-icon">
-                      {item.kind === 'tool' ? <FileCode2 size={23} /> : <Webhook size={23} />}
+                      {item.kind === 'tool' ? (
+                        <FileCode2 size={23} />
+                      ) : item.kind === 'job' ? (
+                        <Clock size={23} />
+                      ) : (
+                        <Webhook size={23} />
+                      )}
                     </div>
                     <div className="tool-family-body">
                       <h2 className="tool-family-name">{item.definition.name}</h2>
                       <p>
-                        {item.kind === 'tool'
+                        {item.kind !== 'route'
                           ? item.definition.description
                           : item.definition.method + ' ' + item.definition.path}
                       </p>
@@ -106,6 +131,20 @@ export function CustomCapabilities({
                         {item.missingEnv.length ? ' · ' + item.missingEnv.join(', ') : ''}
                       </span>
                       {item.error && <p>{item.error}</p>}
+                      {item.kind === 'job' && <JobHealth health={item.health} compact />}
+                      {item.kind === 'job' && (
+                        <p>
+                          {item.definition.triggers
+                            ?.map((trigger) =>
+                              trigger.type === 'workspace_start'
+                                ? 'On workspace start'
+                                : trigger.type === 'once'
+                                  ? `Once at ${new Date(trigger.runAt).toLocaleString()}`
+                                  : `Every ${trigger.intervalMs / 1000}s`,
+                            )
+                            .join(' · ')}
+                        </p>
+                      )}
                       {item.kind === 'tool' && (
                         <p>
                           Permission:{' '}
@@ -124,7 +163,11 @@ export function CustomCapabilities({
           )}
           {!loading && !visible.some((item) => item.kind === section) && (
             <p className="ai-caption">
-              {section === 'tool' ? 'No custom tools yet.' : 'No routes yet.'}
+              {section === 'tool'
+                ? 'No custom tools yet.'
+                : section === 'job'
+                  ? 'No custom jobs yet.'
+                  : 'No routes yet.'}
             </p>
           )}
         </section>
@@ -167,10 +210,11 @@ export function CustomCapabilities({
                 <Dropdown
                   label="Module type"
                   value={kind}
-                  onChange={(value) => setKind(value as 'tool' | 'route')}
+                  onChange={(value) => setKind(value as 'tool' | 'route' | 'job')}
                   options={[
                     { value: 'tool', label: 'Custom tool' },
                     { value: 'route', label: 'Route' },
+                    { value: 'job', label: 'Custom job' },
                   ]}
                 />
               </label>

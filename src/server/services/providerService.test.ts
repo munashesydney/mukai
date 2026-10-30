@@ -3,6 +3,17 @@ import { ApiError } from '../config';
 import { safeProviderError } from './providerService';
 
 describe('Provider error messages', () => {
+  it.each(['invalid_tool_call', 'incomplete_tool_call'])(
+    'explains engine tool-call failures (%s) without exposing raw output',
+    (code) => {
+      const message = safeProviderError({ code, message: 'PRIVATE_MODEL_OUTPUT' });
+      expect(message).toContain(
+        code === 'invalid_tool_call' ? 'malformed tool call' : 'incomplete tool call',
+      );
+      expect(message).toContain('Completed work is saved');
+      expect(message).not.toMatch(/credentials|balance|PRIVATE_MODEL_OUTPUT/);
+    },
+  );
   it('explains media and request-size rejections without exposing request content', () => {
     expect(safeProviderError({ statusCode: 413 })).toContain('smaller or shorter');
     const message = safeProviderError({

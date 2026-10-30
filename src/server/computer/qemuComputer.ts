@@ -159,6 +159,12 @@ type Launcher = (
   options: SpawnOptionsWithoutStdio,
 ) => ChildProcessWithoutNullStreams;
 export class QemuComputer implements Computer {
+  private runtimeIdentity?: string;
+  runtimeId() {
+    return this.state.state === 'running' && !this.starting && !this.maintenance
+      ? this.runtimeIdentity
+      : undefined;
+  }
   private state: ComputerStatus = { kind: 'qemu', state: 'stopped' };
   private child?: ChildProcessWithoutNullStreams;
   private socket?: Socket;
@@ -964,11 +970,23 @@ export class QemuComputer implements Computer {
       ]);
       if (!this.child || !this.socket) throw new Error('VM stopped during startup.');
       this.state = { kind: 'qemu', state: 'running' };
+      this.runtimeIdentity = randomUUID();
       this.report('computer.ready', 'Workspace VM is ready.');
     } finally {
       if (timeout) clearTimeout(timeout);
       signal.removeEventListener('abort', abortBoot);
     }
+  }
+  requestRunning(
+    method: ComputerMethod,
+    input: unknown,
+    owner: RuntimeOwner,
+    signal: AbortSignal,
+    helper?: ComputerHelper,
+  ) {
+    if (this.starting || this.maintenance)
+      return Promise.reject(new Error('Workspace VM is starting or updating; retry when ready.'));
+    return this.exchange(method, input, owner, signal, helper);
   }
   async request(
     method: ComputerMethod,

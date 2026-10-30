@@ -14,6 +14,7 @@ import {
 } from './protocol';
 import { ApiError } from '../config';
 import { GuestDispatcher } from './guestDispatcher';
+import * as guestUpgrade from './upgradeGuest';
 import { QemuComputer, qemuArguments } from './qemuComputer';
 import { computerTools } from './tools';
 import { DiagnosticService } from '../services/diagnosticService';
@@ -297,6 +298,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     health = false,
     loseFirstReconnectProbe = false,
     shutdownDelay = 0,
+    upgrade?: { bundleDir: string; revision: number },
   ) {
     const image = join(directory, 'base.qcow2');
     const script = join(directory, 'guest.cjs');
@@ -324,7 +326,7 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       loseProbe = ${loseFirstReconnectProbe} && connections > 1;
       verified = !loseProbe;
       disconnected = false;
-      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token,revision:health?${GUEST_REVISION}:1})+'\\n'), ${delay}));
+      socket = net.connect(port, '127.0.0.1', () => setTimeout(() => socket.write(JSON.stringify({hello:1,token,revision:fs.existsSync(tokenPath+'.revision')?Number(fs.readFileSync(tokenPath+'.revision','utf8')):${upgrade?.revision ?? (health ? GUEST_REVISION : 1)}})+'\\n'), ${delay}));
       let buffer = '';
       socket.on('data', chunk => { buffer += chunk; let end;
         while((end = buffer.indexOf('\\n')) !== -1) {
@@ -375,12 +377,41 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
       join(directory, 'vm'),
       { binary: process.execPath, image, accelerator: 'tcg', firmware },
       launch,
-      undefined,
+      upgrade?.bundleDir,
       diagnostics,
     );
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it.each([18, 19])(
+    'upgrades revision %i before exposing the workspace-path runtime and skips repeat upgrades',
+    async (revision) => {
+      // A copied guest already reporting 18 must not be mistaken for the new job-capable bundle.
+      expect(GUEST_REVISION).toBeGreaterThan(19);
+      const { vm, launch } = await fixture(false, 0, undefined, true, false, 0, {
+        bundleDir: join(directory, 'bundle'),
+        revision,
+      });
+      const upgrade = vi.spyOn(guestUpgrade, 'upgradeGuest').mockImplementation(async () => {
+        expect(vm.runtimeId()).toBeUndefined();
+        await expect(vm.requestRunning('capability', {}, owner, signal())).rejects.toThrow(
+          'starting or updating',
+        );
+        await writeFile(join(directory, 'vm', 'boot-token.revision'), String(GUEST_REVISION));
+      });
+      try {
+        await vm.start();
+        expect(upgrade).toHaveBeenCalledTimes(1);
+        expect(launch).toHaveBeenCalledTimes(2);
+        expect(vm.runtimeId()).toEqual(expect.any(String));
+        await vm.start();
+        expect(upgrade).toHaveBeenCalledTimes(1);
+        expect(launch).toHaveBeenCalledTimes(2);
+      } finally {
+        upgrade.mockRestore();
+      }
+    },
+  );
   it('allows a delayed software-emulated guest beyond the hardware boot and connection deadlines', async () => {
     const schedule = globalThis.setTimeout;
     // Compress the old hardware deadlines while keeping the guest's real handshake delayed.

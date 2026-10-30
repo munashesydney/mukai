@@ -30,21 +30,21 @@ console.log = console.info = console.warn = console.error = console.debug = () =
   const definition = exports[workerData.exportName];
   if (!definition || typeof definition !== 'object') throw new Error('Export must be a capability definition object.');
   if (workerData.operation === 'validate') {
-    const handler = workerData.kind === 'tool' ? 'execute' : 'handle';
+    const handler = workerData.kind === 'tool' ? 'execute' : workerData.kind === 'job' ? 'run' : 'handle';
     if (typeof definition[handler] !== 'function') throw new Error('Missing ' + handler + ' handler.');
-    const {name, description, inputSchema, requiredEnv = [], timeoutMs = 15000, method, path, auth} = definition;
-    parentPort.postMessage({type:'result', value:serializable({name,description,inputSchema,requiredEnv,timeoutMs,method,path,auth,hasJobHandler:typeof definition.processJob === 'function'})});
+    const {name, description, inputSchema, requiredEnv = [], timeoutMs = 15000, method, path, auth, triggers} = definition;
+    parentPort.postMessage({type:'result', value:serializable({name,description,inputSchema,requiredEnv,timeoutMs,method,path,auth,triggers,hasJobHandler:typeof definition.processJob === 'function'})});
     return;
   }
   const context = {
-    env: workerData.env, workspaceId: workerData.workspaceId, signal: controller.signal,
+    env: workerData.env, workspaceId: workerData.workspaceId, workspacePath: workerData.workspacePath, signal: controller.signal,
     enqueue: (provider,eventId,payload) => rpc('enqueue',[provider,eventId,serializable(payload)]),
     wakeBot: (message, options) => rpc('wakeBot',[message, options]),
     callRoute: (routeId, request) => rpc('callRoute',[routeId, serializable(request || {})]),
   };
   const input = workerData.input;
   if (workerData.operation === 'handle') input.rawBody = Buffer.from(input.rawBody);
-  const handler = definition[workerData.operation];
+  const handler = definition[workerData.operation === 'runJob' ? 'run' : workerData.operation];
   if (typeof handler !== 'function') throw new Error('Missing ' + workerData.operation + ' handler.');
   const value = await handler(input, context);
   parentPort.postMessage({type:'result',value:serializable(value)});

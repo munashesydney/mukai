@@ -1,5 +1,5 @@
 import { SettingsHeading } from './SettingsHeading';
-import { KeyRound, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, Trash2, Download } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
@@ -8,6 +8,7 @@ import { parseDotEnv } from '../../../../shared/dotEnv';
 import { errorText } from '../../utils/errors';
 
 export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
+  const [developerView, setDeveloperView] = useState(false);
   const [editor, setEditor] = useState<'variable' | 'import' | null>(null);
   const [variables, setVariables] = useState<EnvironmentVariable[]>([]);
   const [name, setName] = useState(''),
@@ -26,6 +27,10 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
     setValue('');
     setBlock('');
     setPreview([]);
+    setDeveloperView(false);
+    setVariables([]);
+    setError('');
+    setNotice('');
     void refresh().catch((error) => setError(errorText(error)));
   }, [refresh]);
   async function perform(action: () => Promise<unknown>) {
@@ -43,12 +48,33 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
       setBusy(false);
     }
   }
+  async function exportEnvironment() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const file = await capabilityService.exportEnvironment(workspaceId);
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'mukai-environment.env';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('Environment export downloaded.');
+    } catch (error) {
+      setError(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <section className="provider-panel capability-panel">
       <SettingsHeading
         eyebrow="WORKSPACE CONFIGURATION"
         title="Environment Variables"
-        description="Private configuration for this workspace’s custom tools, routes, and terminal runs. Values are encrypted and supplied only when requested."
+        description="Private configuration for this workspace’s custom tools, routes, jobs, and terminal runs. Values are encrypted and supplied only when requested."
         actions={
           <>
             <button
@@ -75,6 +101,27 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           </>
         }
       />
+      <details
+        className="environment-developer-view"
+        open={developerView}
+        onToggle={(event) => setDeveloperView(event.currentTarget.open)}
+      >
+        <summary>Developer view</summary>
+        <div className="ai-form">
+          <p className="ai-caption">
+            Export the saved variables for this workspace. The downloaded file contains plaintext
+            secrets; keep it private. Missing required values are omitted.
+          </p>
+          <button
+            type="button"
+            className="button"
+            disabled={busy || !variables.length}
+            onClick={() => void exportEnvironment()}
+          >
+            <Download size={15} aria-hidden="true" /> {busy ? 'Exporting…' : 'Export .env'}
+          </button>
+        </div>
+      </details>
       {error && (
         <div className="ai-alert" role="alert">
           {error}

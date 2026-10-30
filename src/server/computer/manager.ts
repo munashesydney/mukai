@@ -49,6 +49,9 @@ export class ComputerManager {
     computer.configureResources(workspace.computerResources || DEFAULT_VM_RESOURCES);
     return computer;
   }
+  runtimeId(workspaceId: string) {
+    return this.computers.get(workspaceId)?.runtimeId();
+  }
   status(workspace: Workspace): ComputerStatus {
     if (workspace.computer !== 'qemu') return { kind: 'local', state: 'local' };
     const computer = this.computers.get(workspace.id);

@@ -699,6 +699,41 @@
   color: var(--ink);
   font-size: 13px;
 }
+.ask-composer .ask-request-card {
+  display: flex;
+  flex-direction: column;
+  max-height: min(60dvh, 560px);
+  min-height: 0;
+  overflow: hidden;
+}
+.ask-composer .ask-request-header {
+  flex-shrink: 0;
+}
+.ask-composer .ask-request-card > form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.ask-composer .ask-request-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.ask-composer .ask-request-content {
+  max-height: none;
+  overflow: visible;
+}
+.ask-composer .ask-request-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding-top: 14px;
+  background: var(--surface-raised);
+}
 .ask-request-header,
 .ask-request-controls,
 .ask-request-footer,

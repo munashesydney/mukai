@@ -1,5 +1,7 @@
+import { startPoll } from '../../services/poll';
+import { JobHealth } from './JobHealth';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, FileCode2, Webhook } from 'lucide-react';
+import { ArrowLeft, FileCode2, Webhook, Clock } from 'lucide-react';
 import { capabilityService, type CapabilityDetail } from '../../services/capabilityService';
 import { errorText } from '../../utils/errors';
 import type { Bot } from '../../../../shared/ai';
@@ -30,7 +32,7 @@ export function CustomCapabilityPage({
     [testInput, setTestInput] = useState('{}');
   const refresh = useCallback(async () => {
     const next = await capabilityService.detail(workspaceId, id);
-    setDetail(next);
+    setDetail((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
     return next;
   }, [workspaceId, id]);
   useEffect(() => {
@@ -51,6 +53,21 @@ export function CustomCapabilityPage({
       )
       .catch((e) => setError(errorText(e)));
   }, [refresh]);
+  const isJob = detail?.registration.kind === 'job';
+  useEffect(() => {
+    if (!isJob) return;
+    let previous = '';
+    const poll = startPoll(
+      async () => {
+        const next = JSON.stringify(await refresh());
+        const changed = next !== previous;
+        previous = next;
+        return changed;
+      },
+      { interval: 3000, maxInterval: 10000, immediate: false },
+    );
+    return () => poll.stop();
+  }, [refresh, isJob]);
   async function perform(action: () => Promise<unknown>) {
     setBusy(true);
     setError('');
@@ -83,6 +100,8 @@ export function CustomCapabilityPage({
             <div className="tool-family-icon">
               {detail.registration.kind === 'tool' ? (
                 <FileCode2 size={23} />
+              ) : detail.registration.kind === 'job' ? (
+                <Clock size={23} />
               ) : (
                 <Webhook size={23} />
               )}
@@ -139,7 +158,12 @@ export function CustomCapabilityPage({
             </button>
           </div>
           <nav className="capability-tabs" aria-label="Custom tool sections">
-            {['Overview', 'Code', 'Test', 'Runs'].map((name) => (
+            {[
+              'Overview',
+              'Code',
+              detail.registration.kind === 'job' ? 'Run now' : 'Test',
+              'Runs',
+            ].map((name) => (
               <button
                 key={name}
                 className={`button ${tab === name ? 'button--primary' : ''}`}
@@ -193,15 +217,43 @@ export function CustomCapabilityPage({
                 </span>
               </label>
             )}
-            <ToolAssignments
-              workspaceId={workspaceId}
-              bots={bots}
-              toolId={'custom:' + id}
-              shared={detail.registration.kind === 'route'}
-            />
+            {detail.registration.kind !== 'job' && (
+              <ToolAssignments
+                workspaceId={workspaceId}
+                bots={bots}
+                toolId={'custom:' + id}
+                shared={detail.registration.kind !== 'tool'}
+              />
+            )}
+            {detail.registration.kind === 'job' && (
+              <div className="ai-form">
+                <JobHealth health={detail.registration.health} />
+                <p>
+                  {detail.registration.definition.triggers
+                    ?.map((trigger) =>
+                      trigger.type === 'workspace_start'
+                        ? 'On workspace start'
+                        : trigger.type === 'once'
+                          ? `Once at ${new Date(trigger.runAt).toLocaleString()}`
+                          : `Every ${trigger.intervalMs / 1000} seconds`,
+                    )
+                    .join(' · ')}
+                </p>
+                <p className="ai-caption">
+                  {detail.registration.enabled && detail.registration.nextRunAt
+                    ? `Next run due: ${new Date(detail.registration.nextRunAt).toLocaleString()}`
+                    : 'No timed run pending.'}{' '}
+                  Runs require an available workspace runtime. Missed intervals run once when
+                  available.
+                </p>
+              </div>
+            )}
             {detail.registration.kind === 'route' && (
               <div className="capability-url">
                 <code>{detail.registration.url}</code>
+                {detail.registration.urlNote && (
+                  <p className="ai-caption">{detail.registration.urlNote}</p>
+                )}
                 <button
                   className="button"
                   onClick={() =>
@@ -257,22 +309,29 @@ export function CustomCapabilityPage({
               Validate & update from file
             </button>
           </section>
-          <section hidden={tab !== 'Test'} className="tool-detail-section ai-form">
-            <h2>Test handler</h2>
+          <section
+            hidden={tab !== 'Test' && tab !== 'Run now'}
+            className="tool-detail-section ai-form"
+          >
+            <h2>{detail.registration.kind === 'job' ? 'Run job now' : 'Test handler'}</h2>
             <p className="ai-caption">
               Tests execute real code and may cause external side effects.
               {detail.registration.kind === 'route'
                 ? ' Supply headers and the exact rawBody string; the handler receives its UTF-8 bytes.'
-                : ' Supply an input object matching the tool schema.'}
+                : detail.registration.kind === 'job'
+                  ? ' Runs the registered job once with a manual trigger.'
+                  : ' Supply an input object matching the tool schema.'}
             </p>
-            <label>
-              Test input (JSON)
-              <textarea
-                value={testInput}
-                onChange={(event) => setTestInput(event.target.value)}
-                spellCheck={false}
-              />
-            </label>
+            {detail.registration.kind !== 'job' && (
+              <label>
+                Test input (JSON)
+                <textarea
+                  value={testInput}
+                  onChange={(event) => setTestInput(event.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+            )}
             <button
               className="button button--primary"
               disabled={busy || detail.registration.status !== 'ready'}
@@ -288,7 +347,7 @@ export function CustomCapabilityPage({
                 })
               }
             >
-              Run test
+              {detail.registration.kind === 'job' ? 'Run now' : 'Run test'}
             </button>
             {output && <pre aria-label="Test result">{output}</pre>}
           </section>

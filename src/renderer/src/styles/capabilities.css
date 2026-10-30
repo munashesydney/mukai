@@ -124,3 +124,32 @@
 .capability-panel > .ai-form-actions {
   margin: 20px 0;
 }
+
+.job-health {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.job-health.has-failures {
+  padding: 8px 12px;
+  border-left: 3px solid var(--danger, #b34444);
+  background: var(--surface-muted);
+  border-radius: 4px;
+}
+.job-health-error {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.environment-developer-view {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.environment-developer-view summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.environment-developer-view .ai-form {
+  margin-top: 12px;
+  justify-items: start;
+}

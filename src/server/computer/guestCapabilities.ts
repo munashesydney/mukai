@@ -42,7 +42,7 @@ export class GuestCapabilities {
             }
           : data.input;
       const value = await this.runtime.run(
-        { ...data, input: args, file },
+        { ...data, input: args, file, workspacePath: this.folder },
         input.timeoutMs,
         signal,
         helper,

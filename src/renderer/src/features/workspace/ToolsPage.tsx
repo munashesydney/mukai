@@ -135,7 +135,7 @@ export function ToolsPage({
   folder: string | null;
   onConnectFolder: () => void;
   selectedToolId: string | null;
-  capabilitySection?: 'tool' | 'route';
+  capabilitySection?: 'tool' | 'route' | 'job';
   onSelectTool: (toolId: string | null) => void;
   vm?: boolean;
 }) {
@@ -218,7 +218,9 @@ export function ToolsPage({
           ? 'Custom tools.'
           : capabilitySection === 'route'
             ? 'Routes.'
-            : 'Tools for your bots.'}
+            : capabilitySection === 'job'
+              ? 'Custom jobs.'
+              : 'Tools for your bots.'}
       </h1>
       <p className="tools-intro">
         {capabilitySection
@@ -231,7 +233,9 @@ export function ToolsPage({
             ? 'Custom tools'
             : capabilitySection === 'route'
               ? 'Routes'
-              : 'Workspace tools'}
+              : capabilitySection === 'job'
+                ? 'Custom jobs'
+                : 'Workspace tools'}
         </span>
         <label>
           <Search size={16} />

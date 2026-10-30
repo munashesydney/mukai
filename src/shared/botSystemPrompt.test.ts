@@ -59,6 +59,8 @@ it('teaches Mukai capabilities to every role even with no tools assigned', () =>
         'Skills are reusable workflows',
         'Memory is user-controlled',
         'Custom tools and hosted routes',
+        'custom jobs run scheduled code',
+        'Registration is not execution: verify history and effects',
         'Shared spaces',
         'model-dependent image/audio/video inspection',
         'Missing access is not proof a feature does not exist',
