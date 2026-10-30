@@ -113,6 +113,32 @@ describe('production browser server', () => {
       ).status,
     ).toBe(401);
   });
+  it('allows native renderers with the local token while keeping cookies bound to browser origins', async () => {
+    for (const origin of ['null', 'file://', 'http://127.0.0.1:5173']) {
+      const preflight = await fetch(api.url + '/api/workspaces', {
+        method: 'OPTIONS',
+        headers: { Origin: origin, 'Access-Control-Request-Headers': 'authorization' },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
+      const response = await fetch(api.url + '/api/workspaces', {
+        headers: { Origin: origin, Authorization: `Bearer ${api.token}` },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+      expect(
+        (await fetch(api.url + '/api/workspaces', { headers: { Origin: origin, Cookie: cookie } }))
+          .status,
+      ).toBe(403);
+    }
+    expect(
+      (
+        await fetch(api.url + '/api/workspaces', {
+          headers: { Origin: 'https://evil.example', Authorization: `Bearer ${api.token}` },
+        })
+      ).status,
+    ).toBe(403);
+  });
   it('authenticates update controls, validates preferences and confirms restart after the response', async () => {
     for (const [path, method, body] of [
       ['/api/settings/updates', 'GET', undefined],
@@ -164,7 +190,7 @@ describe('production browser server', () => {
     const state = {
       pid: process.pid,
       instanceId: api.browserSession!.instanceId,
-      version: 'test',
+      version: '0.1.0-test',
       url: api.url,
       connectionUrl: `${api.url}/#mukai-connect=${api.browserSession!.connectToken}`,
     };

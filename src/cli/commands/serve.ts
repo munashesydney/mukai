@@ -4,7 +4,11 @@ import { spawn } from 'node:child_process';
 import { startApiServer } from '../../server/app';
 import type { CliArguments } from '../arguments';
 import { runtimePaths, version } from '../runtime';
-import { removeServerState, writeServerState } from '../serverState';
+import {
+  discoverBackend,
+  startOrConnectBackend,
+  type BackendConnection,
+} from '../../server/backendConnection';
 import { findInstallation } from '../installation';
 import { CliUpdater } from '../updater';
 
@@ -28,6 +32,23 @@ export async function openBrowser(url: string) {
 }
 
 export async function serve(options: CliArguments) {
+  const reuse = async ({ state }: BackendConnection) => {
+    const actualPort = Number(new URL(state.url).port);
+    console.log(
+      `Mukai ${state.version} is already running for this data directory.\nLocal address: ${state.url}\nConnect: ${state.connectionUrl}\nData: ${options.dataDir}\nReusing the existing backend; this command does not own or stop it.`,
+    );
+    if (options.port !== actualPort)
+      console.log(
+        `Requested port ${options.port}; the existing backend stays on port ${actualPort}. Use a separate --data-dir to start another backend.`,
+      );
+    if (options.open)
+      await openBrowser(state.connectionUrl).catch(() =>
+        console.error('Could not open your browser. Open the connection link above.'),
+      );
+    return { reused: true as const, state, connectionUrl: state.connectionUrl };
+  };
+  const existing = await discoverBackend(options.dataDir, version());
+  if (existing) return reuse(existing);
   const paths = runtimePaths();
   if (!existsSync(join(paths.webDir, 'index.html')))
     throw new Error(
@@ -58,13 +79,16 @@ export async function serve(options: CliArguments) {
       await stop();
     },
   });
-  const api = await startApiServer(options.port, {
-    ...paths,
-    dataDir: options.dataDir,
-    version: version(),
-    updates: updater,
-  });
-  const session = api.browserSession!;
+  const result = await startOrConnectBackend(options.dataDir, version(), () =>
+    startApiServer(options.port, {
+      ...paths,
+      dataDir: options.dataDir,
+      version: version(),
+      updates: updater,
+    }),
+  );
+  if (!result.owned) return reuse(result.connection);
+  const api = result.api;
   let stopping: Promise<void> | undefined;
   const stop = () =>
     (stopping ??= (async () => {
@@ -80,7 +104,6 @@ export async function serve(options: CliArguments) {
       await api.shutdown();
       api.server.closeAllConnections();
       await closed;
-      await removeServerState(options.dataDir, session.instanceId);
     })());
   const onSignal = () => {
     void stop().catch((error) => {
@@ -105,21 +128,7 @@ export async function serve(options: CliArguments) {
     process.once('disconnect', onSignal);
   }
   updater.initialize(api.settings.automaticUpdates());
-  const connectionUrl = api.ownerAuth!.configured()
-    ? `${api.url}/`
-    : `${api.url}/#mukai-setup=${api.ownerAuth!.setupCode}`;
-  try {
-    await writeServerState(options.dataDir, {
-      pid: process.pid,
-      instanceId: session.instanceId,
-      version: version(),
-      url: api.url,
-      connectionUrl,
-    });
-  } catch (error) {
-    await stop();
-    throw error;
-  }
+  const connectionUrl = api.state!.connectionUrl;
   if (process.connected) process.send?.({ type: 'mukai:ready' });
   console.log(
     `Mukai ${version()}\nLocal address: ${api.url}\nConnect: ${connectionUrl}\nData: ${options.dataDir}\nPress Ctrl+C to stop.`,
@@ -132,5 +141,5 @@ export async function serve(options: CliArguments) {
     await openBrowser(connectionUrl).catch(() =>
       console.error('Could not open your browser. Open the connection link above.'),
     );
-  return { ...api, connectionUrl, stop };
+  return { ...api, reused: false as const, connectionUrl, stop };
 }

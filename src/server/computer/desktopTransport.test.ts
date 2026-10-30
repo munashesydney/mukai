@@ -150,6 +150,28 @@ it('requires browser authentication and revokes live desktop access when a sessi
   authenticated = false;
   await closed;
 }, 10000);
+it('accepts native-issued tickets without browser cookies and keeps browser-issued tickets origin-bound', async () => {
+  transport.shutdown();
+  server.removeAllListeners('upgrade');
+  transport = new DesktopTransport(true, () => false);
+  transport.attach(server);
+  const browser = await transport.session(computer);
+  await denied('/api' + browser.path, 'file://');
+  for (const origin of ['file://', 'null', 'http://127.0.0.1:5173']) {
+    const native = await transport.session(computer, true);
+    await denied('/api' + native.path, 'https://untrusted.example');
+    const viewer = new WebSocket(url + '/api' + native.path, { origin });
+    try {
+      await new Promise<void>((done, reject) => {
+        viewer.once('open', done);
+        viewer.once('error', reject);
+      });
+      await denied('/api' + native.path, origin);
+    } finally {
+      viewer.terminate();
+    }
+  }
+});
 it('preserves the startup error when the guest has no usable desktop endpoint', async () => {
   vi.spyOn(computer, 'start').mockRejectedValue(new Error('Linux guest crashed (kernel panic)'));
   vi.spyOn(computer, 'desktopConnection').mockImplementation(() => {
