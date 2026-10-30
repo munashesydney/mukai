@@ -3047,6 +3047,8 @@ describe('Mukai bots and AI API', () => {
     expect(writerSystem).not.toMatch(/Current UTC time:|Runtime UTC now:/);
     expect(String(calls[1].messages.at(-1)?.content)).toContain('Runtime UTC now: ');
     expect(writerSystem).toContain('You are a workspace sub-bot.');
+    expect(writerSystem).not.toContain("You are the workspace's main bot");
+    expect(String(calls[0].messages[0].content)).toContain("You are the workspace's main bot");
     expect((await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data).toHaveLength(2);
     await api.shutdown();
     await close(api.server);
