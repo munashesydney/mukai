@@ -35,9 +35,10 @@ export class CapabilityRedactor {
         [...variants]
           .sort((a, b) => b.length - a.length)
           .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-          .join('|'),
+          .join('|') + '|mukai_routes_[A-Za-z0-9_-]{43}',
         'g',
       );
+    else this.pattern = /mukai_routes_[A-Za-z0-9_-]{43}/g;
   }
   text(value: string) {
     let count = 0;

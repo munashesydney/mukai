@@ -48,7 +48,7 @@
     "test:response-activity-ui": "node --import tsx scripts/response-activity-smoke.ts",
     "test:terminal-ui": "npm run build:web && tsx scripts/terminal-smoke.ts",
     "test:steering-ui": "tsx scripts/steering-smoke.ts",
-    "build": "npm run typecheck && npm run build:computer-use && npm run build:guest && npm run build:web && electron-vite build && tsc -p tsconfig.server.json",
+    "build": "npm run typecheck && npm run build:computer-use && npm run build:guest && npm run build:web && electron-vite build && npm run build:server",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
     "start:server": "node dist/server/src/server/index.js",
@@ -62,7 +62,8 @@
     "test:skills-ui": "tsx scripts/run-skills-smoke.ts",
     "test:bots-ui": "tsx scripts/run-bot-smoke.ts",
     "test:telegram-ui": "tsx scripts/run-telegram-smoke.ts",
-    "test:workspace-ui": "tsx scripts/run-bot-smoke.ts --workspace-only"
+    "test:workspace-ui": "tsx scripts/run-bot-smoke.ts --workspace-only",
+    "build:server": "node --import tsx scripts/build-server.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.71",
@@ -139,6 +140,7 @@
     },
     "files": [
       "out/**/*",
+      "src/skills/**/*",
       "package.json"
     ],
     "asar": true,

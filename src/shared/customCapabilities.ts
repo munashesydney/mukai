@@ -81,7 +81,7 @@ export interface CustomRouteModule {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
   path: string;
   /** handler: verify the provider signature before work/enqueue; public: explicitly unauthenticated. */
-  auth: 'mukai' | 'handler' | 'public';
+  auth: 'mukai' | 'session' | 'handler' | 'public';
   requiredEnv?: string[];
   timeoutMs?: number;
   handle(

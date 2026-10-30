@@ -26,6 +26,10 @@ function serializable(value) {
 // Never forward module stdout/stderr to ordinary application logs.
 console.log = console.info = console.warn = console.error = console.debug = () => {};
 (async () => {
+  if (workerData.operation !== 'validate') {
+    for (const name of ['MUKAI_ROUTES_URL', 'MUKAI_ROUTES_TOKEN'])
+      if (workerData.env[name]) process.env[name] = workerData.env[name];
+  }
   const exports = require(workerData.file);
   const definition = exports[workerData.exportName];
   if (!definition || typeof definition !== 'object') throw new Error('Export must be a capability definition object.');

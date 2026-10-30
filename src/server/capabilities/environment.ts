@@ -14,6 +14,15 @@ export class CapabilityEnvironment {
   // Keep old values redacted too, including after rotation/deletion.
   private secrets = new Set<string>();
   private retired = new Set<string>();
+  private runtimeSecrets = new Set<string>();
+  trackRuntimeSecret(value: string) {
+    this.runtimeSecrets.add(value);
+    this.refreshSecrets();
+    return () => {
+      this.runtimeSecrets.delete(value);
+      this.refreshSecrets();
+    };
+  }
   private redactor = new CapabilityRedactor(new Set());
   constructor(
     private db: Database,
@@ -43,7 +52,7 @@ export class CapabilityEnvironment {
     return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
   }
   private refreshSecrets() {
-    this.secrets = new Set(this.retired);
+    this.secrets = new Set([...this.retired, ...this.runtimeSecrets]);
     for (const row of this.db.all('SELECT value FROM capability_env WHERE secret=1')) {
       const value = this.decrypt(String(row.value), false);
       if (value) {

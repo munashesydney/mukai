@@ -457,6 +457,12 @@ export const migrations = [
   `CREATE INDEX capability_run_order ON capability_runs(capability_id);
    CREATE INDEX capability_run_status_order ON capability_runs(capability_id,status);`,
   `ALTER TABLE capability_env ADD COLUMN secret INTEGER NOT NULL DEFAULT 1 CHECK(secret IN (0,1));`,
+  `CREATE TABLE default_skill_installs (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    skill_id TEXT REFERENCES skills(id) ON DELETE SET NULL,
+    version TEXT NOT NULL,
+    PRIMARY KEY(workspace_id,name));`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

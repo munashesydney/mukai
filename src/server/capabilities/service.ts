@@ -1,3 +1,6 @@
+import { RouteCredentials } from './routeCredentials';
+import { customRouteReturnTo } from '../../shared/routeAccess';
+import { trustedLocalRequest } from '../web/origin';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
@@ -114,12 +117,24 @@ const definitionSchema = z.object({
   timeoutMs: z.number().int().min(100).max(30000),
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']).optional(),
   path: z.string().max(512).optional(),
-  auth: z.enum(['mukai', 'handler', 'public']).optional(),
+  auth: z.enum(['mukai', 'session', 'handler', 'public']).optional(),
   hasJobHandler: z.boolean(),
 });
 
 export class CapabilityService {
   readonly environment: CapabilityEnvironment;
+  readonly routeCredentials: RouteCredentials;
+  private browserAuthenticated?: (request: IncomingMessage) => boolean;
+  setBrowserAuthentication(check: (request: IncomingMessage) => boolean) {
+    this.browserAuthenticated = check;
+  }
+  routeEnvironment(workspaceId: string, lifetimeMs: number, active?: () => Promise<boolean>) {
+    const workspace = this.workspaces.require(workspaceId);
+    if (!this.localBaseUrl) throw new ApiError(503, 'Mukai route listener is not ready.');
+    const url = new URL(this.localBaseUrl);
+    if (workspace.computer === 'qemu') url.hostname = '10.0.2.2';
+    return this.routeCredentials.issue(workspaceId, url.origin, lifetimeMs, active);
+  }
   private ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
   private runtime = new CapabilityWorkers((error) => this.error(error));
   private readonly localRuntime = randomUUID();
@@ -140,6 +155,7 @@ export class CapabilityService {
   private drainingWorkspace?: string;
   async stopWorkspace(id: string) {
     this.deletingWorkspaces.add(id);
+    this.routeCredentials.stopWorkspace(id);
     const tasks = [...this.workspaceTasks].filter(([, value]) => value.workspaceId === id);
     for (const [, value] of tasks) value.controller.abort();
     await Promise.allSettled(tasks.map(([task]) => task));
@@ -217,6 +233,9 @@ export class CapabilityService {
       (id, event) => this.invoke(id, event, 'runJob'),
     );
     this.environment = new CapabilityEnvironment(db, registerSecret);
+    this.routeCredentials = new RouteCredentials((token) =>
+      this.environment.trackRuntimeSecret(token),
+    );
     db.run(
       "UPDATE capability_runs SET status='interrupted',error='The server restarted during execution.' WHERE status='running'",
     );
@@ -246,6 +265,7 @@ export class CapabilityService {
     this.timer.unref();
   }
   async shutdown() {
+    this.routeCredentials.close();
     this.closing = true;
     if (this.timer) clearInterval(this.timer);
     for (const { controller } of this.workspaceTasks.values()) controller.abort();
@@ -303,7 +323,7 @@ export class CapabilityService {
       ...(definition.path
         ? {
             urlNote:
-              'This URL is for the host/browser. VM code should use context.callRoute(routeId, request); guest 127.0.0.1 addresses the guest itself.',
+              'This URL is for the host/browser. Terminal HTTP uses the automatically supplied MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN; custom modules should prefer context.callRoute(routeId, request).',
             url:
               (this.routeSettings().publicBaseUrl || this.localBaseUrl).replace(/\/$/, '') +
               definition.path,
@@ -802,13 +822,15 @@ export class CapabilityService {
       registration.kind === 'tool' ? 'execute' : registration.kind === 'job' ? 'runJob' : 'handle';
     // The controller has already authenticated HTTP or internal Mukai calls.
     // Never forward its management credential to custom code, including in a VM.
-    if (operation === 'handle' && registration.definition.auth === 'mukai') {
+    if (operation === 'handle' && ['mukai', 'session'].includes(registration.definition.auth!)) {
       const request = input as { headers?: Record<string, unknown> };
       input = {
         ...request,
         headers: Object.fromEntries(
           Object.entries(request.headers || {}).filter(
-            ([name]) => name.toLowerCase() !== 'authorization',
+            ([name]) =>
+              name.toLowerCase() !== 'authorization' &&
+              (registration.definition.auth !== 'session' || name.toLowerCase() !== 'cookie'),
           ),
         ),
       };
@@ -846,14 +868,18 @@ export class CapabilityService {
       selectedVersion,
       new Date().toISOString(),
     );
+    let routeLease: ReturnType<CapabilityService['routeEnvironment']> | undefined;
     try {
+      routeLease = this.localBaseUrl
+        ? this.routeEnvironment(registration.workspaceId, definition.timeoutMs + 1000)
+        : undefined;
       const value = await this.worker(
         {
           file: this.file(selectedVersion),
           exportName: manifest.exportName,
           operation,
           kind: registration.kind,
-          env,
+          env: { ...env, ...routeLease?.env },
           input,
           workspaceId: registration.workspaceId,
         },
@@ -978,6 +1004,8 @@ export class CapabilityService {
         runId,
       );
       throw new ApiError(error instanceof ApiError ? error.status : 500, this.error(error));
+    } finally {
+      routeLease?.release();
     }
   }
   private async drain() {
@@ -1068,16 +1096,48 @@ export class CapabilityService {
     const host = request.headers.host || '';
     const base = this.routeSettings().publicBaseUrl;
     const publicHost = base ? new URL(base).host : null;
-    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host) && host !== publicHost)
+    const guestHost = host === `10.0.2.2:${request.socket.localPort}`;
+    if (!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host) && !guestHost && host !== publicHost)
       throw new ApiError(403, 'Custom route host is not configured.');
     if (registration.definition.auth === 'mukai') {
       const given = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') || '');
       const expected = Buffer.from(token);
-      if (given.length !== expected.length || !timingSafeEqual(given, expected))
+      const scoped = await this.routeCredentials.authorized(
+        given.toString(),
+        registration.workspaceId,
+      );
+      if (!scoped && (given.length !== expected.length || !timingSafeEqual(given, expected)))
         throw new ApiError(401, 'API authentication required.');
       const origin = request.headers.origin;
       if (origin && origin !== 'null' && !/^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(origin))
         throw new ApiError(403, 'Untrusted request origin.');
+    }
+    if (registration.definition.auth === 'session') {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      if (
+        !trustedLocalRequest(request, true) ||
+        (!['GET', 'HEAD'].includes(request.method || 'GET') && !request.headers.origin)
+      )
+        throw new ApiError(403, 'Untrusted request origin.');
+      if (!this.browserAuthenticated?.(request)) {
+        const navigation =
+          ['GET', 'HEAD'].includes(request.method || 'GET') &&
+          /\btext\/html\b/i.test(request.headers.accept || '') &&
+          (!request.headers['sec-fetch-mode'] || request.headers['sec-fetch-mode'] === 'navigate');
+        const returnTo = customRouteReturnTo(request.url);
+        if (navigation && returnTo && this.browserAuthenticated) {
+          response.writeHead(302, { Location: '/?mukai-returnTo=' + encodeURIComponent(returnTo) });
+          response.end();
+          return;
+        }
+        throw new ApiError(
+          401,
+          this.browserAuthenticated
+            ? 'Sign in to Mukai.'
+            : 'Browser login requires the Mukai web server.',
+        );
+      }
     }
     const rawBody = await body(request, 1024 * 1024);
     let parsed: unknown;
@@ -1114,6 +1174,10 @@ export class CapabilityService {
     }
     for (const [name, value] of Object.entries(result.headers || {})) {
       response.setHeader(name, value);
+    }
+    if (registration.definition.auth === 'session') {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
     }
     if (!Object.keys(result.headers || {}).some((name) => name.toLowerCase() === 'content-type'))
       response.setHeader(

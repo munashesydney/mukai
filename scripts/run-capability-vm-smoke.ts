@@ -5,6 +5,7 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { QemuComputer, type QemuConfig } from '../src/server/computer/qemuComputer';
 import { startApiServer } from '../src/server/app';
+import { computerTools } from '../src/server/computer/tools';
 import { seedTestBot } from '../src/server/testFixtures';
 import type { CapabilityRegistration } from '../src/shared/customCapabilities';
 
@@ -114,6 +115,76 @@ async function main() {
     };
     assert.equal(received.platform, 'linux');
     assert.equal(received.authorizationPresent, false);
+    console.log(
+      'Testing automatic route credentials against the real VM gateway and ephemeral port.',
+    );
+    await write(
+      'route-access.js',
+      `export default {name:'route_access',method:'GET',path:'/custom/route-access',auth:'mukai',handle(request){return {status:200,body:{ok:true,authorizationPresent:'authorization' in request.headers}}}};`,
+    );
+    await api.capabilities.manage(
+      'default',
+      'scout',
+      'route',
+      { operation: 'register', modulePath: 'route-access.js' },
+      signal,
+    );
+    await write(
+      'route-client.js',
+      `export default {name:'route_client',description:'VM route credentials',inputSchema:{type:'object'},async execute(args,context){
+      const url=context.env.MUKAI_ROUTES_URL;
+      const response=await fetch(url+'/custom/route-access',{headers:{Authorization:'Bearer '+context.env.MUKAI_ROUTES_TOKEN}});
+      return {url,status:response.status,body:await response.json(),token:context.env.MUKAI_ROUTES_TOKEN};
+    }};`,
+    );
+    const client = (await api.capabilities.manage(
+      'default',
+      'scout',
+      'tool',
+      { operation: 'register', modulePath: 'route-client.js', permissionMode: 'auto_approve' },
+      signal,
+    )) as CapabilityRegistration;
+    const gateway = 'http://10.0.2.2:' + new URL(api.url).port;
+    assert.deepEqual(await api.capabilities.invoke(client.id, {}, 'execute', signal), {
+      url: gateway,
+      status: 200,
+      body: { ok: true, authorizationPresent: false },
+      token: '[redacted]',
+    });
+    const routeTools = computerTools({
+      owner,
+      signal,
+      onActivity: () => {},
+      budget: { remaining: 10 },
+      computer: vm,
+      vision: false,
+      fileBudget: { remaining: 10 },
+      recordChange: () => {},
+      recordFile: () => {},
+      saveScreenshot: async () => {
+        throw new Error('unused');
+      },
+      routeEnvironment: (ttl, active) => api!.capabilities.routeEnvironment('default', ttl, active),
+      isTerminalRunning: async (id) =>
+        (
+          (await vm.requestRunning(
+            'process',
+            { action: 'poll', sessionId: id },
+            owner,
+            signal,
+          )) as { status: string }
+        ).status === 'running',
+    });
+    const terminal = (await routeTools.terminal.execute!(
+      {
+        command:
+          'curl --fail --silent -H "Authorization: Bearer $MUKAI_ROUTES_TOKEN" "$MUKAI_ROUTES_URL/custom/route-access"',
+        yieldMs: 30000,
+      },
+      { toolCallId: 'vm-route-access', messages: [], context: undefined },
+    )) as { result: { exitCode: number; output: string } };
+    assert.equal(terminal.result.exitCode, 0);
+    assert.deepEqual(JSON.parse(terminal.result.output), { ok: true, authorizationPresent: false });
     console.log('Calling a protected route from a guest-created tool without a token.');
     await write(
       'call-route.js',

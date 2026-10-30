@@ -3,8 +3,8 @@ import type { RuntimeOwner } from '../../shared/runtime';
 import { ApiError } from '../config';
 
 export const PROTOCOL_VERSION = 1;
-// Revision 20 adds the executing computer’s workspacePath to custom module contexts.
-export const GUEST_REVISION = 20;
+// Revision 21 injects controller-owned route access into guest terminal processes.
+export const GUEST_REVISION = 21;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',

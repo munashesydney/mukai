@@ -128,6 +128,8 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
     );
     const processes = new ProcessService({
+      routeEnvironment: (workspaceId, lifetimeMs) =>
+        capabilities.routeEnvironment(workspaceId, lifetimeMs),
       resolveEnvironment: (workspaceId, names) =>
         capabilities.environment.resolveForTerminal(workspaceId, names),
     });
@@ -283,6 +285,14 @@ export function createApiServer(options: ApiOptions = {}) {
     });
     const ownerAuth = options.webDir ? new OwnerAuth(store) : undefined;
     const browserSession = options.webDir ? new BrowserSession(randomUUID()) : undefined;
+    if (ownerAuth && browserSession)
+      capabilities.setBrowserAuthentication(
+        (request) =>
+          ownerAuth.authenticated(request) ||
+          (!ownerAuth.configured() &&
+            localBrowserRequest(request) &&
+            browserSession.authenticated(request)),
+      );
     const desktops = new DesktopTransport(
       Boolean(options.webDir),
       ownerAuth

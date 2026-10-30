@@ -59,3 +59,14 @@ export function nativeClientRequest(request: IncomingMessage) {
     Number((request.headers.host || '').split(':')[1] || '80') === request.socket.localPort
   );
 }
+
+/** QEMU user networking maps this literal guest gateway to the loopback listener.
+ * It is local transport only at the listener's real port and from loopback peers.
+ */
+export function guestGatewayBrowserRequest(request: IncomingMessage) {
+  return (
+    request.headers.host === `10.0.2.2:${request.socket.localPort}` &&
+    ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress || '') &&
+    trustedLocalRequest(request, true)
+  );
+}

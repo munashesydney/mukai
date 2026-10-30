@@ -1,3 +1,4 @@
+import { defaultSkills } from '../../skills';
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../config';
 import type { Database, Row } from '../db/database';
@@ -7,12 +8,68 @@ import { safeSkillPath, validateBundle } from './bundle';
 import { importGithub } from './github';
 
 export class SkillService {
+  private defaults: ReturnType<typeof validateBundle>[];
   constructor(
     private store: Database,
     private workspaces: WorkspaceService,
-  ) {}
-  private row(workspaceId: string, id: string) {
+    bundles: readonly SkillBundle[] = defaultSkills,
+  ) {
+    this.defaults = bundles.map(validateBundle);
+  }
+  /** Seed once per workspace; refresh only untouched bundled copies. Never resurrect removals. */
+  private ensureDefaults(workspaceId: string) {
     this.workspaces.require(workspaceId);
+    this.store.transaction(() => {
+      for (const parsed of this.defaults) {
+        const installed = this.store.get(
+          'SELECT * FROM default_skill_installs WHERE workspace_id=? AND name=?',
+          workspaceId,
+          parsed.name,
+        );
+        if (installed) {
+          if (!installed.skill_id || installed.version === parsed.version) continue;
+          const row = this.store.get(
+            'SELECT version FROM skills WHERE workspace_id=? AND id=?',
+            workspaceId,
+            installed.skill_id,
+          );
+          if (row?.version !== installed.version) continue;
+          this.write(workspaceId, parsed, String(installed.skill_id));
+          this.store.run(
+            'UPDATE default_skill_installs SET version=? WHERE workspace_id=? AND name=?',
+            parsed.version,
+            workspaceId,
+            parsed.name,
+          );
+          continue;
+        }
+        // A user-created skill with this name belongs to the user, even on first install.
+        const existing = this.store.get(
+          'SELECT id FROM skills WHERE workspace_id=? AND name=?',
+          workspaceId,
+          parsed.name,
+        );
+        if (
+          !existing &&
+          Number(
+            this.store.get('SELECT COUNT(*) AS total FROM skills WHERE workspace_id=?', workspaceId)
+              ?.total,
+          ) >= 200
+        )
+          continue;
+        const id = existing ? null : this.write(workspaceId, parsed);
+        this.store.run(
+          'INSERT INTO default_skill_installs VALUES(?,?,?,?)',
+          workspaceId,
+          parsed.name,
+          id,
+          parsed.version,
+        );
+      }
+    });
+  }
+  private row(workspaceId: string, id: string) {
+    this.ensureDefaults(workspaceId);
     const row = this.store.get(
       'SELECT * FROM skills WHERE workspace_id=? AND id=?',
       workspaceId,
@@ -38,7 +95,7 @@ export class SkillService {
   }
 
   list(workspaceId: string, query = '', includeDisabled = true): SkillInfo[] {
-    this.workspaces.require(workspaceId);
+    this.ensureDefaults(workspaceId);
     const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     return this.store
       .all(
@@ -57,7 +114,7 @@ export class SkillService {
     return { ...this.info(row), files: (JSON.parse(String(row.bundle_json)) as SkillBundle).files };
   }
   save(workspaceId: string, bundle: unknown, id?: string, expectedVersion?: string): SkillDetail {
-    this.workspaces.require(workspaceId);
+    this.ensureDefaults(workspaceId);
     const parsed = validateBundle(bundle);
     if (id) {
       const row = this.row(workspaceId, id);
@@ -73,6 +130,12 @@ export class SkillService {
       )
     )
       throw new ApiError(409, 'A skill with this name already exists. Update that skill instead.');
+    if (!id && this.list(workspaceId).length >= 200)
+      throw new ApiError(400, 'Workspace skill limit reached (200).');
+    const key = this.write(workspaceId, parsed, id);
+    return this.inspect(workspaceId, key);
+  }
+  private write(workspaceId: string, parsed: ReturnType<typeof validateBundle>, id?: string) {
     const metadata = JSON.stringify({
       fileCount: parsed.bundle.files.length,
       bytes: parsed.bytes,
@@ -80,8 +143,6 @@ export class SkillService {
       requirements: parsed.requirements,
     });
     const key = id || randomUUID();
-    if (!id && this.list(workspaceId).length >= 200)
-      throw new ApiError(400, 'Workspace skill limit reached (200).');
     if (id)
       this.store.run(
         'UPDATE skills SET name=?,description=?,version=?,bundle_json=?,info_json=?,updated_at=? WHERE id=? AND workspace_id=?',
@@ -106,7 +167,7 @@ export class SkillService {
         metadata,
         new Date().toISOString(),
       );
-    return this.inspect(workspaceId, key);
+    return key;
   }
   preview(url: string, signal?: AbortSignal) {
     return importGithub(url, signal);
@@ -206,11 +267,11 @@ export class SkillService {
     if (!rows.length && !catalog.length) return '';
     const titles = catalog.slice(0, 10).map((skill) => skill.name);
     const catalogContext =
-      'Available workspace skills (first 10 enabled titles; catalog data):\n' +
+      'Workspace skills (first 10 enabled titles; catalog data):\n' +
       JSON.stringify(titles) +
       '\n' +
       (catalog.length - titles.length) +
-      ' skills left. Use the skills tool with operation search to find the rest or search by topic as needed, then load a relevant skill by ID.';
+      ' skills left. Use skills operation search, then load a relevant skill by ID.';
     if (!rows.length) return catalogContext;
     return (
       catalogContext +

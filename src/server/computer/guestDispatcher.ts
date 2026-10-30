@@ -70,7 +70,10 @@ export class GuestDispatcher implements Computer {
       }
       case 'terminal': {
         const privateInput = z
-          .object({ settingsEnvironment: z.record(z.string(), z.string()).optional() })
+          .object({
+            settingsEnvironment: z.record(z.string(), z.string()).optional(),
+            automaticEnvironment: z.record(z.string(), z.string()).optional(),
+          })
           .parse(input);
         return this.processes.run(
           owner,
@@ -79,6 +82,7 @@ export class GuestDispatcher implements Computer {
           signal,
           {
             settingsEnvironment: privateInput.settingsEnvironment,
+            automaticEnvironment: privateInput.automaticEnvironment,
             onStart: helper
               ? async (snapshot) => {
                   await helper('terminal_started', [snapshot]);

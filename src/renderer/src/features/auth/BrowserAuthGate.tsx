@@ -1,3 +1,4 @@
+import { customRouteReturnTo } from '../../../../shared/routeAccess';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, ArrowRight, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { Brand } from '../../components/ui/Brand';
@@ -109,6 +110,13 @@ export function BrowserAuthGate({ children }: { children: ReactNode }) {
       window.removeEventListener(authChanged, changed);
     };
   }, [bypass, retry]);
+  useEffect(() => {
+    if (bypass || !status?.authenticated) return;
+    const target = customRouteReturnTo(
+      new URLSearchParams(window.location.search).get('mukai-returnTo'),
+    );
+    if (target) window.location.replace(target);
+  }, [bypass, status?.authenticated]);
   if (bypass || status?.authenticated) return children;
   const login = Boolean(status?.configured);
   const creating = !login && Boolean(status?.verified);

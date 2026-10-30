@@ -383,11 +383,11 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
-  it.each([18, 19])(
-    'upgrades revision %i before exposing the workspace-path runtime and skips repeat upgrades',
+  it.each([18, 19, 20])(
+    'upgrades revision %i before exposing route credentials and skips repeat upgrades',
     async (revision) => {
       // A copied guest already reporting 18 must not be mistaken for the new job-capable bundle.
-      expect(GUEST_REVISION).toBeGreaterThan(19);
+      expect(GUEST_REVISION).toBeGreaterThan(20);
       const { vm, launch } = await fixture(false, 0, undefined, true, false, 0, {
         bundleDir: join(directory, 'bundle'),
         revision,

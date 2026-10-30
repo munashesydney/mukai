@@ -42,7 +42,7 @@ Local OpenAI-compatible servers can use a base URL such as `http://127.0.0.1:114
 
 ## What works
 
-- **Settings → Domain** saves the public HTTPS base URL for all custom routes across workspaces. Leave it blank to use `http://127.0.0.1:47831`. Changes apply immediately and persist across restarts; no environment variable or `.env` file is needed. Configure your domain or tunnel separately to forward `/custom/*` to the local server.
+- **Settings → Domain** saves the public HTTPS base URL for all custom routes across workspaces. Leave it blank to use the running backend’s actual loopback address. Changes apply immediately and persist across restarts; no environment variable or `.env` file is needed. Configure your domain or tunnel separately to forward `/custom/*` to the local server.
 
 - Temporal graph memory lives in the independent [`mukai_memory`](mukai_memory/README.md) module. **Settings → Memory** provides a graph/list inspector, source evidence, corrections, forgetting, recall records, and import/export. New user statements are captured in the background using the configured AI, and relevant confirmed memories are supplied before each reply. Private chat memories stay private to their bot; spaces use workspace memory. Keyword/relationship retrieval works immediately; **Download & enable** installs local CPU BGE embeddings. Capture and recall can be disabled per workspace.
 
@@ -219,6 +219,8 @@ recovery, cancellation, transport sanitization, and the shared AI runtime.
 ## Workspace skills
 
 Tools → Skills manages reusable workflow folders. Create or edit `SKILL.md` (YAML `name` and `description`, followed by instructions), add supporting text files, or preview an import from a public GitHub file/folder URL. Imports preserve references, scripts, licenses, and binary assets, record a pinned commit, and validate all files before saving. Exported JSON bundles can be imported again. Files live in Mukai’s workspace-scoped SQLite store; importing never executes scripts or installs dependencies.
+
+Mukai ships default skills from named folders in `src/skills` (normal `SKILL.md`, supporting files, and an `index.ts` that loads them), starting with **mukai-custom-routes-authenticated-websites** for owner-login websites, dashboards, and bot actions. They appear automatically in existing and new workspaces as ordinary skills: search, load, edit, disable or remove them through the same UI/tools. Only titles enter the default prompt; full instructions load on demand. Updated bundled instructions refresh untouched copies; personal edits, disabled state, same-named existing skills and removals are preserved. Loaded conversations keep their pinned version until reloaded.
 
 The `skills` tool supports search, inspect, load/unload, read, create/update, import, enable/disable, and remove. Bots receive a small enabled-skill catalog and load full instructions only as needed. Loaded versions are pinned per bot/conversation, persist across restarts and compaction, and are removed when the skill is disabled or deleted. Updates require the inspected version to avoid overwriting concurrent edits. Reload to use updated instructions; `read` returns the current file version and supports paging text or base64 assets. Use file operations to save required supporting files into the workspace before running a script.
 

@@ -4,7 +4,7 @@ import type { Database } from '../db/database';
 import { ApiError } from '../config';
 import { jsonBody, send } from '../http/transport';
 import { z } from 'zod';
-import { localBrowserRequest } from './origin';
+import { localBrowserRequest, guestGatewayBrowserRequest } from './origin';
 import { ownerCredentialsSchema } from '../../shared/ownerAuth';
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -121,7 +121,11 @@ export class OwnerAuth {
     if (request.method !== 'POST') throw new ApiError(405, 'Method not allowed');
     // Cookie-changing endpoints require a same-origin browser request, checked by the web boundary.
     if (!request.headers.origin) throw new ApiError(403, 'A browser origin is required.');
-    if (!localBrowserRequest(request) && !request.headers.origin.startsWith('https://'))
+    if (
+      !localBrowserRequest(request) &&
+      !guestGatewayBrowserRequest(request) &&
+      !request.headers.origin.startsWith('https://')
+    )
       throw new ApiError(403, 'Use an HTTPS connection to sign in remotely.');
     if (action === 'logout') {
       this.store.run(

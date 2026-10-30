@@ -60,7 +60,7 @@ export class DiagnosticService {
         .split(encodeURIComponent(secret))
         .join('[redacted]');
     }
-    return value;
+    return value.replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]');
   }
   private text(value: unknown, limit = 2048): string | undefined {
     if (typeof value !== 'string') return undefined;
@@ -70,6 +70,7 @@ export class DiagnosticService {
       text = text.split(encodeURIComponent(secret)).join('[redacted]');
     }
     text = text
+      .replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]')
       .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
       .replace(/\bsk-[a-z0-9_-]+/gi, '[redacted]')
       .replace(
