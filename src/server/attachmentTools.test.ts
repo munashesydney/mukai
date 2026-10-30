@@ -419,9 +419,11 @@ describe('Saved uploads and artifact tools', () => {
       ok: true,
       result: { artifactId: 'large-copy', width: 600, height: 600 },
     });
-    expect(
-      (await api.conversationArtifacts.bytes('default', { artifactId: 'large-copy' })).bytes,
-    ).toEqual(bytes);
+    // Identity is byte-for-byte, so compare with a memcmp. `toEqual` deep-walks every
+    // index of this megabyte-sized image, which alone took ~5s on a loaded CI runner
+    // and exceeded the default test timeout.
+    const reopened = await api.conversationArtifacts.bytes('default', { artifactId: 'large-copy' });
+    expect(reopened.bytes.equals(bytes)).toBe(true);
   });
   it('keeps extracted document text separate from the original copyable bytes', async () => {
     const original = Buffer.from('original document bytes');
