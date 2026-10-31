@@ -330,6 +330,38 @@ describe.each(['local', 'qemu'] as const)('%s capability permissions', (computer
       },
     );
     it.each(['user_approval', 'ask_bot'] as const)(
+      'returns a denial reason for %s without executing custom code',
+      async (mode) => {
+        await register(mode);
+        decision = mode === 'ask_bot' ? 'ask_user_approval' : undefined;
+        const run = chat();
+        const approval = await pendingApproval();
+        expect(effect()).toBe('');
+        expect(
+          (
+            await request('/approvals/' + approval.id, 'POST', {
+              approved: false,
+              reason: '  Review the effects first.  ',
+            })
+          ).status,
+        ).toBe(200);
+        await run;
+        expect(effect()).toBe('');
+        expect(receipt()).toMatchObject({
+          permission: { mode, approvedBy: 'user', decision: 'denied' },
+          execution: 'not_executed',
+          rejected: true,
+          reason: 'Review the effects first.',
+          message: expect.stringContaining('Reason: Review the effects first.'),
+        });
+        expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+        if (mode === 'ask_bot')
+          expect(api.store.get('SELECT state FROM custom_tool_confirmations')?.state).toBe(
+            'cancelled',
+          );
+      },
+    );
+    it.each(['user_approval', 'ask_bot'] as const)(
       'executes the saved %s invocation after user approval',
       async (mode) => {
         await register(mode);

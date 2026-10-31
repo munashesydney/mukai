@@ -23,6 +23,7 @@ export interface CustomToolReceipt {
   result?: unknown;
   error?: string;
   rejected?: boolean;
+  reason?: string;
   cancelled?: boolean;
   message?: string;
 }

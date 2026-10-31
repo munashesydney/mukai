@@ -44,6 +44,43 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 describe('Workspace tool approvals', () => {
+  it.each(['register_custom_tool', 'file_operations', 'custom_effect'])(
+    'returns a denial reason for %s without granting permission',
+    async (toolName) => {
+      service.setMode('ask-for-approval');
+      const result = service.request(
+        { ...details, toolName },
+        new AbortController().signal,
+        () => {},
+      );
+      const id = service.state().pending[0].id;
+      for (const reason of ['', '   ', 'x'.repeat(16001)])
+        expect(() => service.decide(id, false, 'default', reason)).toThrow();
+      expect(() => service.decide(id, true, 'default', 'Wait for review.')).toThrow();
+      expect(service.state().pending).toHaveLength(1);
+      service.decide(id, false, 'default', '  Wait for review.  ');
+      expect(await result).toEqual({ approved: false, reason: 'Wait for review.' });
+      expect(service.state().pending).toEqual([]);
+    },
+  );
+  it('restores a saved tool denial with its reason', async () => {
+    new ApprovalRepository(store).save({
+      ...details,
+      toolName: 'register_custom_tool',
+      id: 'saved-tool-denial',
+      createdAt: new Date().toISOString(),
+      decision: { approved: false, reason: 'Review the module first.' },
+    });
+    service = new ApprovalService(new ApprovalRepository(store));
+    expect(
+      await service.request(
+        { ...details, toolName: 'register_custom_tool' },
+        new AbortController().signal,
+        () => {},
+      ),
+    ).toEqual({ approved: false, reason: 'Review the module first.' });
+    expect(new ApprovalRepository(store).pending()).toEqual([]);
+  });
   it('returns a denial reason to an approval question and keeps invalid decisions pending', async () => {
     const onAnswer = vi.fn();
     const result = service.ask(
