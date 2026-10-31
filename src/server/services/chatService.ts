@@ -2027,7 +2027,8 @@ export class ChatService {
         customNames = Object.keys(custom);
         for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
         const skillContext = this.tools.skillContext(bot, conversationId);
-        const currentSystem = buildSystem() + (skillContext ? '\n' + skillContext : '');
+        const botContext = tools.manage_bot ? this.tools.botContext(bot) : '';
+        const currentSystem = [buildSystem(), skillContext, botContext].filter(Boolean).join('\n');
         pausedReason ||= guard.paused
           ? 'This run paused after repeated tool results without progress.'
           : stepsUsed >= TOOL_STEP_LIMIT

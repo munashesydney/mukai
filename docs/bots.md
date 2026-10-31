@@ -37,6 +37,8 @@ The runtime narrows the model's tool schema to these actions and checks authoriz
 
 Both actions stay within the caller's workspace. Bots should inspect the team before creating a new specialist or choosing a delegation target.
 
+Each model step includes a preview of up to 10 workspace sub-bots, sorted by name, with only their names and titles (saved roles). The preview excludes the main bot and the current bot, counts remaining entries, and directs the bot to `manage_bot list` for IDs and the full roster. Bot instructions, model settings, and tool assignments are not included in this preview.
+
 ### Creating and updating bots
 
 Only the main bot can use these actions:

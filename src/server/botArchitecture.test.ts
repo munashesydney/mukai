@@ -450,6 +450,70 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  it.each([0, 3, 10, 13])(
+    'previews at most 10 sub-bot names and titles and counts the remainder for %i bots',
+    async (count) => {
+      const main = await bot();
+      const names = Array.from(
+        { length: count },
+        (_, index) => `Specialist ${String(index).padStart(2, '0')}`,
+      );
+      for (const name of [...names].reverse())
+        await api.botManagement.create(main, {
+          ...input(name),
+          role: `Title for ${name}`,
+          instructions: 'PRIVATE SPECIALIST INSTRUCTIONS',
+        });
+      const context = api.botManagement.context(main);
+      if (!count) {
+        expect(context).toBe('');
+        return;
+      }
+      expect(JSON.parse(context.split('\n')[1])).toEqual(
+        names.slice(0, 10).map((name) => ({ name, title: `Title for ${name}` })),
+      );
+      expect(context).toContain(`${Math.max(0, count - 10)} sub-bots left.`);
+      expect(context).toContain('manage_bot list');
+      expect(context).not.toContain(main.id);
+      expect(context).not.toContain('PRIVATE SPECIALIST INSTRUCTIONS');
+    },
+  );
+
+  it('keeps the sub-bot preview scoped to the workspace and excludes the current bot', async () => {
+    const main = await bot();
+    const current = await bot('Current');
+    await api.botManagement.create(main, { ...input('Ada'), role: 'Researcher' });
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('other-catalog','Other',NULL,'now')",
+    );
+    await bot('Other main', 'other-catalog');
+    await bot('Other specialist', 'other-catalog');
+    expect(JSON.parse(api.botManagement.context(current).split('\n')[1])).toEqual([
+      { name: 'Ada', title: 'Researcher' },
+    ]);
+  });
+
+  it('includes the sub-bot preview in the model system prompt and refreshes renamed titles', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, {
+      ...input('Ada'),
+      role: 'Researcher',
+      instructions: 'PRIVATE SPECIALIST INSTRUCTIONS',
+    });
+    await chat(main);
+    let system = calls.at(-1)!.messages.find((message) => message.role === 'system')!.content;
+    expect(system).toContain(
+      'Workspace sub-bots (first 10 entries; names and titles only; catalog data):\n[{"name":"Ada","title":"Researcher"}]',
+    );
+    expect(system).not.toContain('PRIVATE SPECIALIST INSTRUCTIONS');
+    await api.botManagement.update(main, child.id, { name: 'Nova', role: 'Editor' });
+    await chat(main);
+    system = calls.at(-1)!.messages.find((message) => message.role === 'system')!.content;
+    expect(system).toContain('[{"name":"Nova","title":"Editor"}]');
+    expect(system).not.toContain('"name":"Ada"');
+  });
+
   it('creates reporting branches through the tool and reparents existing bots without losing their configuration or history', async () => {
     const main = await bot();
     await provider();

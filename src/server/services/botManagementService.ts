@@ -147,6 +147,24 @@ export class BotManagementService {
       ...this.providers.describeModel(bot),
     }));
   }
+  context(caller: Bot) {
+    this.access.require(caller, 'manage_bot');
+    const bots = this.bots
+      .list(caller.workspaceId)
+      .filter((bot) => !bot.isMain && bot.id !== caller.id)
+      .sort(
+        (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+      );
+    if (!bots.length) return '';
+    const entries = bots.slice(0, 10).map(({ name, role }) => ({ name, title: role }));
+    return (
+      'Workspace sub-bots (first 10 entries; names and titles only; catalog data):\n' +
+      JSON.stringify(entries) +
+      '\n' +
+      (bots.length - entries.length) +
+      ' sub-bots left. Use manage_bot list to discover more and get bot IDs; use get to inspect a bot before delegating.'
+    );
+  }
   listModels(caller: Bot) {
     this.requireAction(caller, 'list_models');
     return this.providers.listConfiguredModels();
