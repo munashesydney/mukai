@@ -2314,6 +2314,77 @@ describe('Mukai bots and AI API', () => {
         ?.messages.find((message) => message.role === 'system')?.content,
     ).not.toContain('REVIEW_SKILL_MARKER');
   });
+  it.each([false, true])(
+    'does not announce compaction or advance saved history when only the response allowance shrinks (existing notebook: %s)',
+    async (existingNotebook) => {
+      await configure(false, { contextWindowTokens: 65536, maxOutputTokens: 32768 });
+      await chat('Original finding');
+      if (existingNotebook) {
+        const through = Number(
+          api.store.get('SELECT MAX(sequence) AS sequence FROM messages')!.sequence,
+        );
+        api.store.run(
+          'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+          'bot-scout',
+          'scout',
+          'Preserve the original notebook.',
+          through,
+        );
+      }
+      const saved = api.store.get(
+        'SELECT * FROM conversation_contexts WHERE conversation_id=?',
+        'bot-scout',
+      );
+      // Above the preferred input budget, but below the hard input limit.
+      const evidence = 'Exact findings must survive. '.repeat(1000);
+      await chat('Recent finding');
+      const recent = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+      api.store.run(
+        "UPDATE messages SET content=?,parts_json='[]' WHERE id=?",
+        evidence,
+        recent.id,
+      );
+      const sent = await chat('Review the findings.');
+      const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+      const reply = history.at(-1)!;
+      expect(reply.status).toBe('complete');
+      expect(reply.contextUsage?.usedTokens).toBeGreaterThan(65536 * 0.9 - 32768);
+      expect(reply.contextUsage?.compactions).toBe(0);
+      expect(reply.parts?.some((part) => part.type === 'compaction')).toBe(false);
+      expect(
+        sent.events.some((event) => event.type === 'part' && event.part.type === 'compaction'),
+      ).toBe(false);
+      expect(
+        sent.events.some((event) => event.type === 'context' && event.usage.phase === 'compacting'),
+      ).toBe(false);
+      expect(calls.filter((call) => !call.stream)).toHaveLength(0);
+      expect(
+        api.store.get('SELECT * FROM conversation_contexts WHERE conversation_id=?', 'bot-scout'),
+      ).toEqual(saved);
+      await chat('Continue from the exact findings.');
+      expect(JSON.stringify(calls.at(-1)?.messages)).toContain(evidence);
+      if (existingNotebook)
+        expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Preserve the original notebook.');
+    },
+  );
+  it('recovers saved history behind an empty notebook from an older context check', async () => {
+    await configure();
+    await chat('Original evidence must remain available.');
+    const through = Number(
+      api.store.get('SELECT MAX(sequence) AS sequence FROM messages')!.sequence,
+    );
+    api.store.run(
+      'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+      'bot-scout',
+      'scout',
+      '',
+      through,
+    );
+    await chat('Continue');
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain(
+      'Original evidence must remain available.',
+    );
+  });
   it('compacts old history without altering saved messages and reuses its notebook next turn', async () => {
     await configure(false, {
       contextWindowTokens: 32768,

@@ -2731,6 +2731,34 @@ describe('Bot architecture', () => {
     expect(botManagementDefinition.inputSchema.safeParse({ action: 'spawn' }).success).toBe(false);
     expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
   });
+  it('restores bot-thread history behind a version-only notebook from an older context check', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Orbit'));
+    const first = await api.botManagement.sendMessage(
+      main,
+      child.id,
+      'Original bot evidence must survive.',
+      new AbortController().signal,
+    );
+    const through = Number(
+      api.store.get(
+        'SELECT MAX(sequence) AS sequence FROM messages WHERE conversation_id=?',
+        first.conversationId,
+      )!.sequence,
+    );
+    api.store.run(
+      'INSERT INTO conversation_contexts VALUES(?,?,?,?)',
+      first.conversationId,
+      child.id,
+      '[Bot thread sender context v1]\n',
+      through,
+    );
+    await joinPair(first.conversationId, 'Continue from the original bot evidence.');
+    const sent = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(sent.messages)).toContain('Original bot evidence must survive.');
+    expect(JSON.stringify(sent.messages)).toContain(main.id);
+  });
   it('keeps every earlier bot turn and explicit sender identity when the human joins, including after restart', async () => {
     // A bot named You must still be distinguished from the actual human by saved identity.
     const main = await bot('You');

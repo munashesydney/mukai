@@ -520,9 +520,14 @@ export class ChatService {
     const privateChat = this.messages.persistentConversation(conversationId);
     const botChat = this.messages.botConversation(conversationId);
     const saved = privateChat ? this.jobs.context(conversationId, botId) : undefined;
-    // Ignore old bot-thread summaries until rebuilt from saved turns with sender identity.
-    const previous =
-      botChat && saved && !saved.summary.startsWith(botThreadContextVersion) ? undefined : saved;
+    // Empty notebooks from older context checks must not hide saved turns.
+    // Old bot-thread summaries also need rebuilding with sender identity.
+    const summary = botChat
+      ? saved?.summary.startsWith(botThreadContextVersion)
+        ? saved.summary.slice(botThreadContextVersion.length)
+        : ''
+      : saved?.summary;
+    const previous = summary?.trim() ? saved : undefined;
     const rows = this.messages
       .context(conversationId, privateChat ? 2147483647 : 10, throughSequence)
       .filter((row) => !previous || this.messages.sequence(row.id) > previous.throughSequence);
@@ -1314,28 +1319,32 @@ export class ChatService {
         diagnosticPhase = previousPhase;
       };
       const compact = async (force = false) => {
-        let part: Extract<ResponsePart, { type: 'compaction' }> = {
-          id: randomUUID(),
-          type: 'compaction',
-          state: 'compacting',
-          startedAt: new Date().toISOString(),
-          tokensBefore: manager.estimate(messages),
-        };
+        let part: Extract<ResponsePart, { type: 'compaction' }> | undefined;
         const publishPart = () => {
+          if (!part) return;
           generation.parts = upsertResponsePart(generation.parts, part);
           save();
           emit({ type: 'part', id: assistantId, part });
         };
-        usage.phase = 'compacting';
-        publishPart();
-        publishUsage();
         try {
           saveCheckpoint();
-          diagnosticPhase = 'context-compaction';
-          messages = await manager.prepare(messages, force);
+          messages = await manager.prepare(messages, force, () => {
+            part = {
+              id: randomUUID(),
+              type: 'compaction',
+              state: 'compacting',
+              startedAt: new Date().toISOString(),
+              tokensBefore: manager.estimate(messages),
+            };
+            usage.phase = 'compacting';
+            publishPart();
+            publishUsage();
+            saveCheckpoint();
+            diagnosticPhase = 'context-compaction';
+          });
           signal.throwIfAborted();
           usage.compactions = manager.compactions;
-          if (this.messages.persistentConversation(conversationId))
+          if (part && this.messages.persistentConversation(conversationId))
             this.jobs.saveContext(
               conversationId,
               botId,
@@ -1347,23 +1356,26 @@ export class ChatService {
           usage.inputTokens = null;
           usage.outputTokens = null;
           usage.estimated = true;
-          part = {
-            ...part,
-            state: 'complete',
-            finishedAt: new Date().toISOString(),
-            tokensAfter: usage.usedTokens,
-          };
+          if (part)
+            part = {
+              ...part,
+              state: 'complete',
+              finishedAt: new Date().toISOString(),
+              tokensAfter: usage.usedTokens,
+            };
           publishPart();
           publishUsage();
           saveCheckpoint();
           diagnosticPhase = 'provider-request';
         } catch (failure) {
-          usage.phase = signal.aborted ? 'ready' : 'failed';
-          part = {
-            ...part,
-            state: signal.aborted ? 'interrupted' : 'failed',
-            finishedAt: new Date().toISOString(),
-          };
+          if (part) {
+            usage.phase = signal.aborted ? 'ready' : 'failed';
+            part = {
+              ...part,
+              state: signal.aborted ? 'interrupted' : 'failed',
+              finishedAt: new Date().toISOString(),
+            };
+          }
           publishPart();
           publishUsage();
           // Compaction has no side effects. Preserve its failure boundary and old
