@@ -96,18 +96,37 @@ export class SkillService {
 
   list(workspaceId: string, query = '', includeDisabled = true): SkillInfo[] {
     this.ensureDefaults(workspaceId);
-    const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    return this.store
+    const normalize = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim();
+    const phrase = normalize(query);
+    const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
+    const skills = this.store
       .all(
         'SELECT id,name,description,enabled,version,info_json,updated_at FROM skills WHERE workspace_id=? ORDER BY name',
         workspaceId,
       )
       .map((row) => this.info(row))
-      .filter(
-        (item) =>
-          (includeDisabled || item.enabled) &&
-          terms.every((term) => (item.name + ' ' + item.description).toLowerCase().includes(term)),
-      );
+      .filter((item) => includeDisabled || item.enabled);
+    if (!terms.length) return skills;
+    return skills
+      .map((skill) => {
+        const name = normalize(skill.name);
+        const description = normalize(skill.description);
+        const score = terms.reduce(
+          (total, term) => total + (name.includes(term) ? 3 : description.includes(term) ? 1 : 0),
+          0,
+        );
+        return {
+          skill,
+          score: score + (name === phrase ? 1000 : name.includes(phrase) ? 100 : 0),
+        };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.skill);
   }
   inspect(workspaceId: string, id: string): SkillDetail {
     const row = this.row(workspaceId, id);
@@ -203,6 +222,20 @@ export class SkillService {
   }
   load(workspaceId: string, botId: string, conversationId: string, id: string, maxBytes = 24000) {
     this.checkConversation(workspaceId, botId, conversationId);
+    this.ensureDefaults(workspaceId);
+    const resolved = this.store.get(
+      'SELECT id FROM skills WHERE workspace_id=? AND (id=? OR name=?) ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1',
+      workspaceId,
+      id,
+      id,
+      id,
+    );
+    if (!resolved)
+      throw new ApiError(
+        404,
+        'Skill not found in this workspace. Use skills operation search to find its ID or exact name.',
+      );
+    id = String(resolved.id);
     const skill = this.inspect(workspaceId, id);
     if (!skill.enabled) throw new ApiError(400, 'Enable this skill before loading it.');
     const body = validateBundle({
@@ -265,13 +298,15 @@ export class SkillService {
     );
     const catalog = this.list(workspaceId, '', false);
     if (!rows.length && !catalog.length) return '';
-    const titles = catalog.slice(0, 10).map((skill) => skill.name);
+    const entries = catalog
+      .slice(0, 10)
+      .map(({ id, name, description }) => ({ id, name, description }));
     const catalogContext =
-      'Workspace skills (first 10 enabled titles; catalog data):\n' +
-      JSON.stringify(titles) +
+      'Workspace skills (first 10 enabled entries; catalog data):\n' +
+      JSON.stringify(entries) +
       '\n' +
-      (catalog.length - titles.length) +
-      ' skills left. Use skills operation search, then load a relevant skill by ID.';
+      (catalog.length - entries.length) +
+      ' skills left. Load a relevant skill directly by ID or exact name; use skills operation search to discover more.';
     if (!rows.length) return catalogContext;
     return (
       catalogContext +

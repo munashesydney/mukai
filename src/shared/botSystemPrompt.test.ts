@@ -125,7 +125,7 @@ it('recommends procedural self-improvement and explains available skill operatio
   const system = prompt({ skills: {} });
   expect(system).toContain(mukaiSkillInstructions);
   expect(system).toContain('optional follow-through, not a requirement for every task');
-  expect(system).toContain('first 10 enabled skill titles');
+  expect(system).toContain('first 10 enabled skills with IDs, names and descriptions');
   expect(system).toContain('operation search');
   expect(system).toContain('expectedVersion');
   expect(prompt({})).not.toContain('operation search');

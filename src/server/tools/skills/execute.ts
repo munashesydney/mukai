@@ -31,19 +31,22 @@ export function skillTools(context: {
           options.toolCallId,
           'skills',
           input.operation,
-          input.id || input.url || input.query || '',
+          input.id || input.name || input.url || input.query || '',
           async () => {
             const { skills, bot, conversationId } = context;
             const w = bot.workspaceId;
             const id = () => {
-              if (!input.id) throw new Error('A skill ID is required.');
+              if (!input.id)
+                throw new Error(
+                  'A skill ID is required. Use {operation:"search",query:"keywords"}, then pass a returned id. To load by exact name, use {operation:"load",name:"exact-skill-name"}.',
+                );
               return input.id;
             };
             switch (input.operation) {
               case 'search':
                 return {
                   skills: skills.list(w, input.query).slice(0, 40),
-                  note: 'Disabled skills must be enabled before loading. Narrow the query for more results.',
+                  note: 'Results are ranked by relevance. Load directly with a returned id or exact name. Disabled skills must be enabled before loading.',
                 };
               case 'inspect': {
                 const skill = skills.inspect(w, id());
@@ -52,12 +55,21 @@ export function skillTools(context: {
                   files: skill.files.map((file) => ({ path: file.path, encoding: file.encoding })),
                 };
               }
-              case 'load':
-                return skills.load(w, bot.id, conversationId, id(), context.maxContextBytes);
+              case 'load': {
+                const reference = input.id || input.name;
+                if (!reference)
+                  throw new Error(
+                    'Load requires id or exact name. Example: {operation:"load",name:"mukai-api-reference"}. Use {operation:"search",query:"keywords"} to discover skills.',
+                  );
+                return skills.load(w, bot.id, conversationId, reference, context.maxContextBytes);
+              }
               case 'unload':
                 return skills.unload(w, bot.id, conversationId, id());
               case 'read':
-                if (!input.path) throw new Error('A relative file path is required.');
+                if (!input.path)
+                  throw new Error(
+                    'Read requires a relative path from load or inspect, for example {operation:"read",id:"...",path:"references/checklist.md"}. Load already returns the main instructions.',
+                  );
                 return skills.read(w, id(), input.path, input.offset);
               case 'create':
                 if (!input.bundle) throw new Error('A skill bundle is required.');
