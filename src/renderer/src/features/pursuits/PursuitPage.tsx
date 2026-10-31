@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, ChevronDown, Clock3, Pause, Play, Target } from 'lucide-react';
+import {
+  ArrowUpRight,
+  ChevronDown,
+  Clock3,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Target,
+  Trash2,
+} from 'lucide-react';
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
+import { PopupMenu } from '../../components/ui/PopupMenu';
 import type { Bot } from '../../../../shared/ai';
 import {
   pursuitStatusLabels,
@@ -21,11 +32,13 @@ export function PursuitPage({
   id,
   bots,
   onOwner,
+  onDeleted,
   runId,
 }: {
   id: string;
   bots: Bot[];
   onOwner: (id: string) => void;
+  onDeleted: () => void;
   runId?: string;
 }) {
   const [detail, setDetail] = useState<PursuitDetail | null>(null),
@@ -34,6 +47,7 @@ export function PursuitPage({
     [tab, setTab] = useState('Overview'),
     [selectedRun, setSelectedRun] = useState<string | null>(runId || null);
   const [olderRun, setOlderRun] = useState<PursuitRun | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const knownRun = Boolean(detail?.runs.some((run) => run.id === selectedRun));
   useEffect(() => {
     if (!selectedRun || knownRun) return;
@@ -94,6 +108,18 @@ export function PursuitPage({
       setBusy(false);
     }
   }
+  async function remove() {
+    setBusy(true);
+    setError('');
+    try {
+      await pursuitService.remove(id);
+      onDeleted();
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
   if (!detail)
     return (
       <main className="conversation ai-main-state">
@@ -130,6 +156,35 @@ export function PursuitPage({
             {pursuitStatusLabels[p.status]}
           </span>
           <BrowserToggle />
+          <PopupMenu
+            label="Pursuit actions"
+            title="Pursuit actions"
+            trigger={<MoreHorizontal size={20} />}
+            buttonClassName="icon-button"
+            disabled={busy}
+            width={240}
+          >
+            {(close) => (
+              <button
+                type="button"
+                role="menuitem"
+                className="danger-text"
+                disabled={Boolean(p.currentRunId)}
+                title={
+                  p.currentRunId
+                    ? 'Pause and wait for the current run to stop before deleting'
+                    : undefined
+                }
+                onClick={() => {
+                  close();
+                  setError('');
+                  setDeleting(true);
+                }}
+              >
+                <Trash2 size={15} /> Delete pursuit
+              </button>
+            )}
+          </PopupMenu>
         </div>
         <div className="pursuit-owner">
           {owner ? (
@@ -234,6 +289,21 @@ export function PursuitPage({
           </>
         )}
       </div>
+      {deleting && (
+        <ConfirmationModal
+          title={`Delete ${p.name}?`}
+          confirmLabel="Delete pursuit"
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setDeleting(false);
+            setError('');
+          }}
+          onConfirm={() => void remove()}
+        >
+          <p>This permanently deletes this pursuit, its Workpad, and all run chats and history.</p>
+        </ConfirmationModal>
+      )}
     </main>
   );
 }

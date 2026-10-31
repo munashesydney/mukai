@@ -128,12 +128,12 @@ export class CapabilityService {
   setBrowserAuthentication(check: (request: IncomingMessage) => boolean) {
     this.browserAuthenticated = check;
   }
-  routeEnvironment(workspaceId: string, lifetimeMs: number, active?: () => Promise<boolean>) {
+  routeEnvironment(workspaceId: string) {
     const workspace = this.workspaces.require(workspaceId);
     if (!this.localBaseUrl) throw new ApiError(503, 'Mukai route listener is not ready.');
     const url = new URL(this.localBaseUrl);
     if (workspace.computer === 'qemu') url.hostname = '10.0.2.2';
-    return this.routeCredentials.issue(workspaceId, url.origin, lifetimeMs, active);
+    return this.routeCredentials.issue(workspaceId, url.origin);
   }
   private ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
   private runtime = new CapabilityWorkers((error) => this.error(error));
@@ -233,7 +233,7 @@ export class CapabilityService {
       (id, event) => this.invoke(id, event, 'runJob'),
     );
     this.environment = new CapabilityEnvironment(db, registerSecret);
-    this.routeCredentials = new RouteCredentials((token) =>
+    this.routeCredentials = new RouteCredentials(db, (token) =>
       this.environment.trackRuntimeSecret(token),
     );
     db.run(
@@ -868,10 +868,9 @@ export class CapabilityService {
       selectedVersion,
       new Date().toISOString(),
     );
-    let routeLease: ReturnType<CapabilityService['routeEnvironment']> | undefined;
     try {
-      routeLease = this.localBaseUrl
-        ? this.routeEnvironment(registration.workspaceId, definition.timeoutMs + 1000)
+      const routeAccess = this.localBaseUrl
+        ? this.routeEnvironment(registration.workspaceId)
         : undefined;
       const value = await this.worker(
         {
@@ -879,7 +878,7 @@ export class CapabilityService {
           exportName: manifest.exportName,
           operation,
           kind: registration.kind,
-          env: { ...env, ...routeLease?.env },
+          env: { ...env, ...routeAccess?.env },
           input,
           workspaceId: registration.workspaceId,
         },
@@ -1004,8 +1003,6 @@ export class CapabilityService {
         runId,
       );
       throw new ApiError(error instanceof ApiError ? error.status : 500, this.error(error));
-    } finally {
-      routeLease?.release();
     }
   }
   private async drain() {

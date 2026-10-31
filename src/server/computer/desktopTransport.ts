@@ -6,12 +6,15 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { QemuComputer } from './qemuComputer';
 import type { ComputerViewSession } from '../../shared/computer';
 import { trustedLocalRequest, nativeClientRequest } from '../web/origin';
+import type { DiagnosticService } from '../services/diagnosticService';
+import { relayDesktopStream } from './desktopStream';
 
 /** Authenticated HTTP issues short-lived, single-use viewer tickets. No API token in websocket URLs. */
 export class DesktopTransport {
   constructor(
     private readonly browserMode = false,
     private readonly authenticate?: (request: IncomingMessage) => boolean,
+    private readonly diagnostics?: DiagnosticService,
   ) {}
   private tickets = new Map<
     string,
@@ -36,19 +39,25 @@ export class DesktopTransport {
       if (ticket.computer === computer) this.tickets.delete(key);
     for (const [viewer, owner] of this.viewers) if (owner === computer) viewer.terminate();
   }
-  async session(computer: QemuComputer, native = false): Promise<ComputerViewSession> {
+  async session(
+    computer: QemuComputer,
+    native = false,
+    reconnect = false,
+  ): Promise<ComputerViewSession> {
     if (this.closed) throw new Error('Desktop views are shutting down.');
-    try {
-      await computer.start();
-    } catch (error) {
-      // The VNC desktop can survive a bridge disconnect. Reuse only a live VM's
-      // existing endpoint; stopped, booting and panicked guests reject it.
+    if (!reconnect) {
       try {
-        computer.desktopConnection();
-      } catch {
-        throw error;
+        await computer.start();
+      } catch (error) {
+        // A live VNC desktop can survive a guest bridge disconnect.
+        try {
+          computer.desktopConnection();
+        } catch {
+          throw error;
+        }
       }
     }
+    // Automatic viewer recovery must never boot a stopped or failed VM.
     if (this.closed) throw new Error('Desktop views are shutting down.');
     for (const [key, value] of this.tickets)
       if (value.expires <= Date.now()) this.tickets.delete(key);
@@ -103,30 +112,15 @@ export class DesktopTransport {
         this.viewerRequests.delete(viewer);
       });
       const upstream = connect(ticket.port, '127.0.0.1');
+      upstream.setNoDelay(true);
       upstream.setTimeout(10000, () => upstream.destroy());
       upstream.once('connect', () => upstream.setTimeout(0));
-      const close = () => {
-        upstream.destroy();
-        if (viewer.readyState === WebSocket.OPEN) viewer.close();
-      };
-      viewer.on('error', close);
-      viewer.on('close', () => upstream.destroy());
-      upstream.on('error', close);
-      upstream.on('close', close);
-      viewer.on('message', (data, binary) => {
-        if (!binary || upstream.writableLength > 4 * 1024 * 1024) {
-          viewer.close(1008, 'Invalid or excessive desktop input.');
-          return;
-        }
-        upstream.write(Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer));
-      });
-      upstream.on('data', (bytes) => {
-        if (viewer.readyState !== WebSocket.OPEN) return;
-        if (viewer.bufferedAmount > 8 * 1024 * 1024) {
-          viewer.close(1008, 'Desktop connection too slow.');
-          return;
-        }
-        viewer.send(bytes, { binary: true });
+      relayDesktopStream(viewer, upstream, (reason, roundTripMs, bufferedBytes) => {
+        this.diagnostics?.info(
+          'computer.viewer_recovery',
+          `Refreshing desktop stream: ${reason}; roundTripMs=${roundTripMs}; bufferedBytes=${bufferedBytes}.`,
+          { phase: 'computer' },
+        );
       });
     });
   };

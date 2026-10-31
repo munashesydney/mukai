@@ -7,6 +7,7 @@ import { copyText, readClipboardText } from '../../services/clipboardService';
 import { startPoll } from '../../services/poll';
 import { bindComputerClipboard } from './computerClipboard';
 import { ComputerClipboardPanel } from './ComputerClipboardPanel';
+import { maintainComputerConnection, type ComputerConnectionState } from './computerConnection';
 
 export function ComputerPanel({
   workspaceId,
@@ -21,7 +22,7 @@ export function ComputerPanel({
   const client = useRef<RFB | null>(null);
   const clipboard = useRef<ReturnType<typeof bindComputerClipboard> | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [state, setState] = useState<ComputerConnectionState>('connecting');
   const [error, setError] = useState('');
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [interactive, setInteractive] = useState(true);
@@ -69,19 +70,22 @@ export function ComputerPanel({
       }
     };
     const poll = startPoll(() => check(), { interval: 1500, maxInterval: 6000 });
-    void (async () => {
-      try {
+    const connection = maintainComputerConnection({
+      async open(signal, reconnect) {
         const [session, { default: Viewer }] = await Promise.all([
-          computerService.view(workspaceId, controller.signal),
+          computerService.view(workspaceId, signal, reconnect),
           import('@novnc/novnc'),
         ]);
-        if (!alive || !container) return;
-        rfb = new Viewer(container, session.url, {
+        if (signal.aborted || !container) throw new DOMException('View closed.', 'AbortError');
+        return new Viewer(container, session.url, {
           shared: true,
           credentials: { password: session.password, username: '', target: '' },
         });
+      },
+      created(viewer) {
+        rfb = viewer;
         client.current = rfb;
-        clipboard.current = bindComputerClipboard(container, rfb, {
+        clipboard.current = bindComputerClipboard(container!, rfb, {
           read: readClipboardText,
           write: copyText,
           remote: setRemoteClipboard,
@@ -92,40 +96,32 @@ export function ComputerPanel({
         rfb.resizeSession = true;
         rfb.background = 'transparent';
         rfb.showDotCursor = true;
-        rfb.addEventListener('connect', () => {
-          if (alive) setState('connected');
-        });
-        rfb.addEventListener('disconnect', () => {
-          if (alive) {
-            setState('disconnected');
-            setError('The desktop connection closed. Reconnect to return to your computer.');
-          }
-        });
-        rfb.addEventListener('securityfailure', () => {
-          if (alive) {
-            setState('disconnected');
-            setError('Desktop authentication failed. Reconnect to get a fresh session.');
-          }
-        });
-      } catch (failure) {
+      },
+      release() {
+        clipboard.current?.dispose();
+        clipboard.current = null;
+        client.current = null;
+        rfb = null;
+        container?.replaceChildren();
         if (alive) {
-          setState('disconnected');
-          setError(
-            failure instanceof Error ? failure.message : 'Could not connect to the desktop.',
-          );
+          setRemoteClipboard(null);
+          setClipboardMessage('');
+          setClipboardOpen(false);
         }
-      }
-    })();
+      },
+      state(value, message) {
+        if (!alive) return;
+        setState(value);
+        setError(message);
+      },
+    });
     return () => {
       alive = false;
       controller.abort();
       poll.stop();
       window.clearTimeout(resizeTimer);
       resize.disconnect();
-      clipboard.current?.dispose();
-      clipboard.current = null;
-      rfb?.disconnect();
-      client.current = null;
+      connection.stop();
       container?.replaceChildren();
     };
   }, [workspaceId, open, attempt]);

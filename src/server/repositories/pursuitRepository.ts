@@ -90,6 +90,18 @@ export class PursuitRepository {
     });
     return this.find(id)!;
   }
+  remove(id: string) {
+    this.database.transaction(() => {
+      const conversations = this.database.all(
+        'SELECT conversation_id FROM pursuit_runs WHERE pursuit_id=?',
+        id,
+      );
+      this.database.run('DELETE FROM pursuit_runs WHERE pursuit_id=?', id);
+      this.database.run('DELETE FROM pursuits WHERE id=?', id);
+      for (const row of conversations)
+        this.database.run('DELETE FROM conversations WHERE id=?', String(row.conversation_id));
+    });
+  }
   setStatus(id: string, status: PursuitStatus, reason: string, now: number) {
     this.database.run(
       'UPDATE pursuits SET status=?,next_run_at=?,next_run_reason=? WHERE id=?',

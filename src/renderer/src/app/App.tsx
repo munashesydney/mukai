@@ -606,6 +606,10 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
               runId={location.runId}
               bots={ai.bots}
               onOwner={(id) => select({ section: 'bots', item: id })}
+              onDeleted={() => {
+                select({ section: 'pursuits', item: 'empty' });
+                void pursuitState.refresh().catch(() => {});
+              }}
             />
           ) : (
             <main className="conversation ai-chat-empty">

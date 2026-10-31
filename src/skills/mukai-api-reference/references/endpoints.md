@@ -4,6 +4,8 @@ These paths are for the web server that serves Mukai. A same-origin signed-in br
 
 Use GET /api/workspaces to discover workspace IDs. The local/VM runtime and custom-route URL are not a management API credential.
 
+Server clients can use the owner API with valid owner authentication, but server-side fetch does not inherit a browser cookie; credentials:'same-origin' does not supply one. Authenticated custom handlers receive neither the owner's Cookie nor Authorization header. Do not extract those credentials or Mukai's master token for workspace code. Within a custom handler/job/tool, use await context.wakeBot(message,{botId}) instead. For a separate service, register a POST auth:'mukai' custom route that validates its action and awaits wakeBot; call MUKAI_ROUTES_URL plus its /custom/... path with Authorization: Bearer using MUKAI_ROUTES_TOKEN. That token cannot call these owner API endpoints. wakeBot queues a new private conversation and returns queue acceptance, rather than a primary-chat response stream.
+
 | Method and path                                              | Body / result                                                                                                                                                          |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET /api/workspaces                                          | Workspace array, including id, name and computer.                                                                                                                      |

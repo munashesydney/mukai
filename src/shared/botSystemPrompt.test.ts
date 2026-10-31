@@ -14,6 +14,7 @@ function prompt(tools: object, computer: 'local' | 'qemu' = 'local') {
   return buildBotSystemPrompt({
     bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain: true, createdBy: null },
     instructions: 'Help the user.',
+    workspace: { id: 'workspace', name: 'Test workspace' },
     computer,
     tools,
   });
@@ -24,8 +25,25 @@ it('uses the role-neutral v2 shared prompt and leaves v1 available separately', 
   expect(v2).toContain('### Communicate clearly');
   expect(v2).toContain('answer it briefly and continue the original task');
   expect(v2).toContain('Call only tools and actions supplied in the current run');
+  expect(v2).toContain('the communicate tool and approvals also message the user on Telegram');
   expect(v2).not.toContain("You are the workspace's main bot");
   expect(v1).toContain('Your default question is:');
+});
+
+it('includes the current workspace Telegram connection status', () => {
+  const build = (telegramConnected: boolean) =>
+    buildBotSystemPrompt({
+      bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain: true, createdBy: null },
+      instructions: 'Help the user.',
+      workspace: { id: 'workspace', name: 'Test workspace' },
+      telegramConnected,
+      tools: {},
+    });
+  for (const connected of [true, false])
+    expect(build(connected)).toContain(
+      'Telegram connected for current workspace (paired, enabled, workspace authorized): ' +
+        connected,
+    );
 });
 
 it('keeps shared and conditional guidance close to the v1 instruction budget', () => {
@@ -46,6 +64,7 @@ it('teaches Mukai capabilities to every role even with no tools assigned', () =>
       const system = buildBotSystemPrompt({
         bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: null },
         instructions: 'Help.',
+        workspace: { id: 'workspace', name: 'Test workspace' },
         tools: {},
         delegated,
       });
@@ -123,7 +142,7 @@ it('recommends procedural self-improvement and explains available skill operatio
   const system = prompt({ skills: {} });
   expect(system).toContain(mukaiSkillInstructions);
   expect(system).toContain('optional follow-through, not a requirement for every task');
-  expect(system).toContain('first 10 enabled skill titles');
+  expect(system).toContain('first 10 enabled skills with IDs, names and descriptions');
   expect(system).toContain('operation search');
   expect(system).toContain('expectedVersion');
   expect(prompt({})).not.toContain('operation search');
@@ -135,6 +154,7 @@ it('gives all roles the same shared prompt and adds main-bot instructions only f
     buildBotSystemPrompt({
       bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: isMain ? null : 'main' },
       instructions: 'Help the user.',
+      workspace: { id: 'workspace', name: 'Test workspace' },
       tools: { manage_bot: {} },
       delegated,
     });

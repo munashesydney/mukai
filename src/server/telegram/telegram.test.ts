@@ -157,6 +157,23 @@ function answer(input: ChatInput, content = 'A public answer.'): ChatMessage {
 }
 
 describe('Telegram management security', () => {
+  it('reports prompt connection status only for paired, enabled and authorized workspaces', async () => {
+    expect(api.telegram.workspaceConnected('default')).toBe(false);
+    await paired();
+    expect(api.telegram.workspaceConnected('default')).toBe(true);
+    const other = api.workspaces.create({ name: 'Other', folder: tmpdir() });
+    expect(api.telegram.workspaceConnected(other.id)).toBe(false);
+    api.telegram.connections.enabled(false);
+    expect(api.telegram.workspaceConnected('default')).toBe(false);
+    api.telegram.connections.enabled(true);
+    expect(api.telegram.workspaceConnected('default')).toBe(true);
+    await api.telegram.setAccess({ workspaces: [] });
+    expect(api.telegram.workspaceConnected('default')).toBe(false);
+    await api.telegram.setAccess({ workspaces: [{ workspaceId: 'default', botId: null }] });
+    api.telegram.connections.revoke();
+    expect(api.telegram.workspaceConnected('default')).toBe(false);
+  });
+
   it('requires the existing API credentials and trusted origin on every management endpoint', async () => {
     for (const [path, method] of [
       ['/telegram', 'GET'],

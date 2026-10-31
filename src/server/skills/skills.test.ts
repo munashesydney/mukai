@@ -133,7 +133,7 @@ describe('skill bundles', () => {
 
 describe('workspace skills', () => {
   it.each([0, 3, 10, 13])(
-    'previews the first 10 enabled titles and counts the remainder for %i skills',
+    'previews the first 10 enabled skills with load references and counts the remainder for %i skills',
     async (count) => {
       const server = await setup();
       const names = Array.from(
@@ -149,14 +149,57 @@ describe('workspace skills', () => {
         expect(context).toBe('');
         return;
       }
-      expect(JSON.parse(context.split('\n')[1])).toEqual(names.slice(0, 10));
+      expect(JSON.parse(context.split('\n')[1])).toEqual(
+        server.skills
+          .list('default', '', false)
+          .slice(0, 10)
+          .map(({ id, name, description }) => ({ id, name, description })),
+      );
       expect(context).toContain(`${Math.max(0, count - 10)} skills left.`);
       expect(context).toContain('operation search');
-      expect(context).toContain('load a relevant skill by ID');
+      expect(context).toContain('directly by ID or exact name');
       expect(context).not.toContain('disabled-workflow');
-      expect(context).not.toContain('Review code changes before merging.');
+      expect(context).not.toContain('Read the diff, check behavior');
     },
   );
+
+  it('ranks exact names first and finds partial keyword matches without requiring every term', async () => {
+    const server = await setup();
+    const reference = server.skills.save('default', bundle('mukai-api-reference'));
+    server.skills.save('default', bundle('mukai-api-reference-extra'));
+    server.skills.save('default', bundle('unrelated-workflow'));
+    expect(server.skills.list('default', 'mukai-api-reference')[0].id).toBe(reference.id);
+    expect(server.skills.list('default', 'mukai api reference custom routes bots')[0].id).toBe(
+      reference.id,
+    );
+    expect(server.skills.list('default', 'mukai api').map((skill) => skill.name)).not.toContain(
+      'unrelated-workflow',
+    );
+    expect(server.skills.list('default', 'nonexistent')).toEqual([]);
+    server.skills.enable('default', reference.id, false);
+    expect(server.skills.list('default', 'mukai', false).map((skill) => skill.id)).not.toContain(
+      reference.id,
+    );
+  });
+
+  it('loads exact names within the current workspace and returns canonical IDs', async () => {
+    const server = await setup();
+    const skill = server.skills.save('default', bundle());
+    expect(server.skills.load('default', 'scout', 'bot-scout', skill.name)).toMatchObject({
+      id: skill.id,
+    });
+    expect(() => server.skills.load('default', 'scout', 'bot-scout', 'review')).toThrow(
+      'Skill not found',
+    );
+    const other = server.workspaces.create({ name: 'Other', folder: dir });
+    const foreign = server.skills.save(other.id, bundle('foreign-workflow'));
+    for (const reference of [foreign.id, foreign.name])
+      expect(() => server.skills.load('default', 'scout', 'bot-scout', reference)).toThrow(
+        'Skill not found',
+      );
+    server.skills.enable('default', skill.id, false);
+    expect(() => server.skills.load('default', 'scout', 'bot-scout', skill.name)).toThrow('Enable');
+  });
 
   it('creates, searches, updates with version checks, and isolates workspaces', async () => {
     const server = await setup();
@@ -303,6 +346,17 @@ describe('workspace skills', () => {
       { toolCallId: 'test-load', messages: [], context: {} },
     );
     expect(result).toMatchObject({ ok: true });
+    const loadByName = await tools.skills.execute!(
+      { operation: 'load', name: skill.name },
+      { toolCallId: 'test-load-name', messages: [], context: {} },
+    );
+    expect(loadByName).toMatchObject({ ok: true });
+    const missingReference = await tools.skills.execute!(
+      { operation: 'load' },
+      { toolCallId: 'test-load-missing', messages: [], context: {} },
+    );
+    expect(missingReference).toMatchObject({ ok: false });
+    expect(JSON.stringify(missingReference)).toContain('Load requires id or exact name');
     expect(server.skills.context('default', 'scout', 'bot-scout')).toContain(skill.name);
     expect(
       (await request('/tools')).data.find((tool: { id: string }) => tool.id === 'skills'),

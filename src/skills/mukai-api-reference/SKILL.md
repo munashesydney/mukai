@@ -10,3 +10,5 @@ description: >-
 4. Keep one requestId for a chat submission and reuse it for that submission's retries. A 409 can mean the conversation is busy; wait, stop it with user authorization, or queue a follow-up. Do not silently submit a second requestId after an uncertain outcome.
 5. On 401, reload the protected entry page to sign in again. Never put Mukai's API token in browser code. MUKAI_ROUTES_TOKEN authorizes workspace custom routes only; terminal/custom-code environments cannot use it for /api/... management requests. Native bot tools remain the normal choice during agent work.
 6. Exercise only the requested actions. The owner API can change persistent workspace state; bot tool permissions and browser owner authentication are different access paths.
+
+Server-side fetch does not inherit browser login; credentials:'same-origin' is not server authentication. Custom handlers/jobs/tools should use context.wakeBot. A separate service can POST to an auth:'mukai' custom route that awaits wakeBot, authenticated with its workspace MUKAI_ROUTES_TOKEN. This queues a new private conversation, unlike the primary-chat API. See references/endpoints.md for this boundary.

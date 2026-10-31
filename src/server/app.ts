@@ -128,8 +128,7 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
     );
     const processes = new ProcessService({
-      routeEnvironment: (workspaceId, lifetimeMs) =>
-        capabilities.routeEnvironment(workspaceId, lifetimeMs),
+      routeEnvironment: (workspaceId) => capabilities.routeEnvironment(workspaceId),
       resolveEnvironment: (workspaceId, names) =>
         capabilities.environment.resolveForTerminal(workspaceId, names),
     });
@@ -262,6 +261,7 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
       options.telegramFetch,
     );
+    tools.attachTelegram(telegram);
     const telegramRuntime = new TelegramRuntime(
       telegram,
       new TelegramActivity(telegram, approvals, notifications),
@@ -302,6 +302,7 @@ export function createApiServer(options: ApiOptions = {}) {
               localBrowserRequest(request) &&
               Boolean(browserSession?.authenticated(request)))
         : undefined,
+      diagnostics,
     );
     computers.attachDisposalHandler((computer) => desktops.forget(computer));
     attachments.attachDeletionGuard((id) => {

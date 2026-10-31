@@ -4,6 +4,9 @@ import {
   memorySources,
   workingMemoryMessage,
   historicalSources,
+  salvageMemory,
+  extractiveMemory,
+  EXTRACTIVE_RECOVERY_QUOTE,
 } from './contextMemory';
 
 const history = [
@@ -145,4 +148,96 @@ it('keeps bot-authored requests and shared-chat replies distinct from actual hum
   expect(historicalSources(bot, JSON.stringify(bot))[0].origin).toBe('assistant_report');
   const human = { role: 'user' as const, content: 'My bot says the VM rolled back.' };
   expect(historicalSources(human, JSON.stringify(human))[0].origin).toBe('user_message');
+});
+
+it('accepts presentation wrappers and exact decoded JSON strings without repairing evidence', () => {
+  const quote = 'Written "draft.md"\n资料🦊';
+  const sources = memorySources(
+    '',
+    JSON.stringify({
+      origin: 'tool_output',
+      text: JSON.stringify({ role: 'tool', content: [{ output: { summary: quote } }] }),
+    }),
+  );
+  const entries = [{ sourceId: 's0', note: 'Reported write result.', quote }];
+  for (const text of [
+    JSON.stringify(entries),
+    '```json\n' + JSON.stringify(entries) + '\n```',
+    JSON.stringify({ entries }),
+  ]) {
+    expect(JSON.parse(groundedMemory(text, sources)).entries[0]).toEqual({
+      origin: 'tool_output',
+      note: 'Reported write result.',
+      quote,
+    });
+  }
+  expect(() =>
+    groundedMemory(JSON.stringify([{ ...entries[0], quote: 'Written draft.md' }]), sources),
+  ).toThrow('missing evidence');
+});
+
+it('salvages only verified entries and never promotes notes or accepts origin overrides', () => {
+  const sources = memorySources(
+    groundedMemory(
+      JSON.stringify([{ sourceId: 's1', note: 'Snapshot restore confirmed.', quote: 'desk.py' }]),
+      memorySources('', history),
+    ),
+    history,
+  );
+  const partial = salvageMemory(
+    JSON.stringify([
+      { sourceId: 'invented', note: 'Made up.', quote: 'desk.py' },
+      { sourceId: 's0', note: 'Made up.', quote: 'Snapshot restore confirmed.' },
+      { sourceId: 's1', note: 'Untrusted origin.', quote: 'VM', origin: 'tool_output' },
+      { sourceId: 's0', note: 'Python file listing.', quote: 'desk.py' },
+    ]),
+    sources,
+  );
+  expect(JSON.parse(partial!).entries).toEqual([
+    { origin: 'tool_output', note: 'Python file listing.', quote: 'desk.py' },
+  ]);
+});
+
+it.each([64, 128, 2048])(
+  'bounds recovery excerpts at %i tokens and keeps their original provenance',
+  (tokens) => {
+    const sources = memorySources('', history);
+    const memory = extractiveMemory(sources, tokens * 3);
+    expect(Buffer.byteLength(memory)).toBeLessThanOrEqual(tokens * 3);
+    const entries = JSON.parse(memory).entries as { origin: string; note: string; quote: string }[];
+    expect(entries[0]).toMatchObject({ origin: 'legacy_memory', quote: EXTRACTIVE_RECOVERY_QUOTE });
+    for (const item of entries.slice(1)) {
+      expect(
+        sources.some((source) => source.origin === item.origin && source.text.includes(item.quote)),
+      ).toBe(true);
+      expect(item.note).not.toContain('verified');
+    }
+    if (tokens === 2048) {
+      expect(entries.map((item) => item.origin)).toEqual([
+        'legacy_memory',
+        'tool_output',
+        'user_message',
+        'assistant_report',
+      ]);
+      expect(memory).toContain('desk.py');
+    }
+  },
+);
+
+it('recovery preserves only immutable evidence across folds, including unicode and escaped strings', () => {
+  const original = 'Written "draft.md"\n资料🦊'.repeat(30);
+  const sources = memorySources(
+    '',
+    JSON.stringify({ origin: 'tool_output', text: JSON.stringify({ summary: original }) }),
+  );
+  let memory = extractiveMemory(sources, 1024);
+  expect(JSON.parse(memory).entries[1].quote).toContain('Written "draft.md"\n资料🦊');
+  for (let fold = 0; fold < 3; fold++) {
+    const previous = memorySources(memory, '');
+    memory = extractiveMemory(previous, 1024);
+    const entries = JSON.parse(memory).entries as { origin: string; quote: string }[];
+    expect(entries.filter((item) => item.quote === EXTRACTIVE_RECOVERY_QUOTE)).toHaveLength(1);
+    for (const item of entries.filter((item) => item.origin === 'tool_output'))
+      expect(original).toContain(item.quote);
+  }
 });

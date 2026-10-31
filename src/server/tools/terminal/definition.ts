@@ -6,7 +6,7 @@ export const terminalDefinition = {
   summary: 'Run local commands and manage background processes.',
   actions: ['run', 'list', 'poll', 'wait', 'log', 'write', 'kill'],
   description:
-    'Run a fresh noninteractive shell without PTY (Windows PowerShell, otherwise sh), with local OS permissions. cwd is workspace-relative. Output is bounded; running results have a session id for process. background returns immediately; yieldMs sets the initial wait. timeoutSeconds defaults to 300 foreground/3600 background. Stop unneeded work. envFromSettings selects saved names; env is temporary nonsecret data. Automatic MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN provide this workspace’s actual route address and temporary Bearer access to auth:mukai. Never override or save them.',
+    'Run a fresh noninteractive shell without PTY (Windows PowerShell, otherwise sh), with local OS permissions. cwd is workspace-relative. Output is bounded; running results have a session id for process. background returns immediately; yieldMs sets the initial wait. timeoutSeconds defaults to 300 foreground/3600 background. Stop unneeded work. envFromSettings selects saved names; env is temporary nonsecret data. Automatic MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN provide this workspace’s actual route address and non-expiring workspace Bearer access to auth:mukai. The token survives process exit and VM/backend restarts; child services can inherit it. Workspace deletion removes access. Never override them or save/log the token.',
   inputSchema: z.object({
     ...terminalEnvironmentFields,
     command: z.string().trim().min(1).max(16000),

@@ -585,6 +585,7 @@ export function createRoutes({
         return send(response, await browsers.control(id, input));
       }
     } else if (resource === 'pursuits') {
+      if (id && !action && method === 'DELETE') return send(response, pursuits.remove(id));
       if (!id && method === 'GET')
         return sendRead(
           request,
@@ -814,6 +815,7 @@ export function createRoutes({
           await desktops.session(
             workspaces.computers.guest(workspace),
             nativeClientRequest(request),
+            url.searchParams.get('reconnect') === '1',
           ),
         );
       }

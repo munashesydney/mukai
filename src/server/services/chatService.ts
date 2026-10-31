@@ -1008,6 +1008,8 @@ export class ChatService {
         buildBotSystemPrompt({
           bot: botIdentity,
           instructions: bot.instructions,
+          workspace: { id: scope.workspaceId, name: scope.workspaceName },
+          telegramConnected: this.tools.telegramConnected(scope.workspaceId),
           workspaceFolder: scope.folder,
           computer: scope.computer,
           tools,
@@ -1209,11 +1211,21 @@ export class ChatService {
         config.contextWindow,
         config.maxOutputTokens,
         estimateTokens(system) + (await toolTokens(tools)) + memoryOverhead,
-        contextSummarizer(config, signal, (tokens, estimated) => {
-          usage.runTokens += tokens;
-          usage.runEstimated ||= estimated;
-          publishUsage();
-        }),
+        contextSummarizer(
+          config,
+          signal,
+          (tokens, estimated) => {
+            usage.runTokens += tokens;
+            usage.runEstimated ||= estimated;
+            publishUsage();
+          },
+          (recovery) =>
+            this.diagnostics.info(
+              'chat.compaction_recovered',
+              `Compaction recovered using ${recovery.method}; reason=${recovery.reason}; attempts=${recovery.attempts}; sources=${recovery.sourceCount}.`,
+              { ...diagnosticContext(), phase: 'context-compaction' },
+            ),
+        ),
         chatOutputReserve(config) - config.maxOutputTokens,
       );
       manager.compactions = usage.compactions;

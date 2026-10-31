@@ -1,4 +1,4 @@
-import type { RouteEnvironmentLease } from '../../shared/routeAccess';
+import type { RouteEnvironment } from '../../shared/routeAccess';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
@@ -33,7 +33,7 @@ function sameOwner(a: RuntimeOwner, b: RuntimeOwner) {
 export class ProcessService {
   constructor(
     private options: {
-      routeEnvironment?: (workspaceId: string, lifetimeMs: number) => RouteEnvironmentLease;
+      routeEnvironment?: (workspaceId: string) => RouteEnvironment;
       resolveEnvironment?: (workspaceId: string, names: string[]) => Record<string, string>;
     } = {},
   ) {}
@@ -170,29 +170,20 @@ export class ProcessService {
     }
     if (this.deletingWorkspaces.has(owner.workspaceId))
       throw new ApiError(409, 'Workspace is being deleted.');
-    const routeLease = this.options.routeEnvironment?.(
-      owner.workspaceId,
-      (input.timeoutSeconds ?? (input.background ? 3600 : 300)) * 1000 + 1000,
-    );
-    const automatic = routeLease?.env ?? runtime.automaticEnvironment ?? {};
+    const routeAccess = this.options.routeEnvironment?.(owner.workspaceId);
+    const automatic = routeAccess?.env ?? runtime.automaticEnvironment ?? {};
     Object.assign(env, automatic);
     const secrets = [...names.map((name) => configured[name]), automatic.MUKAI_ROUTES_TOKEN];
     const stdout = new ProcessRedactor(secrets);
     const stderr = new ProcessRedactor(secrets);
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child =
-        process.platform === 'win32'
-          ? spawn(
-              'powershell.exe',
-              ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', input.command],
-              { cwd, env, windowsHide: true },
-            )
-          : spawn('/bin/sh', ['-c', input.command], { cwd, env, detached: true });
-    } catch (error) {
-      routeLease?.release();
-      throw error;
-    }
+    const child: ChildProcessWithoutNullStreams =
+      process.platform === 'win32'
+        ? spawn(
+            'powershell.exe',
+            ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', input.command],
+            { cwd, env, windowsHide: true },
+          )
+        : spawn('/bin/sh', ['-c', input.command], { cwd, env, detached: true });
     let finish!: () => void;
     let exited!: () => void;
     const entry: ManagedProcess = {
@@ -242,7 +233,6 @@ export class ProcessService {
       append(redactError('\nProcess input failed: ' + error.message)),
     );
     child.on('error', (error) => {
-      routeLease?.release();
       entry.info.status = 'failed';
       append(redactError(error.message));
       clearTimeout(entry.timer);
@@ -250,12 +240,10 @@ export class ProcessService {
       finish();
     });
     child.on('exit', (code) => {
-      routeLease?.release();
       entry.info.exitCode = code;
       exited();
     });
     child.on('close', (code) => {
-      routeLease?.release();
       append(stdout.finish());
       append(stderr.finish());
       if (entry.info.status === 'running') entry.info.status = 'exited';

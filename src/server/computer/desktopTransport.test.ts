@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { DesktopTransport } from './desktopTransport';
 import type { QemuComputer } from './qemuComputer';
@@ -86,6 +87,42 @@ it('expires unused viewer tickets', async () => {
   const session = await transport.session(computer);
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31000);
   await denied(session.path, 'file://');
+});
+it('reconnects only to an existing desktop without starting or restarting the VM', async () => {
+  const start = vi.spyOn(computer, 'start');
+  await expect(transport.session(computer, false, true)).resolves.toHaveProperty('path');
+  expect(start).not.toHaveBeenCalled();
+  vi.spyOn(computer, 'desktopConnection').mockImplementation(() => {
+    throw new Error('The workspace desktop is unavailable.');
+  });
+  await expect(transport.session(computer, false, true)).rejects.toThrow('unavailable');
+  expect(start).not.toHaveBeenCalled();
+});
+it('delivers an ordered stream intact after a slow viewer resumes reading', async () => {
+  const session = await transport.session(computer);
+  const viewer = new WebSocket(url + session.path, { origin: 'file://' });
+  const received: Buffer[] = [];
+  viewer.on('message', (bytes) => received.push(Buffer.from(bytes as Buffer)));
+  await new Promise<void>((resolve, reject) => {
+    viewer.once('open', resolve);
+    viewer.once('error', reject);
+  });
+  try {
+    await expect.poll(() => Buffer.concat(received).toString()).toBe('RFB fixture');
+    received.length = 0;
+    viewer.pause();
+    const payload = randomBytes(6 * 1024 * 1024);
+    for (let offset = 0; offset < payload.length; offset += 128 * 1024)
+      viewer.send(payload.subarray(offset, offset + 128 * 1024));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(received).toHaveLength(0);
+    viewer.resume();
+    await expect.poll(() => Buffer.concat(received).length).toBe(payload.length);
+    expect(Buffer.concat(received).equals(payload)).toBe(true);
+  } finally {
+    viewer.resume();
+    viewer.terminate();
+  }
 });
 it('carries a full 1 MiB clipboard update with its RFB headers', async () => {
   const session = await transport.session(computer);

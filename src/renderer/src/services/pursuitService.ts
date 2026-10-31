@@ -11,6 +11,8 @@ export const pursuitService = {
   list: (workspaceId: string) =>
     api<Pursuit[]>(`/pursuits?workspaceId=${encodeURIComponent(workspaceId)}`),
   detail: (id: string) => api<PursuitDetail>(`/pursuits/${encodeURIComponent(id)}`),
+  remove: (id: string) =>
+    api<{ deleted: true; id: string }>(`/pursuits/${encodeURIComponent(id)}`, 'DELETE'),
   workpadEntry: (id: string, entryId: string) =>
     api<WorkpadEntry>(
       `/pursuits/${encodeURIComponent(id)}/workpad?entryId=${encodeURIComponent(entryId)}`,

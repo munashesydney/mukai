@@ -2057,7 +2057,8 @@ video.artifact-media-preview {
   border-color: var(--teal);
   background: var(--theme-soft);
 }
-.danger-text {
+.danger-text,
+.popup-menu > button.danger-text {
   color: #bd6f64;
 }
 .button--danger {

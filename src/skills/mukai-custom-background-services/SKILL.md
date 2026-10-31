@@ -1,0 +1,13 @@
+---
+name: mukai-custom-background-services
+description: >-
+  Set up unattended custom pollers and persistent listeners in Mukai, with startup, restart recovery and event delivery to bots. Use for periodic API checks or long-lived connections such as Discord Gateway and Slack Socket Mode; hosted incoming webhooks use mukai-webhooks instead.
+---
+
+Starting code once in a terminal does not make it resume after a workspace/VM restart. Give unattended work a registered trigger and a recovery path; keep the bot free to continue instead of waiting on an endless command.
+
+1. Choose by how events arrive. Pollers actively check an API: use an interval custom job that checks, saves progress and returns; see [references/pollers.md](references/pollers.md). Persistent WebSocket/session listeners need their own running process: use a workspace_start custom job to ensure it is running, plus interval health checks; see [references/persistent-listeners.md](references/persistent-listeners.md). Incoming webhooks such as Stripe wait for the provider to POST to a custom route already hosted by Mukai: use mukai-webhooks, with no startup job or separate receiving server. Choose the pattern from the actual integration, not its product name.
+2. Write the workspace module and register it with register_custom_job. Jobs share context.env, context.workspacePath, context.enqueue and context.wakeBot. Read declared requiredEnv values from context.env and use absolute workspace paths. Keep import-time code free of startup effects.
+3. Mukai owns scheduling. workspace_start fires for a new available workspace runtime: a VM boot, or a backend lifetime for a local workspace. Registration alone does not execute it; use run_now for initial setup and verification. Scheduled jobs do not boot stopped VMs, and Mukai must remain running. Do not promise always-on delivery while the machine or VM is unavailable.
+4. Job handlers have a default 15-second deadline and a maximum timeoutMs of 30,000. Finish each invocation; do not put an endless listener inside run. Separately launched processes need explicit lifecycle management. Context helpers end with the invocation, but inherited MUKAI_ROUTES_TOKEN remains valid afterward and across VM/backend restarts for that workspace’s auth:mukai routes.
+5. Match delivery to the task: collecting/saving data needs no bot wake. If a matching event must trigger AI work, explicitly queue it with context.enqueue → processJob → context.wakeBot(message,{botId}); returning a run result alone does not notify a bot. A separate service can POST to an auth:'mukai' custom route for this handoff. Follow the relevant reference for deduplication, authentication and verification.

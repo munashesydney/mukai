@@ -895,7 +895,7 @@ describe('Bot architecture', () => {
     await chat(main);
     await chat(child);
     const inference = calls.filter((call) => call.stream);
-    expect(inference[0].messages[0].content).toContain('human or bot-sounding name');
+    expect(inference[0].messages[0].content).toContain('short human or character names');
     expect(inference[1].messages[0].content).toContain('"role":"Code architect"');
     expect(api.store.all('PRAGMA table_info(bots)').map((row) => row.name)).not.toContain(
       'description',

@@ -1,67 +1,63 @@
-import { randomBytes } from 'node:crypto';
-import { ApiError } from '../config';
-import type { RouteEnvironmentLease } from '../../shared/routeAccess';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { ApiError, privateSecret } from '../config';
+import type { Database } from '../db/database';
+import type { RouteEnvironment } from '../../shared/routeAccess';
 
-/** Ephemeral credentials accepted exclusively by custom-route dispatch. */
+/** Stable workspace credentials accepted exclusively by custom-route dispatch. */
 export class RouteCredentials {
   private closed = false;
-  private leases = new Map<
-    string,
-    { workspaceId: string; expires: number; active?: () => Promise<boolean>; release: () => void }
-  >();
-  constructor(private track: (token: string) => () => void) {}
-  issue(
-    workspaceId: string,
-    url: string,
-    lifetimeMs: number,
-    active?: () => Promise<boolean>,
-  ): RouteEnvironmentLease {
+  private stopped = new Set<string>();
+  private tokens = new Map<string, string>();
+  private key: Buffer;
+  constructor(
+    private db: Database,
+    private track: (token: string) => void,
+  ) {
+    this.key = privateSecret(db.dir, 'credentials.key', 32);
+    // Mask credentials inherited by existing services even before the first new launch.
+    for (const row of db.all('SELECT id FROM workspaces WHERE deleting=0'))
+      this.token(String(row.id));
+  }
+  private token(workspaceId: string) {
+    let token = this.tokens.get(workspaceId);
+    if (!token) {
+      // Domain separation keeps this independent of other uses of the encryption key.
+      token =
+        'mukai_routes_' +
+        createHmac('sha256', this.key)
+          .update('mukai:custom-route-access:v1\0')
+          .update(workspaceId)
+          .digest('base64url');
+      this.track(token);
+      this.tokens.set(workspaceId, token);
+    }
+    return token;
+  }
+  private available(workspaceId: string) {
+    return (
+      !this.closed &&
+      !this.stopped.has(workspaceId) &&
+      !!this.db.get('SELECT id FROM workspaces WHERE id=? AND deleting=0', workspaceId)
+    );
+  }
+  issue(workspaceId: string, url: string): RouteEnvironment {
     if (this.closed) throw new ApiError(503, 'Route access is shutting down.');
-    this.prune();
-    if (this.leases.size >= 10000) throw new ApiError(429, 'Too many active route credentials.');
-    const token = 'mukai_routes_' + randomBytes(32).toString('base64url');
-    const untrack = this.track(token);
-    let released = false;
-    const timer = setTimeout(() => release(), lifetimeMs);
-    timer.unref();
-    const release = () => {
-      if (released) return;
-      released = true;
-      clearTimeout(timer);
-      this.leases.delete(token);
-      untrack();
-    };
-    this.leases.set(token, { workspaceId, expires: Date.now() + lifetimeMs, active, release });
-    return { env: { MUKAI_ROUTES_URL: url, MUKAI_ROUTES_TOKEN: token }, release };
+    if (!this.available(workspaceId)) throw new ApiError(404, 'Workspace is unavailable.');
+    return { env: { MUKAI_ROUTES_URL: url, MUKAI_ROUTES_TOKEN: this.token(workspaceId) } };
   }
-  private prune() {
-    for (const lease of this.leases.values()) if (lease.expires <= Date.now()) lease.release();
-  }
-  async authorized(token: string, workspaceId: string) {
-    const lease = this.leases.get(token);
-    if (!lease || lease.workspaceId !== workspaceId) return false;
-    if (lease.expires <= Date.now()) {
-      lease.release();
-      return false;
-    }
-    if (lease.active) {
-      try {
-        if (await lease.active())
-          return this.leases.get(token) === lease && lease.expires > Date.now();
-      } catch {
-        /* Fail closed when a computer disappears. */
-      }
-      lease.release();
-      return false;
-    }
-    return true;
+  authorized(token: string, workspaceId: string) {
+    if (!this.available(workspaceId)) return false;
+    const expected = Buffer.from(this.token(workspaceId));
+    const given = Buffer.from(token);
+    return expected.length === given.length && timingSafeEqual(expected, given);
   }
   stopWorkspace(workspaceId: string) {
-    for (const lease of this.leases.values())
-      if (lease.workspaceId === workspaceId) lease.release();
+    this.stopped.add(workspaceId);
+    // Keep masking credentials from earlier output even after access is removed.
+    this.tokens.delete(workspaceId);
   }
   close() {
     this.closed = true;
-    for (const lease of this.leases.values()) lease.release();
+    this.tokens.clear();
   }
 }

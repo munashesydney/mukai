@@ -29,7 +29,15 @@ export const botManagementDefinition = {
         'send_message',
         'get_last_message',
       ]),
-      name: z.string().trim().min(1).max(60).optional(),
+      name: z
+        .string()
+        .trim()
+        .min(1)
+        .max(60)
+        .optional()
+        .describe(
+          'Short human or character name (Ada, Orbit), not a job label. Respect user names; avoid similar team names.',
+        ),
       role: z
         .string()
         .trim()
@@ -44,7 +52,7 @@ export const botManagementDefinition = {
         .max(12000)
         .optional()
         .describe(
-          'Persistent role, approach, and standards across conversations. Put the current assignment and context in send_message.message.',
+          'Reusable system prompt: generic role, approach and standards across conversations. Put one-run tasks/context in send_message.message.',
         ),
       toolIds: z
         .array(z.string().min(1).max(100))
