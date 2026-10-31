@@ -357,6 +357,63 @@ describe('working context', () => {
     expect(manager.compactions).toBe(0);
     expect(summarize).not.toHaveBeenCalled();
   });
+  it.each([1, 1.5])(
+    'keeps the latest execution receipt when required instructions leave only a small response budget (%fx calibration)',
+    async (factor) => {
+      const user: ModelMessage = {
+        role: 'user',
+        content: 'Complete the task using saved results.',
+      };
+      const runtime = (now: string): ModelMessage => ({
+        role: 'user',
+        content: buildBotRuntimeContext({ now, pursuits: [], previousOperations: false }),
+      });
+      const first = runtime('2026-10-30T00:00:00Z');
+      const required = [user, first];
+      const overhead =
+        Math.floor(contextLimits(32768, 4096).hardInput / factor) - estimateTokens(required) - 1200;
+      const summarize = vi.fn(async () => 'Earlier history was summarized.');
+      const manager = new ContextManager(32768, 4096, overhead, summarize);
+      manager.calibrate([], overhead * factor);
+      const operation = pair('completed', 'Saved once: receipt #1042. Do not repeat.');
+      const original = [user, ...operation, first];
+      expect(manager.estimate(required)).toBeGreaterThan(contextLimits(32768, 4096).input);
+      const compacted = await manager.prepare(original, true);
+      expect(contextUnits(compacted)).toContainEqual(operation);
+      expect(compacted).toContain(user);
+      expect(compacted).toContain(first);
+      expect(summarize).not.toHaveBeenCalled();
+      const next = runtime('2026-10-30T00:01:00Z');
+      const again = await manager.prepare([...compacted, next], true);
+      expect(contextUnits(again)).toContainEqual(operation);
+      expect(again).not.toContain(first);
+      expect(again).toContain(next);
+      expect(manager.estimate(again) + manager.outputAllowance(again)).toBeLessThanOrEqual(
+        Math.floor(32768 * 0.9),
+      );
+      expect(original).toEqual([user, ...operation, first]);
+    },
+  );
+  it('shrinks the response instead of summarizing completed calls when the full input still fits', async () => {
+    const user: ModelMessage = { role: 'user', content: 'Finish the three completed operations.' };
+    const runtime = (now: string): ModelMessage => ({
+      role: 'user',
+      content: buildBotRuntimeContext({ now, pursuits: [], previousOperations: false }),
+    });
+    const old = runtime('2026-10-30T00:00:00Z');
+    const latest = runtime('2026-10-30T00:01:00Z');
+    const summarize = vi.fn(async () => 'Earlier calls completed.');
+    const manager = new ContextManager(32768, 4096, 26500, summarize);
+    const operations = [pair('first'), pair('second'), pair('third')];
+    const compacted = await manager.prepare([user, old, ...operations.flat(), latest]);
+    expect(compacted).toEqual([user, ...operations.flat(), latest]);
+    expect(summarize).not.toHaveBeenCalled();
+    expect(manager.compactions).toBe(0);
+    expect(manager.outputAllowance(compacted)).toBeLessThan(4096);
+    expect(manager.estimate(compacted) + manager.outputAllowance(compacted)).toBeLessThanOrEqual(
+      Math.floor(32768 * 0.9),
+    );
+  });
   it('estimates PNG screenshots by dimensions and excludes old pixels from summary requests', async () => {
     const header = Buffer.alloc(24);
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(header);

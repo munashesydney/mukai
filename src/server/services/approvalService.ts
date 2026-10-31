@@ -95,8 +95,7 @@ export class ApprovalService {
     if (item.request.ask?.action === 'clarification')
       throw new ApiError(400, 'This request needs an answer, not an approval.');
     if (reason !== undefined) {
-      if (approved || item.request.ask?.action !== 'approval')
-        throw new ApiError(400, 'Only denied approval questions accept a reason.');
+      if (approved) throw new ApiError(400, 'Only denied approvals accept a reason.');
       reason = reason.trim();
       if (!reason || reason.length > 16000)
         throw new ApiError(400, 'Enter a reason between 1 and 16000 characters.');
@@ -151,7 +150,7 @@ export class ApprovalService {
     signal: AbortSignal,
     onChange: () => void,
     force = false,
-  ): Promise<boolean> {
+  ): Promise<ApprovalDecision> {
     signal.throwIfAborted();
     // This reserved built-in records a validated outcome; it performs no external action.
     if (!force && details.toolName === 'report_pursuit') {
@@ -170,7 +169,8 @@ export class ApprovalService {
         this.mode(this.repository.workspaceId(details)) === 'full-access')
     )
       return true;
-    return (await this.wait(details, signal, onChange)) === true;
+    const decision = await this.wait(details, signal, onChange);
+    return typeof decision === 'object' ? decision : decision === true;
   }
 
   async ask(

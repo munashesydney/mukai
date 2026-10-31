@@ -185,12 +185,25 @@ export class ContextManager {
     const units = contextUnits(messages);
     let anchor = -1;
     let runtime = -1;
+    let latestOperation = -1;
     units.forEach((unit, index) => {
       if (unit.some((item) => item.role === 'user' && !isBotRuntimeContext(item.content)))
         anchor = index;
       if (unit.some((item) => item.role === 'user' && isBotRuntimeContext(item.content)))
         runtime = index;
+      if (unit.some((item) => item.role === 'tool')) latestOperation = index;
     });
+    const current = units
+      .filter(
+        (unit, index) =>
+          index === runtime || !unit.some((message) => isBotRuntimeContext(message.content)),
+      )
+      .flat();
+    // The configured response cap is a preference. If all input still fits with
+    // a smaller response, retain the exact history and let outputAllowance adapt.
+    // Forced provider-overflow recovery must still make compaction progress.
+    if (!force && this.estimate(current) <= limits.hardInput)
+      return current.length === messages.length ? messages : current;
     // The exact request is mandatory; recent groups are retained only if they fit.
     // Dropped operation groups are summarized whole, never replayed as orphan results.
     let trimmedRecent = false;
@@ -198,6 +211,7 @@ export class ContextManager {
     // consume its entire budget when tool schemas fill a small context window.
     const summaryOverhead = estimateTokens([workingMemoryMessage('')]);
     const reserve = Math.ceil((limits.summary * 1.5 + summaryOverhead) * this.factor);
+    const minimumReserve = Math.ceil((64 * 1.5 + summaryOverhead) * this.factor);
     const pinned = new Set<number>(anchor >= 0 ? [anchor] : []);
     if (runtime >= 0) pinned.add(runtime);
     units.forEach((unit, index) => {
@@ -208,17 +222,25 @@ export class ContextManager {
       throw new ContextError(
         'The current request, attachments, or required instructions exceeds the model’s working context. Increase its context-window setting or send a smaller request.',
       );
-    for (
-      let index = units.length - 1;
-      index >= Math.max(0, anchor) && index >= units.length - 2;
-      index--
-    ) {
-      if (pinned.has(index)) continue;
+    const recent = new Set([units.length - 1, units.length - 2, latestOperation]);
+    for (const index of [...recent]
+      .filter((index) => index >= Math.max(0, anchor))
+      .sort((a, b) => b - a)) {
+      if (
+        pinned.has(index) ||
+        (index !== runtime && units[index].some((message) => isBotRuntimeContext(message.content)))
+      )
+        continue;
+      // Keep the latest execution receipt before reserving a full response and
+      // notebook. outputAllowance can shrink the response; losing this evidence
+      // can instead make the model repeat an already completed operation.
+      const operationBudget = index === latestOperation ? limits.hardInput : budget;
+      const operationReserve = index === latestOperation ? minimumReserve : reserve;
       let candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
       // Additional tools and loaded workflows reduce space for recent evidence.
       // Trim the newest result group before discarding it, preserving call/result pairs.
       if (
-        this.estimate(candidate) + reserve > budget &&
+        this.estimate(candidate) + operationReserve > operationBudget &&
         units[index].some((item) => item.role === 'tool')
       ) {
         const structural = candidate.map((message) =>
@@ -236,14 +258,16 @@ export class ContextManager {
               }
             : message,
         );
-        const room = Math.floor((budget - reserve - this.estimate(structural)) / this.factor);
+        const room = Math.floor(
+          (operationBudget - operationReserve - this.estimate(structural)) / this.factor,
+        );
         if (room >= 256) {
           trimmedRecent = true;
           units[index] = limitToolGroups(units[index], room, estimateTokens);
           candidate = units.filter((_unit, i) => pinned.has(i) || i === index).flat();
         }
       }
-      if (this.estimate(candidate) + reserve <= budget) pinned.add(index);
+      if (this.estimate(candidate) + operationReserve <= operationBudget) pinned.add(index);
     }
     const retained = units.filter((_unit, index) => pinned.has(index)).flat();
     // The newest snapshot fully replaces old runtime status. Expired snapshots

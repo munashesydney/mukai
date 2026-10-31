@@ -406,6 +406,72 @@ describe('Custom capabilities', () => {
     expect(await call({ operation: 'remove', id: item.id })).toEqual({ removed: true });
     expect(api.capabilities.list('default')).toHaveLength(0);
   });
+  it('registers, edits, preserves and clears custom tool approval presentation', async () => {
+    writeFileSync(join(folder, 'presented.ts'), toolSource('presented'));
+    const tools = api.capabilities.forBot(scoutBot(), new AbortController().signal, () => {});
+    const call = (input: object) =>
+      tools.register_custom_tool.execute!(input, {
+        toolCallId: randomUUID(),
+        messages: [],
+        context: {},
+      });
+    const presentation = {
+      title: 'Review **value**',
+      fields: [{ parameter: 'value', label: 'Value to send', presentation: 'long_text' }],
+    };
+    const item = (await call({
+      operation: 'register',
+      modulePath: 'presented.ts',
+      permissionMode: 'user_approval',
+      presentation,
+    })) as CapabilityRegistration;
+    expect(item.definition.presentation).toEqual(presentation);
+    const updated = (await call({ operation: 'update', id: item.id })) as CapabilityRegistration;
+    expect(updated.definition.presentation).toEqual(presentation);
+    const edited = { fields: [{ parameter: 'value', label: 'New label' }] };
+    const changed = (await call({
+      operation: 'set_presentation',
+      id: item.id,
+      presentation: edited,
+    })) as CapabilityRegistration;
+    expect(changed.definition.presentation).toEqual(edited);
+    expect(changed.version).toBe(updated.version);
+    const inspected = (await call({ operation: 'inspect', id: item.id })) as {
+      registration: CapabilityRegistration;
+    };
+    expect(inspected.registration.definition.presentation).toEqual(edited);
+    await call({ operation: 'disable', id: item.id });
+    const enabled = (await call({ operation: 'enable', id: item.id })) as CapabilityRegistration;
+    expect(enabled.definition.presentation).toEqual(edited);
+    await expect(call({ operation: 'set_presentation', id: item.id })).rejects.toThrow(
+      'presentation',
+    );
+    await expect(
+      call({
+        operation: 'set_presentation',
+        id: item.id,
+        presentation: { fields: [{ parameter: 'value', presentation: 'invalid' }] },
+      }),
+    ).rejects.toThrow();
+    const cleared = (await call({
+      operation: 'set_presentation',
+      id: item.id,
+      presentation: null,
+    })) as CapabilityRegistration;
+    expect(cleared.definition.presentation).toBeUndefined();
+    const reset = (await call({
+      operation: 'update',
+      id: item.id,
+      presentation,
+    })) as CapabilityRegistration;
+    expect(reset.definition.presentation).toEqual(presentation);
+    const resetAgain = (await call({
+      operation: 'update',
+      id: item.id,
+      presentation: null,
+    })) as CapabilityRegistration;
+    expect(resetAgain.definition.presentation).toBeUndefined();
+  });
   it('keeps shared registrations and custom tool access confined to their workspace', async () => {
     const item = await register('tool', toolSource('shared_tool'), 'shared.ts', 'scout');
     const otherFolder = join(root, 'other-workspace');

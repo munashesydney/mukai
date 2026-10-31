@@ -121,14 +121,14 @@ export class TelegramActivity {
     const event = reusable
       ? this.repository.refresh(previous.id)
       : this.repository.create(connection, 'approval', request.id, workspaceId, request.botId);
-    const details = approvalDetails(request.input);
+    const details = approvalDetails(request.input, request.presentation);
     const reviewable = details.length <= 12000;
     const question = request.ask;
     let text = `${question?.action === 'clarification' ? 'Question' : 'Approval required'}\n`;
     if (request.target) text += `From: ${line(request.target.name)}\n`;
     text += question
       ? `\n${question.question}`
-      : `Tool: ${line(request.toolName)}\n\n${reviewable ? '```json\n' + details + '\n```' : 'This request is too large to review safely in Telegram. Open Mukai to review and approve it.'}`;
+      : `Tool: ${line(request.toolName)}\n\n${reviewable ? details : 'This request is too large to review safely in Telegram. Open Mukai to review and approve it.'}`;
     const rows: Button[][] = [];
     if (question?.action === 'clarification') {
       question.options?.forEach((option, index) => {
@@ -356,7 +356,10 @@ export class TelegramActivity {
             }
             if (!['yes', 'no', 'deny_reason'].includes(action.action))
               throw new ApiError(400, 'Use the Approve or Deny buttons for this request.');
-            if (action.action === 'yes' && approvalDetails(request.input).length > 12000)
+            if (
+              action.action === 'yes' &&
+              approvalDetails(request.input, request.presentation).length > 12000
+            )
               throw new ApiError(400, 'Review and approve this large request in Mukai.');
             if (action.action === 'deny_reason' && !action.value?.trim())
               throw new ApiError(400, 'Reply with a reason for denying this request.');

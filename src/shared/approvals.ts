@@ -1,4 +1,5 @@
 import type { AskInput } from './ask';
+import type { CustomToolPresentation } from './customCapabilities';
 
 export type ApprovalMode = 'ask-for-approval' | 'full-access';
 export type ApprovalDecision = boolean | { approved: false; reason: string };
@@ -16,6 +17,8 @@ export interface ToolApproval {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  /** Snapshot of the custom tool's approval layout when this call was requested. */
+  presentation?: CustomToolPresentation;
   botId: string;
   botName: string;
   conversationId: string;

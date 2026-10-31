@@ -917,6 +917,7 @@ export class ChatService {
                   toolCallId: options.toolCallId,
                   toolName: pending.registration.definition.name,
                   input: pending.input,
+                  presentation: pending.registration.definition.presentation,
                   botId,
                   botName: bot.name,
                   conversationId,
@@ -928,15 +929,18 @@ export class ChatService {
                 true,
               );
               stepSignal.throwIfAborted();
-              if (!approved) {
+              if (approved !== true) {
+                const reason = typeof approved === 'object' ? approved.reason : undefined;
                 this.tools.cancelCustomConfirmation(input.pendingCallId);
                 return customToolReceipt(
                   { mode: 'ask_bot', approvedBy: 'user', decision: 'denied' },
                   'not_executed',
                   {
                     rejected: true,
+                    ...(reason ? { reason } : {}),
                     message:
-                      'The user denied this invocation. It was not executed. Do not retry without new user authorization.',
+                      'The user denied this invocation. It was not executed. Do not retry without new user authorization.' +
+                      (reason ? ` Reason: ${reason}` : ''),
                   },
                 );
               }
@@ -1513,6 +1517,7 @@ export class ChatService {
                       toolCallId: options.toolCallId,
                       toolName: name,
                       input,
+                      presentation: custom?.definition.presentation,
                       botId,
                       botName: bot.name,
                       conversationId,
@@ -1524,9 +1529,12 @@ export class ChatService {
                     Boolean(custom),
                   );
             stepSignal.throwIfAborted();
-            if (approved === false) {
+            if (approved === false || typeof approved === 'object') {
+              const reason = typeof approved === 'object' ? approved.reason : undefined;
               const summary =
-                'The user rejected this tool call. It was not executed. Do not retry it without a new user instruction.';
+                'The user denied this tool call. It was not executed. Do not retry it without a new user instruction.' +
+                (reason ? ` Reason: ${reason}` : '');
+              const denial = { rejected: true, message: summary, ...(reason ? { reason } : {}) };
               onActivity({
                 id: options.toolCallId,
                 tool: name,
@@ -1543,9 +1551,9 @@ export class ChatService {
                       decision: 'denied',
                     },
                     'not_executed',
-                    { rejected: true, message: summary },
+                    denial,
                   )
-                : { rejected: true, message: summary };
+                : denial;
             }
             const customPermission = custom
               ? {

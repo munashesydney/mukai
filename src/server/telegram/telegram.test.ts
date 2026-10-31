@@ -13,6 +13,7 @@ import { scoutBot } from '../services/botService';
 import { TelegramClient, TelegramApiError } from './client';
 import type { ChatInput, ChatMessage } from '../../shared/ai';
 import type { TelegramUpdate } from './types';
+import type { CustomToolPresentation } from '../../shared/customCapabilities';
 
 const TOKEN = '123456789:abcdefghijklmnopqrstuvwxyz_0123456789';
 const OWNER = 987654321;
@@ -728,6 +729,7 @@ describe('Telegram sessions and durable work', () => {
 function pendingApproval(
   botId = 'scout',
   input: unknown = { action: 'run', command: 'echo safe' },
+  presentation?: CustomToolPresentation,
 ) {
   const bot = new BotRepository(api.store).find(botId)!;
   const conversation = new ConversationRepository(api.store).createPrivate(bot.workspaceId, botId);
@@ -750,6 +752,7 @@ function pendingApproval(
     batchId: id,
     toolName: 'computer_use',
     input,
+    presentation,
   };
   const controller = new AbortController();
   const decision = api.approvals
@@ -810,6 +813,54 @@ function notify(botId = 'scout', title = 'A finding') {
 }
 
 describe('Telegram workspace approvals and updates', () => {
+  it('sends configured approval fields as readable Markdown with real values and buttons', async () => {
+    await paired();
+    const pending = pendingApproval(
+      'scout',
+      {
+        to: 'Jane',
+        body: '# Invoice\n\n**Total:** $250',
+        hidden: 'do-not-forward',
+        value: 'private',
+      },
+      {
+        title: 'Send this email?',
+        fields: [
+          { parameter: 'to', label: 'Recipient' },
+          { parameter: 'body', label: 'Message', presentation: 'long_text' },
+          { parameter: 'value', presentation: 'secret' },
+        ],
+      },
+    );
+    const event = await postedEvent(pending.request.id);
+    await vi.waitFor(
+      () =>
+        expect(
+          calls.some(
+            (call) =>
+              call.method === 'sendMessage' && String(call.input.text).includes('Send this email?'),
+          ),
+        ).toBe(true),
+      { timeout: 10000 },
+    );
+    const sent = calls.find(
+      (call) =>
+        call.method === 'sendMessage' && String(call.input.text).includes('Send this email?'),
+    )!.input;
+    expect(sent.text).toContain('Recipient: Jane');
+    expect(sent.text).toContain('Invoice');
+    expect(sent.text).toContain('Total: $250');
+    expect(sent.text).toContain('[redacted]');
+    expect(sent.text).not.toContain('do-not-forward');
+    expect(sent.text).not.toContain('private');
+    expect(sent.text).not.toContain('```');
+    expect(sent.entities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'bold' })]),
+    );
+    expect(JSON.stringify(sent.reply_markup)).toContain('Approve');
+    tap(String(event.id), 'yes');
+    expect(await pending.decision).toBe(true);
+  }, 15000);
   it('forwards approvals from non-Telegram conversations and other bots, with scoped one-time decisions', async () => {
     await paired();
     new BotRepository(api.store).create({

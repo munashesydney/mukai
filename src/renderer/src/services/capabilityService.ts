@@ -4,6 +4,7 @@ import type {
   CapabilityRun,
   EnvironmentVariable,
   CustomToolPermissionMode,
+  CustomToolPresentation,
 } from '../../../shared/customCapabilities';
 
 export interface CapabilityDetail {
@@ -34,6 +35,7 @@ export const capabilityService = {
       exportName?: string;
       ownerBotId?: string;
       permissionMode?: CustomToolPermissionMode;
+      presentation?: CustomToolPresentation | null;
     } = {},
   ) => api('/capabilities' + scope(workspaceId), 'POST', { kind, operation, ...values }),
   test: (workspaceId: string, id: string, input: unknown) =>
