@@ -105,6 +105,9 @@ export class ToolService {
   skillContext(bot: Bot, conversationId: string) {
     return this.skills?.context(bot.workspaceId, bot.id, conversationId) || '';
   }
+  botContext(bot: Bot) {
+    return this.management?.context(bot) || '';
+  }
   private memory?: MemoryService;
   attachMemory(service: MemoryService) {
     this.memory = service;

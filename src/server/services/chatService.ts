@@ -7,6 +7,7 @@ import {
 import { telegramUserMessagePrefix } from '../../shared/telegram';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  asSchema,
   tool,
   streamText,
   isStepCount,
@@ -40,6 +41,7 @@ import { AttachmentService } from './attachmentService';
 import { ApiError } from '../config';
 import { ToolService } from './toolService';
 import type { ApprovalService } from './approvalService';
+import { approvalReviewNotice, type ApprovalDecision } from '../../shared/approvals';
 import { customToolReceipt } from './customToolReceipt';
 import { unsuccessfulToolResult } from './toolFeedback';
 import { attachmentContext } from './attachmentContext';
@@ -520,9 +522,14 @@ export class ChatService {
     const privateChat = this.messages.persistentConversation(conversationId);
     const botChat = this.messages.botConversation(conversationId);
     const saved = privateChat ? this.jobs.context(conversationId, botId) : undefined;
-    // Ignore old bot-thread summaries until rebuilt from saved turns with sender identity.
-    const previous =
-      botChat && saved && !saved.summary.startsWith(botThreadContextVersion) ? undefined : saved;
+    // Empty notebooks from older context checks must not hide saved turns.
+    // Old bot-thread summaries also need rebuilding with sender identity.
+    const summary = botChat
+      ? saved?.summary.startsWith(botThreadContextVersion)
+        ? saved.summary.slice(botThreadContextVersion.length)
+        : ''
+      : saved?.summary;
+    const previous = summary?.trim() ? saved : undefined;
     const rows = this.messages
       .context(conversationId, privateChat ? 2147483647 : 10, throughSequence)
       .filter((row) => !previous || this.messages.sequence(row.id) > previous.throughSequence);
@@ -1109,10 +1116,21 @@ export class ChatService {
           },
         };
       }
-      const checkpoint =
+      let checkpoint =
         existingUser && (!runtime || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
           : undefined;
+      // Model context can survive configuration changes. Executable pending calls
+      // need a new user decision before they can use the current configuration.
+      const reviewChangedConfiguration = recoveringStep && !checkpoint;
+      if (reviewChangedConfiguration && recoveryCalls.length) {
+        checkpoint = this.jobs.read(assistantId, fingerprint, true, true);
+        if (checkpoint)
+          this.approvals?.requireReview(
+            assistantId,
+            recoveryCalls.filter((call) => call.state === 'pending').map((call) => call.toolCallId),
+          );
+      }
       const steeringRequests = new Map<string, ModelMessage>();
       if (existingUser && this.jobs.backgroundDelegations(assistantId).length && !checkpoint)
         throw new ChatCheckpointError(
@@ -1314,28 +1332,32 @@ export class ChatService {
         diagnosticPhase = previousPhase;
       };
       const compact = async (force = false) => {
-        let part: Extract<ResponsePart, { type: 'compaction' }> = {
-          id: randomUUID(),
-          type: 'compaction',
-          state: 'compacting',
-          startedAt: new Date().toISOString(),
-          tokensBefore: manager.estimate(messages),
-        };
+        let part: Extract<ResponsePart, { type: 'compaction' }> | undefined;
         const publishPart = () => {
+          if (!part) return;
           generation.parts = upsertResponsePart(generation.parts, part);
           save();
           emit({ type: 'part', id: assistantId, part });
         };
-        usage.phase = 'compacting';
-        publishPart();
-        publishUsage();
         try {
           saveCheckpoint();
-          diagnosticPhase = 'context-compaction';
-          messages = await manager.prepare(messages, force);
+          messages = await manager.prepare(messages, force, () => {
+            part = {
+              id: randomUUID(),
+              type: 'compaction',
+              state: 'compacting',
+              startedAt: new Date().toISOString(),
+              tokensBefore: manager.estimate(messages),
+            };
+            usage.phase = 'compacting';
+            publishPart();
+            publishUsage();
+            saveCheckpoint();
+            diagnosticPhase = 'context-compaction';
+          });
           signal.throwIfAborted();
           usage.compactions = manager.compactions;
-          if (this.messages.persistentConversation(conversationId))
+          if (part && this.messages.persistentConversation(conversationId))
             this.jobs.saveContext(
               conversationId,
               botId,
@@ -1347,23 +1369,26 @@ export class ChatService {
           usage.inputTokens = null;
           usage.outputTokens = null;
           usage.estimated = true;
-          part = {
-            ...part,
-            state: 'complete',
-            finishedAt: new Date().toISOString(),
-            tokensAfter: usage.usedTokens,
-          };
+          if (part)
+            part = {
+              ...part,
+              state: 'complete',
+              finishedAt: new Date().toISOString(),
+              tokensAfter: usage.usedTokens,
+            };
           publishPart();
           publishUsage();
           saveCheckpoint();
           diagnosticPhase = 'provider-request';
         } catch (failure) {
-          usage.phase = signal.aborted ? 'ready' : 'failed';
-          part = {
-            ...part,
-            state: signal.aborted ? 'interrupted' : 'failed',
-            finishedAt: new Date().toISOString(),
-          };
+          if (part) {
+            usage.phase = signal.aborted ? 'ready' : 'failed';
+            part = {
+              ...part,
+              state: signal.aborted ? 'interrupted' : 'failed',
+              finishedAt: new Date().toISOString(),
+            };
+          }
           publishPart();
           publishUsage();
           // Compaction has no side effects. Preserve its failure boundary and old
@@ -1426,6 +1451,7 @@ export class ChatService {
       };
       messages = manager.boundTools(messages);
       let executionVersion = 0;
+      const recoveryDecisions = new Map<string, ApprovalDecision>();
       let stepSignal = signal;
       let approvalBatchId: string = randomUUID();
       const guardTool = (name: string, definition: ToolSet[string]) => {
@@ -1484,7 +1510,10 @@ export class ChatService {
               !this.approvals
             )
               throw new ApiError(503, 'User approvals are unavailable.');
-            if (custom?.definition.permissionMode === 'ask_bot') {
+            if (
+              custom?.definition.permissionMode === 'ask_bot' &&
+              !recoveryDecisions.has(options.toolCallId)
+            ) {
               const checkpoint = this.tools.prepareCustomConfirmation(
                 bot,
                 name,
@@ -1505,7 +1534,8 @@ export class ChatService {
               return checkpoint;
             }
             const approved =
-              name === 'ask' ||
+              recoveryDecisions.get(options.toolCallId) ??
+              (name === 'ask' ||
               name === 'communicate' ||
               name === 'confirm_custom_tool' ||
               custom?.definition.permissionMode === 'auto_approve' ||
@@ -1527,7 +1557,7 @@ export class ChatService {
                     stepSignal,
                     () => emit({ type: 'approval', id: assistantId }),
                     Boolean(custom),
-                  );
+                  ));
             stepSignal.throwIfAborted();
             if (approved === false || typeof approved === 'object') {
               const reason = typeof approved === 'object' ? approved.reason : undefined;
@@ -1559,10 +1589,12 @@ export class ChatService {
               ? {
                   mode: custom.definition.permissionMode || ('user_approval' as const),
                   approvedBy:
+                    !recoveryDecisions.has(options.toolCallId) &&
                     custom.definition.permissionMode === 'auto_approve'
                       ? ('runtime' as const)
                       : ('user' as const),
                   decision:
+                    !recoveryDecisions.has(options.toolCallId) &&
                     custom.definition.permissionMode === 'auto_approve'
                       ? ('auto_approved' as const)
                       : ('approved' as const),
@@ -1651,7 +1683,71 @@ export class ChatService {
               save();
               try {
                 const definition = tools[call.toolName];
-                if (!definition?.execute) throw new Error('This tool is no longer available.');
+                const custom = definition
+                  ? this.tools.customRegistration(bot, call.toolName)
+                  : undefined;
+                if (
+                  reviewChangedConfiguration &&
+                  call.state === 'pending' &&
+                  call.toolName !== 'ask' &&
+                  call.toolName !== 'communicate'
+                ) {
+                  if (!this.approvals) throw new Error('User approvals are unavailable.');
+                  const approved = await this.approvals.request(
+                    {
+                      toolCallId: call.toolCallId,
+                      toolName: call.toolName,
+                      input: call.input,
+                      presentation: custom?.definition.presentation,
+                      botId,
+                      botName: bot.name,
+                      conversationId,
+                      messageId: assistantId,
+                      batchId: call.batchId,
+                      reviewNotice: approvalReviewNotice,
+                    },
+                    signal,
+                    () => emit({ type: 'approval', id: assistantId }),
+                    true,
+                  );
+                  recoveryDecisions.set(call.toolCallId, approved);
+                  if (approved !== true && !definition?.execute)
+                    throw new ApiError(
+                      403,
+                      'The user denied this saved tool call. It was not executed.' +
+                        (typeof approved === 'object' ? ` Reason: ${approved.reason}` : ''),
+                    );
+                }
+                if (!definition?.execute)
+                  throw new ApiError(
+                    409,
+                    'This tool is no longer available. The saved action was not executed; request a fresh call.',
+                  );
+                // Recovery bypasses the SDK's normal input parsing. Validate against
+                // the current schema before passing saved arguments to a tool.
+                const decision = recoveryDecisions.get(call.toolCallId);
+                if (decision === undefined || decision === true) {
+                  if (custom) {
+                    const current = this.tools.customRegistration(bot, call.toolName);
+                    if (
+                      !current ||
+                      current.id !== custom.id ||
+                      current.version !== custom.version ||
+                      current.status !== 'ready' ||
+                      current.definition.permissionMode !== custom.definition.permissionMode
+                    )
+                      throw new ApiError(
+                        409,
+                        'The custom tool changed while awaiting approval. Request a fresh call.',
+                      );
+                  }
+                  const validation = await asSchema(definition.inputSchema).validate?.(call.input);
+                  if (validation && !validation.success)
+                    throw new ApiError(
+                      400,
+                      'The saved arguments no longer match this tool. Request a fresh call; this action was not executed.',
+                    );
+                }
                 const value = await definition.execute(call.input, {
                   toolCallId: call.toolCallId,
                   messages,
@@ -1931,7 +2027,8 @@ export class ChatService {
         customNames = Object.keys(custom);
         for (const [name, definition] of Object.entries(custom)) guardTool(name, definition);
         const skillContext = this.tools.skillContext(bot, conversationId);
-        const currentSystem = buildSystem() + (skillContext ? '\n' + skillContext : '');
+        const botContext = tools.manage_bot ? this.tools.botContext(bot) : '';
+        const currentSystem = [buildSystem(), skillContext, botContext].filter(Boolean).join('\n');
         pausedReason ||= guard.paused
           ? 'This run paused after repeated tool results without progress.'
           : stepsUsed >= TOOL_STEP_LIMIT

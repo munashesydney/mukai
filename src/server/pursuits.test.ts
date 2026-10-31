@@ -691,6 +691,113 @@ describe('AI-owned pursuits and scheduled runs', () => {
       Date.now(),
     );
   });
+  it('lets the workspace main bot list and manage a sub-bot pursuit and its Workpad without taking ownership', async () => {
+    const main = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
+    const owner = { ...scoutBot('default', 'pursuit-owner'), isMain: false, createdBy: main.id };
+    new BotRepository(api.store).create(owner);
+    const pursuit = api.pursuits.create(owner, input);
+    expect(await workpadTool({ action: 'list' })).toMatchObject({
+      ok: true,
+      result: [{ id: pursuit.id, ownerBotId: owner.id }],
+    });
+    expect(api.pursuits.forBot(owner).map((item) => item.id)).toEqual([pursuit.id]);
+    expect(
+      await workpadTool({
+        action: 'update',
+        pursuitId: pursuit.id,
+        ...input,
+        name: 'Main reviewed',
+      }),
+    ).toMatchObject({
+      ok: true,
+      result: { name: 'Main reviewed', ownerBotId: owner.id },
+    });
+    const entry = api.pursuits.addEntryOwned(main, pursuit.id, {
+      type: 'note',
+      title: 'Main review',
+      content: 'Reviewed the next step.',
+    });
+    expect(await workpadTool({ action: 'list_entries', pursuitId: pursuit.id })).toMatchObject({
+      ok: true,
+      result: { entries: [{ id: entry.id }] },
+    });
+    expect(
+      await workpadTool({ action: 'get_entry', pursuitId: pursuit.id, entryId: entry.id }),
+    ).toMatchObject({
+      ok: true,
+      result: { id: entry.id, authorBotId: main.id },
+    });
+    expect(
+      await workpadTool({
+        action: 'update_entry',
+        pursuitId: pursuit.id,
+        entryId: entry.id,
+        expectedRevision: entry.revision,
+        patch: { content: 'Updated by main.' },
+      }),
+    ).toMatchObject({ ok: true, result: { content: 'Updated by main.' } });
+    for (const action of ['pause', 'resume', 'complete'] as const)
+      expect(await workpadTool({ action, pursuitId: pursuit.id })).toMatchObject({
+        ok: true,
+        result: { ownerBotId: owner.id },
+      });
+    expect(await workpadTool({ action: 'delete', pursuitId: pursuit.id })).toMatchObject({
+      ok: true,
+    });
+    expect(() => api.pursuits.require(pursuit.id)).toThrow('Pursuit not found');
+  });
+
+  it('keeps main-bot pursuit management inside its workspace and checks the saved bot role', async () => {
+    const main = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
+    const owner = { ...scoutBot('default', 'pursuit-owner'), isMain: false, createdBy: main.id };
+    const peer = { ...owner, id: 'pursuit-peer' };
+    const bots = new BotRepository(api.store);
+    bots.create(owner);
+    bots.create(peer);
+    const pursuit = api.pursuits.create(owner, input);
+    const own = api.pursuits.create(main, { ...input, name: 'Main pursuit' });
+    expect(api.pursuits.forBot(main).map((item) => item.id)).toEqual(
+      expect.arrayContaining([pursuit.id, own.id]),
+    );
+    expect(api.pursuits.forBot({ ...peer, isMain: true })).toEqual([]);
+    for (const caller of [peer, { ...peer, isMain: true }]) {
+      expect(() => api.pursuits.controlOwned(caller, pursuit.id, 'paused')).toThrow(
+        'workspace main bot',
+      );
+      expect(() => api.pursuits.removeOwned(caller, pursuit.id)).toThrow('workspace main bot');
+      expect(() => api.pursuits.listEntriesOwned(caller, pursuit.id, {})).toThrow(
+        'workspace main bot',
+      );
+    }
+    new WorkspaceRepository(api.store).create({
+      id: 'foreign-pursuits',
+      name: 'Foreign',
+      folder: null,
+      createdAt: new Date().toISOString(),
+    });
+    const foreignMain = scoutBot('foreign-pursuits', 'foreign-main');
+    bots.create(foreignMain);
+    const foreign = api.pursuits.create(foreignMain, input);
+    expect(api.pursuits.forBot(main).map((item) => item.id)).not.toContain(foreign.id);
+    for (const [caller, target] of [
+      [main, foreign],
+      [foreignMain, pursuit],
+    ] as const) {
+      expect(() => api.pursuits.updateOwned(caller, target.id, input)).toThrow(
+        'workspace main bot',
+      );
+      expect(() => api.pursuits.controlOwned(caller, target.id, 'paused')).toThrow(
+        'workspace main bot',
+      );
+      expect(() => api.pursuits.removeOwned(caller, target.id)).toThrow('workspace main bot');
+      expect(() => api.pursuits.listEntriesOwned(caller, target.id, {})).toThrow(
+        'workspace main bot',
+      );
+    }
+    expect(
+      api.pursuits.controlOwned({ ...main, isMain: false }, pursuit.id, 'paused').ownerBotId,
+    ).toBe(owner.id);
+  });
   it('retrieves provenance runs older than the recent run list and scopes them to their pursuit', async () => {
     const p = await createWithAI(),
       bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!,

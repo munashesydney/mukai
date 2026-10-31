@@ -11,6 +11,7 @@ import { PursuitRepository } from './repositories/pursuitRepository';
 import { WorkspaceRepository } from './repositories/workspaceRepository';
 import { BotRepository } from './repositories/botRepository';
 import { scoutBot } from './services/botService';
+import { approvalReviewNotice } from '../shared/approvals';
 
 let store: Database;
 let service: ApprovalService;
@@ -389,5 +390,44 @@ describe('Workspace tool approvals', () => {
     await expect(service.request(details, controller.signal, () => {})).rejects.toMatchObject({
       name: 'AbortError',
     });
+  });
+
+  it('requires review of unexecuted grants after configuration changes and preserves denials and answers', async () => {
+    const repository = new ApprovalRepository(store);
+    for (const [id, decision] of [
+      ['pending', undefined],
+      ['approved', true],
+      ['denied', { approved: false, reason: 'Do not send.' }],
+      ['answered', 'Existing customers'],
+    ] as const)
+      repository.save({
+        ...details,
+        id,
+        toolCallId: id,
+        decision,
+        createdAt: new Date().toISOString(),
+      });
+    service = new ApprovalService(repository);
+    service.requireReview(details.messageId, ['pending', 'approved', 'denied', 'answered']);
+    service = new ApprovalService(repository);
+    expect(service.state().pending.map((item) => item.id)).toEqual(['pending', 'approved']);
+    expect(
+      service.state().pending.every((item) => item.reviewNotice === approvalReviewNotice),
+    ).toBe(true);
+    expect(repository.pending().find((item) => item.id === 'denied')?.decision).toEqual({
+      approved: false,
+      reason: 'Do not send.',
+    });
+    expect(repository.pending().find((item) => item.id === 'answered')?.decision).toBe(
+      'Existing customers',
+    );
+    const result = service.request(
+      { ...details, toolCallId: 'approved' },
+      new AbortController().signal,
+      () => {},
+    );
+    expect(service.state().pending.map((item) => item.id)).toContain('approved');
+    service.decide('approved', false);
+    expect(await result).toBe(false);
   });
 });

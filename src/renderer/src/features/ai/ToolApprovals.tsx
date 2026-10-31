@@ -198,6 +198,7 @@ function ToolApprovalCard({
           </strong>
         </div>
         <p role="status">Waiting for your approval. This tool has not run.</p>
+        {request.reviewNotice && <p role="status">{request.reviewNotice}</p>}
         {delegated && (
           <p>
             Your bot is waiting for {request.botName}’s response. This permission is for{' '}

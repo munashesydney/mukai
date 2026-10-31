@@ -178,7 +178,11 @@ export class ContextManager {
   pinRequests(messages: ModelMessage[]) {
     this.pinnedRequests = messages;
   }
-  async prepare(messages: ModelMessage[], force = false): Promise<ModelMessage[]> {
+  async prepare(
+    messages: ModelMessage[],
+    force = false,
+    onCompaction?: () => void,
+  ): Promise<ModelMessage[]> {
     const limits = contextLimits(this.window, this.maxOutput, this.outputOverhead);
     const budget = limits.input;
     if (!force && this.estimate(messages) <= budget) return messages;
@@ -304,6 +308,9 @@ export class ContextManager {
       throw new ContextError(
         'This model’s working context leaves insufficient room for safe compaction. Increase its context-window setting.',
       );
+    // Housekeeping and reduced output allowances above do not summarize history.
+    // Announce compaction only once we are about to build a new notebook.
+    onCompaction?.();
     let candidate = this.summary;
     let chunk = '',
       chunkBytes = 0;

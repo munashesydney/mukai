@@ -7,6 +7,7 @@ import { startApiServer } from '../src/server/app';
 import { seedTestBot } from '../src/server/testFixtures';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
 import type { CustomToolPresentation } from '../src/shared/customCapabilities';
+import { approvalReviewNotice } from '../src/shared/approvals';
 
 async function main() {
   const root = await mkdtemp(join(tmpdir(), 'mukai-tool-approval-ui-'));
@@ -64,6 +65,7 @@ async function main() {
               options: { sendNow: true, recipients: ['Jane', 'Sam'] },
             },
             presentation,
+            reviewNotice: configured ? approvalReviewNotice : undefined,
           },
           controller.signal,
           () => {},
@@ -72,6 +74,7 @@ async function main() {
         .catch(() => {});
       const scroll = page.getByRole('region', { name: 'Tool approval details', exact: true });
       await scroll.waitFor();
+      if (configured) await scroll.getByText(approvalReviewNotice, { exact: true }).waitFor();
       await scroll.getByRole('heading', { name: 'Your invoice', exact: true }).waitFor();
       assert.equal(
         await scroll.getByRole('link', { name: 'Invoice', exact: true }).getAttribute('href'),

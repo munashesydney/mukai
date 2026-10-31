@@ -405,14 +405,33 @@ describe('working context', () => {
     const summarize = vi.fn(async () => 'Earlier calls completed.');
     const manager = new ContextManager(32768, 4096, 26500, summarize);
     const operations = [pair('first'), pair('second'), pair('third')];
-    const compacted = await manager.prepare([user, old, ...operations.flat(), latest]);
+    const onCompaction = vi.fn();
+    const compacted = await manager.prepare(
+      [user, old, ...operations.flat(), latest],
+      false,
+      onCompaction,
+    );
     expect(compacted).toEqual([user, ...operations.flat(), latest]);
     expect(summarize).not.toHaveBeenCalled();
     expect(manager.compactions).toBe(0);
+    expect(onCompaction).not.toHaveBeenCalled();
     expect(manager.outputAllowance(compacted)).toBeLessThan(4096);
     expect(manager.estimate(compacted) + manager.outputAllowance(compacted)).toBeLessThanOrEqual(
       Math.floor(32768 * 0.9),
     );
+  });
+  it('announces actual compaction once before summarizing and counts it only after success', async () => {
+    const onCompaction = vi.fn();
+    const summarize = vi.fn(async () => {
+      expect(onCompaction).toHaveBeenCalledTimes(1);
+      expect(manager.compactions).toBe(0);
+      return 'Earlier operations completed.';
+    });
+    const manager = new ContextManager(16384, 2048, 100, summarize);
+    await manager.prepare(history(), false, onCompaction);
+    expect(summarize).toHaveBeenCalled();
+    expect(onCompaction).toHaveBeenCalledTimes(1);
+    expect(manager.compactions).toBe(1);
   });
   it('estimates PNG screenshots by dimensions and excludes old pixels from summary requests', async () => {
     const header = Buffer.alloc(24);

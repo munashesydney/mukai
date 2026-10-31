@@ -172,14 +172,19 @@ export class PursuitService {
     return this.repository.isRunConversation(id);
   }
   forBot(bot: Bot) {
-    return this.list(bot.workspaceId)
-      .filter((p) => p.ownerBotId === bot.id)
+    const caller = this.bots.require(bot.id);
+    return this.list(caller.workspaceId)
+      .filter((p) => caller.isMain || p.ownerBotId === caller.id)
       .map((p) => ({ ...p, recentRuns: this.repository.runs(p.id).slice(0, 3) }));
   }
   private owned(bot: Bot, id: string) {
+    const caller = this.bots.require(bot.id);
     const p = this.require(id);
-    if (p.ownerBotId !== bot.id || p.workspaceId !== bot.workspaceId)
-      throw new ApiError(403, 'Only the creating bot can manage this pursuit.');
+    if (p.workspaceId !== caller.workspaceId || (p.ownerBotId !== caller.id && !caller.isMain))
+      throw new ApiError(
+        403,
+        'Only the creating bot or the workspace main bot can manage this pursuit.',
+      );
     return p;
   }
   private validate(input: PursuitInput) {
