@@ -281,6 +281,7 @@ export class ToolService {
     const workspace = this.workspaces.require(bot.workspaceId);
     return {
       workspaceId: workspace.id,
+      workspaceName: workspace.name,
       computer: workspace.computer,
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:

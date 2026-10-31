@@ -275,6 +275,7 @@ describe('workspace computer choice', () => {
     const prompt = buildBotSystemPrompt({
       bot: { id: 'bot', name: 'Bot', role: 'Main', isMain: true, createdBy: null },
       instructions: '',
+      workspace: { id: 'workspace', name: 'Test workspace' },
       tools: { terminal: {} },
       computer: 'qemu',
       workspaceFolder: '/home/mukai/workspace',

@@ -14,6 +14,7 @@ function prompt(tools: object, computer: 'local' | 'qemu' = 'local') {
   return buildBotSystemPrompt({
     bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain: true, createdBy: null },
     instructions: 'Help the user.',
+    workspace: { id: 'workspace', name: 'Test workspace' },
     computer,
     tools,
   });
@@ -46,6 +47,7 @@ it('teaches Mukai capabilities to every role even with no tools assigned', () =>
       const system = buildBotSystemPrompt({
         bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: null },
         instructions: 'Help.',
+        workspace: { id: 'workspace', name: 'Test workspace' },
         tools: {},
         delegated,
       });
@@ -135,6 +137,7 @@ it('gives all roles the same shared prompt and adds main-bot instructions only f
     buildBotSystemPrompt({
       bot: { id: 'bot', name: 'Ada', role: 'Assistant', isMain, createdBy: isMain ? null : 'main' },
       instructions: 'Help the user.',
+      workspace: { id: 'workspace', name: 'Test workspace' },
       tools: { manage_bot: {} },
       delegated,
     });

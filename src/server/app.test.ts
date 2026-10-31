@@ -76,6 +76,8 @@ let mode:
   | 'truncated-once'
   | 'usage'
   | 'compaction-fail'
+  | 'compaction-invalid'
+  | 'compaction-overflow'
   | 'compaction-length'
   | 'compaction-empty'
   | 'compaction-filter'
@@ -326,7 +328,7 @@ beforeEach(async () => {
         .end(JSON.stringify({ error: { message: 'DO NOT EXPOSE private-test-key' } }));
       return;
     }
-    if (mode === 'overflow' && body.stream && !overflowed) {
+    if (['overflow', 'compaction-overflow'].includes(mode) && body.stream && !overflowed) {
       overflowed = true;
       res
         .writeHead(400, { 'Content-Type': 'application/json' })
@@ -361,41 +363,50 @@ beforeEach(async () => {
                 content:
                   empty || truncated
                     ? ''
-                    : JSON.stringify(body.messages).includes('Summarize working memory')
-                      ? (() => {
-                          const sources = JSON.parse(String(body.messages.at(-1)?.content)) as {
-                            id: string;
-                            text: string;
-                            evidence?: string;
-                          }[];
-                          const findings =
-                            mode === 'oversized-results'
-                              ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED].filter(
-                                  (finding) =>
-                                    sources.some((source) => source.text.includes(finding)),
-                                )
-                              : [];
-                          return JSON.stringify(
-                            findings.length
-                              ? findings.map((finding) => ({
-                                  sourceId: sources.find((source) => source.text.includes(finding))!
-                                    .id,
-                                  note: 'Saved work.',
-                                  quote: finding,
-                                }))
-                              : [
-                                  {
-                                    sourceId: sources[0].id,
-                                    note:
-                                      mode === 'oversized-results'
-                                        ? 'Saved work.'
-                                        : 'Earlier conversation notes: retain source provenance.',
-                                    quote: (sources[0].evidence ?? sources[0].text).slice(0, 16),
-                                  },
-                                ],
-                          );
-                        })()
-                      : 'OK',
+                    : ['compaction-invalid', 'compaction-overflow'].includes(mode)
+                      ? JSON.stringify([
+                          {
+                            sourceId: 'not-a-source',
+                            note: 'Invented summary',
+                            quote: 'Unobserved result',
+                          },
+                        ])
+                      : JSON.stringify(body.messages).includes('Summarize working memory')
+                        ? (() => {
+                            const sources = JSON.parse(String(body.messages.at(-1)?.content)) as {
+                              id: string;
+                              text: string;
+                              evidence?: string;
+                            }[];
+                            const findings =
+                              mode === 'oversized-results'
+                                ? ['Useful page findings', RESULT_TRUNCATED, IMAGE_OMITTED].filter(
+                                    (finding) =>
+                                      sources.some((source) => source.text.includes(finding)),
+                                  )
+                                : [];
+                            return JSON.stringify(
+                              findings.length
+                                ? findings.map((finding) => ({
+                                    sourceId: sources.find((source) =>
+                                      source.text.includes(finding),
+                                    )!.id,
+                                    note: 'Saved work.',
+                                    quote: finding,
+                                  }))
+                                : [
+                                    {
+                                      sourceId: sources[0].id,
+                                      note:
+                                        mode === 'oversized-results'
+                                          ? 'Saved work.'
+                                          : 'Earlier conversation notes: retain source provenance.',
+                                      quote: (sources[0].evidence ?? sources[0].text).slice(0, 16),
+                                    },
+                                  ],
+                            );
+                          })()
+                        : 'OK',
               },
               finish_reason: truncated
                 ? 'length'
@@ -2328,76 +2339,72 @@ describe('Mukai bots and AI API', () => {
       expect(states).toEqual(['compacting', 'complete']);
     },
   );
-  it('leaves usable context and original history intact when compaction fails, then permits retry', async () => {
-    await configure(false, {
-      contextWindowTokens: 32768,
-      maxOutputTokens: 1024,
-    });
-    await chat('Earlier finding');
-    const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
-    const evidence = 'Keep original evidence. '.repeat(3000);
-    api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
-    mode = 'compaction-fail';
-    const sent = await chat('Continue exactly from these findings');
-    let history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
-    expect(history.at(-1)?.status).toBe('failed');
-    expect(history.at(-1)?.error).toContain('compaction did not finish');
-    expect(history.at(-1)?.contextUsage?.phase).toBe('failed');
-    expect(history.at(-1)?.parts?.find((part) => part.type === 'compaction')).toMatchObject({
-      type: 'compaction',
-      state: 'failed',
-    });
-    expect(history.at(-1)?.content).toContain('Saved progress:');
-    expect(calls.filter((call) => !call.stream)).toHaveLength(3);
-    expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
-    expect(history[0].content).toBe(evidence);
-    await api.shutdown();
-    await close(api.server);
-    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
-    mode = 'normal';
-    await chat('ignored replacement', sent.requestId);
-    history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
-    expect(history).toHaveLength(4);
-    expect(history.at(-1)?.status).toBe('complete');
-    expect(
-      history
-        .at(-1)
-        ?.parts?.filter((part) => part.type === 'compaction')
-        .map((part) => part.state),
-    ).toEqual(['failed', 'complete']);
-    expect(history[0].content).toBe(evidence);
-  });
-  it.each(['compaction-filter', 'compaction-slow'] as const)(
-    'preserves history when %s interrupts compaction',
+  it.each(['compaction-fail', 'compaction-invalid', 'compaction-filter'] as const)(
+    'continues with saved-source excerpts after %s and reuses the notebook after restart',
     async (failure) => {
-      await configure(false, {
-        contextWindowTokens: 32768,
-        maxOutputTokens: 1024,
-      });
+      await configure(false, { contextWindowTokens: 32768, maxOutputTokens: 1024 });
       await chat('Earlier finding');
       const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
-      const evidence = 'Original evidence. '.repeat(3000);
+      const evidence = 'Keep original evidence. '.repeat(3000);
       api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
       mode = failure;
-      const running = chat('Continue safely');
-      if (failure === 'compaction-slow') {
-        await vi.waitFor(() => expect(calls.some((call) => !call.stream)).toBe(true));
-        const live = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
-        expect(live.parts?.at(-1)).toMatchObject({ type: 'compaction', state: 'compacting' });
-        await request('/bots/scout/stop', 'POST');
-      }
-      await running;
-      const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
-      expect(history[0].content).toBe(evidence);
-      expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
-      expect(calls.filter((call) => !call.stream)).toHaveLength(1);
+      await chat('Continue exactly from these findings');
+      let history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+      expect(history.at(-1)?.status).toBe('complete');
+      expect(history.at(-1)?.error).toBeFalsy();
       expect(history.at(-1)?.parts?.find((part) => part.type === 'compaction')).toMatchObject({
-        type: 'compaction',
-        state: failure === 'compaction-slow' ? 'interrupted' : 'failed',
+        state: 'complete',
       });
-      expect(history.at(-1)?.status).toBe(failure === 'compaction-slow' ? 'stopped' : 'failed');
+      expect(calls.filter((call) => !call.stream)).toHaveLength(
+        failure === 'compaction-filter' ? 1 : 3,
+      );
+      const saved = api.store.get(
+        'SELECT summary FROM conversation_contexts WHERE conversation_id=?',
+        'bot-scout',
+      )!;
+      expect(String(saved.summary)).toContain('Keep original evidence.');
+      expect(String(saved.summary)).not.toContain('Invented summary');
+      expect(history[0].content).toBe(evidence);
+      const diagnostics = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+      expect(diagnostics).toContain('chat.compaction_recovered');
+      expect(diagnostics).not.toContain('Unobserved result');
+      await api.shutdown();
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+      mode = 'normal';
+      await chat('Now follow up');
+      history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+      expect(history).toHaveLength(6);
+      expect(history.at(-1)?.status).toBe('complete');
+      expect(history[0].content).toBe(evidence);
+      expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Keep original evidence.');
+      expect(JSON.stringify(calls.at(-1)?.messages)).toContain(
+        'retrieve saved history before repeating',
+      );
     },
   );
+  it('honors Stop during compaction and leaves the original history intact', async () => {
+    await configure(false, { contextWindowTokens: 32768, maxOutputTokens: 1024 });
+    await chat('Earlier finding');
+    const first = (await request<ChatMessage[]>('/bots/scout/messages')).data[0];
+    const evidence = 'Original evidence. '.repeat(3000);
+    api.store.run('UPDATE messages SET content=? WHERE id=?', evidence, first.id);
+    mode = 'compaction-slow';
+    const running = chat('Continue safely');
+    await vi.waitFor(() => expect(calls.some((call) => !call.stream)).toBe(true));
+    const live = (await request<ChatMessage[]>('/bots/scout/messages')).data.at(-1)!;
+    expect(live.parts?.at(-1)).toMatchObject({ type: 'compaction', state: 'compacting' });
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    expect(history[0].content).toBe(evidence);
+    expect(api.store.all('SELECT * FROM conversation_contexts')).toEqual([]);
+    expect(calls.filter((call) => !call.stream)).toHaveLength(1);
+    expect(history.at(-1)?.parts?.find((part) => part.type === 'compaction')).toMatchObject({
+      state: 'interrupted',
+    });
+    expect(history.at(-1)?.status).toBe('stopped');
+  });
   it('handles a provider context rejection with one safe compaction instead of exposing provider text', async () => {
     await configure();
     await chat('Prior context');
@@ -2446,6 +2453,42 @@ describe('Mukai bots and AI API', () => {
       expect(api.store.all('SELECT * FROM chat_jobs')).toEqual([]);
     },
   );
+  it('recovers invalid compaction while resuming a checkpoint without repeating its completed file write', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    const workspace = (
+      await request<Workspace>('/workspaces', 'POST', { name: 'Recovery', folder: project })
+    ).data;
+    const bot = (await request<Bot>('/bots', 'POST', { ...inputBot(), workspaceId: workspace.id }))
+      .data;
+    mode = 'checkpoint';
+    const sent = await chat('Write once, then report.', randomUUID(), bot.id);
+    const first = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data[1];
+    expect(first.status).toBe('failed');
+    expect(first.activity).toHaveLength(1);
+    expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
+    // A second write would overwrite this edit, exposing a replay even if IDs were reused.
+    writeFileSync(join(project, 'checkpoint.txt'), 'User edited after completed operation.');
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    mode = 'compaction-overflow';
+    await chat('ignored replacement', sent.requestId, bot.id);
+    const history = (await request<ChatMessage[]>(`/bots/${bot.id}/messages`)).data;
+    expect(history).toHaveLength(2);
+    expect(history[1].status).toBe('complete');
+    expect(history[1].activity).toEqual(first.activity);
+    expect(history[1].parts?.find((part) => part.type === 'compaction')).toMatchObject({
+      state: 'complete',
+    });
+    expect(calls.filter((call) => !call.stream)).toHaveLength(3);
+    expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe(
+      'User edited after completed operation.',
+    );
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('checkpoint.txt');
+    expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Runtime notice: Resume');
+    expect(api.store.all('SELECT * FROM chat_jobs')).toEqual([]);
+  });
   it('carries failed tool work into a fresh message after restart', async () => {
     await configure();
     project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
