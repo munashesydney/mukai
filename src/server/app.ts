@@ -303,6 +303,7 @@ export function createApiServer(options: ApiOptions = {}) {
               localBrowserRequest(request) &&
               Boolean(browserSession?.authenticated(request)))
         : undefined,
+      diagnostics,
     );
     computers.attachDisposalHandler((computer) => desktops.forget(computer));
     attachments.attachDeletionGuard((id) => {

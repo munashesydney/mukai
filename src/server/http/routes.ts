@@ -815,6 +815,7 @@ export function createRoutes({
           await desktops.session(
             workspaces.computers.guest(workspace),
             nativeClientRequest(request),
+            url.searchParams.get('reconnect') === '1',
           ),
         );
       }
