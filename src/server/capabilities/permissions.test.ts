@@ -255,6 +255,37 @@ describe.each(['local', 'qemu'] as const)('%s capability permissions', (computer
       });
       expect((await request('/approvals')).value.pending).toEqual([]);
     });
+    it.each(['user_approval', 'ask_bot'] as const)(
+      'snapshots presentation for %s approvals',
+      async (mode) => {
+        await register(mode);
+        const presentation = {
+          title: 'Review this write',
+          fields: [{ parameter: 'value', label: 'Approved value' }],
+        };
+        await request('/capabilities', 'POST', {
+          kind: 'tool',
+          operation: 'set_presentation',
+          id: registrationId,
+          presentation,
+        });
+        decision = mode === 'ask_bot' ? 'ask_user_approval' : undefined;
+        const run = chat();
+        const approval = await pendingApproval();
+        expect(approval.presentation).toEqual(presentation);
+        expect(approval.input).toEqual({ value: 'approved-value' });
+        await request('/capabilities', 'POST', {
+          kind: 'tool',
+          operation: 'set_presentation',
+          id: registrationId,
+          presentation: { title: 'Next call only' },
+        });
+        expect((await request('/approvals')).value.pending[0].presentation).toEqual(presentation);
+        await request('/approvals/' + approval.id, 'POST', { approved: true });
+        await run;
+        expect(effect()).toBe('approved-value\n');
+      },
+    );
     it('lets a noncreator sub-bot execute a shared tool after the configured user approval', async () => {
       api.store.run("UPDATE bots SET is_main=0 WHERE id='scout'");
       await register('user_approval');
@@ -550,6 +581,16 @@ describe.each(['local', 'qemu'] as const)('%s capability permissions', (computer
     });
     it('restores an escalated approval after restart without executing early or twice', async () => {
       await register('ask_bot');
+      const presentation = {
+        title: 'Saved approval layout',
+        fields: [{ parameter: 'value', label: 'Value to write' }],
+      };
+      await request('/capabilities', 'POST', {
+        kind: 'tool',
+        operation: 'set_presentation',
+        id: registrationId,
+        presentation,
+      });
       decision = 'ask_user_approval';
       const run = chat();
       const approval = await pendingApproval();
@@ -559,6 +600,11 @@ describe.each(['local', 'qemu'] as const)('%s capability permissions', (computer
       api.dispose();
       api = await startApiServer(0, { dataDir: join(root, 'data') });
       attachGuest();
+      expect(
+        (await request('/capabilities/' + registrationId)).value.registration.definition
+          .presentation,
+      ).toEqual(presentation);
+      expect((await request('/approvals')).value.pending[0].presentation).toEqual(presentation);
       await waitFor(async () => {
         expect(
           (await request('/approvals/' + approval.id, 'POST', { approved: true })).status,

@@ -6,6 +6,8 @@ import { Check, ChevronDown, ChevronUp, Hand, ShieldAlert, SquarePen } from 'luc
 import { approvalStore, useApprovals } from './approvalStore';
 import type { ApprovalMode, ToolApproval } from '../../../../shared/approvals';
 import { approvalBlocksConversation } from '../../../../shared/approvals';
+import { toolApprovalPresentation } from '../../../../shared/toolApprovalPresentation';
+import { MessageMarkdown } from './MessageMarkdown';
 
 const choices = [
   {
@@ -182,45 +184,54 @@ function ToolApprovalCard({
   const busy = deciding.includes(request.id);
   return (
     <section className="tool-approval-card" aria-label={`Approval for ${request.toolName}`}>
-      <div className="tool-approval-heading">
-        <Hand size={18} />
-        <strong>
-          {delegated ? 'Sub-bot ' : ''}
-          {request.botName} wants to use {request.toolName}
-        </strong>
-      </div>
-      <p role="status">Waiting for your approval. This tool has not run.</p>
-      {delegated && (
-        <p>
-          Your bot is waiting for {request.botName}’s response. This permission is for{' '}
-          {request.botName}.
-        </p>
-      )}
-      <details>
-        <summary>Review tool arguments</summary>
-        <pre>{JSON.stringify(request.input, null, 2)}</pre>
-      </details>
-      <div className="tool-approval-full-access">
-        <label>
-          <Checkbox
-            checked={state.loaded && state.mode === 'full-access'}
-            disabled={
-              !state.loaded ||
-              state.saving ||
-              Boolean(request.target && request.target.workspaceId !== state.workspaceId)
-            }
-            onChange={(event) =>
-              void approvalStore.setMode(event.target.checked ? 'full-access' : 'ask-for-approval')
-            }
+      <div
+        className="tool-approval-scroll"
+        role="region"
+        aria-label="Tool approval details"
+        tabIndex={0}
+      >
+        <div className="tool-approval-heading">
+          <Hand size={18} />
+          <strong>
+            {delegated ? 'Sub-bot ' : ''}
+            {request.botName} wants to use {request.toolName}
+          </strong>
+        </div>
+        <p role="status">Waiting for your approval. This tool has not run.</p>
+        {delegated && (
+          <p>
+            Your bot is waiting for {request.botName}’s response. This permission is for{' '}
+            {request.botName}.
+          </p>
+        )}
+        <div className="tool-approval-details">
+          <MessageMarkdown text={toolApprovalPresentation(request.input, request.presentation)} />
+        </div>
+        <div className="tool-approval-full-access">
+          <label>
+            <Checkbox
+              checked={state.loaded && state.mode === 'full-access'}
+              disabled={
+                !state.loaded ||
+                state.saving ||
+                Boolean(request.target && request.target.workspaceId !== state.workspaceId)
+              }
+              onChange={(event) =>
+                void approvalStore.setMode(
+                  event.target.checked ? 'full-access' : 'ask-for-approval',
+                )
+              }
+            />
+            Enable Full Access Mode
+          </label>
+          <Tooltip
+            label="About Full Access Mode"
+            content="Changes the tool approval mode for every bot and conversation in this workspace. Future tools governed by this mode run without asking. Existing pending tool calls still need approval, and explicit confirmations and questions still need your response. Other workspaces are unaffected. You can switch back using the approval mode picker."
           />
-          Enable Full Access Mode
-        </label>
-        <Tooltip
-          label="About Full Access Mode"
-          content="Changes the tool approval mode for every bot and conversation in this workspace. Future tools governed by this mode run without asking. Existing pending tool calls still need approval, and explicit confirmations and questions still need your response. Other workspaces are unaffected. You can switch back using the approval mode picker."
-        />
+        </div>
       </div>
       <form
+        className="tool-approval-footer"
         onSubmit={(event) => {
           event.preventDefault();
           if (denying && reason.trim() && !busy)

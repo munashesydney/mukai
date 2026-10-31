@@ -1,3 +1,5 @@
+import { toolApprovalPresentation } from '../../shared/toolApprovalPresentation';
+
 /** Telegram presentation only. Never append this header to stored conversation messages or AI input. */
 export const telegramBodyLimit = 3800;
 function headerName(value: string) {
@@ -12,15 +14,4 @@ export function telegramMessage(text: string, workspaceName?: string, botName?: 
   return prefix + body;
 }
 
-export function approvalDetails(input: unknown) {
-  return (
-    JSON.stringify(
-      input,
-      (key, value: unknown) =>
-        /password|secret|token|api[_-]?key|authorization|credential/i.test(key)
-          ? '[redacted]'
-          : value,
-      2,
-    ) ?? ''
-  );
-}
+export const approvalDetails = toolApprovalPresentation;

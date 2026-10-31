@@ -581,12 +581,37 @@
   margin-bottom: 10px;
 }
 .tool-approval-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 40dvh;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px 16px;
   border: 1px solid var(--theme-border);
   border-radius: 10px;
   background: var(--surface-raised);
   color: var(--ink);
   font-size: 12px;
+}
+.tool-approval-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.tool-approval-details {
+  overflow-wrap: anywhere;
+}
+.tool-approval-details .ai-markdown {
+  font-size: inherit;
+}
+.tool-approval-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  padding-top: 10px;
+  background: var(--surface-raised);
 }
 .tool-approval-heading {
   display: flex;

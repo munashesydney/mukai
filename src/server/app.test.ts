@@ -2507,6 +2507,22 @@ describe('Mukai bots and AI API', () => {
     expect(first.status).toBe('failed');
     expect(first.activity).toHaveLength(1);
     expect(readFileSync(join(project, 'checkpoint.txt'), 'utf8')).toBe('Saved once.');
+    // Give forced compaction actual history to summarize. Expired runtime
+    // snapshots alone can be removed without invoking the summarizer.
+    const row = api.store.get(
+      'SELECT checkpoint_json FROM chat_jobs WHERE message_id=?',
+      first.id,
+    )!;
+    const checkpoint = JSON.parse(String(row.checkpoint_json));
+    checkpoint.messages.unshift({
+      role: 'assistant',
+      content: 'Earlier observation saved before the write.',
+    });
+    api.store.run(
+      'UPDATE chat_jobs SET checkpoint_json=? WHERE message_id=?',
+      JSON.stringify(checkpoint),
+      first.id,
+    );
     // A second write would overwrite this edit, exposing a replay even if IDs were reused.
     writeFileSync(join(project, 'checkpoint.txt'), 'User edited after completed operation.');
     await api.shutdown();
@@ -2526,6 +2542,7 @@ describe('Mukai bots and AI API', () => {
       'User edited after completed operation.',
     );
     expect(JSON.stringify(calls.at(-1)?.messages)).toContain('checkpoint.txt');
+    expect(JSON.stringify(calls.at(-1)?.messages)).not.toContain('Invented summary');
     expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Runtime notice: Resume');
     expect(api.store.all('SELECT * FROM chat_jobs')).toEqual([]);
   });

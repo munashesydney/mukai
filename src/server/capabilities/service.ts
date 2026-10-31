@@ -32,7 +32,7 @@ import type {
   CustomResponse,
 } from '../../shared/customCapabilities';
 import { CapabilityEnvironment, variableName } from './environment';
-import { registrationInput } from '../tools/custom-registration/shared';
+import { registrationInput, toolPresentation } from '../tools/custom-registration/shared';
 import { customRegistrationTools } from '../tools/registry';
 import {
   MAX_ROUTE_CALL_DEPTH,
@@ -105,6 +105,7 @@ export const jobTriggers = z
 const definitionSchema = z.object({
   triggers: jobTriggers.optional(),
   permissionMode: z.enum(customToolPermissionModes).optional(),
+  presentation: toolPresentation.optional(),
   name: z
     .string()
     .regex(
@@ -506,6 +507,11 @@ export class CapabilityService {
     const input = registrationInput.parse(value);
     if (kind !== 'tool' && (input.permissionMode || input.operation === 'set_permission'))
       throw new ApiError(400, 'Permission modes apply only to custom tools.');
+    if (
+      kind !== 'tool' &&
+      (input.presentation !== undefined || input.operation === 'set_presentation')
+    )
+      throw new ApiError(400, 'Presentation applies only to custom tools.');
     if (kind === 'tool' && input.operation === 'register' && !input.permissionMode)
       throw new ApiError(400, 'Choose permissionMode: auto_approve, ask_bot, or user_approval.');
     if (input.operation === 'list')
@@ -541,6 +547,19 @@ export class CapabilityService {
       );
       this.db.run(
         "UPDATE custom_tool_confirmations SET state='cancelled' WHERE capability_id=? AND state='pending'",
+        previous.id,
+      );
+      return this.require(previous.id);
+    }
+    if (input.operation === 'set_presentation') {
+      if (!previous || input.presentation === undefined)
+        throw new ApiError(
+          400,
+          'Choose a tool registration ID and presentation (or null to reset).',
+        );
+      this.db.run(
+        'UPDATE capabilities SET definition_json=? WHERE id=?',
+        JSON.stringify({ ...previous.definition, presentation: input.presentation ?? undefined }),
         previous.id,
       );
       return this.require(previous.id);
@@ -608,9 +627,14 @@ export class CapabilityService {
       writeFileSync(join(directory, 'sources.json'), JSON.stringify(sources), { mode: 0o600 });
       const exportName = value.exportName || previous?.exportName || 'default';
       const definition = await this.validate(version, exportName, kind, signal, workspaceId);
-      if (kind === 'tool')
+      if (kind === 'tool') {
         definition.permissionMode =
           input.permissionMode || previous?.definition.permissionMode || 'user_approval';
+        definition.presentation =
+          input.presentation === undefined
+            ? previous?.definition.presentation
+            : (input.presentation ?? undefined);
+      }
       writeFileSync(
         join(directory, 'manifest.json'),
         JSON.stringify({ exportName, kind, definition }),
