@@ -23,7 +23,7 @@ import type {
 import type { FileChangeDetail } from '../shared/fileChanges';
 import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
-import type { ApprovalState } from '../shared/approvals';
+import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
 import { ArtifactRepository } from './repositories/artifactRepository';
 import { wavFixture, mp4Fixture } from './testMediaFixtures';
@@ -1652,63 +1652,70 @@ describe('Mukai bots and AI API', () => {
     ).toContain('Reason: Let me review it first.');
   });
 
-  it('keeps parallel questions separate from tool permissions and rejects bulk clarification grants atomically', async () => {
-    await configure();
-    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
-    mode = 'ask-mixed';
-    const result = chat('Ask two questions and list browser tabs');
-    await pendingApproval('custom-call-3');
-    const pending = (await request<ApprovalState>('/approvals')).data.pending;
-    expect(pending).toHaveLength(3);
-    expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
-    const batch = {
-      conversationId: pending[0].conversationId,
-      batchId: pending[0].batchId,
-      ids: pending.map((item) => item.id),
-      approved: true,
-    };
-    expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(400);
-    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(3);
-    const question = pending.find((item) => item.ask?.action === 'clarification')!;
-    const permission = pending.find((item) => item.ask?.action === 'approval')!;
-    await request(`/approvals/${question.id}`, 'POST', { answer: 'Existing customers' });
-    await vi.waitFor(() =>
-      expect(
-        api.store.get(
-          'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',
-          question.messageId,
-        )?.approval_step_json,
-      ).toContain('Existing customers'),
-    );
-    // An answered question must not be repeated while its siblings remain pending.
-    await api.shutdown();
-    await result;
-    await close(api.server);
-    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
-    expect(
-      (await request<ApprovalState>('/approvals')).data.pending.map((item) => item.id).sort(),
-    ).toEqual(
-      pending
-        .filter((item) => item.id !== question.id)
-        .map((item) => item.id)
-        .sort(),
-    );
-    await vi.waitFor(async () =>
-      expect(
-        (await request(`/approvals/${permission.id}`, 'POST', { approved: false })).response.status,
-      ).toBe(200),
-    );
-    await request(`/approvals/${pending.find((item) => !item.ask)!.id}`, 'POST', {
-      approved: true,
-    });
-    await vi.waitFor(async () =>
-      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
-        'complete',
-      ),
-    );
-    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
-    expect(calls.filter((call) => call.stream)).toHaveLength(2);
-  });
+  it.each([false, true])(
+    'keeps answered questions saved on recovery (configuration changed: %s)',
+    async (changed) => {
+      await configure();
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      mode = 'ask-mixed';
+      const result = chat('Ask two questions and list browser tabs');
+      await pendingApproval('custom-call-3');
+      const pending = (await request<ApprovalState>('/approvals')).data.pending;
+      expect(pending).toHaveLength(3);
+      expect(new Set(pending.map((item) => item.batchId)).size).toBe(1);
+      const batch = {
+        conversationId: pending[0].conversationId,
+        batchId: pending[0].batchId,
+        ids: pending.map((item) => item.id),
+        approved: true,
+      };
+      expect((await request('/approvals/batch', 'POST', batch)).response.status).toBe(400);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(3);
+      const question = pending.find((item) => item.ask?.action === 'clarification')!;
+      const permission = pending.find((item) => item.ask?.action === 'approval')!;
+      await request(`/approvals/${question.id}`, 'POST', { answer: 'Existing customers' });
+      await vi.waitFor(() =>
+        expect(
+          api.store.get(
+            'SELECT approval_step_json FROM chat_jobs WHERE message_id=?',
+            question.messageId,
+          )?.approval_step_json,
+        ).toContain('Existing customers'),
+      );
+      // An answered question must not be repeated while its siblings remain pending.
+      await api.shutdown();
+      await result;
+      if (changed) api.store.run("UPDATE chat_jobs SET fingerprint='previous-app-version'");
+      await close(api.server);
+      api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+      await vi.waitFor(async () =>
+        expect(
+          (await request<ApprovalState>('/approvals')).data.pending.map((item) => item.id).sort(),
+        ).toEqual(
+          pending
+            .filter((item) => item.id !== question.id)
+            .map((item) => item.id)
+            .sort(),
+        ),
+      );
+      await vi.waitFor(async () =>
+        expect(
+          (await request(`/approvals/${permission.id}`, 'POST', { approved: false })).response
+            .status,
+        ).toBe(200),
+      );
+      await request(`/approvals/${pending.find((item) => !item.ask)!.id}`, 'POST', {
+        approved: true,
+      });
+      await vi.waitFor(async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'complete',
+        ),
+      );
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+      expect(calls.filter((call) => call.stream)).toHaveLength(2);
+    },
+  );
 
   it('executes built-in memory without approval while ask-for-approval is selected', async () => {
     await configure();
@@ -1902,9 +1909,122 @@ describe('Mukai bots and AI API', () => {
     expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(1);
   });
 
-  it.each(['complete', 'uncertain'] as const)(
-    'restores parallel approvals with a %s sibling result and bulk approves only a validated snapshot',
-    async (savedState) => {
+  it.each([
+    { approved: true, change: 'instructions' },
+    { approved: false, change: 'instructions' },
+    { approved: true, change: 'schema' },
+    { approved: true, change: 'unavailable' },
+    { approved: true, change: 'while-waiting' },
+  ])(
+    'keeps a custom action reviewable across an update ($change, approved=$approved)',
+    async ({ approved, change }) => {
+      await configure();
+      project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+      await request('/workspaces/default', 'PUT', { name: 'Update approvals', folder: project });
+      writeFileSync(
+        join(project, 'approval-echo.ts'),
+        `export default {name:'approval_echo',description:'Echo',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
+      );
+      const registration = (
+        await request<{ id: string }>('/capabilities', 'POST', {
+          kind: 'tool',
+          operation: 'register',
+          modulePath: 'approval-echo.ts',
+          permissionMode: 'user_approval',
+          ownerBotId: 'scout',
+        })
+      ).data;
+      mode = 'approval-custom';
+      const result = chat('Use my custom tool');
+      const pending = await pendingApproval('custom-call-1');
+      if (change === 'schema') {
+        writeFileSync(
+          join(project, 'approval-echo.ts'),
+          `export default {name:'approval_echo',description:'Echo a number',inputSchema:{type:'object',properties:{value:{type:'number'}},required:['value']},execute:(args)=>args};`,
+        );
+        expect(
+          (
+            await request('/capabilities', 'POST', {
+              kind: 'tool',
+              operation: 'update',
+              id: registration.id,
+            })
+          ).response.status,
+        ).toBe(200);
+      }
+      if (change === 'unavailable')
+        await request('/tools/assignments?workspaceId=default', 'PUT', {
+          botId: 'scout',
+          toolId: 'custom:' + registration.id,
+          enabled: false,
+        });
+      await api.shutdown();
+      await result;
+      // Simulate an update that changes system instructions/tool definitions.
+      api.store.run("UPDATE chat_jobs SET fingerprint='previous-app-version'");
+      await close(api.server);
+      for (let restart = 0; restart < 2; restart++) {
+        api = await startApiServer(0, {
+          dataDir: dir,
+          memoryExtractor: async () => ({ facts: [] }),
+        });
+        await vi.waitFor(async () => {
+          expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([
+            { ...pending, reviewNotice: approvalReviewNotice },
+          ]);
+          expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+            'streaming',
+          );
+        });
+        expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(0);
+        expect(calls.filter((call) => call.stream)).toHaveLength(1);
+        if (restart === 0) {
+          await api.shutdown();
+          await close(api.server);
+        }
+      }
+      if (change === 'while-waiting') {
+        writeFileSync(
+          join(project, 'approval-echo.ts'),
+          `export default {name:'approval_echo',description:'Changed after review started',inputSchema:{type:'object',properties:{value:{type:'string'}},required:['value']},execute:(args)=>args};`,
+        );
+        expect(
+          (
+            await request('/capabilities', 'POST', {
+              kind: 'tool',
+              operation: 'update',
+              id: registration.id,
+            })
+          ).response.status,
+        ).toBe(200);
+      }
+      await vi.waitFor(async () =>
+        expect(
+          (await request(`/approvals/${pending.id}`, 'POST', { approved })).response.status,
+        ).toBe(200),
+      );
+      await vi.waitFor(async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'complete',
+        ),
+      );
+      expect(api.store.all('SELECT * FROM capability_runs')).toHaveLength(
+        approved && change === 'instructions' ? 1 : 0,
+      );
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+      if (change === 'instructions')
+        expect(JSON.stringify(calls.at(-1)!.messages)).toContain(approved ? 'approved' : 'denied');
+    },
+  );
+
+  it.each([
+    { savedState: 'complete', changed: false },
+    { savedState: 'uncertain', changed: false },
+    { savedState: 'complete', changed: true },
+    { savedState: 'uncertain', changed: true },
+  ])(
+    'restores parallel approvals with a $savedState sibling result (configuration changed: $changed)',
+    async ({ savedState, changed }) => {
       // Retain the whole saved parallel step; compaction is covered separately.
       await configure(false, { contextWindowTokens: 262144 });
       project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
@@ -1963,6 +2083,7 @@ describe('Mukai bots and AI API', () => {
       const startedAt = (await request<ChatMessage[]>('/bots/scout/messages')).data[1].startedAt;
       await api.shutdown();
       await result;
+      if (changed) api.store.run("UPDATE chat_jobs SET fingerprint='previous-app-version'");
       if (savedState === 'uncertain') {
         // Simulate a crash after a side effect but before its output was saved.
         const row = api.store.get(
@@ -1985,7 +2106,13 @@ describe('Mukai bots and AI API', () => {
       });
       await close(api.server);
       api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
-      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual(pending.slice(1));
+      await vi.waitFor(async () =>
+        expect((await request<ApprovalState>('/approvals')).data.pending).toEqual(
+          pending
+            .slice(1)
+            .map((item) => (changed ? { ...item, reviewNotice: approvalReviewNotice } : item)),
+        ),
+      );
       expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].startedAt).toBe(
         startedAt,
       );

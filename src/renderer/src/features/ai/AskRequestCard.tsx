@@ -71,6 +71,7 @@ export function AskRequestCard({
         }}
       >
         <div className="ask-request-scroll" role="region" aria-label="Request details" tabIndex={0}>
+          {request.reviewNotice && <p role="status">{request.reviewNotice}</p>}
           {delegated && (
             <p className="ai-caption">
               Your bot is waiting for {request.botName}’s response. This request is from{' '}

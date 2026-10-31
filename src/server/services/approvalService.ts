@@ -10,6 +10,7 @@ import { ApiError } from '../config';
 import type { AskInput, AskResponse } from '../../shared/ask';
 import { askDefinition } from '../tools/ask/definition';
 import { inPursuitExecution, pausePursuitTask } from './pursuitScheduler';
+import { approvalReviewNotice } from '../../shared/approvals';
 
 type Decision = ApprovalDecision | string;
 
@@ -44,6 +45,24 @@ export class ApprovalService {
   }
   checkpoints(): ToolApproval[] {
     return [...this.pending.values()].map((item) => item.request);
+  }
+  requireReview(messageId: string, toolCallIds: string[]) {
+    this.repository.resolve(() => {
+      for (const item of this.pending.values()) {
+        if (
+          item.request.messageId !== messageId ||
+          !toolCallIds.includes(item.request.toolCallId) ||
+          (item.request.decision !== undefined && item.request.decision !== true)
+        )
+          continue;
+        item.request = {
+          ...item.request,
+          decision: undefined,
+          reviewNotice: approvalReviewNotice,
+        };
+        this.repository.save(item.request);
+      }
+    });
   }
   discard(messageId: string) {
     for (const [id, item] of this.pending)

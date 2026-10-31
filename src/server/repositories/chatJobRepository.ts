@@ -314,11 +314,16 @@ export class ChatJobRepository {
       return [];
     }
   }
-  read(id: string, fingerprint: string, recoverApproval = false): ChatCheckpoint | undefined {
+  read(
+    id: string,
+    fingerprint: string,
+    recoverApproval = false,
+    reviewChangedConfiguration = false,
+  ): ChatCheckpoint | undefined {
     const row = this.database.get('SELECT * FROM chat_jobs WHERE message_id=?', id);
     if (
       !row ||
-      row.fingerprint !== fingerprint ||
+      (row.fingerprint !== fingerprint && !(recoverApproval && reviewChangedConfiguration)) ||
       (row.in_flight && !(recoverApproval && row.approval_step_json))
     )
       return;

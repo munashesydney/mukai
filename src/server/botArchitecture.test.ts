@@ -20,7 +20,7 @@ import type { ToolInfo } from '../shared/ai';
 import type { Conversation } from '../shared/conversations';
 import { botManagementDefinition } from './tools/bots/definition';
 import { botAvatarIds } from '../shared/mascots';
-import type { ApprovalState } from '../shared/approvals';
+import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
@@ -2497,7 +2497,7 @@ describe('Bot architecture', () => {
     expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
     expect(JSON.stringify(calls.at(-1)?.messages)).toContain('Reviewed the notes successfully.');
   });
-  it('stops the waiting chain when changed settings make its checkpoint incompatible', async () => {
+  it('preserves the waiting chain and child approval when settings change across restart', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
@@ -2507,16 +2507,40 @@ describe('Bot architecture', () => {
     await waitFor(async () =>
       expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
     );
-    api.store.run('UPDATE bots SET instructions=? WHERE id=?', 'Different instructions.', main.id);
+    const approval = (await request<ApprovalState>('/approvals')).data.pending[0];
+    api.store.run(
+      'UPDATE bots SET instructions=? WHERE id IN (?,?)',
+      'Different instructions.',
+      main.id,
+      child.id,
+    );
     await restart();
     await pending;
     await waitFor(async () => {
       expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
-        'interrupted',
+        'streaming',
       );
-      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+      expect((await request<ApprovalState>('/approvals')).data.pending).toMatchObject([
+        {
+          id: approval.id,
+          reviewNotice: approvalReviewNotice,
+          blockedParents: approval.blockedParents,
+        },
+      ]);
     });
     expect(calls).toHaveLength(2);
+    await waitFor(async () =>
+      expect((await request(`/approvals/${approval.id}`, 'POST', { approved: true })).status).toBe(
+        200,
+      ),
+    );
+    await waitFor(async () =>
+      expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+        'complete',
+      ),
+    );
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+    expect(calls).toHaveLength(4);
   });
   it('rejects recursive delegation even when a delegated sub-bot attempts send_message', async () => {
     const main = await bot();

@@ -4,6 +4,9 @@ import type { CustomToolPresentation } from './customCapabilities';
 export type ApprovalMode = 'ask-for-approval' | 'full-access';
 export type ApprovalDecision = boolean | { approved: false; reason: string };
 
+export const approvalReviewNotice =
+  'Mukai’s configuration changed after this action was saved. Review the saved request before allowing it to run with the current tools and settings.';
+
 export interface ApprovalTarget {
   kind: 'private' | 'space' | 'pursuit_run' | 'bot';
   workspaceId: string;
@@ -26,6 +29,8 @@ export interface ToolApproval {
   /** Calls emitted in the same model step share one approval group. */
   batchId: string;
   createdAt: string;
+  /** Saved action needs a user decision under the current configuration. */
+  reviewNotice?: string;
   target?: ApprovalTarget;
   /** Explicit human interaction, rather than permission to run a tool. */
   ask?: AskInput;
