@@ -262,6 +262,7 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
       options.telegramFetch,
     );
+    tools.attachTelegram(telegram);
     const telegramRuntime = new TelegramRuntime(
       telegram,
       new TelegramActivity(telegram, approvals, notifications),

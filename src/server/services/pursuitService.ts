@@ -214,6 +214,23 @@ export class PursuitService {
     this.owned(bot, id);
     return this.control(id, status);
   }
+  removeOwned(bot: Bot, id: string) {
+    this.owned(bot, id);
+    return this.remove(id);
+  }
+  remove(id: string) {
+    const pursuit = this.require(id);
+    if (
+      pursuit.currentRunId ||
+      [...this.jobs.keys()].some((runId) => this.repository.findRun(runId)?.pursuitId === id)
+    )
+      throw new ApiError(
+        409,
+        'Pause this pursuit and wait for its current run to stop before deleting it.',
+      );
+    this.repository.remove(id);
+    return { deleted: true, id };
+  }
   control(id: string, status: 'paused' | 'active' | 'completed') {
     const p = this.require(id);
     if (

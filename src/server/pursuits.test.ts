@@ -807,7 +807,7 @@ describe('AI-owned pursuits and scheduled runs', () => {
     expect(schema.anyOf).toBeUndefined();
     expect(pursuitActionSchema.safeParse({ action: 'create' }).success).toBe(false);
     expect(pursuitActionSchema.safeParse({ action: 'update', ...input }).success).toBe(false);
-    for (const action of ['pause', 'resume', 'complete']) {
+    for (const action of ['pause', 'resume', 'complete', 'delete']) {
       expect(pursuitActionSchema.safeParse({ action }).success).toBe(false);
     }
     expect(pursuitActionSchema.parse({ action: 'list' })).toEqual({ action: 'list' });
@@ -820,6 +820,70 @@ describe('AI-owned pursuits and scheduled runs', () => {
       firstRunAt: null,
       deadline: null,
     });
+  });
+  it('deletes an owned pursuit through the AI tool and rejects another owner', async () => {
+    const bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!;
+    const pursuit = api.pursuits.create(bot, input);
+    const other = { ...bot, id: 'another-bot' };
+    expect(
+      await workpadTool({ action: 'delete', pursuitId: pursuit.id }, undefined, other),
+    ).toMatchObject({ ok: false });
+    expect(api.pursuits.require(pursuit.id)).toBeDefined();
+    expect(await workpadTool({ action: 'delete', pursuitId: pursuit.id })).toMatchObject({
+      ok: true,
+      result: { deleted: true, id: pursuit.id },
+    });
+    expect(() => api.pursuits.require(pursuit.id)).toThrow('Pursuit not found');
+  });
+  it('deletes all run chats and Workpad entries through HTTP, including history beyond the page limit', async () => {
+    const bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!;
+    const pursuit = api.pursuits.create(bot, input);
+    const repository = new PursuitRepository(api.store);
+    const conversations: string[] = [];
+    for (let index = 0; index < 101; index++) {
+      const run = repository.claim(pursuit.id, 'manual', Date.now())!;
+      conversations.push(run.conversationId);
+      if (!index)
+        api.pursuits.addEntryOwned(
+          bot,
+          pursuit.id,
+          {
+            type: 'note',
+            title: 'Run note',
+            content: 'Saved context.',
+          },
+          run.conversationId,
+        );
+      repository.finish(run.id, 'complete', 'Done', null, 'completed', Date.now());
+      if (index < 100) repository.setStatus(pursuit.id, 'active', 'Next run', Date.now());
+    }
+    expect((await request(`/pursuits/${pursuit.id}`, 'DELETE')).data).toEqual({
+      deleted: true,
+      id: pursuit.id,
+    });
+    expect((await request(`/pursuits/${pursuit.id}`)).response.status).toBe(404);
+    expect(api.store.all('SELECT id FROM pursuit_runs WHERE pursuit_id=?', pursuit.id)).toEqual([]);
+    expect(
+      api.store.all('SELECT id FROM pursuit_workpad_entries WHERE pursuit_id=?', pursuit.id),
+    ).toEqual([]);
+    for (const id of conversations)
+      expect(api.store.get('SELECT id FROM conversations WHERE id=?', id)).toBeUndefined();
+    expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
+    api.pursuits.tick();
+    expect(api.pursuits.list(bot.workspaceId)).toEqual([]);
+  });
+  it('rejects deletion during a run and permits it after the run stops', async () => {
+    const bot = (await request<Bot[]>('/bots')).data.find((item) => item.id === 'scout')!;
+    const pursuit = api.pursuits.create(bot, input);
+    const repository = new PursuitRepository(api.store);
+    const run = repository.claim(pursuit.id, 'manual', Date.now())!;
+    expect((await request(`/pursuits/${pursuit.id}`, 'DELETE')).response.status).toBe(409);
+    expect(
+      await workpadTool({ action: 'delete', pursuitId: pursuit.id }, run.conversationId),
+    ).toMatchObject({ ok: false });
+    expect(api.pursuits.detail(pursuit.id).runs).toHaveLength(1);
+    repository.finish(run.id, 'stopped', 'Stopped', null, 'waiting_for_you', Date.now());
+    expect((await request(`/pursuits/${pursuit.id}`, 'DELETE')).response.status).toBe(200);
   });
   it('creates only through an AI tool, binds ownership, and blocks another bot from managing it', async () => {
     const p = await createWithAI();

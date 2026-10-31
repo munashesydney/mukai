@@ -65,7 +65,9 @@ export function acquireDataLock(dir: string) {
     // SQLite's OS lock is released even after a crash. It also serializes stale
     // PID-file recovery: two launchers can never unlink each other's new lock.
     lease = new DatabaseSync(join(dir, 'server-lease.sqlite'));
-    lease.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;');
+    // Concurrent first opens can briefly hold SQLite initialization locks.
+    // Allow those to settle before deciding another backend owns the lease.
+    lease.exec('PRAGMA busy_timeout = 250; BEGIN EXCLUSIVE;');
     const releasePid = acquirePidLock(dir);
     let released = false;
     return () => {

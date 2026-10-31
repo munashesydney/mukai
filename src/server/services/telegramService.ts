@@ -159,6 +159,12 @@ export class TelegramService {
   connection() {
     return this.connections.get();
   }
+  workspaceConnected(workspaceId: string) {
+    const connection = this.connection();
+    return Boolean(
+      connection && this.workspaceAllowed(connection.id, connection.ownerChatId ?? 0, workspaceId),
+    );
+  }
   setRuntime(state: TelegramStatus['runtime']['state'], error: string | null = null) {
     if (state === 'stopped') this.deliveryError = null;
     this.runtimeStatus = {

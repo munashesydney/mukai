@@ -1009,6 +1009,7 @@ export class ChatService {
           bot: botIdentity,
           instructions: bot.instructions,
           workspace: { id: scope.workspaceId, name: scope.workspaceName },
+          telegramConnected: this.tools.telegramConnected(scope.workspaceId),
           workspaceFolder: scope.folder,
           computer: scope.computer,
           tools,

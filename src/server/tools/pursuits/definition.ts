@@ -51,7 +51,10 @@ export const pursuitActionSchema = z.discriminatedUnion('action', [
     ...pursuitInputSchema.shape,
   }),
   z.object({ action: z.literal('list') }),
-  z.object({ action: z.enum(['pause', 'resume', 'complete']), pursuitId: z.string().uuid() }),
+  z.object({
+    action: z.enum(['pause', 'resume', 'complete', 'delete']),
+    pursuitId: z.string().uuid(),
+  }),
   z.object({
     action: z.literal('list_entries'),
     pursuitId: z.string().uuid(),
@@ -82,6 +85,7 @@ const actions = [
   'pause',
   'resume',
   'complete',
+  'delete',
   'list_entries',
   'get_entry',
   'add_entry',
@@ -93,7 +97,7 @@ export const pursuitDefinition = {
   summary: 'Create and manage your scheduled pursuits.',
   actions: [...actions],
   description:
-    'Manage pursuits you own. Create only when the user asks for ongoing work. You are the sole owner; ownership cannot be assigned or transferred. Specify an objective, concrete success criteria, optional firstRunAt and deadline as ISO dates with timezone (null when omitted). Without firstRunAt the first run starts as soon as the scheduler is available. There is no recurring interval: each run must report its own next wake time, reason, and instructions using report_pursuit. Update requires all configuration fields. List returns pursuit IDs, state and run summaries. A pursuit executes in its own conversation on the local server while Mukai is running. Pausing stops an active run; resume schedules a run immediately to reassess and plan its next wake. Completing stops future wakes. Never claim a pursuit was created unless this tool succeeds. Workpad actions require pursuitId. list_entries supports type/status/includeArchived and limit/offset with nextOffset pagination. get_entry requires entryId. add_entry requires entry {type,title,content,status?,links?}. Work items use todo/in_progress/done (default todo); blockers use open/resolved (default open); decision/reference/note use active (default). Any type may be archived. Links use {kind:file|url|conversation|artifact|entry,target,label}; file targets are workspace paths, URLs are HTTP(S), other targets are IDs. Entry links must refer to this pursuit. update_entry requires entryId, expectedRevision from retrieval, and patch {title?,content?,status?,links?}; supplied links replace all links, [] clears them. Types cannot change. Updates persist immediately, independently of the run outcome. ' +
+    'Manage pursuits you own. Create only when the user asks for ongoing work. You are the sole owner; ownership cannot be assigned or transferred. Specify an objective, concrete success criteria, optional firstRunAt and deadline as ISO dates with timezone (null when omitted). Without firstRunAt the first run starts as soon as the scheduler is available. There is no recurring interval: each run must report its own next wake time, reason, and instructions using report_pursuit. Update requires all configuration fields. List returns pursuit IDs, state and run summaries. A pursuit executes in its own conversation on the local server while Mukai is running. Pausing stops an active run; resume schedules a run immediately to reassess and plan its next wake. Completing stops future wakes. Delete permanently removes the pursuit, Workpad and run chats; only do so when the user requests it. Pause and wait for an active run to stop first. Never claim a pursuit was created unless this tool succeeds. Workpad actions require pursuitId. list_entries supports type/status/includeArchived and limit/offset with nextOffset pagination. get_entry requires entryId. add_entry requires entry {type,title,content,status?,links?}. Work items use todo/in_progress/done (default todo); blockers use open/resolved (default open); decision/reference/note use active (default). Any type may be archived. Links use {kind:file|url|conversation|artifact|entry,target,label}; file targets are workspace paths, URLs are HTTP(S), other targets are IDs. Entry links must refer to this pursuit. update_entry requires entryId, expectedRevision from retrieval, and patch {title?,content?,status?,links?}; supplied links replace all links, [] clears them. Types cannot change. Updates persist immediately, independently of the run outcome. ' +
     workpadGuidance,
   inputSchema: z.object({
     action: z.enum(actions),
@@ -101,7 +105,7 @@ export const pursuitDefinition = {
       .string()
       .uuid()
       .optional()
-      .describe('Required for update, pause, resume, complete and all Workpad actions.'),
+      .describe('Required for update, pause, resume, complete, delete and all Workpad actions.'),
     ...pursuitInputSchema.partial().shape,
     entryId: z.string().uuid().optional(),
     expectedRevision: z.number().int().min(1).optional(),

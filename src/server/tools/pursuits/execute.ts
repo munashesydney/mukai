@@ -41,6 +41,9 @@ export function executePursuit(
       case 'update':
         result = pursuits.updateOwned(bot, value.pursuitId, value);
         break;
+      case 'delete':
+        result = pursuits.removeOwned(bot, value.pursuitId);
+        break;
       case 'list_entries': {
         const page = pursuits.listEntriesOwned(bot, value.pursuitId, {
           type: value.type,

@@ -1,4 +1,5 @@
 import type { SkillService } from '../skills/service';
+import type { TelegramService } from './telegramService';
 import { skillTools } from '../tools/skills/execute';
 import type { Bot, ChatActivity, ToolInfo } from '../../shared/ai';
 import {
@@ -41,6 +42,13 @@ import type { InputCapabilities } from '../../shared/modelCapabilities';
 import { terminalDefinition } from '../tools/terminal/definition';
 
 export class ToolService {
+  private telegram?: Pick<TelegramService, 'workspaceConnected'>;
+  attachTelegram(service: Pick<TelegramService, 'workspaceConnected'>) {
+    this.telegram = service;
+  }
+  telegramConnected(workspaceId: string) {
+    return this.telegram?.workspaceConnected(workspaceId) ?? false;
+  }
   private notifications?: NotificationService;
   private history?: ConversationHistoryService;
   private conversationArtifacts?: ConversationArtifactService;
