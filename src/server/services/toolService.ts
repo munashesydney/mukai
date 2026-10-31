@@ -294,7 +294,7 @@ export class ToolService {
       folder: workspace.computer === 'qemu' ? '/home/mukai/workspace' : workspace.folder,
       computerSystem:
         workspace.computer === 'qemu'
-          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, media, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Terminal commands and custom handlers automatically receive MUKAI_ROUTES_URL (the host gateway and actual running port) and MUKAI_ROUTES_TOKEN (temporary, workspace-scoped; send as Authorization: Bearer). Use these variables rather than hardcoding addresses or reading the master API token. auth:session is for browser login and does not accept the route token. Custom modules can use context.callRoute instead without handling credentials. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
+          ? 'Your computer is a persistent Linux VM shared with this workspace’s bots. Shell: /bin/sh. Project: /home/mukai/workspace. All terminal, process, file, media, browser and computer_use operations run inside that VM. Absolute paths refer to Linux guest paths. Chrome and computer_use actions are visible on the guest desktop. Terminal commands and custom handlers automatically receive MUKAI_ROUTES_URL (the host gateway and actual running port) and MUKAI_ROUTES_TOKEN (non-expiring, workspace-scoped; send as Authorization: Bearer). Child services may inherit the token; it remains valid after parent completion/exit and across VM/backend restarts. Workspace deletion removes access. Use these variables rather than hardcoding addresses or reading the master API token. auth:session is for browser login and does not accept the route token. Custom modules can use context.callRoute instead without handling credentials. Write custom tool/route modules inside the VM, then register them using workspace-relative module paths. Mukai manages registrations, approvals and route endpoints; module compilation and execution run inside this VM. Host project mounts are unavailable. Web search, memory, skills and scheduling are controller services.'
           : undefined,
     };
   }
@@ -337,20 +337,8 @@ export class ToolService {
       supportsVideo: capabilities.supportsVideo,
       resultBytes,
       routeEnvironment: this.capabilities
-        ? (lifetimeMs: number, active?: () => Promise<boolean>) =>
-            this.capabilities!.routeEnvironment(bot.workspaceId, lifetimeMs, active)
+        ? () => this.capabilities!.routeEnvironment(bot.workspaceId)
         : undefined,
-      isTerminalRunning: async (sessionId: string) => {
-        const result = await this.workspaces
-          .computers!.guest(workspace)
-          .requestRunning(
-            'process',
-            { action: 'poll', sessionId },
-            { workspaceId: bot.workspaceId, botId: bot.id, conversationId: conversationId! },
-            AbortSignal.timeout(3000),
-          );
-        return (result as { status?: string }).status === 'running';
-      },
       resolveTerminalEnvironment: (names: string[]) => {
         if (!this.capabilities) throw new Error('Workspace environment variables are unavailable.');
         return this.capabilities.environment.resolveForTerminal(bot.workspaceId, names);

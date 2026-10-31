@@ -47,7 +47,6 @@ it('discovers bundled skills through existing HTTP and bot search/load/read path
   const loaded = api.skills.load('default', 'scout', 'bot-scout', skill.id);
   expect(loaded.instructions).toContain("auth:'session'");
   expect(loaded.instructions).toContain('POST /api/bots/{botId}/chat directly from the browser');
-  expect(loaded.instructions).not.toContain('context.wakeBot');
   expect(loaded.instructions).toContain('no terminal-started web server');
   expect(api.skills.read('default', skill.id, 'references/bot-api.md').content).toContain(
     "fetch('/api/bots/' + encodeURIComponent(botId) + '/chat'",

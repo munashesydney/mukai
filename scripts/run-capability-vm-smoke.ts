@@ -164,16 +164,7 @@ async function main() {
       saveScreenshot: async () => {
         throw new Error('unused');
       },
-      routeEnvironment: (ttl, active) => api!.capabilities.routeEnvironment('default', ttl, active),
-      isTerminalRunning: async (id) =>
-        (
-          (await vm.requestRunning(
-            'process',
-            { action: 'poll', sessionId: id },
-            owner,
-            signal,
-          )) as { status: string }
-        ).status === 'running',
+      routeEnvironment: () => api!.capabilities.routeEnvironment('default'),
     });
     const terminal = (await routeTools.terminal.execute!(
       {

@@ -1,4 +1,4 @@
-import type { RouteEnvironmentLease } from '../../shared/routeAccess';
+import type { RouteEnvironment } from '../../shared/routeAccess';
 import type { ChatActivity } from '../../shared/ai';
 import { ACTIVITY_TRUNCATED, resultPreview } from '../services/toolResultPolicy';
 import type { RuntimeOwner } from '../../shared/runtime';
@@ -10,8 +10,7 @@ export interface RuntimeToolContext {
   onActivity: (activity: ChatActivity) => void;
   budget: { remaining: number };
   resultBytes?: number;
-  routeEnvironment?: (lifetimeMs: number, active?: () => Promise<boolean>) => RouteEnvironmentLease;
-  isTerminalRunning?: (sessionId: string) => Promise<boolean>;
+  routeEnvironment?: () => RouteEnvironment;
   resolveTerminalEnvironment?: (names: string[]) => Record<string, string>;
 }
 export async function executeRuntime<T>(

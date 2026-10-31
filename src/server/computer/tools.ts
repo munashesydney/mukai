@@ -1,4 +1,4 @@
-import type { RouteEnvironmentLease } from '../../shared/routeAccess';
+import type { RouteEnvironment } from '../../shared/routeAccess';
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import type { Computer } from './protocol';
@@ -101,8 +101,7 @@ export function computerTools(
                 ? 'files'
                 : (name as 'terminal' | 'process' | 'browser' | 'media');
             let requestInput = input;
-            let routeLease: RouteEnvironmentLease | undefined;
-            let terminalSessionId: string | undefined;
+            let routeAccess: RouteEnvironment | undefined;
             if (name === 'terminal') {
               const terminal = terminalDefinition.inputSchema.parse(input);
               const names = terminal.envFromSettings || [];
@@ -111,17 +110,11 @@ export function computerTools(
               const settingsEnvironment = names.length
                 ? context.resolveTerminalEnvironment!(names)
                 : {};
-              routeLease = context.routeEnvironment?.(
-                (terminal.timeoutSeconds ?? (terminal.background ? 3600 : 300)) * 1000 + 1000,
-                async () =>
-                  terminalSessionId
-                    ? Boolean(await context.isTerminalRunning?.(terminalSessionId))
-                    : true,
-              );
+              routeAccess = context.routeEnvironment?.();
               requestInput = {
                 ...terminal,
                 ...(names.length ? { settingsEnvironment } : {}),
-                ...(routeLease ? { automaticEnvironment: routeLease.env } : {}),
+                ...(routeAccess ? { automaticEnvironment: routeAccess.env } : {}),
               };
             }
             if (name === 'file_operations' && value.action === 'copy_attachment') {
@@ -134,38 +127,29 @@ export function computerTools(
               const bytes = await context.attachmentBytes(value.attachmentId);
               requestInput = { ...value, bytes: bytes.toString('base64') };
             }
-            let result: unknown;
-            try {
-              result = await context.computer.request(
-                method,
-                requestInput,
-                context.owner,
-                signal,
-                name === 'terminal'
-                  ? async (action, args) => {
-                      if (action !== 'terminal_started') throw new Error('Unknown terminal event.');
-                      const snapshot = terminalSnapshotSchema.parse(args[0]);
-                      terminalSessionId = snapshot.id;
-                      context.onActivity({
-                        id: options.toolCallId,
-                        tool: 'terminal',
-                        action: 'run',
-                        path: String(value.command || ''),
-                        status: 'running',
-                        summary: '',
-                        processSessionId: snapshot.id,
-                        terminal: snapshot,
-                      });
-                      return null;
-                    }
-                  : undefined,
-              );
-            } catch (error) {
-              routeLease?.release();
-              throw error;
-            }
-            if (name === 'terminal' && (result as { status?: string })?.status !== 'running')
-              routeLease?.release();
+            const result = await context.computer.request(
+              method,
+              requestInput,
+              context.owner,
+              signal,
+              name === 'terminal'
+                ? async (action, args) => {
+                    if (action !== 'terminal_started') throw new Error('Unknown terminal event.');
+                    const snapshot = terminalSnapshotSchema.parse(args[0]);
+                    context.onActivity({
+                      id: options.toolCallId,
+                      tool: 'terminal',
+                      action: 'run',
+                      path: String(value.command || ''),
+                      status: 'running',
+                      summary: '',
+                      processSessionId: snapshot.id,
+                      terminal: snapshot,
+                    });
+                    return null;
+                  }
+                : undefined,
+            );
             if (name === 'file_operations') {
               const response = z
                 .object({

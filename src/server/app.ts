@@ -128,8 +128,7 @@ export function createApiServer(options: ApiOptions = {}) {
       dir,
     );
     const processes = new ProcessService({
-      routeEnvironment: (workspaceId, lifetimeMs) =>
-        capabilities.routeEnvironment(workspaceId, lifetimeMs),
+      routeEnvironment: (workspaceId) => capabilities.routeEnvironment(workspaceId),
       resolveEnvironment: (workspaceId, names) =>
         capabilities.environment.resolveForTerminal(workspaceId, names),
     });

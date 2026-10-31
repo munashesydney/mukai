@@ -68,22 +68,23 @@ async function ownerCookie() {
   expect(setup.status).toBe(200);
   return setup.headers.get('set-cookie')!.split(';')[0];
 }
-it('loads both skills and supporting references through the existing catalog', () => {
-  expect(defaultSkills).toHaveLength(3);
-  for (const name of ['mukai-api-reference', 'mukai-webhooks']) {
+it('loads workflow skills and supporting references through the existing catalog', () => {
+  expect(api.skills.list('default')).toHaveLength(defaultSkills.length);
+  const references = {
+    'mukai-api-reference': ['references/browser-client.js'],
+    'mukai-webhooks': ['references/stripe-webhook.js'],
+    'mukai-custom-background-services': [
+      'references/pollers.md',
+      'references/persistent-listeners.md',
+    ],
+  };
+  for (const [name, paths] of Object.entries(references)) {
     const skill = api.skills.list('default').find((item) => item.name === name)!;
     expect(skill.enabled).toBe(true);
     const loaded = api.skills.load('default', 'scout', 'bot-scout', skill.id);
     expect(loaded.instructions.length).toBeLessThan(2400);
-    expect(
-      api.skills.read(
-        'default',
-        skill.id,
-        skill.name === 'mukai-webhooks'
-          ? 'references/stripe-webhook.js'
-          : 'references/browser-client.js',
-      ).content,
-    ).toBeTruthy();
+    for (const path of paths)
+      expect(api.skills.read('default', skill.id, path).content).toBeTruthy();
     api.skills.unload('default', 'scout', 'bot-scout', skill.id);
   }
 });

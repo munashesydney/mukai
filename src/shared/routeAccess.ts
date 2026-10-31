@@ -16,7 +16,6 @@ export function customRouteReturnTo(value: unknown): string | undefined {
   }
 }
 export const routeEnvironmentNames = ['MUKAI_ROUTES_URL', 'MUKAI_ROUTES_TOKEN'] as const;
-export interface RouteEnvironmentLease {
+export interface RouteEnvironment {
   env: Record<string, string>;
-  release(): void;
 }

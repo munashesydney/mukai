@@ -92,7 +92,7 @@ export const mukaiSkillInstructions = `Load relevant skills; reuse before creati
 /** Included when tools can discover or use workspace environment variables. */
 export const mukaiSecretsInstructions = `Store credentials in Settings → Environment Variables (Add variable or Import .env). Request names, never values in chat. Storage is encrypted; discovery returns names/status. Never expose secrets in code, definitions, logs or replies. Use system list_env_vars when available; missing values require user setup.
 Custom tools/routes/jobs declare requiredEnv and read context.env. Terminals select saved names through envFromSettings on every run; env is nonsecret, with no overlapping names. Children inherit values; existing processes keep old values. Docker/SSH may need forwarding.
-MUKAI_ROUTES_URL and MUKAI_ROUTES_TOKEN are automatic in handlers and terminals: actual local/VM address and temporary workspace route access. Never save, override or request these names.`;
+MUKAI_ROUTES_URL/MUKAI_ROUTES_TOKEN: actual local/VM URL and non-expiring workspace auth:mukai access. Children inherit them; tokens survive exit/restarts until workspace deletion.`;
 
 /** Included when pursuit management is available. */
 export const mukaiPursuitInstructions = `A pursuit is scheduled autonomous work toward a user objective with verifiable success criteria. Create one only for ongoing work the user requested that cannot finish in the current conversation, and only when pursuit management is available. Complete work that fits the current conversation here. Before creating a pursuit, check for an overlapping one and reuse or update it when appropriate.

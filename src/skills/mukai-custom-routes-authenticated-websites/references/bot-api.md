@@ -23,3 +23,11 @@ async function sayHi(botId, requestId = crypto.randomUUID()) {
 ```
 
 Disable the button while awaiting sayHi, then display the returned message's content. Handle errors and re-enable the button in finally. If an API request returns 401, reload the protected page to go through Mukai login again. Reuse the same requestId if retrying the same chat submission.
+
+## Server-side callers
+
+The API is not intrinsically browser-only: a server client with valid owner authentication can call it. However, the browser example relies on its owner's session cookie. A separate Node/Python service or custom handler does not automatically have that cookie, and server-side credentials:'same-origin' does not obtain it. Mukai strips Cookie/Authorization before invoking authenticated custom handlers. MUKAI_ROUTES_TOKEN is a workspace custom-route credential, not an owner management API credential. Do not extract browser cookies or the master token to make this example work in custom server code.
+
+Inside a custom route, tool or job, use await context.wakeBot('hi',{botId:'EXISTING_BOT_ID'}) directly. For a separate service, create/register a POST /custom/... route with auth:'mukai'; its handler validates the requested action, awaits context.wakeBot and returns an acknowledgment. The service POSTs to MUKAI_ROUTES_URL plus that path with Authorization: Bearer using MUKAI_ROUTES_TOKEN. Keep the target within the registration owner's permitted workspace bots. A browser-facing custom action route can instead use auth:'session' when owner login is the intended authentication.
+
+wakeBot durably queues a wake in a new private conversation; it does not post into the bot's primary chat or return a streamed bot reply like POST /api/bots/{botId}/chat. Its accepted result means queued, not completed. The direct browser approach above still needs only the GET entry route.

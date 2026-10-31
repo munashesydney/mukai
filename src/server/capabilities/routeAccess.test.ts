@@ -58,7 +58,7 @@ it('binds route credentials to one workspace and rejects them at the management 
     operation: 'register',
     modulePath: 'other.ts',
   });
-  const lease = api.capabilities.routeEnvironment('default', 60000);
+  const lease = api.capabilities.routeEnvironment('default');
   expect(lease.env.MUKAI_ROUTES_URL).toBe(api.url);
   expect(lease.env.MUKAI_ROUTES_TOKEN).not.toBe(api.token);
   const headers = bearer(lease.env.MUKAI_ROUTES_TOKEN);
@@ -68,10 +68,11 @@ it('binds route credentials to one workspace and rejects them at the management 
   expect((await fetch(api.url + '/api/workspaces', { headers })).status).toBe(401);
   expect((await fetch(api.url + '/custom/other', { headers })).status).toBe(401);
   expect((await fetch(api.url + '/custom/ui', { headers })).status).toBe(401);
-  lease.release();
-  expect((await fetch(api.url + '/custom/private', { headers })).status).toBe(401);
+  expect(api.capabilities.routeEnvironment('default').env.MUKAI_ROUTES_TOKEN).toBe(
+    lease.env.MUKAI_ROUTES_TOKEN,
+  );
 });
-it('injects the actual port into local terminal processes, masks credentials and revokes them on exit', async () => {
+it('injects the actual port into local terminal processes, masks credentials and preserves them after exit', async () => {
   await route('terminal_target');
   await writeFile(
     join(folder, 'probe.cjs'),
@@ -98,7 +99,7 @@ it('injects the actual port into local terminal processes, masks credentials and
   const token = await readFile(join(folder, 'token.txt'), 'utf8');
   expect(
     (await fetch(api.url + '/custom/terminal_target', { headers: bearer(token) })).status,
-  ).toBe(401);
+  ).toBe(200);
   await expect(
     api.processes.run(
       owner,
@@ -132,6 +133,54 @@ it('supplies route access to custom workers and children without requiredEnv, an
     child: '[redacted]',
   });
 });
+it('lets a job-launched child call a protected route after the job returns with inherited environment', async () => {
+  await route('service_target');
+  api.capabilities.environment.save('default', [
+    { name: 'SERVICE_SECRET', value: 'synthetic-listener-secret' },
+  ]);
+  await writeFile(
+    join(folder, 'listener.cjs'),
+    `const fs=require('node:fs');
+    (async()=>{
+      const end=Date.now()+3000;
+      while(!fs.existsSync('job-returned')&&Date.now()<end)await new Promise(r=>setTimeout(r,10));
+      if(!fs.existsSync('job-returned'))throw new Error('Launcher did not return');
+      const response=await fetch(process.env.MUKAI_ROUTES_URL+'/custom/service_target',{headers:{Authorization:'Bearer '+process.env.MUKAI_ROUTES_TOKEN}});
+      fs.writeFileSync('listener-result.json',JSON.stringify({status:response.status,hasSecret:process.env.SERVICE_SECRET==='synthetic-listener-secret'}));
+    })().catch(error=>{fs.writeFileSync('listener-result.json',JSON.stringify({error:error.message}));process.exitCode=1});`,
+  );
+  await writeFile(
+    join(folder, 'launcher.ts'),
+    `import {spawn} from 'node:child_process';
+    import {join} from 'node:path';
+    export default {name:'service_launcher',description:'Start a test service',requiredEnv:['SERVICE_SECRET'],triggers:[{type:'workspace_start'}],
+      run(event,context){
+        const child=spawn(process.execPath,[join(context.workspacePath,'listener.cjs')],{cwd:context.workspacePath,env:{...process.env,...context.env},stdio:'ignore',detached:true});
+        child.unref();return {started:true};
+      }};`,
+  );
+  const item = (await api.capabilities.manage('default', null, 'job', {
+    operation: 'register',
+    modulePath: 'launcher.ts',
+  })) as CapabilityRegistration;
+  expect(
+    await api.capabilities.invoke(
+      item.id,
+      { trigger: 'manual', scheduledAt: new Date().toISOString() },
+      'runJob',
+    ),
+  ).toEqual({ started: true });
+  await writeFile(join(folder, 'job-returned'), 'done');
+  await vi.waitFor(
+    async () => {
+      expect(JSON.parse(await readFile(join(folder, 'listener-result.json'), 'utf8'))).toEqual({
+        status: 200,
+        hasSecret: true,
+      });
+    },
+    { timeout: 5000 },
+  );
+});
 it('gives VM terminals and workers the gateway URL with the bound port and supports it without a Host override', async () => {
   api.store.run("UPDATE workspaces SET computer='qemu',folder=NULL WHERE id='default'");
   const guest = new GuestDispatcher(folder, join(root, 'guest'));
@@ -148,7 +197,7 @@ it('gives VM terminals and workers the gateway URL with the bound port and suppo
       'handle',
     )) as { body: { url: string } };
     expect(output.body.url).toBe('http://10.0.2.2:' + port);
-    const lease = api.capabilities.routeEnvironment('default', 60000);
+    const lease = api.capabilities.routeEnvironment('default');
     const status = (host: string) =>
       new Promise<number>((resolve, reject) => {
         const request = httpRequest(
@@ -164,7 +213,6 @@ it('gives VM terminals and workers the gateway URL with the bound port and suppo
       });
     expect(await status('10.0.2.2:' + port)).toBe(200);
     expect(await status('10.0.2.2:1')).toBe(403);
-    lease.release();
     const tools = computerTools({
       owner,
       signal: signal(),
@@ -178,13 +226,7 @@ it('gives VM terminals and workers the gateway URL with the bound port and suppo
       saveScreenshot: async () => {
         throw new Error('unused');
       },
-      routeEnvironment: (ttl, active) => api.capabilities.routeEnvironment('default', ttl, active),
-      isTerminalRunning: async (id) =>
-        (
-          (await guest.request('process', { action: 'poll', sessionId: id }, owner, signal())) as {
-            status: string;
-          }
-        ).status === 'running',
+      routeEnvironment: () => api.capabilities.routeEnvironment('default'),
     });
     await writeFile(
       join(folder, 'guest-probe.cjs'),
@@ -202,28 +244,67 @@ it('gives VM terminals and workers the gateway URL with the bound port and suppo
     await guest.shutdown();
   }
 });
-it('expires leases, checks guest process liveness, and revokes workspace credentials', async () => {
-  const active = vi.fn(async () => true),
-    untrack = vi.fn();
-  const credentials = new RouteCredentials(() => untrack);
+it('keeps one token per workspace without timers and revokes access for unavailable workspaces', async () => {
+  const track = vi.fn();
+  const credentials = new RouteCredentials(api.store, track);
   try {
-    const lease = credentials.issue('a', api.url, 60000, active),
-      token = lease.env.MUKAI_ROUTES_TOKEN;
-    expect(await credentials.authorized(token, 'b')).toBe(false);
-    expect(active).not.toHaveBeenCalled();
-    expect(await credentials.authorized(token, 'a')).toBe(true);
-    active.mockResolvedValue(false);
-    expect(await credentials.authorized(token, 'a')).toBe(false);
-    expect(untrack).toHaveBeenCalledTimes(1);
-    const expiring = credentials.issue('a', api.url, 5);
-    await vi.waitFor(async () =>
-      expect(await credentials.authorized(expiring.env.MUKAI_ROUTES_TOKEN, 'a')).toBe(false),
-    );
-    const stopped = credentials.issue('a', api.url, 60000);
-    credentials.stopWorkspace('a');
-    expect(await credentials.authorized(stopped.env.MUKAI_ROUTES_TOKEN, 'a')).toBe(false);
+    const access = credentials.issue('default', api.url);
+    const token = access.env.MUKAI_ROUTES_TOKEN;
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    expect(credentials.issue('default', api.url).env.MUKAI_ROUTES_TOKEN).toBe(token);
+    expect(timers).not.toHaveBeenCalled();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1000 * 60 * 60 * 24 * 365 * 50);
+    expect(credentials.authorized(token, 'default')).toBe(true);
+    expect(credentials.authorized(token, 'missing')).toBe(false);
+    expect(credentials.authorized(token + 'x', 'default')).toBe(false);
+    const otherFolder = join(root, 'credential-other');
+    await mkdir(otherFolder);
+    const other = api.workspaces.create({ name: 'Other', folder: otherFolder });
+    const otherToken = credentials.issue(other.id, api.url).env.MUKAI_ROUTES_TOKEN;
+    expect(otherToken).not.toBe(token);
+    expect(credentials.authorized(token, other.id)).toBe(false);
+    api.store.run('UPDATE workspaces SET deleting=1 WHERE id=?', other.id);
+    expect(credentials.authorized(otherToken, other.id)).toBe(false);
+    expect(() => credentials.issue(other.id, api.url)).toThrow('unavailable');
+    credentials.stopWorkspace('default');
+    expect(credentials.authorized(token, 'default')).toBe(false);
+    expect(() => credentials.issue('default', api.url)).toThrow('unavailable');
   } finally {
     credentials.close();
+  }
+  expect(track).toHaveBeenCalledTimes(2);
+});
+it('accepts an inherited token after backend restart and masks it before a fresh launch', async () => {
+  await route('restart_target');
+  const token = api.capabilities.routeEnvironment('default').env.MUKAI_ROUTES_TOKEN;
+  await api.shutdown();
+  expect(api.capabilities.environment.publicValue({ token })).toEqual({ token: '[redacted]' });
+  await new Promise<void>((resolve) => api.server.close(() => resolve()));
+  api.dispose();
+  api = await startApiServer(0, { dataDir: join(root, 'data') });
+  expect(api.capabilities.environment.publicValue({ token })).toEqual({ token: '[redacted]' });
+  const response = await fetch(api.url + '/custom/restart_target', { headers: bearer(token) });
+  expect(response.status).toBe(200);
+  expect(api.capabilities.routeEnvironment('default').env.MUKAI_ROUTES_TOKEN).toBe(token);
+  await api.capabilities.stopWorkspace('default');
+  expect(api.capabilities.environment.publicValue({ token })).toEqual({ token: '[redacted]' });
+  expect((await fetch(api.url + '/custom/restart_target', { headers: bearer(token) })).status).toBe(
+    401,
+  );
+});
+it('does not accept a token from another data directory with the same workspace ID', async () => {
+  const other = await startApiServer(0, { dataDir: join(root, 'other-data') });
+  seedTestBot(other.store);
+  try {
+    const token = api.capabilities.routeEnvironment('default').env.MUKAI_ROUTES_TOKEN;
+    const otherToken = other.capabilities.routeEnvironment('default').env.MUKAI_ROUTES_TOKEN;
+    expect(otherToken).not.toBe(token);
+    expect(other.capabilities.routeCredentials.authorized(token, 'default')).toBe(false);
+    expect(api.capabilities.routeCredentials.authorized(otherToken, 'default')).toBe(false);
+  } finally {
+    await other.shutdown();
+    await new Promise<void>((resolve) => other.server.close(() => resolve()));
+    other.dispose();
   }
 });
 it('only allows local custom-route return destinations', () => {
