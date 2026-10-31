@@ -45,6 +45,7 @@ import { memorySettingsSchema, type MemoryService } from '../services/memoryServ
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 import { trustedLocalRequest, nativeClientRequest } from '../web/origin';
+import { nativeAuthenticatedRequest } from '../web/nativeAuth';
 import type { SettingsService } from '../services/settingsService';
 import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
@@ -814,7 +815,7 @@ export function createRoutes({
           response,
           await desktops.session(
             workspaces.computers.guest(workspace),
-            nativeClientRequest(request),
+            nativeClientRequest(request) || nativeAuthenticatedRequest(request),
             url.searchParams.get('reconnect') === '1',
           ),
         );

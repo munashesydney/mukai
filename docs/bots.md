@@ -6,6 +6,8 @@ Bots are persistent assistants within a workspace. Each bot has a name, role, in
 
 The first bot created in a workspace becomes its main bot, with the fixed role **Main Bot/Orchestrator**. Subsequent bots are sub-bots. Each workspace can have at most one main bot, enforced by the database as well as the creation flow. Editing a sub-bot cannot promote it to main. The main bot can change a sub-bot’s reporting parent through the Bots tool.
 
+The main bot can list and manage every pursuit in its workspace, including pursuits owned by sub-bots and their Workpads. Sub-bots can manage only their own pursuits. Management does not transfer ownership: scheduled runs continue to execute as the owning bot. Pursuit-run Workpad changes remain scoped to that run’s pursuit.
+
 The main bot coordinates work. Its system prompt encourages it to:
 
 - Inspect existing bots and reuse suitable specialists.

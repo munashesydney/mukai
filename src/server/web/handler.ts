@@ -8,6 +8,7 @@ import { trustedLocalRequest, localBrowserRequest, nativeClientRequest } from '.
 import { BrowserSession, matches } from './session';
 import { send } from '../http/transport';
 import type { OwnerAuth } from './ownerAuth';
+import { authenticateNativeApiRequest } from './nativeAuth';
 
 const contentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -45,9 +46,8 @@ export function createWebHandler(
       url.pathname !== '/api/instance' &&
       !url.pathname.startsWith('/api/auth/') &&
       url.pathname !== '/api/session' &&
-      nativeClientRequest(request) &&
-      (request.method === 'OPTIONS' ||
-        matches(request.headers.authorization || '', `Bearer ${token}`))
+      ((request.method === 'OPTIONS' && nativeClientRequest(request)) ||
+        authenticateNativeApiRequest(request, token))
     ) {
       request.url = url.pathname.slice(4) + url.search;
       return route(request, response);
