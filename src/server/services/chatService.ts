@@ -49,7 +49,7 @@ import { rejectedMedia, omitRejectedMedia } from './mediaRecovery';
 import { imageDefinition } from '../tools/image/definition';
 import { mediaDefinition } from '../tools/media/definition';
 import type { InputCapabilities } from '../../shared/modelCapabilities';
-import { GenerationTimeout } from './generationTimeout';
+import { GenerationTimeout, generationTimeoutError } from './generationTimeout';
 import { pursuitSession } from './pursuitScheduler';
 import {
   ChatCheckpointError,
@@ -90,7 +90,6 @@ import {
   assistantContextText,
   containsRawToolProtocol,
   PROVIDER_MAX_RETRIES,
-  RESPONSE_TIMEOUT_MS,
   TOOL_STEP_LIMIT,
   EMPTY_REPLY_RECOVERY_LIMIT,
   FINAL_REPLY_NOTICE,
@@ -98,9 +97,10 @@ import {
   isPrematureReasoningEcho,
   REASONING_ECHO_RECOVERY_LIMIT,
   REASONING_ECHO_NOTICE,
+  PROVIDER_TIMEOUT_RECOVERY_LIMIT,
+  PROVIDER_TIMEOUT_NOTICE,
   canRetryProvider,
   interruptedResponseReport,
-  RESPONSE_IDLE_TIMEOUT_MS,
 } from './responsePolicy';
 
 interface Generation {
@@ -777,6 +777,7 @@ export class ChatService {
     const invalidToolInputs = new Set<string>();
     let recoveredEmptyReply = false;
     let recoveredReasoningEcho = false;
+    let recoveredProviderTimeout = false;
     let status: MessageStatus = 'complete',
       error: string | null = null,
       lastSaved = Date.now();
@@ -1309,6 +1310,9 @@ export class ChatService {
       };
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let reasoningEchoRecoveries = restoreSavedStep ? checkpoint?.reasoningEchoRecoveries || 0 : 0;
+      let providerTimeoutRecoveries = restoreSavedStep
+        ? checkpoint?.providerTimeoutRecoveries || 0
+        : 0;
       let providerToolCallRecoveries = restoreSavedStep
         ? checkpoint?.providerToolCallRecoveries || 0
         : 0;
@@ -1327,6 +1331,7 @@ export class ChatService {
           steps: stepsUsed,
           emptyReplyRecoveries,
           reasoningEchoRecoveries,
+          providerTimeoutRecoveries,
           providerToolCallRecoveries,
           response: {
             content: generation.content,
@@ -1818,7 +1823,8 @@ export class ChatService {
           ? finalReplyNotice
           : checkpoint
             ? 'Resume the original request from saved completed steps. Do not repeat successful operations; verify state before further changes. Browser and process handles may have expired; check live sessions and take a fresh snapshot before reusing browser references.' +
-              (reasoningEchoRecoveries > 0 ? '\n' + REASONING_ECHO_NOTICE : '')
+              (reasoningEchoRecoveries > 0 ? '\n' + REASONING_ECHO_NOTICE : '') +
+              (providerTimeoutRecoveries > 0 ? '\n' + PROVIDER_TIMEOUT_NOTICE : '')
             : '',
         pausedReason = '';
       let continuationOf = '';
@@ -2140,8 +2146,8 @@ export class ChatService {
             Boolean(this.approvals?.waiting(assistantId)) ||
             Boolean(scheduling?.waiting()),
           stepController,
-          RESPONSE_TIMEOUT_MS,
-          RESPONSE_IDLE_TIMEOUT_MS,
+          config.responseTimeouts.totalMs,
+          config.responseTimeouts.idleMs,
         );
         let textPartId = '',
           reasoningPartId = '';
@@ -2316,6 +2322,40 @@ export class ChatService {
             error = null;
             continue;
           }
+          const watchdog =
+            generationTimeoutError(caught) ?? generationTimeoutError(stepController.signal.reason);
+          if (
+            watchdog &&
+            !signal.aborted &&
+            !pausedReason &&
+            executionVersion === stepExecutionVersion &&
+            !pendingTools.size &&
+            !this.jobs.approvalStep(assistantId).length &&
+            providerTimeoutRecoveries < PROVIDER_TIMEOUT_RECOVERY_LIMIT
+          ) {
+            providerTimeoutRecoveries++;
+            const partial = generation.content.slice(textBeforeStep);
+            if (partial.trim())
+              messages.push({ role: 'assistant', content: assistantContextText(partial) });
+            generation.parts = generation.parts.map((part) =>
+              part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
+            );
+            continuationOf = '';
+            notice = PROVIDER_TIMEOUT_NOTICE;
+            status = 'complete';
+            error = null;
+            this.diagnostics.record(
+              'chat.provider_timeout_recovery',
+              watchdog,
+              diagnosticContext(),
+              'warn',
+              `Continuing from saved results after a response timeout (${watchdog.kind}); no operation entered execution or approval in this generation, attempt ${providerTimeoutRecoveries}/${PROVIDER_TIMEOUT_RECOVERY_LIMIT}.`,
+            );
+            save();
+            saveCheckpoint();
+            continue;
+          }
+          if (watchdog) throw watchdog;
           const failure = providerToolCallFailure(caught);
           if (
             !signal.aborted &&
@@ -2637,6 +2677,7 @@ export class ChatService {
       if (status === 'complete') {
         recoveredEmptyReply = emptyReplyRecoveries > 0;
         recoveredReasoningEcho = reasoningEchoRecoveries > 0;
+        recoveredProviderTimeout = providerTimeoutRecoveries > 0;
         this.jobs.remove(assistantId);
       }
     } catch (caught) {
@@ -2734,6 +2775,12 @@ export class ChatService {
             this.diagnostics.info(
               'chat.reasoning_echo_recovered',
               'The model continued past a reasoning echo and completed the response.',
+              diagnosticContext(),
+            );
+          if (status === 'complete' && recoveredProviderTimeout)
+            this.diagnostics.info(
+              'chat.provider_timeout_recovered',
+              'The model continued from saved results after a response timeout and completed the response.',
               diagnosticContext(),
             );
         }

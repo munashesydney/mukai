@@ -20,6 +20,10 @@ import { errorText } from '../../utils/errors';
 import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 import { ModelReasoningSettings } from './ModelReasoningSettings';
 import { reasoningDefaultLabel } from '../../../../shared/reasoning';
+import {
+  MAX_RESPONSE_TIMEOUT_SECONDS,
+  providerResponseTimeouts,
+} from '../../../../shared/providerTimeouts';
 
 export function ProviderModels({
   provider,
@@ -69,6 +73,18 @@ export function ProviderModels({
     if (draft.maxOutputTokens >= draft.contextWindowTokens!) {
       setError(
         'The output limit must be smaller than the context window to leave room for your messages.',
+      );
+      return;
+    }
+    if (
+      [draft.responseTimeoutSeconds, draft.responseIdleTimeoutSeconds].some(
+        (value) =>
+          value !== undefined &&
+          (!Number.isInteger(value) || value < 1 || value > MAX_RESPONSE_TIMEOUT_SECONDS),
+      )
+    ) {
+      setError(
+        `Response timeouts must be whole seconds from 1 to ${MAX_RESPONSE_TIMEOUT_SECONDS}.`,
       );
       return;
     }
@@ -377,6 +393,59 @@ export function ProviderModels({
                     </small>
                   </label>
                 </div>
+                <details>
+                  <summary>Response time limits</summary>
+                  <div className="ai-form-grid">
+                    <label>
+                      Response time limit (seconds)
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_RESPONSE_TIMEOUT_SECONDS}
+                        step={1}
+                        value={draft.responseTimeoutSeconds ?? ''}
+                        placeholder={String(providerResponseTimeouts(provider).totalMs / 1000)}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            responseTimeoutSeconds: event.target.value
+                              ? Number(event.target.value)
+                              : undefined,
+                          })
+                        }
+                      />
+                      <small>
+                        Maximum time per model generation, excluding tools and approval waits. Leave
+                        blank for the default.
+                      </small>
+                    </label>
+                    <label>
+                      Idle time limit (seconds)
+                      <input
+                        type="number"
+                        min={1}
+                        max={MAX_RESPONSE_TIMEOUT_SECONDS}
+                        step={1}
+                        value={draft.responseIdleTimeoutSeconds ?? ''}
+                        placeholder={String(providerResponseTimeouts(provider).idleMs / 1000)}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            responseIdleTimeoutSeconds: event.target.value
+                              ? Number(event.target.value)
+                              : undefined,
+                          })
+                        }
+                      />
+                      <small>
+                        Maximum wait without streamed updates, capped by the response limit. Local
+                        models may need longer for large file writes.
+                      </small>
+                    </label>
+                  </div>
+                </details>
                 <ModelReasoningSettings
                   provider={provider}
                   draft={draft}

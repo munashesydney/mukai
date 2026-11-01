@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MockLanguageModelV4 } from 'ai/test';
 import { createServer, type Server } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,7 @@ import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
 import { ArtifactRepository } from './repositories/artifactRepository';
+import { ProviderService } from './services/providerService';
 import { wavFixture, mp4Fixture } from './testMediaFixtures';
 
 function inputBot() {
@@ -60,6 +62,11 @@ let mode:
   | 'upstream-fail'
   | 'transient-stream'
   | 'transient-stream-always'
+  | 'buffered-tool'
+  | 'watchdog-once'
+  | 'watchdog-always'
+  | 'watchdog-stop'
+  | 'watchdog-approval'
   | 'malformed-stream'
   | 'malformed-stream-always'
   | 'malformed-stream-with-tool'
@@ -516,6 +523,79 @@ beforeEach(async () => {
         );
         return;
       }
+    }
+    if (mode === 'buffered-tool' || mode.startsWith('watchdog-')) {
+      const send = (delta: unknown, finish_reason: string | null = null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'watchdog-fixture', model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+        );
+      const completed = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const recovering = JSON.stringify(body.messages).includes(
+        'Mukai ended the previous generation at its response time limit',
+      );
+      const invoke = (name: string, input: unknown) =>
+        send(
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'watchdog-tool-' + completed,
+                type: 'function',
+                function: { name, arguments: JSON.stringify(input) },
+              },
+            ],
+          },
+          'tool_calls',
+        );
+      if (mode === 'watchdog-stop') {
+        send({ content: 'Now writing the renderer.' });
+        return;
+      }
+      if (!completed) {
+        send({ content: 'Now writing the renderer.' });
+        const write = () => {
+          invoke('file_operations', {
+            action: 'write_file',
+            path: 'once.txt',
+            content: 'Saved once.',
+          });
+          res.end('data: [DONE]\n\n');
+        };
+        if (mode === 'buffered-tool') {
+          // Like oMLX, send commentary, then buffer the entire tool call.
+          const timer = setTimeout(write, 1500);
+          res.once('close', () => clearTimeout(timer));
+        } else write();
+        return;
+      }
+      if (mode === 'buffered-tool' || (completed >= 2 && mode === 'watchdog-once')) {
+        send({ content: 'Finished using the saved file.' }, 'stop');
+      } else if (recovering && mode === 'watchdog-approval' && completed === 1) {
+        invoke('communicate', { action: 'approval', question: 'May I publish this draft?' });
+      } else if (recovering && mode === 'watchdog-once') {
+        invoke('file_operations', { action: 'read_file', path: 'once.txt' });
+      } else {
+        send({ content: 'Now completing the remaining renderer work.' });
+        // This incomplete argument stream must never enter the next request as a call.
+        send({
+          tool_calls: [
+            {
+              index: 0,
+              id: 'unfinished-write',
+              type: 'function',
+              function: {
+                name: 'file_operations',
+                arguments: '{"action":"write_file","path":"never.txt","content":"',
+              },
+            },
+          ],
+        });
+        return;
+      }
+      res.end('data: [DONE]\n\n');
+      return;
     }
     if (mode === 'transient-stream-always' || (mode === 'transient-stream' && calls.length === 1)) {
       res.end(
@@ -2346,6 +2426,177 @@ describe('Mukai bots and AI API', () => {
     expect(calls[1].messages).toEqual(calls[0].messages);
     expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).toContain('chat.provider_retry');
   });
+
+  it('waits for a buffered tool call using the saved model time limits', async () => {
+    const provider = await configure(false, {
+      responseTimeoutSeconds: 5,
+      responseIdleTimeoutSeconds: 3,
+    });
+    expect(provider.models?.[0]).toMatchObject({
+      responseTimeoutSeconds: 5,
+      responseIdleTimeoutSeconds: 3,
+    });
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Buffered tool', folder: project });
+    mode = 'buffered-tool';
+    await chat('Write the file and finish.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status, reply.error || '').toBe('complete');
+    expect(calls).toHaveLength(2);
+    expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Saved once.');
+  });
+
+  it('continues after a watchdog timeout with partial commentary and unfinished tool input, without repeating saved writes', async () => {
+    await configure(false, { responseTimeoutSeconds: 10, responseIdleTimeoutSeconds: 1 });
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Timeout recovery', folder: project });
+    mode = 'watchdog-once';
+    await chat('Write once, then finish the renderer.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status, reply.error || '').toBe('complete');
+    expect(reply.content).toContain('Now completing the remaining renderer work.');
+    expect(reply.content).toContain('Finished using the saved file.');
+    expect(reply.activity?.map((item) => item.action)).toEqual(['write_file', 'read_file']);
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(calls[2].messages)).toContain('Saved once.');
+    expect(JSON.stringify(calls[2].messages)).toContain(
+      'Now completing the remaining renderer work.',
+    );
+    expect(JSON.stringify(calls[2].messages)).not.toContain('unfinished-write');
+    expect(calls[2].tools?.length).toBeGreaterThan(0);
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs).toContain('chat.provider_timeout_recovery');
+    expect(logs).toContain('MUKAI_PROVIDER_IDLE_TIMEOUT');
+    expect(logs).toContain('chat.provider_timeout_recovered');
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  }, 10000);
+
+  it('bounds watchdog continuations and leaves the checkpoint available for manual Retry', async () => {
+    await configure(false, { responseTimeoutSeconds: 10, responseIdleTimeoutSeconds: 1 });
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Timeout ceiling', folder: project });
+    mode = 'watchdog-always';
+    await chat('Write once, then finish.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('failed');
+    expect(reply.error).toContain('idle timeout');
+    expect(reply.error).not.toContain('connection');
+    expect(calls).toHaveLength(4);
+    expect(reply.activity).toHaveLength(1);
+    const checkpoint = api.store.get(
+      'SELECT checkpoint_json FROM chat_jobs WHERE message_id=?',
+      reply.id,
+    )!;
+    expect(JSON.parse(String(checkpoint.checkpoint_json)).providerTimeoutRecoveries).toBe(2);
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs.match(/"event":"chat.provider_timeout_recovery"/g)).toHaveLength(2);
+    expect(logs).not.toContain('chat.provider_timeout_recovered');
+  }, 10000);
+
+  it('does not retry a watchdog timeout after an operation executed in that generation', async () => {
+    await configure(false, { responseTimeoutSeconds: 10, responseIdleTimeoutSeconds: 1 });
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Executed tool', folder: project });
+    // Exercise a provider that finishes its tool call but leaves the stream
+    // open: its write can execute before the subsequent stream stall.
+    const model = new MockLanguageModelV4({
+      doStream: async ({ abortSignal }) => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({
+              type: 'tool-call',
+              toolCallId: 'executed-write',
+              toolName: 'file_operations',
+              input: JSON.stringify({
+                action: 'write_file',
+                path: 'once.txt',
+                content: 'Saved once.',
+              }),
+            });
+            controller.enqueue({
+              type: 'finish',
+              finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
+              usage: {
+                inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                outputTokens: { total: 1, text: 1, reasoning: 0 },
+              },
+            });
+            abortSignal?.addEventListener('abort', () => controller.error(abortSignal.reason), {
+              once: true,
+            });
+          },
+        }),
+      }),
+    });
+    const resolve = ProviderService.prototype.resolve;
+    vi.spyOn(ProviderService.prototype, 'resolve').mockImplementation(function (
+      this: ProviderService,
+      bot,
+    ) {
+      return { ...resolve.call(this, bot), model };
+    });
+    await chat('Write once, then finish.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('failed');
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Saved once.');
+    expect(readFileSync(join(dir, 'logs', 'errors.log'), 'utf8')).not.toContain(
+      'chat.provider_timeout_recovery',
+    );
+  });
+
+  it('honors Stop during a buffered generation without starting a watchdog continuation', async () => {
+    await configure(false, { responseTimeoutSeconds: 10, responseIdleTimeoutSeconds: 1 });
+    mode = 'watchdog-stop';
+    const running = chat('Work until stopped.');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
+  });
+
+  it('retains the watchdog continuation budget and pending approval across restart', async () => {
+    await configure(false, { responseTimeoutSeconds: 10, responseIdleTimeoutSeconds: 1 });
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Timeout restart', folder: project });
+    mode = 'watchdog-approval';
+    const running = chat('Prepare the draft and ask before publishing.');
+    const approval = await pendingApproval('watchdog-tool-1');
+    expect(calls).toHaveLength(3);
+    const row = api.store.get('SELECT checkpoint_json FROM chat_jobs')!;
+    expect(JSON.parse(String(row.checkpoint_json)).providerTimeoutRecoveries).toBe(1);
+    await api.shutdown();
+    await close(api.server);
+    await running;
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    await vi.waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending[0]?.id).toBe(approval.id),
+    );
+    expect((await request<ProviderSettings[]>('/providers')).data[0].models?.[0]).toMatchObject({
+      responseTimeoutSeconds: 10,
+      responseIdleTimeoutSeconds: 1,
+    });
+    expect(calls).toHaveLength(3);
+    await request(`/approvals/${approval.id}`, 'POST', { approved: false });
+    await vi.waitFor(
+      async () =>
+        expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe(
+          'failed',
+        ),
+      { timeout: 5000 },
+    );
+    expect(calls).toHaveLength(5);
+    const toolResults = calls.at(-1)!.messages.filter((message) => message.role === 'tool');
+    expect(JSON.parse(String(toolResults.at(-1)!.content))).toEqual({
+      action: 'approval',
+      approved: false,
+    });
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs.match(/"event":"chat.provider_timeout_recovery"/g)).toHaveLength(2);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+  }, 10000);
 
   it.each(['malformed-stream', 'incomplete-stream', 'malformed-http'] as const)(
     'explains %s to the model and continues even after visible commentary',
@@ -4336,6 +4587,9 @@ it('saves model configuration independently of the provider connection and rejec
     { models, defaultModel: '' },
     { models: [models[0], models[0]], defaultModel: 'new-default' },
     { models, defaultModel: 'new-default', apiKey: 'should-not-change' },
+    { models: [{ ...models[0], responseTimeoutSeconds: 0 }], defaultModel: 'new-default' },
+    { models: [{ ...models[0], responseIdleTimeoutSeconds: 7201 }], defaultModel: 'new-default' },
+    { models: [{ ...models[0], responseTimeoutSeconds: 1.5 }], defaultModel: 'new-default' },
   ])
     expect((await request(`/providers/${provider.id}/models`, 'PUT', input)).response.status).toBe(
       400,

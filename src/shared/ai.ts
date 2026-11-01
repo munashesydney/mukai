@@ -22,6 +22,8 @@ export interface ProviderModel {
   supportsImages: boolean | null;
 }
 export interface SavedProviderModel {
+  responseTimeoutSeconds?: number;
+  responseIdleTimeoutSeconds?: number;
   reasoningEfforts?: ReasoningLevel[];
   reasoningEffort?: ReasoningEffort;
   customReasoning?: CustomReasoning;

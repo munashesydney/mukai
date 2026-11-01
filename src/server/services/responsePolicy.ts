@@ -47,6 +47,9 @@ export const RESPONSE_IDLE_TIMEOUT_MS = 120000;
 export const PROVIDER_MAX_RETRIES = 5;
 export const EMPTY_REPLY_RECOVERY_LIMIT = 2;
 export const REASONING_ECHO_RECOVERY_LIMIT = 2;
+export const PROVIDER_TIMEOUT_RECOVERY_LIMIT = 2;
+export const PROVIDER_TIMEOUT_NOTICE =
+  'Mukai ended the previous generation at its response time limit before any tool in that generation entered execution or approval. Continue the original request from saved results and commentary; do not repeat successful operations. Use smaller, focused tool calls instead of one very large tool call. The partial generation did not complete its pending work. Respect the latest user instructions, approval requirements, stop requests, and runtime limits. Finish with an accurate final report.';
 
 export const REASONING_ECHO_NOTICE =
   'Your previous response repeated your reasoning and ended while announcing more work. Continue the original request from saved progress, using available tools when needed. Preserve completed results and do not repeat successful operations. Respect the latest user instructions, stop requests, approval requirements, and runtime limits. If the request is finished or you need user input, give a substantive final answer explaining the result or what is needed; do not end with another continuation announcement.';

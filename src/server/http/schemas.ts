@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { botAvatarIds, legacyAvatarIds, resolveBotAvatar } from '../../shared/mascots';
 import { reasoningEfforts, reasoningLevels } from '../../shared/reasoning';
+import { MAX_RESPONSE_TIMEOUT_SECONDS } from '../../shared/providerTimeouts';
 
 export const botSchema = z.object({
   reasoningEffort: z.enum(reasoningEfforts).nullable().optional(),
@@ -19,6 +20,18 @@ export const providerSchema = z.object({
   models: z
     .array(
       z.object({
+        responseTimeoutSeconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_RESPONSE_TIMEOUT_SECONDS)
+          .optional(),
+        responseIdleTimeoutSeconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_RESPONSE_TIMEOUT_SECONDS)
+          .optional(),
         reasoningEffort: z.enum(reasoningEfforts).optional(),
         reasoningEfforts: z.array(z.enum(reasoningLevels)).max(7).optional(),
         customReasoning: z

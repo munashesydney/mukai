@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../config';
 import { safeProviderError } from './providerService';
+import { GenerationTimeoutError } from './generationTimeout';
 
 describe('Provider error messages', () => {
+  it.each(['idle', 'total'] as const)(
+    'distinguishes a wrapped %s runtime limit from a connection failure',
+    (kind) => {
+      const message = safeProviderError({
+        lastError: { cause: new GenerationTimeoutError(kind, 120000) },
+      });
+      expect(message).toContain(kind === 'idle' ? 'idle timeout' : 'response time limit');
+      expect(message).toContain('Saved progress');
+      expect(message).not.toMatch(/connection|internet/);
+    },
+  );
   it.each(['invalid_tool_call', 'incomplete_tool_call'])(
     'explains engine tool-call failures (%s) without exposing raw output',
     (code) => {

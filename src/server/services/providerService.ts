@@ -27,6 +27,8 @@ import { ChatGPTService } from './chatgptService';
 import { chatGPTError } from './chatgptTransport';
 import { PROVIDER_MAX_RETRIES } from './responsePolicy';
 import { providerToolCallFailure } from './providerToolCallRecovery';
+import { generationTimeoutError } from './generationTimeout';
+import { providerResponseTimeouts } from '../../shared/providerTimeouts';
 import {
   effectiveReasoning,
   reasoningDefaultLabel,
@@ -108,6 +110,11 @@ function transportErrorMessage(error: unknown): string | undefined {
 
 export function safeProviderError(error: unknown) {
   if (error instanceof ApiError) return error.message;
+  const timeout = generationTimeoutError(error);
+  if (timeout)
+    return timeout.kind === 'idle'
+      ? 'Mukai stopped waiting because the model sent no streamed updates within its idle timeout. The model may have been generating a long tool call. Saved progress is preserved; increase the model’s response timeout settings or retry.'
+      : 'Mukai stopped waiting because the model reached its response time limit. Saved progress is preserved; increase the model’s response timeout settings or retry.';
   const toolCallFailure = providerToolCallFailure(error);
   if (toolCallFailure)
     return toolCallFailure === 'incomplete_tool_call'
@@ -450,6 +457,7 @@ export class ProviderService {
         configured?.maxOutputTokens ?? bot.maxOutputTokens ?? provider.maxOutputTokens ?? 8192,
       ...modelInputCapabilities(bot, provider),
       reasoningEffort: effort,
+      responseTimeouts: providerResponseTimeouts(provider, configured),
     };
   }
   /** Effective settings for tool results, without opening a model or accessing credentials. */

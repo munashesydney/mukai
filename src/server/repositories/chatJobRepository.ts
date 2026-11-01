@@ -9,6 +9,7 @@ export interface ChatCheckpoint {
   steps: number;
   emptyReplyRecoveries?: number;
   reasoningEchoRecoveries?: number;
+  providerTimeoutRecoveries?: number;
   providerToolCallRecoveries?: number;
   response?: {
     content: string;
