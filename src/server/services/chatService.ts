@@ -95,6 +95,9 @@ import {
   EMPTY_REPLY_RECOVERY_LIMIT,
   FINAL_REPLY_NOTICE,
   emptyReplyRecoveryMessages,
+  isPrematureReasoningEcho,
+  REASONING_ECHO_RECOVERY_LIMIT,
+  REASONING_ECHO_NOTICE,
   canRetryProvider,
   interruptedResponseReport,
   RESPONSE_IDLE_TIMEOUT_MS,
@@ -773,6 +776,7 @@ export class ChatService {
     const pendingTools = new Set<Promise<unknown>>();
     const invalidToolInputs = new Set<string>();
     let recoveredEmptyReply = false;
+    let recoveredReasoningEcho = false;
     let status: MessageStatus = 'complete',
       error: string | null = null,
       lastSaved = Date.now();
@@ -1304,6 +1308,7 @@ export class ChatService {
         return true;
       };
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
+      let reasoningEchoRecoveries = restoreSavedStep ? checkpoint?.reasoningEchoRecoveries || 0 : 0;
       let providerToolCallRecoveries = restoreSavedStep
         ? checkpoint?.providerToolCallRecoveries || 0
         : 0;
@@ -1321,6 +1326,7 @@ export class ChatService {
           usage,
           steps: stepsUsed,
           emptyReplyRecoveries,
+          reasoningEchoRecoveries,
           providerToolCallRecoveries,
           response: {
             content: generation.content,
@@ -1811,7 +1817,8 @@ export class ChatService {
       let notice = finalReplyOnly
           ? finalReplyNotice
           : checkpoint
-            ? 'Resume the original request from saved completed steps. Do not repeat successful operations; verify state before further changes. Browser and process handles may have expired; check live sessions and take a fresh snapshot before reusing browser references.'
+            ? 'Resume the original request from saved completed steps. Do not repeat successful operations; verify state before further changes. Browser and process handles may have expired; check live sessions and take a fresh snapshot before reusing browser references.' +
+              (reasoningEchoRecoveries > 0 ? '\n' + REASONING_ECHO_NOTICE : '')
             : '',
         pausedReason = '';
       let continuationOf = '';
@@ -2577,6 +2584,37 @@ export class ChatService {
             ' Required outcome reporting failed after two reminders. Saved work needs review before resuming.';
           break;
         }
+        if (
+          finishReason === 'stop' &&
+          lastStep &&
+          isPrematureReasoningEcho(
+            lastStep.text,
+            lastStep.reasoning.filter((part) => part.type === 'reasoning').at(-1)?.text,
+          )
+        ) {
+          if (reasoningEchoRecoveries < REASONING_ECHO_RECOVERY_LIMIT) {
+            reasoningEchoRecoveries++;
+            // Keep normal tools and completed call/result pairs available. Empty-reply
+            // recovery deliberately disables tools and cannot finish outstanding work.
+            notice = REASONING_ECHO_NOTICE;
+            this.diagnostics.info(
+              'chat.reasoning_echo_recovery',
+              `Reasoning echoed as a continuation announcement; requesting continuation, attempt ${reasoningEchoRecoveries}/${REASONING_ECHO_RECOVERY_LIMIT}.`,
+              diagnosticContext(),
+            );
+            saveCheckpoint();
+            continue;
+          }
+          status = 'failed';
+          error =
+            'The model repeatedly ended with a continuation announcement matching its reasoning after two recovery attempts. Completed work is saved; retry to resume.';
+          this.diagnostics.record(
+            'chat.reasoning_echo_failed',
+            new Error(error),
+            diagnosticContext(),
+          );
+          break;
+        }
         if (!lastStep?.text.trim()) {
           if (emptyReplyRecoveries < EMPTY_REPLY_RECOVERY_LIMIT) {
             emptyReplyRecoveries++;
@@ -2598,6 +2636,7 @@ export class ChatService {
       }
       if (status === 'complete') {
         recoveredEmptyReply = emptyReplyRecoveries > 0;
+        recoveredReasoningEcho = reasoningEchoRecoveries > 0;
         this.jobs.remove(assistantId);
       }
     } catch (caught) {
@@ -2689,6 +2728,12 @@ export class ChatService {
             this.diagnostics.info(
               'chat.empty_reply_recovered',
               'Empty reply recovered successfully; the final response was saved.',
+              diagnosticContext(),
+            );
+          if (status === 'complete' && recoveredReasoningEcho)
+            this.diagnostics.info(
+              'chat.reasoning_echo_recovered',
+              'The model continued past a reasoning echo and completed the response.',
               diagnosticContext(),
             );
         }

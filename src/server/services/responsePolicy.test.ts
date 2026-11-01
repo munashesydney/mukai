@@ -4,6 +4,7 @@ import {
   canRetryProvider,
   emptyReplyRecoveryMessages,
   interruptedResponseReport,
+  isPrematureReasoningEcho,
 } from './responsePolicy';
 
 describe('provider recovery policy', () => {
@@ -36,6 +37,31 @@ describe('provider recovery policy', () => {
     expect(report).toContain('1 tool operations completed; 1 failed; 1 interrupted or unresolved');
     expect(report).toContain('Verify unresolved operations');
     expect(report).not.toContain('PRIVATE OUTPUT');
+  });
+});
+
+describe('premature reasoning echoes', () => {
+  it.each([
+    'Continue.',
+    'Proceed with the changes.',
+    "Let's continue the investigation. I need to check the logs.",
+    'I need to investigate this further. Let me check the details.',
+    'The file is present. Let me look at the project structure.',
+    'I’ll verify the result.',
+  ])('recognizes an exact echo announcing unfinished work: %s', (text) => {
+    expect(isPrematureReasoningEcho('\n' + text, text + '\n')).toBe(true);
+  });
+
+  it.each([
+    ['42', '42'],
+    ['The update is complete.', 'The update is complete.'],
+    ['Let me know if you need anything else.', 'Let me know if you need anything else.'],
+    ['I need your approval before proceeding.', 'I need your approval before proceeding.'],
+    ['Continue.', 'I will inspect the files.'],
+    ['Continue.', undefined],
+    ['', ''],
+  ])('leaves valid answers and nonmatching reasoning alone', (text, reasoning) => {
+    expect(isPrematureReasoningEcho(text!, reasoning)).toBe(false);
   });
 });
 

@@ -48,6 +48,7 @@ let calls: {
   messages: { role: string; content: unknown }[];
   max_tokens?: number;
   stream?: boolean;
+  tools?: unknown[];
   thinking?: { type: string };
 }[];
 let mode:
@@ -66,11 +67,18 @@ let mode:
   | 'incomplete-stream'
   | 'malformed-http'
   | 'malformed-stream-stop'
+  | 'reasoning-echo-once'
+  | 'reasoning-echo-always'
+  | 'reasoning-echo-stop'
+  | 'reasoning-echo-answer'
+  | 'reasoning-echo-stale'
+  | 'reasoning-echo-approval'
   | 'memory-failure'
   | 'slow'
   | 'tools'
   | 'invalid-tool'
   | 'tool-limit'
+  | 'tool-limit-echo'
   | 'no-final'
   | 'truncated'
   | 'truncated-once'
@@ -837,6 +845,70 @@ beforeEach(async () => {
       res.end('data: [DONE]\n\n');
       return;
     }
+    if (mode.startsWith('reasoning-echo-')) {
+      const send = (delta: unknown, finish_reason: string | null = null) =>
+        res.write(
+          `data: ${JSON.stringify({ id: 'echo-fixture', model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+        );
+      const completed = body.messages.filter(
+        (message: { role: string }) => message.role === 'tool',
+      ).length;
+      const recovering = JSON.stringify(body.messages).includes(
+        'Your previous response repeated your reasoning',
+      );
+      const invoke = (name: string, input: unknown) => {
+        send(
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: 'echo-tool-' + completed,
+                type: 'function',
+                function: { name, arguments: JSON.stringify(input) },
+              },
+            ],
+          },
+          'tool_calls',
+        );
+      };
+      if (mode === 'reasoning-echo-answer') {
+        send({ reasoning_content: '42' });
+        send({ content: '42' }, 'stop');
+      } else if (mode === 'reasoning-echo-stop') {
+        send({ reasoning_content: 'Continue.' });
+        send({ content: 'Continue.' });
+        const timer = setTimeout(() => {
+          send({}, 'stop');
+          res.end('data: [DONE]\n\n');
+        }, 200);
+        res.once('close', () => clearTimeout(timer));
+        return;
+      } else if (!completed) {
+        // An echo in a tool-bearing step must not be mistaken for a final reply.
+        send({ reasoning_content: 'Continue.' });
+        send({ content: 'Continue.' });
+        invoke('file_operations', {
+          action: 'write_file',
+          path: 'once.txt',
+          content: 'Saved once.',
+        });
+      } else if (mode === 'reasoning-echo-stale') {
+        send({ content: 'Continue.' }, 'stop');
+      } else if (
+        mode === 'reasoning-echo-always' ||
+        (mode === 'reasoning-echo-approval' && completed > 1) ||
+        !recovering
+      ) {
+        send({ reasoning_content: '\nContinue.' });
+        send({ content: 'Continue.\n' }, 'stop');
+      } else if (completed === 1) {
+        if (mode === 'reasoning-echo-approval')
+          invoke('communicate', { action: 'approval', question: 'May I publish this draft?' });
+        else invoke('file_operations', { action: 'read_file', path: 'once.txt' });
+      } else send({ content: 'Finished the remaining check using saved progress.' }, 'stop');
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (['raw-tool-once', 'raw-tool-always', 'long-browser'].includes(mode)) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
@@ -929,7 +1001,11 @@ beforeEach(async () => {
       res.end('data: [DONE]\n\n');
       return;
     }
-    if (['tools', 'invalid-tool', 'tool-limit', 'no-final', 'checkpoint'].includes(mode)) {
+    if (
+      ['tools', 'invalid-tool', 'tool-limit', 'tool-limit-echo', 'no-final', 'checkpoint'].includes(
+        mode,
+      )
+    ) {
       const completed = body.messages.filter(
         (message: { role: string }) => message.role === 'tool',
       ).length;
@@ -952,15 +1028,18 @@ beforeEach(async () => {
         res.write(
           `data: ${JSON.stringify({ id: 'tools', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
         );
-      if (mode === 'tool-limit' || mode === 'no-final') {
+      if (mode === 'tool-limit' || mode === 'tool-limit-echo' || mode === 'no-final') {
         if (!body.tools?.length) {
+          if (mode === 'tool-limit-echo') send({ reasoning_content: 'Continue.' });
           send(
             mode === 'no-final'
               ? {}
-              : {
-                  content:
-                    'Final report: the operation limit was reached. Some tool calls failed, and verification remains unfinished.',
-                },
+              : mode === 'tool-limit-echo'
+                ? { content: 'Continue.' }
+                : {
+                    content:
+                      'Final report: the operation limit was reached. Some tool calls failed, and verification remains unfinished.',
+                  },
             'stop',
           );
         } else {
@@ -2350,6 +2429,125 @@ describe('Mukai bots and AI API', () => {
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
   });
 
+  it('continues an echoed announcement with tools available and preserves completed operations', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Echo recovery', folder: project });
+    mode = 'reasoning-echo-once';
+    await chat('Write once.txt, then check the saved contents.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('complete');
+    expect(reply.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'Finished the remaining check using saved progress.',
+    });
+    expect(reply.activity?.map((item) => item.action)).toEqual(['write_file', 'read_file']);
+    expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Saved once.');
+    expect(calls).toHaveLength(4);
+    expect(calls[2].tools?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(calls[2].messages)).toContain(
+      'Your previous response repeated your reasoning',
+    );
+    expect(JSON.stringify(calls[2].messages)).toContain('Saved once.');
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs.match(/"event":"chat.reasoning_echo_recovery"/g)).toHaveLength(1);
+    expect(logs).toContain('chat.reasoning_echo_recovered');
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  });
+
+  it('bounds repeated reasoning echoes and saves progress for manual Retry', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Echo recovery', folder: project });
+    mode = 'reasoning-echo-always';
+    const sent = await chat('Write once.txt and finish the work.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('failed');
+    expect(reply.error).toContain('after two recovery attempts');
+    expect(reply.activity).toHaveLength(1);
+    expect(calls).toHaveLength(4);
+    const row = api.store.get('SELECT * FROM chat_jobs WHERE message_id=?', reply.id)!;
+    expect(JSON.parse(String(row.checkpoint_json)).reasoningEchoRecoveries).toBe(2);
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs.match(/"event":"chat.reasoning_echo_recovery"/g)).toHaveLength(2);
+    expect(logs).toContain('chat.reasoning_echo_failed');
+    expect(logs).not.toContain('chat.reasoning_echo_recovered');
+    mode = 'normal';
+    await chat('', sent.requestId);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('complete');
+    expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Saved once.');
+  });
+
+  it('honors Stop while an echoed final reply is arriving', async () => {
+    await configure();
+    mode = 'reasoning-echo-stop';
+    const running = chat('Work until stopped.');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
+  });
+
+  it('accepts a legitimate identical short answer without a recovery request', async () => {
+    await configure();
+    mode = 'reasoning-echo-answer';
+    await chat('What is six times seven?');
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1]).toMatchObject({
+      status: 'complete',
+      content: '42',
+    });
+  });
+
+  it('compares only reasoning from the current generation, leaving earlier tool steps alone', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Earlier reasoning', folder: project });
+    mode = 'reasoning-echo-stale';
+    await chat('Write once.txt, then reply Continue.');
+    expect(calls).toHaveLength(2);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('complete');
+  });
+
+  it('preserves the echo recovery budget and pending approval across restart', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Echo recovery', folder: project });
+    mode = 'reasoning-echo-approval';
+    const running = chat('Prepare the draft and ask before publishing.');
+    const approval = await pendingApproval('echo-tool-1');
+    expect(calls).toHaveLength(3);
+    const row = api.store.get('SELECT * FROM chat_jobs')!;
+    expect(JSON.parse(String(row.checkpoint_json)).reasoningEchoRecoveries).toBe(1);
+    await api.shutdown();
+    await close(api.server);
+    await running;
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    await vi.waitFor(async () => {
+      expect((await request<ApprovalState>('/approvals')).data.pending[0]?.id).toBe(approval.id);
+    });
+    expect(calls).toHaveLength(3);
+    await request(`/approvals/${approval.id}`, 'POST', { approved: false });
+    await vi.waitFor(async () => {
+      expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('failed');
+    });
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.error).toContain('after two recovery attempts');
+    expect(reply.activity?.filter((item) => item.action === 'write_file')).toHaveLength(1);
+    const approvalResult = calls
+      .at(-1)!
+      .messages.filter((message) => message.role === 'tool')
+      .at(-1)!;
+    expect(JSON.parse(String(approvalResult.content))).toEqual({
+      action: 'approval',
+      approved: false,
+    });
+    const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
+    expect(logs.match(/"event":"chat.reasoning_echo_recovery"/g)).toHaveLength(2);
+    expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+  });
+
   it('returns a failed memory save to the model and still finishes the chat', async () => {
     await configure();
     mode = 'memory-failure';
@@ -3097,6 +3295,19 @@ describe('Mukai bots and AI API', () => {
     expect(incomplete.status).toBe('failed');
     expect(incomplete.error).toContain('without a final response');
   });
+  it('keeps a safety pause authoritative even when its final report echoes reasoning', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Safety pause', folder: project });
+    mode = 'tool-limit-echo';
+    await chat('Keep checking until the runtime pauses.');
+    const message = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(message.status).toBe('interrupted');
+    expect(message.error).toContain('without progress');
+    expect(calls.filter((call) => call.stream)).toHaveLength(10);
+    expect(calls.at(-1)).not.toHaveProperty('tools');
+  });
+
   it('continues browser work past the previous eight-step ceiling', async () => {
     // Keep all twelve mock results in context: the protocol fixture counts them
     // to decide its next step and cannot recover that count from a mock summary.

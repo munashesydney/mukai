@@ -46,6 +46,19 @@ export const RESPONSE_IDLE_TIMEOUT_MS = 120000;
 // Five retries after the initial request. The SDK handles backoff and cancellation.
 export const PROVIDER_MAX_RETRIES = 5;
 export const EMPTY_REPLY_RECOVERY_LIMIT = 2;
+export const REASONING_ECHO_RECOVERY_LIMIT = 2;
+
+export const REASONING_ECHO_NOTICE =
+  'Your previous response repeated your reasoning and ended while announcing more work. Continue the original request from saved progress, using available tools when needed. Preserve completed results and do not repeat successful operations. Respect the latest user instructions, stop requests, approval requirements, and runtime limits. If the request is finished or you need user input, give a substantive final answer explaining the result or what is needed; do not end with another continuation announcement.';
+
+/** Equality alone can be a valid short answer (for example, "42"). */
+export function isPrematureReasoningEcho(text: string, lastReasoning: string | undefined) {
+  const answer = text.trim();
+  if (!answer || answer !== lastReasoning?.trim()) return false;
+  return /^(?:continue|continuing|proceed|proceeding)\b|(?:^|[.!?]\s+)(?:let me|let['’]s|i (?:need to|will)|i['’]ll)\s+(?:continue|proceed|check|investigate|look|inspect|review|run|apply|fix|implement|finish|verify|test|read|update)\b/i.test(
+    answer,
+  );
+}
 
 export const FINAL_REPLY_NOTICE =
   'Your last generation ended without a final reply. Use this conversation and any completed tool results or user answers already present to finish the original request with a concise final reply. Tools are disabled: do not repeat tool calls, questions, or completed actions. If work remains unfinished, explain what remains rather than claiming success. If another bot sent this request, your final text will automatically return to that bot; report the relevant results or user answer to it.';
