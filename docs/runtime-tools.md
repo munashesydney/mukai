@@ -6,9 +6,19 @@ conversation's tabs or processes. The authenticated desktop UI can browse its wo
 
 ## Shared AI concurrency
 
+See [AI queue and memory recovery](ai-memory-recovery.md) for the complete recovery flow, UI states, retry limits, and operational limitations.
+
 Settings → Limits includes **Maximum concurrent AIs**, default **4**, shared by all workspaces. Chats, pursuit inference, memory extraction and local embeddings, context compaction, and model connection tests share one FIFO pool. A streamed generation releases its slot when the provider stream ends, so tool execution, approval waits and delegation do not hold AI capacity. Queued work can be stopped without starting a provider request, and waiting time does not consume a chat's provider watchdog budget.
 
-Main and pursuit chats display queue position, the workspaces using slots, and a link to Settings → Limits. Raising the limit admits queued work immediately; lowering it lets existing requests finish. The independent pursuit-run limit remains available and can also queue runs. Limits persist across restarts; runtime queue/activity snapshots are available through authenticated `GET /ai-activity`.
+Main and pursuit chats display a compact inline queue notice after the latest message, with queue position, the workspaces using slots, and a link to Settings → Limits. It scrolls with the messages and is not pinned. Raising the limit admits queued work immediately; lowering it lets existing requests finish. The independent pursuit-run limit remains available and can also queue runs. Limits persist across restarts; runtime queue/activity snapshots are available through authenticated `GET /ai-activity`.
+
+Provider memory protection errors are recognized from HTTP rejections and streamed errors, separately from token-window overflow. The affected server temporarily receives half its previous concurrency allowance, down to one. This never changes the saved global limit, never cancels other active requests, and never admits more requests than that global limit. Compatible-provider registrations pointing to the same endpoint share the temporary cap. Other ready providers can pass cooling entries; FIFO order is preserved among eligible requests.
+
+Memory failures start a shared cooldown of 60, 120, then 180 seconds (remaining at 180 for further failures). Cooling work occupies no inference slot, remains cancellable, and does not consume the chat watchdog budget. Chats retry at most three times, then try one smaller context if compaction can reduce it. A generation that already started tool execution is not automatically replayed; previous completed steps remain saved. Non-streamed model operations, including memory extraction, compaction and connection tests, also have three bounded memory retries. Generic SDK retries cannot multiply the memory retry budget. Chat retry state is checkpointed for automatic continuation; an explicit new user retry may start a fresh attempt.
+
+Queue notices show the cooldown countdown, retry number, smaller-context attempt and temporary allowance versus the saved maximum. Settings → Limits shows the temporary allowance while retaining the configured value. After two minutes without a memory rejection and at least three successful requests, the server allowance increases by one; further groups of three successes restore it up to the saved maximum. Temporary pressure state clears on backend restart. Exhausted recovery produces an accurate memory error with saved progress preserved; it does not clear caches or restart a provider.
+
+For `manage_pursuit` creation, main may supply `ownerBotId` from the workspace bot roster to create a pursuit for another bot. Omission assigns the caller. Sub-bots may create only for themselves. The assigned owner executes scheduled runs; ownership cannot be transferred by update. Main can still manage the pursuit and its Workpad without taking ownership.
 
 ## Web search and page content
 

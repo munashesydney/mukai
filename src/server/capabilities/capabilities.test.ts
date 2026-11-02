@@ -715,7 +715,7 @@ describe('Custom capabilities', () => {
       'select.ts',
       'child',
     );
-    for (const target of ['missing', 'foreign', 'scout', '']) {
+    for (const target of ['missing', 'foreign', '']) {
       await expect(api.capabilities.invoke(item.id, { value: target })).rejects.toThrow();
     }
     expect(api.store.all('SELECT * FROM capability_jobs')).toHaveLength(0);
@@ -727,7 +727,7 @@ describe('Custom capabilities', () => {
     await expect(api.capabilities.invoke(ownerless.id, { value: 'x' })).rejects.toThrow('no owner');
     expect(api.store.all('SELECT * FROM capability_jobs')).toHaveLength(0);
   });
-  it('rechecks the target hierarchy before processing a saved wake', async () => {
+  it('allows saved wakes after reporting changes, including waking main from a sub-bot', async () => {
     const bots = new BotRepository(api.store);
     bots.create({
       ...scoutBot('default', 'owner'),
@@ -750,15 +750,53 @@ describe('Custom capabilities', () => {
       'owner',
     );
     await api.capabilities.invoke(item.id, { value: 'x' });
-    // The queued target becomes higher-level than its owner before delivery.
+    // Reporting changes cannot revoke a valid same-workspace wake.
     api.store.run('UPDATE bots SET created_by=NULL WHERE id=?', 'child');
     await waitFor(
       () => Number(api.store.get('SELECT attempts FROM capability_jobs')?.attempts) > 0,
     );
-    expect(wakes).toHaveLength(0);
+    await waitFor(() => wakes.length === 1);
+    expect(wakes).toEqual(['child']);
+    const upward = await register(
+      'tool',
+      toolSource('upward_wake', `return context.wakeBot('Need help',{botId:'scout'});`),
+      'upward.ts',
+      'owner',
+    );
+    expect(await api.capabilities.invoke(upward.id, { value: 'x' })).toEqual({ accepted: true });
+    await waitFor(() => wakes.length === 2);
+    expect(wakes).toEqual(['child', 'scout']);
+  });
+  it('rechecks workspace boundaries before delivering a queued wake', async () => {
+    const bots = new BotRepository(api.store);
+    bots.create({ ...scoutBot('default', 'target'), isMain: false, createdBy: 'scout' });
+    const otherFolder = join(root, 'boundary-workspace');
+    mkdirSync(otherFolder);
+    const other = await request('/workspaces', 'POST', { name: 'Other', folder: otherFolder });
+    expect(other.status).toBe(201);
+    const wakes: string[] = [];
+    api.capabilities.setWake(async (botId) => {
+      wakes.push(botId);
+    });
+    const item = await register(
+      'tool',
+      toolSource('boundary_wake', `return context.wakeBot('Event',{botId:'target'});`),
+      'boundary.ts',
+      'scout',
+    );
+    await api.capabilities.invoke(item.id, { value: 'x' });
+    api.store.run(
+      'UPDATE bots SET workspace_id=?,created_by=NULL WHERE id=?',
+      other.value.id,
+      'target',
+    );
+    await waitFor(
+      () => Number(api.store.get('SELECT attempts FROM capability_jobs')?.attempts) > 0,
+    );
+    expect(wakes).toEqual([]);
     expect(api.store.get('SELECT status,error FROM capability_jobs')).toMatchObject({
       status: 'pending',
-      error: expect.stringContaining('higher-level bots'),
+      error: expect.stringContaining('another workspace'),
     });
   });
   it('registers with a suggested ID and calls the new tool in the same model conversation turn', async () => {

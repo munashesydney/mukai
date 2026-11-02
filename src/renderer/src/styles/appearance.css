@@ -593,6 +593,9 @@
   padding: 24px;
   background: var(--surface);
 }
+.limits-card + .limits-card {
+  margin-top: 16px;
+}
 .limits-card-heading {
   min-width: 0;
 }

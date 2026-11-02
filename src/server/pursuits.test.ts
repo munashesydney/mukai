@@ -47,6 +47,7 @@ let nextWake: string,
   reportAttempts = 0;
 let reportOverride: Record<string, unknown> = {};
 let workpadPursuitId = '';
+let createOwnerId: string | undefined;
 const wakeReason = 'Allow time for the export to finish.';
 const wakeInstructions =
   'Check the export status, then validate the output against the success criteria.';
@@ -99,6 +100,7 @@ beforeEach(async () => {
   reportAttempts = 0;
   reportOverride = {};
   workpadPursuitId = '';
+  createOwnerId = undefined;
   dir = mkdtempSync(join(tmpdir(), 'mukai-pursuit-test-'));
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -224,7 +226,7 @@ beforeEach(async () => {
           : mode;
       const args =
         mode === 'create'
-          ? { action: 'create', ...input }
+          ? { action: 'create', ...input, ...(createOwnerId ? { ownerBotId: createOwnerId } : {}) }
           : {
               status: outcome,
               summary: 'Verified the notes. Recorded evidence and the next step.',
@@ -692,6 +694,72 @@ describe('AI-owned pursuits and scheduled runs', () => {
       Date.now(),
     );
   });
+  it('lets main create through the SDK for another bot and schedules the assigned owner', async () => {
+    const main = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
+    const owner = { ...scoutBot('default', 'ivy'), name: 'Ivy', isMain: false, createdBy: main.id };
+    new BotRepository(api.store).create(owner);
+    createOwnerId = owner.id;
+    const pursuit = await createWithAI();
+    expect(pursuit.ownerBotId).toBe(owner.id);
+    expect(api.pursuits.forBot(owner).map((item) => item.id)).toContain(pursuit.id);
+    const entry = api.pursuits.addEntryOwned(main, pursuit.id, {
+      type: 'note',
+      title: 'Setup',
+      content: 'Created by main for Ivy.',
+    });
+    expect(api.pursuits.getEntryOwned(owner, pursuit.id, entry.id).authorBotId).toBe(main.id);
+    mode = 'waiting';
+    await request(`/pursuits/${pursuit.id}/run`, 'POST');
+    const result = await settled(pursuit.id);
+    expect(result.runs[0]).toMatchObject({
+      status: 'complete',
+      snapshot: { ownerBotId: owner.id },
+    });
+    const messages = (
+      await request<ChatMessage[]>(`/conversations/${result.runs[0].conversationId}/messages`)
+    ).data;
+    expect(messages.find((message) => message.role === 'assistant')).toMatchObject({
+      botId: owner.id,
+      status: 'complete',
+    });
+    expect(api.pursuits.require(pursuit.id).ownerBotId).toBe(owner.id);
+  });
+  it('restricts assigning pursuit owners to saved main roles and the current workspace, on create only', async () => {
+    const main = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
+    const peer = { ...scoutBot('default', 'peer'), isMain: false, createdBy: main.id };
+    const bots = new BotRepository(api.store);
+    bots.create(peer);
+    new WorkspaceRepository(api.store).create({
+      id: 'elsewhere',
+      name: 'Other',
+      folder: null,
+      createdAt: new Date().toISOString(),
+    });
+    const foreign = scoutBot('elsewhere', 'foreign');
+    bots.create(foreign);
+    for (const caller of [peer, { ...peer, isMain: true }]) {
+      expect(
+        await workpadTool({ action: 'create', ...input, ownerBotId: main.id }, undefined, caller),
+      ).toMatchObject({ ok: false, error: expect.stringContaining('Only the workspace main bot') });
+    }
+    for (const ownerBotId of [foreign.id, 'missing'])
+      expect(await workpadTool({ action: 'create', ...input, ownerBotId })).toMatchObject({
+        ok: false,
+      });
+    expect(api.pursuits.list(main.workspaceId)).toEqual([]);
+    const pursuit = api.pursuits.create(
+      { ...main, isMain: false },
+      { ...input, ownerBotId: peer.id },
+    );
+    expect(
+      await workpadTool({ action: 'update', pursuitId: pursuit.id, ...input, ownerBotId: main.id }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('cannot be transferred') });
+    expect(api.pursuits.require(pursuit.id).ownerBotId).toBe(peer.id);
+    expect(
+      await workpadTool({ action: 'create', ...input, ownerBotId: peer.id }, 'scheduled-run'),
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Scheduled runs cannot create') });
+    expect(api.pursuits.create(peer, { ...input, ownerBotId: peer.id }).ownerBotId).toBe(peer.id);
+  });
   it('lets the workspace main bot list and manage a sub-bot pursuit and its Workpad without taking ownership', async () => {
     const main = (await request<Bot[]>('/bots')).data.find((bot) => bot.id === 'scout')!;
     const owner = { ...scoutBot('default', 'pursuit-owner'), isMain: false, createdBy: main.id };
@@ -1026,7 +1094,9 @@ describe('AI-owned pursuits and scheduled runs', () => {
         avatar: 'atlas',
       })
     ).data;
-    expect(() => api.pursuits.controlOwned(other, p.id, 'paused')).toThrow('Only the creating bot');
+    expect(() => api.pursuits.controlOwned(other, p.id, 'paused')).toThrow(
+      'Only the pursuit owner',
+    );
     expect((await request<Pursuit[]>('/pursuits?workspaceId=missing')).response.status).toBe(404);
     expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
   });

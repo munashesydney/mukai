@@ -9,8 +9,10 @@ import {
   MAX_AI_CONCURRENCY,
 } from '../../../../shared/limits';
 import { Tooltip } from '../../components/ui/Tooltip';
+import { useAIActivity } from '../../services/aiActivityStore';
 
 export function LimitsPanel() {
+  const pressure = useAIActivity().memoryPressure || [];
   const [saved, setSaved] = useState<number | null>(null);
   const [aiSaved, setAISaved] = useState<number | null>(null);
   const [aiValue, setAIValue] = useState(String(DEFAULT_AI_CONCURRENCY));
@@ -102,6 +104,13 @@ export function LimitsPanel() {
                 One shared pool for chats, pursuits, memory reviews, and compaction across every
                 workspace.
               </p>
+              {pressure.map((item) => (
+                <p key={item.providerId} className="ai-caption" role="status">
+                  Memory recovery: {item.providerName} temporarily allows {item.effectiveLimit}{' '}
+                  {item.effectiveLimit === 1 ? 'AI' : 'AIs'}. Your saved maximum stays{' '}
+                  {item.configuredLimit}; capacity restores after successful requests.
+                </p>
+              ))}
             </div>
           </div>
           <div className="limits-field">

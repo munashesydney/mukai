@@ -24,7 +24,7 @@ export async function executeBotManagement(
   context.onActivity(activity);
   try {
     context.signal.throwIfAborted();
-    context.management.requireAction(context.bot, input.action, context.messageId);
+    context.management.requireAction(context.bot, input.action);
     let result;
     if (input.action === 'list_models') result = context.management.listModels(context.bot);
     else if (input.action === 'get_model') {

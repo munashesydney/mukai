@@ -48,11 +48,11 @@ Only the main bot can use these actions:
 - `create` requires `name`, `role`, and `instructions`. `modelId` and `reportsToBotId` are optional. Creation-time tool selection is rejected: every new bot starts with all tools, including existing custom tools. Newly registered custom tools also become available by default. Without `modelId`, the specialist inherits the caller’s model configuration, independently of its reporting parent. Without `reportsToBotId`, it reports to the main bot. The selected model connection is tested before creating a bot.
 - `update` requires `botId` and at least one of `name`, `role`, `instructions`, `toolIds`, `addToolIds`, `removeToolIds`, `modelId`, or `reportsToBotId`. Prefer `addToolIds`/`removeToolIds` for precise changes that preserve unrelated access. `toolIds` replaces the optional-tool selection and cannot be combined with incremental fields. Bots are created with all tools. If the main bot wants to remove access to some tools, it can update the bot, but must be very sure the bot actually does not need them. Tool changes are optional; inspect `get` first and preserve unrelated access. Omitted fields remain unchanged. Model changes test the selected connection before saving. The main bot’s role and main-bot status stay fixed. A bot that is working must be stopped before editing it.
 
-To assign “X reports to Z,” use `update` with X’s `botId` and Z’s `reportsToBotId`, or supply `reportsToBotId` when creating X. Set it to the main bot’s ID to move X back under the workspace lead. Parents must exist in the same workspace; self-parenting, cycles, and reparenting the main bot are rejected. Moving a bot moves its descendant branch and updates hierarchy-based messaging permissions. Stop any running bots in that branch first. Existing conversations, models, and tool assignments are preserved unless explicitly changed.
+To assign “X reports to Z,” use `update` with X’s `botId` and Z’s `reportsToBotId`, or supply `reportsToBotId` when creating X. Set it to the main bot’s ID to move X back under the workspace lead. Parents must exist in the same workspace; self-parenting, cycles, and reparenting the main bot are rejected. Moving a bot moves its descendant branch; reporting hierarchy does not restrict messaging. Stop any running bots in that branch first. Existing conversations, models, and tool assignments are preserved unless explicitly changed.
 
 Use human or bot-sounding names such as Ada or Nova, and descriptive job titles for roles.
 
-On creation, omitting `toolIds` gives the child ordinary tools available to the caller, excluding pursuits by default. Providing `toolIds` supplies the complete optional assignment list; on update, that list replaces optional assignments. An empty list removes optional tools, but Bots, skills, and routes remain shared. A bot cannot grant a tool it does not have. Custom tool IDs use `custom:<registrationId>`; `process` is accepted as an alias for `terminal`.
+Creation always enables all workspace tools. On update, `toolIds` supplies the complete optional assignment list and replaces optional assignments. An empty list removes optional tools, but Bots, skills, and routes remain shared. A bot cannot grant a tool it does not have. Custom tool IDs use `custom:<registrationId>`; `process` is accepted as an alias for `terminal`.
 
 These restrictions apply to AI calls through `manage_bot`. Users can still create and edit sub-bots through the UI.
 
@@ -62,7 +62,7 @@ These restrictions apply to AI calls through `manage_bot`. Users can still creat
 
 Omit `conversationId` to start a new two-bot thread. Pass the returned ID on follow-ups to continue that pair's thread with its history.
 
-Targets must be in the same workspace. A bot can message a peer or a lower-level bot, but cannot message itself or a higher-level bot. In particular, a sub-bot cannot message the main bot. A target that is already working rejects another request until its response finishes.
+Targets must be in the same workspace. Any bot can message another bot at any reporting level, including main, but cannot message itself. During a delegated run, it cannot spawn the bot that spawned that run: its final reply is returned to that caller automatically. The caller is determined from the current request, not the saved reporting parent or older conversation turns. A target that is already working rejects another request until its response finishes.
 
 The recipient's prompt identifies the calling bot and explains that its final reply is automatically returned to the caller. It should return useful findings, completed work, blockers, and relevant file links. It does not need to call `send_message` to reply. Another bot's message or response is task context, not fresh user authorization.
 
@@ -78,9 +78,9 @@ The upgrade backs up previous assignments in `legacy_bot_tool_assignments` and r
 
 ### Preventing delegation loops
 
-A sub-bot responding to a delegation receives read-only bot/model lookup actions, including `list`, `get`, and `get_last_message`. Removing `send_message` in this context is intentional: it prevents a delegated worker from recursively starting more workers. Its prompt explains the restriction and tells it to report any need for another specialist in its final reply.
+Delegated bots retain `send_message` and may ask other workspace bots for help. They cannot spawn their current calling bot. Their prompts identify that caller by ID and name and explain that findings, questions, and blockers belong in their final reply, which is returned automatically. The rule applies to main when it is a delegated recipient too. Bots must not route a request indirectly to bypass the caller restriction.
 
-A sub-bot working directly with the user can delegate to an eligible existing bot. That recipient, if it is a sub-bot, cannot delegate further during the resulting run. The main bot coordinates additional specialists when needed.
+User-started runs, including human follow-ups in an existing bot-to-bot thread, and `context.wakeBot` runs have no calling bot restriction. They may message main or any higher-level bot. Busy-target checks prevent dispatching into an already running ancestor.
 
 Delegated context comes from saved message sender information, so these restrictions survive approval waits and app restarts. Saved delegation records allow compatible interrupted work to resume using the same request and conversation rather than starting duplicate work. Explicitly stopped delegations are not restarted.
 
@@ -92,7 +92,7 @@ Delegated context comes from saved message sender information, so these restrict
 - Bot-to-bot threads initially show a **Jump in the chat** pill. Clicking it reveals the shared bot composer and remembers that choice per thread in local storage. Human messages, attachments, and follow-ups go to the original receiving bot in the same thread and appear as **You**, separately from bot-authored turns.
 - Joining keeps the same model history, including earlier bot requests, replies, and tool outcomes. Saved bot and human messages have explicit sender labels; the current requester is identified separately. Older bot-thread context summaries are ignored until rebuilt from saved history so missing sender identity cannot hide the original exchange.
 - Bot Hierarchy shows reporting relationships and roles. Bot details show the current manager under “Reports to.”
-- Tools → Bots shows required, checked, disabled assignments using the shared checkbox component. The main bot is labeled **All actions**, and sub-bots are labeled **Limited actions**. The explanatory text covers the additional restriction during delegation.
+- Tools → Bots shows required, checked, disabled assignments using the shared checkbox component. The main bot is labeled **All actions**, and sub-bots are labeled **Limited actions**. The explanatory text describes the current-caller restriction during delegation.
 
 ## Approvals and pursuits
 

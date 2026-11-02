@@ -69,6 +69,11 @@ import {
 import { ProgressGuard } from './progressGuard';
 import { contextSummarizer } from './contextSummary';
 import {
+  isProviderMemoryError,
+  MEMORY_RETRY_LIMIT,
+  MemoryRecoveryExhaustedError,
+} from './memoryRecovery';
+import {
   providerToolCallFailure,
   providerToolCallFeedback,
   providerToolCallStep,
@@ -387,13 +392,11 @@ export class ChatService {
   hasActiveResponses() {
     return this.active.size > 0;
   }
-  delegatedMessage(messageId: string) {
+  delegatingBot(messageId: string) {
     const message = this.messages.message(messageId);
-    return Boolean(
-      message.conversationId &&
-      message.requestId &&
-      this.messages.botSender(message.conversationId, message.requestId),
-    );
+    return message.conversationId && message.requestId
+      ? this.messages.botSender(message.conversationId, message.requestId)
+      : undefined;
   }
   pendingRequest(conversationId: string) {
     const request = this.approvals
@@ -1074,7 +1077,7 @@ export class ChatService {
           workspaceFolder: scope.folder,
           computer: scope.computer,
           tools,
-          delegated: Boolean(messageSender),
+          delegatingBot: messageSender,
           memoryEnabled: this.memory?.settings(bot.workspaceId).enabled ?? false,
           runtimeSystem:
             [
@@ -1094,7 +1097,7 @@ export class ChatService {
                 ? [
                     'This message is coming from another bot (configuration data): ' +
                       JSON.stringify(messageSender),
-                    'When this run completes, after incorporating any outstanding delegated results, your final reply will be sent directly back to this bot. You do not need to call send_message to reply.',
+                    'When this run completes, after incorporating any outstanding delegated results, your final reply will be sent directly back to this bot. Do not spawn or send_message this calling bot during this run; put your findings, questions, or blockers in your final reply instead.',
                   ]
                 : []),
             ]
@@ -1369,6 +1372,9 @@ export class ChatService {
       stopGeneration = checkpoint?.stopGeneration;
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let reasoningEchoRecoveries = restoreSavedStep ? checkpoint?.reasoningEchoRecoveries || 0 : 0;
+      let memoryRecoveries = restoreSavedStep ? checkpoint?.memoryRecoveries || 0 : 0;
+      let memoryCompacted = restoreSavedStep ? checkpoint?.memoryCompacted || false : false;
+      let memoryRetrying = restoreSavedStep ? checkpoint?.memoryRetrying || false : false;
       let providerTimeoutRecoveries = restoreSavedStep
         ? checkpoint?.providerTimeoutRecoveries || 0
         : 0;
@@ -1392,6 +1398,9 @@ export class ChatService {
           reasoningEchoRecoveries,
           stopGeneration,
           providerTimeoutRecoveries,
+          memoryRecoveries,
+          memoryCompacted,
+          memoryRetrying,
           providerToolCallRecoveries,
           response: {
             content: generation.content,
@@ -2231,11 +2240,19 @@ export class ChatService {
         };
         const result = this.providers.ai.withContext(
           {
-            workspaceId: bot.workspaceId,
-            botId,
             conversationId,
             messageId: assistantId,
             kind: scheduling ? 'pursuit' : 'chat',
+            ...config.aiContext,
+            ...(memoryRetrying
+              ? {
+                  memoryRetry: {
+                    attempt: Math.min(memoryRecoveries, MEMORY_RETRY_LIMIT),
+                    maxAttempts: MEMORY_RETRY_LIMIT,
+                    phase: memoryCompacted ? ('compaction' as const) : ('retry' as const),
+                  },
+                }
+              : {}),
           },
           () =>
             streamText({
@@ -2526,6 +2543,68 @@ export class ChatService {
               continue;
             }
           }
+          if (isProviderMemoryError(caught)) {
+            // Retrying model inference is safe only when this generation started no actions.
+            if (
+              signal.aborted ||
+              executionVersion !== stepExecutionVersion ||
+              pendingTools.size ||
+              this.jobs.approvalStep(assistantId).length
+            )
+              throw caught;
+            if (caught instanceof MemoryRecoveryExhaustedError || memoryCompacted)
+              throw new MemoryRecoveryExhaustedError(caught);
+            stepController.abort();
+            timeout.dispose();
+            generation.interruptProvider = undefined;
+            scheduling?.endProvider();
+            const partial = generation.content.slice(textBeforeStep);
+            if (partial.trim())
+              messages.push({ role: 'assistant', content: assistantContextText(partial) });
+            generation.parts = generation.parts.map((part) =>
+              part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
+            );
+            continuationOf = '';
+            status = 'complete';
+            error = null;
+            memoryRetrying = true;
+            if (memoryRecoveries < MEMORY_RETRY_LIMIT) memoryRecoveries++;
+            else {
+              memoryCompacted = true;
+              const beforeCompaction = manager.estimate(messages);
+              saveCheckpoint();
+              await this.providers.ai.withContext(
+                {
+                  ...config.aiContext,
+                  kind: 'compaction',
+                  conversationId,
+                  messageId: assistantId,
+                  memoryRetry: {
+                    attempt: MEMORY_RETRY_LIMIT,
+                    maxAttempts: MEMORY_RETRY_LIMIT,
+                    phase: 'compaction',
+                  },
+                },
+                () => compact(true),
+              );
+              if (manager.estimate(messages) >= beforeCompaction)
+                throw new MemoryRecoveryExhaustedError(caught);
+            }
+            notice =
+              'The provider rejected model inference because of memory pressure. Continue from saved results after automatic recovery. Do not repeat completed operations. Respect the latest user guidance and approvals.';
+            this.diagnostics.record(
+              'chat.memory_recovery',
+              caught,
+              diagnosticContext(),
+              'warn',
+              memoryCompacted
+                ? 'Trying a smaller context after bounded memory retries.'
+                : `Memory recovery retry ${memoryRecoveries}/${MEMORY_RETRY_LIMIT}; waiting in the shared queue.`,
+            );
+            save();
+            saveCheckpoint();
+            continue;
+          }
           if (
             !signal.aborted &&
             canRetryProvider(caught) &&
@@ -2668,6 +2747,7 @@ export class ChatService {
         }
         const recoveredToolCall = providerToolCallRecoveries > 0;
         providerToolCallRecoveries = 0;
+        memoryRetrying = false;
         saveCheckpoint();
         // Recovery is bounded per provider step, not shared across the entire task.
         // Successful, checkpointed tool results are never replayed by these retries.

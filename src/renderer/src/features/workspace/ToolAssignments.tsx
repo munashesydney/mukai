@@ -66,7 +66,7 @@ export function ToolAssignments({
       </div>
       <p>
         {toolId === 'manage_bot'
-          ? 'Required for every bot. The main bot has all actions. Sub-bots can list, inspect, and message bots; delegated sub-bot runs can only list and inspect.'
+          ? 'Required for every bot. The main bot has all actions. Sub-bots can list, inspect, and message workspace bots at any reporting level. A delegated run cannot spawn its calling bot; its final reply returns automatically.'
           : shared
             ? 'Shared with every bot in this workspace.'
             : 'Choose which bots can use this tool. Changes apply to their next tool call.'}

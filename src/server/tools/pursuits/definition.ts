@@ -44,7 +44,11 @@ export const pursuitInputSchema = z.object({
 });
 // Validate each action locally; providers require the model-facing root to be an object.
 export const pursuitActionSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('create'), ...pursuitInputSchema.shape }),
+  z.object({
+    action: z.literal('create'),
+    ...pursuitInputSchema.shape,
+    ownerBotId: z.string().min(1).max(100).optional(),
+  }),
   z.object({
     action: z.literal('update'),
     pursuitId: z.string().uuid(),
@@ -97,7 +101,7 @@ export const pursuitDefinition = {
   summary: 'Create and manage your scheduled pursuits.',
   actions: [...actions],
   description:
-    'The workspace main bot can list and manage any pursuit in its workspace, including its Workpad. Other bots can list and manage only pursuits they own. Create only when the user asks for ongoing work. The creating bot remains the sole owner; ownership cannot be assigned or transferred, and scheduled runs still execute as that owner. Specify an objective, concrete success criteria, optional firstRunAt and deadline as ISO dates with timezone (null when omitted). Without firstRunAt the first run starts as soon as the scheduler is available. There is no recurring interval: each run must report its own next wake time, reason, and instructions using report_pursuit. Update requires all configuration fields. List returns pursuit IDs, state and run summaries. A pursuit executes in its own conversation on the local server while Mukai is running. Pausing stops an active run; resume schedules a run immediately to reassess and plan its next wake. Completing stops future wakes. Delete permanently removes the pursuit, Workpad and run chats; only do so when the user requests it. Pause and wait for an active run to stop first. Never claim a pursuit was created unless this tool succeeds. Workpad actions require pursuitId. list_entries supports type/status/includeArchived and limit/offset with nextOffset pagination. get_entry requires entryId. add_entry requires entry {type,title,content,status?,links?}. Work items use todo/in_progress/done (default todo); blockers use open/resolved (default open); decision/reference/note use active (default). Any type may be archived. Links use {kind:file|url|conversation|artifact|entry,target,label}; file targets are workspace paths, URLs are HTTP(S), other targets are IDs. Entry links must refer to this pursuit. update_entry requires entryId, expectedRevision from retrieval, and patch {title?,content?,status?,links?}; supplied links replace all links, [] clears them. Types cannot change. Updates persist immediately, independently of the run outcome. ' +
+    'The workspace main bot can list and manage any pursuit in its workspace, including its Workpad. Other bots can list and manage only pursuits they own. Create only when the user asks for ongoing work. On create, main may set ownerBotId to another bot in the same workspace; omit it to own the pursuit yourself. Sub-bots may create only for themselves. Scheduled runs execute as the assigned owner. Ownership cannot be transferred after creation. Specify an objective, concrete success criteria, optional firstRunAt and deadline as ISO dates with timezone (null when omitted). Without firstRunAt the first run starts as soon as the scheduler is available. There is no recurring interval: each run must report its own next wake time, reason, and instructions using report_pursuit. Update requires all configuration fields. List returns pursuit IDs, state and run summaries. A pursuit executes in its own conversation on the local server while Mukai is running. Pausing stops an active run; resume schedules a run immediately to reassess and plan its next wake. Completing stops future wakes. Delete permanently removes the pursuit, Workpad and run chats; only do so when the user requests it. Pause and wait for an active run to stop first. Never claim a pursuit was created unless this tool succeeds. Workpad actions require pursuitId. list_entries supports type/status/includeArchived and limit/offset with nextOffset pagination. get_entry requires entryId. add_entry requires entry {type,title,content,status?,links?}. Work items use todo/in_progress/done (default todo); blockers use open/resolved (default open); decision/reference/note use active (default). Any type may be archived. Links use {kind:file|url|conversation|artifact|entry,target,label}; file targets are workspace paths, URLs are HTTP(S), other targets are IDs. Entry links must refer to this pursuit. update_entry requires entryId, expectedRevision from retrieval, and patch {title?,content?,status?,links?}; supplied links replace all links, [] clears them. Types cannot change. Updates persist immediately, independently of the run outcome. ' +
     workpadGuidance,
   inputSchema: z.object({
     action: z.enum(actions),
@@ -107,6 +111,14 @@ export const pursuitDefinition = {
       .optional()
       .describe('Required for update, pause, resume, complete, delete and all Workpad actions.'),
     ...pursuitInputSchema.partial().shape,
+    ownerBotId: z
+      .string()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe(
+        'Create only. Main may assign any same-workspace bot from manage_bot list/get. Omit to own it yourself. The owner executes scheduled runs; ownership cannot be changed later.',
+      ),
     entryId: z.string().uuid().optional(),
     expectedRevision: z.number().int().min(1).optional(),
     entry: z.object({ type: z.enum(workpadEntryTypes), ...workpadFields }).optional(),

@@ -53,7 +53,7 @@ Interval and startup triggers may be combined. A startup and overdue interval ar
 - `context.env`: only declared workspace environment variables, configured through Settings. Returned values and errors use the existing secret-redaction rules.
 - `context.workspacePath`: the absolute workspace root on the executing computer. Use `path.join(context.workspacePath, ...)` for file access and pass it as `cwd` when launching a child process. Custom handlers do not inherit the terminal tool’s workspace cwd.
 - `context.workspaceId` and `context.signal`: workspace identity and cancellation. Timeouts are 100–30000 ms (default 15000). Mukai terminates the worker when its lifetime ends; use the signal for outgoing requests.
-- `await context.wakeBot(message, { botId? })`: durably queues a bot wake-up. Omit `botId` to wake the registration owner. Ownerless registrations need an explicit target. Existing workspace and bot-hierarchy checks apply; acceptance means queued, not that the model finished.
+- `await context.wakeBot(message, { botId? })`: durably queues a bot wake-up. Omit `botId` to wake the registration owner. Ownerless registrations need an explicit target. Workspace and tool-access checks apply; reporting hierarchy does not restrict the target. The awakened AI may ask any other workspace bot for help. Acceptance means queued, not that the model finished.
 - `await context.callRoute(routeId, request)`: invokes a registered workspace route with the same authentication, request limits, cancellation and cycle protections as tools/routes.
 - `await context.enqueue(provider, eventId, payload)`: queues deduplicated background work when the module also declares `processJob(payload, context)`.
 

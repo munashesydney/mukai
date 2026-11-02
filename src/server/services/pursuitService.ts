@@ -210,7 +210,7 @@ export class PursuitService {
     if (p.workspaceId !== caller.workspaceId || (p.ownerBotId !== caller.id && !caller.isMain))
       throw new ApiError(
         403,
-        'Only the creating bot or the workspace main bot can manage this pursuit.',
+        'Only the pursuit owner or the workspace main bot can manage this pursuit.',
       );
     return p;
   }
@@ -232,9 +232,15 @@ export class PursuitService {
       deadline: value.deadline ? new Date(value.deadline).toISOString() : null,
     };
   }
-  create(bot: Bot, input: PursuitInput) {
-    this.bots.require(bot.id);
-    return this.repository.create(bot.workspaceId, bot.id, this.validate(input), this.now());
+  create(bot: Bot, input: PursuitInput & { ownerBotId?: string }) {
+    const caller = this.bots.require(bot.id);
+    const ownerId = input.ownerBotId ?? caller.id;
+    if (ownerId !== caller.id && !caller.isMain)
+      throw new ApiError(403, 'Only the workspace main bot can create pursuits for another bot.');
+    const owner = this.bots.require(ownerId);
+    if (owner.workspaceId !== caller.workspaceId)
+      throw new ApiError(403, 'The pursuit owner must belong to the same workspace.');
+    return this.repository.create(caller.workspaceId, owner.id, this.validate(input), this.now());
   }
   updateOwned(bot: Bot, id: string, input: PursuitInput) {
     const p = this.owned(bot, id);

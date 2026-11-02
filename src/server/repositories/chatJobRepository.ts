@@ -11,6 +11,9 @@ export interface ChatCheckpoint {
   reasoningEchoRecoveries?: number;
   stopGeneration?: { finalResponse?: string };
   providerTimeoutRecoveries?: number;
+  memoryRecoveries?: number;
+  memoryCompacted?: boolean;
+  memoryRetrying?: boolean;
   providerToolCallRecoveries?: number;
   response?: {
     content: string;

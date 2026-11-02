@@ -26,6 +26,10 @@ export function executePursuit(
   context.onActivity(activity);
   try {
     context.signal.throwIfAborted();
+    if (input.ownerBotId !== undefined && input.action !== 'create')
+      throw new Error(
+        'ownerBotId is only supported when creating a pursuit. Ownership cannot be transferred.',
+      );
     const value = pursuitActionSchema.parse(input);
     const { pursuits, bot } = context;
     if (value.action === 'create' && context.scheduledRun)

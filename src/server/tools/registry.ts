@@ -41,7 +41,7 @@ import { computerUseTools, type ComputerUseContext } from './computer_use/execut
 import { systemDefinition } from './system/definition';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
-  const actions = context.management.actionsFor(context.bot, context.messageId);
+  const actions = context.management.actionsFor(context.bot);
   return {
     [botManagementDefinition.name]: tool({
       description:

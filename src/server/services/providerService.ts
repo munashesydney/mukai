@@ -5,6 +5,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, wrapLanguageModel } from 'ai';
 import { AIConcurrency } from './aiConcurrency';
+import { isProviderMemoryError, MemoryRecoveryExhaustedError } from './memoryRecovery';
 import {
   compatibleImageMiddleware,
   compatibleAudioDataUrlMiddleware,
@@ -53,6 +54,7 @@ type ModelConfigurationInput = Pick<
 export function isContextOverflow(error: unknown) {
   const value = error as { statusCode?: number; message?: string; responseBody?: string };
   return (
+    !isProviderMemoryError(error) &&
     [400, 413, 422].includes(value?.statusCode ?? 0) &&
     /context[_ ](?:length|window)|maximum context|too many (?:input )?tokens|prompt (?:is )?too long|input.*exceed.*token/i.test(
       `${value.message ?? ''} ${value.responseBody ?? ''}`,
@@ -135,6 +137,10 @@ export function safeProviderError(error: unknown) {
     }
   }
   if (code && /^(subscription_sharing_|chatpass_v2_)/.test(code)) return chatGPTError(code);
+  if (isProviderMemoryError(error))
+    return error instanceof MemoryRecoveryExhaustedError
+      ? error.message
+      : 'The provider rejected this request because it could not fit it in available memory. Saved progress is preserved; free memory or reduce the model context before retrying.';
   if (isContextOverflow(error))
     return 'The provider rejected the context size. Check the model’s context-window setting and retry; your saved history is preserved.';
   const connectionError = transportErrorMessage(error);
@@ -508,13 +514,17 @@ export class ProviderService {
     return {
       ...config,
       ai: this.ai,
-      aiContext: { workspaceId: bot.workspaceId, botId: bot.id },
+      aiContext: { workspaceId: bot.workspaceId, botId: bot.id, ...this.ai.provider(provider) },
       vision: config.supportsImages,
       model: wrapLanguageModel({
         model: this.model(provider, modelId),
         middleware: [
           toolMediaMiddleware,
-          this.ai.middleware({ workspaceId: bot.workspaceId, botId: bot.id }),
+          this.ai.middleware({
+            workspaceId: bot.workspaceId,
+            botId: bot.id,
+            ...this.ai.provider(provider),
+          }),
         ],
       }),
       reasoningEffort: effort,
@@ -616,11 +626,14 @@ export class ProviderService {
       throw new ApiError(400, 'Add a model in Settings before testing this connection.');
     try {
       const result = await this.ai.run(
-        { kind: 'connection' },
+        { kind: 'connection', ...this.ai.provider(provider) },
         signal ?? new AbortController().signal,
         () =>
           generateText({
-            model: this.model(provider, modelId),
+            model: wrapLanguageModel({
+              model: this.model(provider, modelId),
+              middleware: this.ai.middleware(this.ai.provider(provider)),
+            }),
             prompt: 'Reply with OK.',
             maxOutputTokens: 64,
             maxRetries: PROVIDER_MAX_RETRIES,

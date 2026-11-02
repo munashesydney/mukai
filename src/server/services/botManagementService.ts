@@ -23,7 +23,7 @@ export class BotManagementService {
     private providers: ProviderService,
     private jobs: ChatJobRepository,
   ) {}
-  actionsFor(caller: Bot, messageId?: string): BotAction[] {
+  actionsFor(caller: Bot): BotAction[] {
     const current = this.bots.require(caller.id);
     if (current.isMain)
       return [
@@ -38,18 +38,14 @@ export class BotManagementService {
         'get_last_message',
         'stop_message',
       ];
-    return messageId && this.chats.delegatedMessage(messageId)
-      ? ['list', 'get', 'list_models', 'get_model', 'get_last_message']
-      : ['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message'];
+    return ['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message'];
   }
-  requireAction(caller: Bot, action: BotAction, messageId?: string) {
+  requireAction(caller: Bot, action: BotAction) {
     this.access.require(caller, 'manage_bot');
-    if (!this.actionsFor(caller, messageId).includes(action))
+    if (!this.actionsFor(caller).includes(action))
       throw new ApiError(
         403,
-        action === 'send_message'
-          ? 'send_message is intentionally unavailable in a delegated sub-bot run to prevent delegation loops. Return your final reply to the calling bot.'
-          : 'Only the workspace main bot can create, update, delete bots or stop dispatched messages. Ask the user to discuss this with the main bot.',
+        'Only the workspace main bot can create, update, delete bots or stop dispatched messages. Ask the user to discuss this with the main bot.',
       );
   }
   get(caller: Bot, botId: string) {
@@ -257,19 +253,17 @@ export class BotManagementService {
     }
     return level;
   }
-  requireMessageTarget(caller: Bot, botId: string) {
+  requireMessageTarget(caller: Bot, botId: string, messageId?: string) {
     this.access.require(caller, 'manage_bot');
     caller = this.bots.require(caller.id);
     const target = this.bots.require(botId);
-    if (
-      caller.workspaceId !== target.workspaceId ||
-      caller.id === target.id ||
-      (!caller.isMain && target.isMain) ||
-      this.level(target) < this.level(caller)
-    )
+    if (caller.workspaceId !== target.workspaceId)
+      throw new ApiError(403, 'Bot belongs to another workspace.');
+    if (caller.id === target.id) throw new ApiError(403, 'You cannot message yourself.');
+    if (messageId && this.chats.delegatingBot(messageId)?.id === target.id)
       throw new ApiError(
         403,
-        'You may message only peers or lower-level bots in this workspace’s hierarchy, never yourself or higher-level bots.',
+        'You cannot spawn the bot that spawned this run. Your final reply is automatically returned to that calling bot; include your findings, questions, or blockers there.',
       );
     return target;
   }
@@ -324,8 +318,8 @@ export class BotManagementService {
     mode: 'fire_and_forget' | 'wait' = 'wait',
   ) {
     signal.throwIfAborted();
-    this.requireAction(caller, 'send_message', delegation?.parentMessageId);
-    const target = this.requireMessageTarget(caller, botId);
+    this.requireAction(caller, 'send_message');
+    const target = this.requireMessageTarget(caller, botId, delegation?.parentMessageId);
     caller = this.bots.require(caller.id);
     const saved = delegation?.parentMessageId
       ? this.jobs.delegation(delegation.parentMessageId, delegation.toolCallId)

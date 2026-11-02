@@ -711,7 +711,7 @@ async function main() {
       );
       assert.equal(
         await evaluate(
-          'document.querySelector(".tool-assignments").textContent.includes("delegated sub-bot runs can only list and inspect")',
+          'document.querySelector(".tool-assignments").textContent.includes("A delegated run cannot spawn its calling bot")',
         ),
         true,
       );

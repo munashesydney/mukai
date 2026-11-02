@@ -66,7 +66,7 @@ it('teaches Mukai capabilities to every role even with no tools assigned', () =>
         instructions: 'Help.',
         workspace: { id: 'workspace', name: 'Test workspace' },
         tools: {},
-        delegated,
+        delegatingBot: delegated ? { id: 'caller', name: 'Caller' } : undefined,
       });
       for (const concept of [
         '### Know Mukai',
@@ -158,7 +158,7 @@ it('gives all roles the same shared prompt and adds main-bot instructions only f
       instructions: 'Help the user.',
       workspace: { id: 'workspace', name: 'Test workspace' },
       tools: { manage_bot: {} },
-      delegated,
+      delegatingBot: delegated ? { id: 'caller', name: 'Caller' } : undefined,
     });
   for (const isMain of [true, false])
     for (const delegated of [true, false]) {
@@ -170,11 +170,17 @@ it('gives all roles the same shared prompt and adds main-bot instructions only f
   expect(build(true)).toContain('Handle straightforward tasks directly');
   expect(build(true)).toContain('Create a specialist when the task warrants it');
   expect(build(true)).not.toContain('otherwise create a specialist and use it');
-  expect(build(false)).toContain('You cannot create, update, or delete bots');
-  expect(build(false)).toContain('direct them to the main bot');
+  expect(build(false)).toContain('only the workspace main bot can create, update, delete bots');
+  expect(build(false)).toContain('ask the main bot or another higher-level bot');
   expect(build(false)).toContain('you may use send_message');
-  expect(build(false, true)).toContain('intentionally unavailable to prevent delegation loops');
-  expect(build(false, true)).toContain('automatically returned to the calling bot');
+  expect(build(false, true)).toContain(
+    'You cannot spawn or send_message the bot that spawned this run',
+  );
+  expect(build(false, true)).toContain('automatically returned to that calling bot');
+  expect(build(false, true)).toContain('You may delegate focused work to other workspace bots');
+  expect(build(true, true)).toContain(
+    'You cannot spawn or send_message the bot that spawned this run',
+  );
   expect(build(false, true)).not.toContain('you may use send_message');
   expect(build(true, true)).toContain('always has every manage_bot action');
 });

@@ -38,6 +38,7 @@ let mode:
   | 'slow'
   | 'revoke'
   | 'delegate'
+  | 'upward-wake'
   | 'delegate-slow'
   | 'delegate-stop'
   | 'delegate-many'
@@ -267,6 +268,17 @@ beforeEach(async () => {
       send({}, 'tool_calls');
     } else if (
       child &&
+      mode === 'delegate-nested' &&
+      !call.messages.some(
+        (item) =>
+          item.content?.includes('"name":"Mukai"') &&
+          item.content.includes('This message is coming from another bot'),
+      )
+    ) {
+      send({ role: 'assistant', content: 'Nested specialist findings.' });
+      send({}, 'stop');
+    } else if (
+      child &&
       [
         'delegate-approval',
         'delegate-tool-approval',
@@ -396,7 +408,7 @@ beforeEach(async () => {
       });
       send({}, 'tool_calls');
     } else if (
-      mode.startsWith('delegate') &&
+      (mode.startsWith('delegate') || mode === 'upward-wake') &&
       !call.messages.some((item) => item.role === 'tool') &&
       !call.messages.some((item) =>
         item.content?.includes('This message is coming from another bot'),
@@ -614,12 +626,10 @@ describe('Bot architecture', () => {
         expect.objectContaining({ id: leaf.id, reportsToBotId: engineer.id, hierarchyLevel: 2 }),
       ]),
     );
-    // Even stale caller/target objects must respect the updated reporting depth.
+    // Reporting changes do not restrict messaging, even with stale caller objects.
     expect(api.botManagement.requireMessageTarget(engineer, alternate.id).id).toBe(alternate.id);
     await api.botManagement.update(main, engineer.id, { reportsToBotId: manager.id });
-    expect(() => api.botManagement.requireMessageTarget(engineer, alternate.id)).toThrow(
-      'higher-level',
-    );
+    expect(api.botManagement.requireMessageTarget(engineer, alternate.id).id).toBe(alternate.id);
     await api.botManagement.update(main, engineer.id, { role: 'Senior engineer' });
     expect(api.botManagement.get(main, engineer.id).createdBy).toBe(manager.id);
     expect(api.store.all('PRAGMA foreign_key_check')).toEqual([]);
@@ -1900,11 +1910,10 @@ describe('Bot architecture', () => {
     expect(api.access.allowed(updated, 'browser')).toBe(false);
     expect(api.access.allowed(updated, 'manage_bot')).toBe(true);
     expect((await request<Bot[]>('/bots')).data).toHaveLength(3);
-    for (const target of [main, child]) {
-      await expect(
-        api.botManagement.sendMessage(child, target.id, 'Work', new AbortController().signal),
-      ).rejects.toThrow('only peers or lower-level');
-    }
+    await expect(
+      api.botManagement.sendMessage(child, child.id, 'Work', new AbortController().signal),
+    ).rejects.toThrow('yourself');
+    expect(api.botManagement.requireMessageTarget(child, main.id).id).toBe(main.id);
   });
   it('sends real child work through the SDK tool and returns its saved response to the caller', async () => {
     const main = await bot();
@@ -1922,9 +1931,9 @@ describe('Bot architecture', () => {
     expect(
       childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'list_models', 'get_model', 'get_last_message']);
+    ).toEqual(['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message']);
     expect(JSON.stringify(childCall.messages)).toContain(
-      'intentionally unavailable to prevent delegation loops',
+      'You cannot spawn or send_message the bot that spawned this run',
     );
     expect(JSON.stringify(childCall.messages)).toContain(main.name);
     expect(JSON.stringify(childCall.messages)).toContain(main.role);
@@ -2827,7 +2836,7 @@ describe('Bot architecture', () => {
     expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
     expect(calls).toHaveLength(4);
   });
-  it('rejects recursive delegation even when a delegated sub-bot attempts send_message', async () => {
+  it('allows nested delegation but blocks only the current caller across restarts and human follow-ups', async () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
@@ -2836,44 +2845,108 @@ describe('Bot architecture', () => {
     nestedId = other.id;
     mode = 'delegate-nested';
     await chat(main);
-    expect((await request<Conversation[]>('/conversations?kind=bot')).data).toHaveLength(1);
+    const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
+    expect(conversations).toHaveLength(2);
+    expect(
+      api.store.get(
+        "SELECT status FROM messages WHERE bot_id=? AND role='assistant' ORDER BY sequence DESC LIMIT 1",
+        main.id,
+      )?.status,
+    ).toBe('complete');
     expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
-    const conversation = (await request<Conversation[]>('/conversations?kind=bot')).data[0];
+    const conversation = conversations.find((item) => item.botIds.includes(main.id))!;
     const reply = (
       await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`)
     ).data.at(-1)!;
-    expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
-      'list',
-      'get',
-      'list_models',
-      'get_model',
-      'get_last_message',
-    ]);
-    const result = await executeBotManagement(
-      { action: 'send_message', botId: other.id, message: 'Nested work', mode: 'wait' },
-      {
-        bot: child,
-        management: api.botManagement,
-        messageId: reply.id,
-        signal: new AbortController().signal,
-        onActivity() {},
-      },
-      randomUUID(),
-    );
-    expect(result).toMatchObject({
+    expect(reply.status).toBe('complete');
+    expect(
+      calls.some((call) => JSON.stringify(call.messages).includes('Nested specialist findings.')),
+    ).toBe(true);
+    const attempt = (botId: string, messageId: string) =>
+      executeBotManagement(
+        { action: 'send_message', botId, message: 'Need help', mode: 'wait' },
+        {
+          bot: child,
+          management: api.botManagement,
+          messageId,
+          signal: new AbortController().signal,
+          onActivity() {},
+        },
+        randomUUID(),
+      );
+    expect(api.botManagement.actionsFor(child)).toContain('send_message');
+    expect(await attempt(main.id, reply.id)).toMatchObject({
       ok: false,
-      error: expect.stringContaining('intentionally unavailable'),
+      error: expect.stringContaining('bot that spawned this run'),
     });
+    // The actual caller is main, even if the reporting parent is a different bot.
+    await api.botManagement.update(main, child.id, { reportsToBotId: other.id });
+    expect(api.botManagement.requireMessageTarget(child, other.id, reply.id).id).toBe(other.id);
     await restart();
-    expect(api.botManagement.actionsFor(child, reply.id)).toEqual([
-      'list',
-      'get',
-      'list_models',
-      'get_model',
-      'get_last_message',
-    ]);
-    expect(api.botManagement.actionsFor(main, reply.id)).toContain('send_message');
+    expect(api.botManagement.actionsFor(child)).toContain('send_message');
+    expect(await attempt(main.id, reply.id)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('automatically returned'),
+    });
+    // A human joining the same pair thread starts a run with no calling bot restriction.
+    mode = 'normal';
+    const humanEvents = await joinPair(conversation.id, 'Ask main for help');
+    const humanReply = humanEvents.at(-1)!;
+    if (humanReply.type !== 'done') throw new Error('Expected saved human reply.');
+    const result = await attempt(main.id, humanReply.message.id);
+    expect(result).toMatchObject({ ok: true, result: { botId: main.id, status: 'complete' } });
+    // The rule also applies when main is the delegated recipient of a sub-bot.
+    if (!result.ok || !result.result || !('messageId' in result.result))
+      throw new Error('Missing main reply');
+    const mainReplyId = String(result.result.messageId);
+    expect(() => api.botManagement.requireMessageTarget(main, child.id, mainReplyId)).toThrow(
+      'bot that spawned this run',
+    );
   });
+  it.each(['user', 'wake'] as const)(
+    'lets a sub-bot in a %s run ask main through the real SDK',
+    async (source) => {
+      const main = await bot();
+      await provider();
+      const child = await api.botManagement.create(main, input('Ada'));
+      delegatedId = main.id;
+      mode = 'upward-wake';
+      if (source === 'user') await chat(child);
+      else {
+        mkdirSync(join(root, 'project'));
+        await request('/workspaces/default', 'PUT', {
+          name: 'Project',
+          folder: join(root, 'project'),
+        });
+        writeFileSync(
+          join(root, 'project', 'wake.ts'),
+          `export default {name:'wake',description:'Wake Ada',inputSchema:{type:'object',properties:{}},execute:async(args,context)=>context.wakeBot('Ask main for help')};`,
+        );
+        const registration = (await api.capabilities.manage('default', child.id, 'tool', {
+          operation: 'register',
+          modulePath: 'wake.ts',
+          permissionMode: 'auto_approve',
+        })) as { id: string };
+        expect(await api.capabilities.invoke(registration.id, {})).toEqual({ accepted: true });
+        await waitFor(() =>
+          expect(api.store.get('SELECT status FROM capability_jobs')?.status).toBe('complete'),
+        );
+      }
+      const pair = (await request<Conversation[]>('/conversations?kind=bot')).data[0];
+      expect(pair.botIds).toEqual([child.id, main.id]);
+      const messages = (await request<ChatMessage[]>(`/conversations/${pair.id}/messages`)).data;
+      expect(messages.at(-1)).toMatchObject({ botId: main.id, status: 'complete' });
+      const rootCall = calls.find(
+        (call) =>
+          call.stream &&
+          !call.messages.some((item) =>
+            item.content?.includes('This message is coming from another bot'),
+          ),
+      )!;
+      expect(JSON.stringify(rootCall.messages)).toContain('This run has no calling bot');
+      expect(JSON.stringify(calls.at(-1)!.messages)).toContain('Reviewed the notes successfully.');
+    },
+  );
   it('does not restart an explicitly stopped delegation', async () => {
     const main = await bot();
     await provider();
@@ -3301,7 +3374,7 @@ describe('Bot architecture', () => {
         ),
     ).toBe(false);
   });
-  it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
+  it('allows messaging at every reporting level and across branches', async () => {
     const main = await bot();
     await provider();
     const ada = await api.botManagement.create(main, input('Ada'));
@@ -3312,9 +3385,9 @@ describe('Bot architecture', () => {
     api.store.run('UPDATE bots SET created_by=? WHERE id=?', nova.id, colleague.id);
     const signal = new AbortController().signal;
     for (const target of [main, ada, nova])
-      await expect(
-        api.botManagement.sendMessage(junior, target.id, 'Upward', signal),
-      ).rejects.toThrow('higher-level');
+      expect(
+        await api.botManagement.sendMessage(junior, target.id, 'Upward', signal),
+      ).toMatchObject({ status: 'complete' });
     const peer = await api.botManagement.sendMessage(ada, nova.id, 'Hello peer', signal);
     await api.botManagement.sendMessage(
       nova,
@@ -3393,6 +3466,6 @@ describe('Bot architecture', () => {
     const foreign = await bot('Foreign', workspace.id);
     await expect(
       api.botManagement.sendMessage(main, foreign.id, 'Work', new AbortController().signal),
-    ).rejects.toThrow('only peers or lower-level');
+    ).rejects.toThrow('another workspace');
   });
 });

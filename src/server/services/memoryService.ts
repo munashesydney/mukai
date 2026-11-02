@@ -176,7 +176,14 @@ export class MemoryService {
     this.embedding = new BgeEmbedder(join(dataDir, 'memory-models'));
     const embed = this.embedding.embed.bind(this.embedding);
     this.embedding.embed = (texts, kind) =>
-      this.providers.ai.run({ kind: 'memory' }, this.controller.signal, () => embed(texts, kind));
+      this.providers.ai.run(
+        {
+          kind: 'memory',
+          ...this.providers.ai.provider({ id: 'local-embeddings', name: 'Local embeddings' }),
+        },
+        this.controller.signal,
+        () => embed(texts, kind),
+      );
     this.engine = new MemoryEngine(
       this.store,
       async (request) => {
@@ -194,24 +201,32 @@ export class MemoryService {
             : controller.signal,
         };
         request.signal?.throwIfAborted();
+        const resolved = extractor
+          ? undefined
+          : (() => {
+              const bot = request.episode.actorId
+                ? this.bots.find(request.episode.actorId)
+                : undefined;
+              if (request.episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
+              if (bot && bot.workspaceId !== request.episode.workspaceId)
+                throw new Error('Memory actor changed workspace.');
+              const actor = bot || this.bots.list(request.episode.workspaceId)[0];
+              if (!actor) throw new Error('A bot is required to resolve the memory model.');
+              return this.providers.resolve(actor);
+            })();
         const result = await this.providers.ai.run(
           {
             kind: 'memory',
             workspaceId: request.episode.workspaceId,
             botId: request.episode.actorId ?? undefined,
+            ...resolved?.aiContext,
           },
           request.signal ?? this.controller.signal,
           () =>
             (
               extractor ||
               (async ({ episode, candidates, signal }) => {
-                const bot = episode.actorId ? this.bots.find(episode.actorId) : undefined;
-                if (episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
-                if (bot && bot.workspaceId !== episode.workspaceId)
-                  throw new Error('Memory actor changed workspace.');
-                const actor = bot || this.bots.list(episode.workspaceId)[0];
-                if (!actor) throw new Error('A bot is required to resolve the memory model.');
-                const config = this.providers.resolve(actor);
+                const config = resolved!;
                 const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
                 const compatible = config.provider.kind === 'compatible';
                 const repairInstructions =
@@ -336,7 +351,7 @@ export class MemoryService {
                           providerId: config.provider.id,
                           providerKind: config.provider.kind,
                           model: config.modelId,
-                          botId: actor.id,
+                          botId: config.aiContext.botId,
                           conversationId: episode.conversationId || undefined,
                           messageId: episode.messageId || undefined,
                           phase: 'memory-extraction',

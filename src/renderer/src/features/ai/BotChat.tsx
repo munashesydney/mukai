@@ -218,7 +218,6 @@ export function BotChat({
               </div>
             </div>
           </header>
-          <AIQueueNotice conversationId={conversation.id} />
           {filesOpen ? (
             <ArtifactsView
               conversationId={conversation.id}
@@ -297,6 +296,7 @@ export function BotChat({
                     onRetry={retryResponse}
                   />
                 ))}
+                <AIQueueNotice conversationId={conversation.id} />
               </div>
               {!composerVisible && hasRequests && (
                 <div className="bot-conversation-requests">

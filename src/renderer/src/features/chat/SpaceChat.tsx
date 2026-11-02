@@ -118,7 +118,6 @@ export function SpaceChat({
   );
   return (
     <>
-      <AIQueueNotice conversationId={space.id} />
       {savedOpen && (
         <div className="saved-view-heading">
           <h2>Saved messages</h2>
@@ -182,6 +181,7 @@ export function SpaceChat({
                 onRetry={retryResponse}
               />
             ))}
+            {!savedOpen && <AIQueueNotice conversationId={space.id} />}
           </div>
           {!savedOpen && (
             <div className="composer-area ai-composer-area">

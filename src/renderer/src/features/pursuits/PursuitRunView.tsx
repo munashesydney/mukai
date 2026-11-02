@@ -127,7 +127,6 @@ export function PursuitRunView({
           ))}
         </div>
       </header>
-      <AIQueueNotice conversationId={run.conversationId} />
       {error && (
         <p role="alert" className="ai-alert">
           {error}
@@ -197,6 +196,7 @@ export function PursuitRunView({
               <MessageMarkdown text={run.summary} />
             </div>
           )}
+          <AIQueueNotice conversationId={run.conversationId} />
         </div>
       )}
       {review && (
