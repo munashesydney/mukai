@@ -11,6 +11,7 @@ import {
   type ComputerHelper,
 } from './protocol';
 import { answerHelper } from './helpers';
+import { COMPUTER_PULSE_SERVER } from '../../shared/computerAudio';
 
 export class GuestWorker implements Computer {
   private child?: ChildProcess;
@@ -46,6 +47,7 @@ export class GuestWorker implements Computer {
         LOGNAME: 'mukai',
         LANG: 'C.UTF-8',
         DISPLAY: ':0',
+        PULSE_SERVER: COMPUTER_PULSE_SERVER,
       },
     });
     this.child = child;

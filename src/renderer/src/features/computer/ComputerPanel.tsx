@@ -7,6 +7,7 @@ import { copyText, readClipboardText } from '../../services/clipboardService';
 import { startPoll } from '../../services/poll';
 import { bindComputerClipboard } from './computerClipboard';
 import { ComputerClipboardPanel } from './ComputerClipboardPanel';
+import { ComputerAudioControls } from './ComputerAudioControls';
 import { maintainComputerConnection, type ComputerConnectionState } from './computerConnection';
 
 export function ComputerPanel({
@@ -152,6 +153,11 @@ export function ComputerPanel({
           </span>
         </span>
         <div className="computer-controls">
+          <ComputerAudioControls
+            workspaceId={workspaceId}
+            open={open}
+            available={state === 'connected'}
+          />
           <button
             className={`computer-control ${clipboardOpen ? 'is-active' : ''}`}
             aria-expanded={clipboardOpen}

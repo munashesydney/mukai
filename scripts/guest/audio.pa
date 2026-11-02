@@ -1,0 +1,6 @@
+# The socket lives inside a 0700 directory owned by the workspace account.
+# Capture only this output's monitor; no physical input device is loaded.
+load-module module-native-protocol-unix socket=/run/mukai-audio/native auth-anonymous=1
+load-module module-null-sink sink_name=mukai_output format=s16le rate=48000 channels=2 sink_properties=device.description=Mukai
+set-default-sink mukai_output
+set-default-source mukai_output.monitor

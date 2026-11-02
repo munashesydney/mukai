@@ -136,6 +136,30 @@
   opacity: 0.45;
   cursor: default;
 }
+
+.computer-audio-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+.computer-audio-volume {
+  width: 68px;
+  accent-color: var(--teal);
+}
+.computer-audio-error {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(300px, 70vw);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  z-index: 3;
+}
 .computer-clipboard-notice {
   padding: 8px 16px;
   font-size: 12px;

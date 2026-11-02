@@ -1,0 +1,18 @@
+[Unit]
+Description=Mukai workspace audio output
+After=network.target
+RefuseManualStop=yes
+
+[Service]
+User=mukai
+Group=mukai
+RuntimeDirectory=mukai-audio
+RuntimeDirectoryMode=0700
+Environment=HOME=/home/mukai XDG_RUNTIME_DIR=/run/mukai-audio
+ExecStart=/usr/bin/pulseaudio --daemonize=no --exit-idle-time=-1 --use-pid-file=no --disallow-exit --disallow-module-loading -n --file=/opt/mukai-guest/bridge/audio.pa
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

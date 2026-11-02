@@ -10,6 +10,8 @@ export const guestScripts = [
   'desktop-start.sh',
   'mukai-display.service',
   'mukai-desktop.service',
+  'mukai-audio.service',
+  'audio.pa',
   'mukai-kernel-guard.service',
 ];
 export const guestDesktopFiles = ['linux.py', 'linux_wayland.py'];

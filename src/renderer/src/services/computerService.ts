@@ -2,6 +2,14 @@ import type { ComputerStatus, ComputerViewSession } from '../../../shared/comput
 import { apiFetch, apiWebSocketUrl } from './http';
 
 export const computerService = {
+  async audio(workspaceId: string, signal: AbortSignal) {
+    const response = await apiFetch(`/workspaces/${workspaceId}/computer-audio`, {
+      method: 'POST',
+      signal,
+    });
+    const session = (await response.json()) as { path: string };
+    return apiWebSocketUrl(session.path);
+  },
   async status(workspaceId: string, signal?: AbortSignal) {
     const response = await apiFetch(`/workspaces/${workspaceId}/computer`, { signal });
     return (await response.json()) as ComputerStatus;

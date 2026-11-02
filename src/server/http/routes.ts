@@ -808,6 +808,17 @@ export function createRoutes({
             reason: 'VM computers are unavailable.',
           },
         );
+      if (id && action === 'computer-audio' && method === 'POST') {
+        const workspace = workspaces.require(id);
+        if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');
+        return send(
+          response,
+          desktops.audioSession(
+            workspaces.computers.guest(workspace),
+            nativeClientRequest(request) || nativeAuthenticatedRequest(request),
+          ),
+        );
+      }
       if (id && action === 'computer-view' && method === 'POST') {
         const workspace = workspaces.require(id);
         if (!workspaces.computers) throw new ApiError(503, 'Computer manager is unavailable.');

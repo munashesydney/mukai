@@ -6,6 +6,7 @@ import { encodeGuestError, guestRequest, PROTOCOL_VERSION, GUEST_REVISION } from
 import { collectGuestHealth, GuestHealthLog, GUEST_HEALTH_INTERVAL_MS } from './guestHealth';
 import { GuestTransport, openGuestChannel } from './guestTransport';
 import { GuestHelpers } from './helpers';
+import { GuestAudioServer, guestAudioKey } from './guestAudio';
 
 // This entry point runs ONLY inside a prepared Linux guest, never in Electron.
 if (process.getuid?.() !== 0)
@@ -24,6 +25,8 @@ const uid = Number(account?.[2]),
 if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid <= 0)
   throw new Error('Missing unprivileged guest account.');
 const dispatcher = new GuestWorker(join(__dirname, 'guest-worker.cjs'), uid, gid);
+const audio = new GuestAudioServer(guestAudioKey(token), uid, gid);
+void audio.listen().catch(() => console.error('Workspace audio service unavailable.'));
 const pending = new Map<string, AbortController>();
 const healthLog = new GuestHealthLog();
 let sample: ReturnType<typeof collectGuestHealth> | undefined;
@@ -122,6 +125,7 @@ const stop = () => {
   stopping = true;
   clearInterval(healthTimer);
   transport.close();
+  void audio.close();
   for (const controller of pending.values()) controller.abort();
   void dispatcher.shutdown().finally(() => process.exit(0));
 };

@@ -5,6 +5,8 @@ import {
 } from 'node:child_process';
 import { createServer, type Socket } from 'node:net';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { guestAudioKey } from './guestAudio';
+import { COMPUTER_AUDIO_PORT } from '../../shared/computerAudio';
 import { mkdir, copyFile, rename, stat, writeFile, readFile, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
@@ -108,6 +110,7 @@ export function qemuArguments(
   config: QemuConfig,
   controlPort?: number,
   desktopPort?: number,
+  audioPort?: number,
 ) {
   return [
     '-name',
@@ -126,7 +129,9 @@ export function qemuArguments(
     '-drive',
     `file=${optionPath(join(directory, 'disk.qcow2'))},format=qcow2,if=virtio`,
     '-netdev',
-    'user,id=net0' + (desktopPort ? `,hostfwd=tcp:127.0.0.1:${desktopPort}-:5901` : ''),
+    'user,id=net0' +
+      (desktopPort ? `,hostfwd=tcp:127.0.0.1:${desktopPort}-:5901` : '') +
+      (audioPort ? `,hostfwd=tcp:127.0.0.1:${audioPort}-:${COMPUTER_AUDIO_PORT}` : ''),
     '-device',
     'virtio-net-pci,netdev=net0',
     // Linux publishes kernel layout information for usable crash dumps under KASLR.
@@ -179,6 +184,8 @@ export class QemuComputer implements Computer {
   private control?: Awaited<ReturnType<typeof qemuControl>>;
   private desktopPort?: number;
   private desktopPassword?: string;
+  private audioPort?: number;
+  private audioKey?: string;
   private maintenance?: { message: string; detail?: string };
   private activeResources?: VmResources;
   private healthPending = new Map<string, Pending>();
@@ -243,6 +250,14 @@ export class QemuComputer implements Computer {
     )
       throw new Error('The workspace desktop is unavailable.');
     return { port: this.desktopPort, password: this.desktopPassword };
+  }
+  audioConnection() {
+    this.desktopConnection();
+    if (this.guestRevision < GUEST_REVISION || !this.audioPort || !this.audioKey)
+      throw new Error(
+        'Workspace audio requires the updated guest. Restart this VM to finish updating.',
+      );
+    return { port: this.audioPort, key: this.audioKey };
   }
   /** Root bridge probe; does not execute a command or depend on the tools worker. */
   inspectHealth(signal: AbortSignal): Promise<GuestHealth> {
@@ -674,6 +689,8 @@ export class QemuComputer implements Computer {
       await rename(temporary, disk);
     }
     const token = randomBytes(32).toString('hex');
+    this.audioKey = guestAudioKey(token);
+    this.diagnostics?.registerSecret(this.audioKey);
     this.desktopPassword = Buffer.from(token, 'hex').toString('base64').slice(0, 8);
     this.diagnostics?.registerSecret(token);
     this.diagnostics?.registerSecret(this.desktopPassword);
@@ -715,6 +732,16 @@ export class QemuComputer implements Computer {
     if (!desktopAddress || typeof desktopAddress === 'string')
       throw new Error('Could not allocate desktop transport.');
     this.desktopPort = desktopAddress.port;
+    const audioReservation = createServer();
+    await new Promise<void>((resolve, reject) => {
+      audioReservation.once('error', reject);
+      audioReservation.listen(0, '127.0.0.1', resolve);
+    });
+    const audioAddress = audioReservation.address();
+    if (!audioAddress || typeof audioAddress === 'string')
+      throw new Error('Could not allocate audio transport.');
+    this.audioPort = audioAddress.port;
+    await new Promise<void>((resolve) => audioReservation.close(() => resolve()));
     await new Promise<void>((resolve) => reservation.close(() => resolve()));
     signal.throwIfAborted();
     let ready!: () => void;
@@ -850,7 +877,14 @@ export class QemuComputer implements Computer {
     );
     const child = this.launch(
       this.config.binary,
-      qemuArguments(this.directory, address.port, bootConfig, this.control.port, this.desktopPort),
+      qemuArguments(
+        this.directory,
+        address.port,
+        bootConfig,
+        this.control.port,
+        this.desktopPort,
+        this.audioPort,
+      ),
       { windowsHide: true, env },
     );
     this.child = child;
@@ -1125,6 +1159,8 @@ export class QemuComputer implements Computer {
       this.socket = undefined;
       this.desktopPort = undefined;
       this.desktopPassword = undefined;
+      this.audioPort = undefined;
+      this.audioKey = undefined;
       await Promise.all([this.healthLog.flush(), this.consoleLog.flush()]);
     })().finally(() => {
       this.stopping = undefined;

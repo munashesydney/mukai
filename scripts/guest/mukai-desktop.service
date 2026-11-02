@@ -1,13 +1,15 @@
 [Unit]
 Description=Mukai workspace desktop
 Requires=mukai-display.service
-After=mukai-display.service
+Wants=mukai-audio.service
+After=mukai-display.service mukai-audio.service
 RefuseManualStop=yes
 
 [Service]
 User=mukai
 Group=mukai
 Environment=HOME=/home/mukai DISPLAY=:0
+Environment=PULSE_SERVER=unix:/run/mukai-audio/native
 WorkingDirectory=/home/mukai
 ExecStartPre=/bin/sh /opt/mukai-guest/bridge/desktop-start.sh --wait
 ExecStart=/bin/sh /opt/mukai-guest/bridge/desktop-start.sh

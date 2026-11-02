@@ -2,6 +2,15 @@
 # Trusted app update, run as root INSIDE the guest. Does not restart the bridge.
 set -eu
 [ "$(id -u)" = 0 ] || exit 1
+if ! command -v pulseaudio >/dev/null 2>&1 || ! command -v parec >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' libasound2-plugins 2>/dev/null | grep -q 'install ok installed'; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils libasound2-plugins
+fi
+# Use a dedicated output-only server for desktop and tool-launched applications.
+install -d /etc/pulse/client.conf.d /etc/alsa/conf.d
+printf 'default-server = unix:/run/mukai-audio/native\nautospawn = no\n' > /etc/pulse/client.conf.d/99-mukai.conf
+printf 'pcm.!default { type pulse }\nctl.!default { type pulse }\n' > /etc/alsa/conf.d/99-mukai.conf
 bundle=$(realpath "${1:?Missing guest bundle}")
 if ! command -v Xtigervnc >/dev/null 2>&1 || ! command -v startxfce4 >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
@@ -28,6 +37,7 @@ if ! cmp -s "$bundle/package.json" /opt/mukai-guest/package.json ||
   (cd /opt/mukai-guest; /usr/local/bin/npm install --omit=dev)
 fi
 install -o root -g root -m 0644 "$bundle/guest.cjs" "$bundle/guest-worker.cjs" /opt/mukai-guest/bridge/
+install -o root -g root -m 0644 "$bundle/audio.pa" /opt/mukai-guest/bridge/
 install -o root -g root -m 0644 "$bundle/linux.py" "$bundle/linux_wayland.py" /opt/mukai-guest/bridge/
 install -o root -g root -m 0755 "$bundle/desktop-prepare.sh" "$bundle/desktop-start.sh" /opt/mukai-guest/bridge/
 if ! dpkg-divert --list /usr/bin/systemctl | grep -q /usr/lib/mukai-guest/systemctl; then
@@ -45,6 +55,6 @@ install -o root -g root -m 0755 "$bundle/kernel-modules.sh" /usr/lib/mukai-guest
   echo 'Mukai guest update: kernel module repair deferred to boot.' >&2
 # No policy change to sudo: ordinary administration remains available.
 install -o root -g root -m 0644 "$bundle/mukai-guest.service" /etc/systemd/system/mukai-guest.service
-install -o root -g root -m 0644 "$bundle/mukai-display.service" "$bundle/mukai-desktop.service" "$bundle/mukai-kernel-guard.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$bundle/mukai-display.service" "$bundle/mukai-desktop.service" "$bundle/mukai-kernel-guard.service" "$bundle/mukai-audio.service" /etc/systemd/system/
 /usr/lib/mukai-guest/systemctl daemon-reload
-/usr/lib/mukai-guest/systemctl enable mukai-guest.service mukai-display.service mukai-desktop.service mukai-kernel-guard.service
+/usr/lib/mukai-guest/systemctl enable mukai-guest.service mukai-display.service mukai-desktop.service mukai-kernel-guard.service mukai-audio.service

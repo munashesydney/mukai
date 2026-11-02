@@ -40,6 +40,10 @@ beforeAll(async () => {
       port: (upstream.address() as { port: number }).port,
       password: 'fixture',
     }),
+    audioConnection: () => ({
+      port: (upstream.address() as { port: number }).port,
+      key: 'a'.repeat(64),
+    }),
   } as unknown as QemuComputer);
   const response = await fetch(api.url + '/api/session', {
     method: 'POST',
@@ -99,6 +103,25 @@ async function denied(socket: WebSocket) {
     socket.once('open', () => reject(new Error('Unexpected desktop access.')));
   });
 }
+
+it('issues output audio tickets through native bearer authentication and browser cookies without booting a VM', async () => {
+  const path = api.url + endpoint.replace('/computer-view', '/computer-audio');
+  const before = start.mock.calls.length;
+  const denied = await fetch(path, { method: 'POST', headers: { Origin: api.url } });
+  expect(denied.status).toBe(401);
+  const headersList: Record<string, string>[] = [
+    { Authorization: `Bearer ${api.token}` },
+    { Origin: api.url, Cookie: cookie },
+  ];
+  for (const headers of headersList) {
+    const response = await fetch(path, { method: 'POST', headers });
+    expect(response.status).toBe(200);
+    const ticket = await response.json();
+    expect(ticket).toEqual({ path: expect.stringContaining('/computer-audio?ticket=') });
+    expect(JSON.stringify(ticket)).not.toContain('a'.repeat(64));
+  }
+  expect(start.mock.calls.length).toBe(before);
+});
 
 it('opens and reconnects an Electron viewer without HTTP Origin alongside a browser viewer', async () => {
   const browser = viewer(await ticket({ Origin: api.url, Cookie: cookie }), api.url, cookie);
