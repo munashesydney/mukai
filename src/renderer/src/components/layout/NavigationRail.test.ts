@@ -61,4 +61,14 @@ describe('sidebar navigation', () => {
       current: true,
     });
   });
+  it('shows Failed only with global failures, even when the current workspace has no bots', () => {
+    expect(renderLinks({ failureCount: 0 }).some((link) => link.label.endsWith('Failed'))).toBe(
+      false,
+    );
+    expect(renderLinks({ failureCount: 2, hasBots: false, section: 'failed' })).toContainEqual({
+      label: '2Failed',
+      disabled: false,
+      current: true,
+    });
+  });
 });

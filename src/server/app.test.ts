@@ -26,6 +26,7 @@ import type { Conversation } from '../shared/conversations';
 import { IMAGE_OMITTED, RESULT_TRUNCATED } from './services/toolResultPolicy';
 import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
+import { ConversationRepository } from './repositories/conversationRepository';
 import { ArtifactRepository } from './repositories/artifactRepository';
 import { ProviderService } from './services/providerService';
 import { ChatJobRepository } from './repositories/chatJobRepository';
@@ -4352,6 +4353,84 @@ describe('Mukai bots and AI API', () => {
       [],
     );
   });
+  it.each(['private', 'space', 'bot'] as const)(
+    'explicitly retries the original %s response without changing authorship or duplicating the turn',
+    async (kind) => {
+      await configure();
+      const repository = new ConversationRepository(api.store);
+      const caller =
+        kind === 'bot'
+          ? (await request<Bot>('/bots', 'POST', { ...inputBot(), name: 'Caller' })).data
+          : undefined;
+      const target =
+        kind === 'bot'
+          ? repository.createBotChat('default', caller!.id, 'scout', 'Failed task')
+          : kind === 'private'
+            ? repository.createPrivate('default', 'scout')
+            : repository.create('default', {
+                name: 'Failed task',
+                description: '',
+                botIds: ['scout'],
+              });
+      mode = 'fail';
+      const requestId = randomUUID();
+      const failed = await fetch(api.url + `/conversations/${target.id}/chat`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          text: 'Keep this task',
+          attachmentIds: [],
+          ...(kind === 'space' ? { botId: 'scout' } : {}),
+        }),
+      });
+      expect(failed.status).toBe(200);
+      await failed.text();
+      const history = (await request<ChatMessage[]>(`/conversations/${target.id}/messages`)).data;
+      expect(history[1].status).toBe('failed');
+      if (kind === 'bot') {
+        // A saved bot-authored request must stay bot-authored after the owner's explicit retry.
+        api.store.run(
+          "UPDATE messages SET bot_id=?,author_name='Caller' WHERE id=?",
+          caller!.id,
+          history[0].id,
+        );
+        const spoof = await request(`/conversations/${target.id}/chat`, 'POST', {
+          requestId,
+          text: '',
+          attachmentIds: [],
+        });
+        expect(spoof.response.status).toBe(403);
+      }
+      mode = 'normal';
+      const response = await fetch(api.url + `/conversations/${target.id}/retry`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + api.token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: history[1].id }),
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+      const after = (await request<ChatMessage[]>(`/conversations/${target.id}/messages`)).data;
+      expect(after).toHaveLength(2);
+      expect(after.map((m) => [m.id, m.requestId])).toEqual(
+        history.map((m) => [m.id, m.requestId]),
+      );
+      expect(after[1].status).toBe('complete');
+      if (kind === 'bot') expect(after[0].botId).toBe(caller!.id);
+      expect(
+        (await request(`/conversations/${target.id}/retry`, 'POST', { messageId: after[1].id }))
+          .response.status,
+      ).toBe(409);
+      expect(
+        (await request(`/conversations/${target.id}/retry`, 'POST', { messageId: after[0].id }))
+          .response.status,
+      ).toBe(404);
+      expect(
+        (await request(`/conversations/${target.id}/retry`, 'POST', { messageId: randomUUID() }))
+          .response.status,
+      ).toBe(404);
+    },
+  );
   it('preserves user messages on failure and retries the same turn without duplicates', async () => {
     const log = vi.spyOn(console, 'error');
     await configure();

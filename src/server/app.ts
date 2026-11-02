@@ -31,6 +31,8 @@ import { ConversationRepository } from './repositories/conversationRepository';
 import { ConversationService } from './services/conversationService';
 import { NotificationService } from './services/notificationService';
 import { ConversationHistoryService } from './services/conversationHistoryService';
+import { FailureService } from './services/failureService';
+import { FailureRepository } from './repositories/failureRepository';
 import { NotificationRepository } from './repositories/notificationRepository';
 import { ConversationArtifactRepository } from './repositories/conversationArtifactRepository';
 import { ConversationArtifactService } from './services/conversationArtifactService';
@@ -345,6 +347,7 @@ export function createApiServer(options: ApiOptions = {}) {
       chatOutputs,
       conversationArtifacts,
       notifications,
+      failures: new FailureService(new FailureRepository(store)),
       desktops,
       approvals,
       token,

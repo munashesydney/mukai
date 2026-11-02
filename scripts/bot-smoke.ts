@@ -11,6 +11,8 @@ import { themeStorageKey } from '../src/renderer/src/features/appearance/themes'
 import type { ApprovalState } from '../src/shared/approvals';
 import { randomUUID } from 'node:crypto';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
+import type { FailureInbox } from '../src/shared/failures';
+import type { PursuitRun } from '../src/shared/pursuits';
 import type { NotificationInbox } from '../src/shared/notifications';
 import { PursuitRepository } from '../src/server/repositories/pursuitRepository';
 import { WorkspaceRepository } from '../src/server/repositories/workspaceRepository';
@@ -96,6 +98,253 @@ async function main() {
     return (await response.json()) as T;
   };
   try {
+    if (process.argv.includes('--failures-only')) {
+      seedTestWorkspace(api.store);
+      await request('/settings/appearance', 'PUT', { mode: 'light', theme: 'mukai' });
+      let completions = 0;
+      modelFixture = createServer(async (req, res) => {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const input = JSON.parse(body);
+        const needsReport =
+          input.tools?.some(
+            (t: { function: { name: string } }) => t.function.name === 'report_pursuit',
+          ) && !input.messages.some((m: { role: string }) => m.role === 'tool');
+        const delta = needsReport
+          ? {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'report-' + randomUUID(),
+                  type: 'function',
+                  function: {
+                    name: 'report_pursuit',
+                    arguments: JSON.stringify({
+                      status: 'completed',
+                      summary: 'Recovered the saved pursuit run.',
+                      nextRunAt: null,
+                      nextRunReason: null,
+                      nextRunInstructions: null,
+                    }),
+                  },
+                },
+              ],
+            }
+          : { role: 'assistant', content: 'Resumed the original saved response.' };
+        completions++;
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(
+          'data: ' +
+            JSON.stringify({
+              id: 'retry-smoke',
+              model: 'test',
+              choices: [{ index: 0, delta, finish_reason: needsReport ? 'tool_calls' : 'stop' }],
+            }) +
+            '\n\ndata: [DONE]\n\n',
+        );
+      });
+      await new Promise<void>((resolve) => modelFixture!.listen(0, '127.0.0.1', resolve));
+      await request('/providers', 'POST', {
+        name: 'Retry fixture',
+        kind: 'compatible',
+        baseUrl: `http://127.0.0.1:${(modelFixture.address() as { port: number }).port}/v1`,
+        defaultModel: 'test',
+        supportsImages: false,
+        isDefault: true,
+        apiKey: '',
+      });
+      const botInput = {
+        role: 'Assistant',
+        instructions: 'Help with this task.',
+        providerId: null,
+        model: null,
+        supportsImages: null,
+        avatar: 'nova',
+      };
+      const main = await request<Bot>('/bots', 'POST', { ...botInput, name: 'Mukai' });
+      new WorkspaceRepository(api.store).create({
+        id: 'other',
+        name: 'Other workspace',
+        folder: null,
+        computer: 'local',
+        createdAt: new Date().toISOString(),
+      });
+      const other = await request<Bot>('/bots', 'POST', {
+        ...botInput,
+        name: 'Orbit',
+        workspaceId: 'other',
+      });
+      await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
+      await wait('Boolean(document.querySelector(".composer textarea"))');
+      assert.equal(await evaluate('Boolean(document.querySelector(".rail-failed"))'), false);
+      const conversations = new ConversationRepository(api.store);
+      const privateChat = conversations.createPrivate('other', other.id);
+      const space = conversations.create('default', {
+        name: 'Shared failure',
+        description: '',
+        botIds: [main.id],
+      });
+      const pursuits = new PursuitRepository(api.store);
+      const pursuit = pursuits.create(
+        'default',
+        main.id,
+        {
+          name: 'Interrupted review',
+          objective: 'Review saved work.',
+          successCriteria: 'A verified result.',
+          firstRunAt: new Date(Date.now() + 3600000).toISOString(),
+          deadline: null,
+        },
+        Date.now(),
+      );
+      const run = pursuits.claim(pursuit.id, 'manual', Date.now())!;
+      pursuits.finish(
+        run.id,
+        'failed',
+        'Partial work saved.',
+        'The provider connection timed out.',
+        'waiting_for_you',
+        Date.now(),
+      );
+      function fail(conversationId: string, botId: string, name: string) {
+        api.store.run('UPDATE conversations SET name=? WHERE id=?', name, conversationId);
+        const requestId = randomUUID(),
+          now = new Date().toISOString();
+        api.store.run(
+          "INSERT INTO messages(id,conversation_id,request_id,role,content,status,created_at) VALUES(?,?,?,'user','Continue the task','complete',?)",
+          randomUUID(),
+          conversationId,
+          requestId,
+          now,
+        );
+        const id = randomUUID();
+        api.store.run(
+          "INSERT INTO messages(id,conversation_id,bot_id,request_id,role,content,status,created_at,error) VALUES(?,?,?,?,'assistant','Saved partial work','failed',?,'The provider connection timed out.')",
+          id,
+          conversationId,
+          botId,
+          requestId,
+          now,
+        );
+        return id;
+      }
+      const privateResponse = fail(privateChat.id, other.id, 'Private export');
+      fail(space.id, main.id, 'Shared failure');
+      const openInbox = async () => {
+        await wait('Boolean(document.querySelector(".rail-failed"))');
+        await evaluate('document.querySelector(".rail-failed").closest("button").click()');
+        await wait('Boolean(document.querySelector(".failed-page"))');
+      };
+      await openInbox();
+      await wait('document.querySelectorAll(".failure-notice").length===3');
+      assert(
+        await evaluate(
+          'document.querySelector(".failed-page").textContent.includes("Other workspace")',
+        ),
+      );
+      assert.equal(await evaluate('document.querySelector(".workspace-sidebar")'), null);
+      await capture('failed-inbox.png');
+      await evaluate('document.documentElement.dataset.mode="dark"');
+      await capture('failed-inbox-dark.png');
+      window.setSize(680, 800);
+      await capture('failed-inbox-narrow.png');
+      assert(
+        await evaluate(
+          'Array.from(document.querySelectorAll(".failure-notice")).every(e=>e.getBoundingClientRect().right<=window.innerWidth)',
+        ),
+      );
+      window.setSize(1480, 980);
+      await evaluate('document.documentElement.dataset.mode="light"');
+      await evaluate(
+        'document.querySelector(\'button[aria-label="Open chat: Private export in Other workspace"]\').click()',
+      );
+      await wait(
+        'document.querySelector(".conversation-heading h1")?.textContent.includes("Orbit") && document.querySelector(".ai-message-feed")?.textContent.includes("Saved partial work")',
+      );
+      assert.equal(await evaluate('localStorage.getItem("mukai.active-workspace")'), 'other');
+      await click('Retry response');
+      await wait(
+        'document.querySelector(".ai-message-feed")?.textContent.includes("Resumed the original saved response.")',
+      );
+      assert.equal(
+        api.store.get('SELECT status FROM messages WHERE id=?', privateResponse)!.status,
+        'complete',
+      );
+      assert.equal(
+        api.store.get(
+          'SELECT COUNT(*) AS count FROM messages WHERE conversation_id=?',
+          privateChat.id,
+        )!.count,
+        2,
+      );
+      await openInbox();
+      await evaluate(
+        'document.querySelector(\'button[aria-label="Open run: Interrupted review in Test workspace"]\').click()',
+      );
+      await wait('Boolean(document.querySelector(".pursuit-run-context"))');
+      assert.equal(await evaluate('localStorage.getItem("mukai.active-workspace")'), 'default');
+      await capture('pursuit-run-retry.png');
+      await click('Retry run');
+      await wait('document.querySelector(".status-label")?.textContent==="complete"');
+      const retried = await request<PursuitRun>(`/pursuits/${pursuit.id}/run?runId=${run.id}`);
+      assert.equal(retried.conversationId, run.conversationId);
+      assert.equal(
+        api.store.get('SELECT COUNT(*) AS count FROM pursuit_runs WHERE pursuit_id=?', pursuit.id)!
+          .count,
+        1,
+      );
+      await openInbox();
+      await wait('document.querySelectorAll(".failure-notice").length===1');
+      await evaluate(
+        'document.querySelector(\'button[aria-label="Open chat: Shared failure in Test workspace"]\').click()',
+      );
+      await wait(
+        'document.querySelector(".conversation-heading")?.textContent.includes("Shared failure") && document.querySelector(".ai-message-feed")?.textContent.includes("Saved partial work")',
+      );
+      await openInbox();
+      await evaluate('document.querySelector(".failure-clear").click()');
+      await wait(
+        'document.querySelectorAll(".failure-notice").length===0 && !document.querySelector(".rail-failed")',
+      );
+      const preserved = api.store.all('SELECT * FROM messages WHERE conversation_id=?', space.id);
+      assert.equal(preserved.length, 2);
+      // A new attempt in a dismissed chat can surface a new failure.
+      const responseId = String(preserved.find((m) => m.role === 'assistant')!.id);
+      api.store.run("UPDATE messages SET status='streaming' WHERE id=?", responseId);
+      api.store.run("UPDATE messages SET status='failed' WHERE id=?", responseId);
+      await openInbox();
+      await wait('document.querySelectorAll(".failure-notice").length===1');
+      await click('Clear all');
+      await wait(
+        'document.querySelectorAll(".failure-notice").length===0 && !document.querySelector(".rail-failed")',
+      );
+      assert.deepEqual(
+        api.store.all('SELECT * FROM messages WHERE conversation_id=?', space.id),
+        preserved,
+      );
+      assert.equal((await request<FailureInbox>('/failures')).total, 0);
+      const lateSpace = conversations.create('default', {
+        name: 'New shared failure',
+        description: '',
+        botIds: [main.id],
+      });
+      fail(lateSpace.id, main.id, 'New shared failure');
+      await openInbox();
+      await wait('document.querySelectorAll(".failure-notice").length===1');
+      await evaluate(
+        'document.querySelector(".failure-notice .notification-card-summary").click()',
+      );
+      await wait(
+        'document.querySelector(".conversation-heading")?.textContent.includes("New shared failure") && document.querySelector(".ai-message-feed")?.textContent.includes("Saved partial work")',
+      );
+      assert(completions >= 3);
+      assert.deepEqual(errors, []);
+      console.log(
+        'PASS global Failed UI: conditional icon, cross-workspace private/space/pursuit navigation, original-response retry, same-run pursuit retry, individual/bulk dismissal, recurring failures, dark and narrow layouts.',
+      );
+      return;
+    }
     if (process.argv.includes('--pair-chat-only')) {
       seedTestWorkspace(api.store);
       await request('/settings/appearance', 'PUT', { mode: 'dark', theme: 'mukai' });

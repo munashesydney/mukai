@@ -325,6 +325,24 @@ export class PursuitService {
     this.enqueue(run);
     return run;
   }
+  retryRun(id: string, runId: string) {
+    const pursuit = this.require(id);
+    const run = this.runDetail(id, runId);
+    if (!['failed', 'interrupted', 'stopped'].includes(run.status))
+      throw new ApiError(409, 'Only failed, interrupted, or stopped runs can be retried.');
+    if (this.closing || pursuit.currentRunId || this.jobs.has(runId))
+      throw new ApiError(409, 'Wait for the current pursuit run to stop before retrying.');
+    if (!pursuit.ownerBotId || pursuit.ownerBotId !== run.snapshot.ownerBotId)
+      throw new ApiError(409, 'The original owning bot is unavailable.');
+    this.bots.require(pursuit.ownerBotId);
+    if (pursuit.deadline && Date.parse(pursuit.deadline) <= this.now())
+      throw new ApiError(409, 'Extend the pursuit deadline before retrying this run.');
+    const resumed = this.repository.retry(runId);
+    if (!resumed)
+      throw new ApiError(409, 'This run cannot be retried while another run is active.');
+    this.enqueue(resumed);
+    return resumed;
+  }
   private async execute(run: PursuitRun) {
     let message: ChatMessage | undefined, report: PursuitReport | undefined;
     const reportProblem = () =>
@@ -378,7 +396,10 @@ export class PursuitService {
       await this.chats.respond(
         bot,
         {
-          requestId: this.chats.pendingRequest(run.conversationId) || randomUUID(),
+          requestId:
+            this.chats.pendingRequest(run.conversationId) ||
+            this.chats.retryableRequest(run.conversationId) ||
+            randomUUID(),
           text:
             `Pursuit: ${p.name} · Run ${runNumber}\nRun this pursuit autonomously. Work toward its objective, check the success criteria, and summarize what you actually did. The user is not watching this run; use communicate action notify for a meaningful update when necessary.\n\nPursuit context:\n` +
             context,
@@ -388,6 +409,7 @@ export class PursuitService {
         run.conversationId,
         {
           system: workpadGuidance,
+          resumeSavedProgress: true,
           completionNotice: () => {
             const problem = reportProblem();
             return problem

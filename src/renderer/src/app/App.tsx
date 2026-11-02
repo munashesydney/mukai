@@ -1,3 +1,7 @@
+import type { ChatFailure } from '../../../shared/failures';
+import { useFailures } from '../features/failures/useFailures';
+import { FailedPage } from '../features/failures/FailedPage';
+import { failureLocation } from '../features/failures/failureLocation';
 import { AIQueueSettings } from '../features/ai/aiQueueContext';
 import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target, Plus } from 'lucide-react';
@@ -53,10 +57,23 @@ function WorkspaceLayout({
 
 export function App() {
   const ai = useAIWorkspace();
+  const failures = useFailures();
+  const [pendingFailure, setPendingFailure] = useState<ChatFailure | null>(null);
+  const onFailureOpened = useCallback(() => setPendingFailure(null), []);
+  function openFailure(failure: ChatFailure) {
+    setPendingFailure(failure);
+    ai.selectWorkspace(failure.workspaceId);
+  }
   if (!ai.workspace) return <EmptyWorkspaces ai={ai} />;
   return (
     <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
-      <WorkspaceApp ai={ai} />
+      <WorkspaceApp
+        ai={ai}
+        failures={failures}
+        onOpenFailure={openFailure}
+        pendingFailure={pendingFailure}
+        onFailureOpened={onFailureOpened}
+      />
     </BrowserWorkspace>
   );
 }
@@ -125,7 +142,19 @@ function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     </div>
   );
 }
-function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
+function WorkspaceApp({
+  ai,
+  failures,
+  onOpenFailure,
+  pendingFailure,
+  onFailureOpened,
+}: {
+  ai: ReturnType<typeof useAIWorkspace>;
+  failures: ReturnType<typeof useFailures>;
+  onOpenFailure: (failure: ChatFailure) => void;
+  pendingFailure: ChatFailure | null;
+  onFailureOpened: () => void;
+}) {
   useLayoutEffect(() => {
     approvalStore.setWorkspace(ai.workspaceId);
   }, [ai.workspaceId]);
@@ -136,6 +165,9 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
   const botChats = useBotConversations(ai.workspaceId);
   const botPairs = useBotConversations(ai.workspaceId, 'bot');
   const notifications = useNotifications(ai.workspaceId);
+  const { loading: privateChatsLoading, include: includePrivateChat } = botChats;
+  const { loading: botPairsLoading, include: includeBotPair } = botPairs;
+  const { loading: spacesLoading, include: includeSpace } = spaceState;
   const [editingWorkspace, setEditingWorkspace] = useState<Workspace | 'new' | null>(null);
   const [editingBot, setEditingBot] = useState<Bot | 'new' | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -155,7 +187,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       !hasBots &&
       location.section !== 'bots' &&
       location.section !== 'settings' &&
-      location.section !== 'telegram'
+      location.section !== 'telegram' &&
+      location.section !== 'failed'
     )
       replace({ section: 'bots', item: 'empty' });
   }, [ai.loading, hasBots, location.section, replace]);
@@ -174,7 +207,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
         !hasBots &&
         next.section !== 'bots' &&
         next.section !== 'settings' &&
-        next.section !== 'telegram'
+        next.section !== 'telegram' &&
+        next.section !== 'failed'
       )
         return;
       navigate(next);
@@ -184,11 +218,39 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
     },
     [navigate, hasBots],
   );
+  useEffect(() => {
+    if (!pendingFailure || pendingFailure.workspaceId !== ai.workspaceId || ai.loading) return;
+    if (
+      (pendingFailure.conversation.kind === 'private' && privateChatsLoading) ||
+      (pendingFailure.conversation.kind === 'bot' && botPairsLoading) ||
+      (pendingFailure.conversation.kind === 'space' && spacesLoading)
+    )
+      return;
+    if (pendingFailure.conversation.kind === 'private')
+      includePrivateChat(pendingFailure.conversation);
+    if (pendingFailure.conversation.kind === 'bot') includeBotPair(pendingFailure.conversation);
+    if (pendingFailure.conversation.kind === 'space') includeSpace(pendingFailure.conversation);
+    select(failureLocation(pendingFailure));
+    onFailureOpened();
+  }, [
+    pendingFailure,
+    ai.workspaceId,
+    ai.loading,
+    privateChatsLoading,
+    botPairsLoading,
+    spacesLoading,
+    includeSpace,
+    includePrivateChat,
+    includeBotPair,
+    select,
+    onFailureOpened,
+  ]);
   const space = spaceState.spaces.find((s) => s.id === location.item);
   const botPair = botPairs.conversations.find((chat) => chat.id === location.conversationId);
   const pairBot = ai.bots.find((bot) => bot.id === botPair?.botIds[1]);
   const pursuit =
-    pursuitState.pursuits.find((p) => p.id === location.item) || pursuitState.pursuits[0];
+    pursuitState.pursuits.find((p) => p.id === location.item) ||
+    (location.item === 'empty' ? pursuitState.pursuits[0] : undefined);
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
   const ownedChats = botChats.conversations.filter((chat) => chat.ownerBotId === bot?.id);
   let rememberedChat = '';
@@ -308,11 +370,12 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
       />
       <div className={`app-body ${viewingComputer ? 'computer-mode' : ''}`}>
         <div
-          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' || location.section === 'notifications' || location.section === 'telegram' ? 'is-compact' : ''}`}
+          className={`workspace-navigation ${sidebarCollapsed || location.section === 'settings' || location.section === 'notifications' || location.section === 'failed' || location.section === 'telegram' ? 'is-compact' : ''}`}
           inert={viewingComputer}
           aria-hidden={viewingComputer}
         >
           <NavigationRail
+            failureCount={failures.total}
             notificationCount={notifications.total}
             unreadNotifications={notifications.unread}
             hasPendingApprovals={approvals.pending.length > 0}
@@ -331,7 +394,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
           />
           {location.section !== 'settings' &&
             location.section !== 'notifications' &&
-            location.section !== 'telegram' && (
+            location.section !== 'telegram' &&
+            location.section !== 'failed' && (
               <WorkspaceSidebar
                 workspace={ai.workspace}
                 workspaces={ai.workspaces}
@@ -387,6 +451,8 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
             />
           ) : location.section === 'telegram' ? (
             <TelegramPage />
+          ) : location.section === 'failed' ? (
+            <FailedPage inbox={failures} onOpen={onOpenFailure} />
           ) : location.section === 'notifications' ? (
             <NotificationsPage
               workspaceId={ai.workspaceId}
@@ -605,10 +671,10 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
                 Try again
               </button>
             </main>
-          ) : pursuit ? (
+          ) : pursuit || (location.section === 'pursuits' && location.item !== 'empty') ? (
             <PursuitPage
-              key={`${pursuit.id}:${location.runId || ''}`}
-              id={pursuit.id}
+              key={`${pursuit?.id || location.item}:${location.runId || ''}`}
+              id={pursuit?.id || location.item}
               runId={location.runId}
               bots={ai.bots}
               onOwner={(id) => select({ section: 'bots', item: id })}

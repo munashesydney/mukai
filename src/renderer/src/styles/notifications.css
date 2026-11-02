@@ -303,3 +303,32 @@
     width: 100%;
   }
 }
+
+.rail-unread.rail-failed {
+  background: var(--danger, #b34444);
+}
+.failure-notice {
+  display: flex;
+  align-items: center;
+}
+.failure-notice .notification-card-summary {
+  flex: 1;
+}
+.failure-clear {
+  flex: none;
+  margin-right: 14px;
+}
+.failure-notice .notification-card-icon {
+  color: var(--danger, #b34444);
+}
+@media (max-width: 600px) {
+  .failure-notice {
+    flex-wrap: wrap;
+  }
+  .failure-notice .notification-card-summary {
+    flex-basis: 100%;
+  }
+  .failure-clear {
+    margin: 0 14px 12px auto;
+  }
+}

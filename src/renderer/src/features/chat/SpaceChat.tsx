@@ -1,3 +1,4 @@
+import { RetryResponseButton } from '../ai/RetryResponseButton';
 import { AIQueueNotice } from '../ai/AIQueueNotice';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LoaderCircle, ArrowUp, Square } from 'lucide-react';
@@ -399,13 +400,10 @@ const MessageRow = memo(function MessageRow({
             <div className="ai-response-status">
               <span>{message.error || 'Response stopped.'}</span>
               {canRetry && (
-                <button
-                  className="text-button"
+                <RetryResponseButton
                   disabled={busy}
-                  onClick={() => onRetry(message.requestId, message.botId)}
-                >
-                  Retry response
-                </button>
+                  onRetry={() => onRetry(message.requestId, message.botId)}
+                />
               )}
             </div>
           )}

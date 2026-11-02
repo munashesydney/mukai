@@ -470,6 +470,18 @@ export const migrations = [
     PRIMARY KEY(bot_id,tool_id));
    INSERT INTO legacy_bot_tool_assignments SELECT * FROM bot_tool_assignments;
    DELETE FROM bot_tool_assignments;`,
+  `CREATE TABLE chat_failure_dismissals (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    dismissed_at TEXT NOT NULL);
+   CREATE TRIGGER failure_new_response AFTER INSERT ON messages
+     WHEN NEW.role='assistant' AND NEW.status='streaming'
+     BEGIN DELETE FROM chat_failure_dismissals WHERE conversation_id=NEW.conversation_id; END;
+   CREATE TRIGGER failure_response_retry AFTER UPDATE OF status ON messages
+     WHEN NEW.role='assistant' AND NEW.status='streaming' AND OLD.status<>'streaming'
+     BEGIN DELETE FROM chat_failure_dismissals WHERE conversation_id=NEW.conversation_id; END;
+   CREATE TRIGGER failure_run_retry AFTER UPDATE OF status ON pursuit_runs
+     WHEN NEW.status='running' AND OLD.status<>'running'
+     BEGIN DELETE FROM chat_failure_dismissals WHERE conversation_id=NEW.conversation_id; END;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

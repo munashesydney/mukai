@@ -13,7 +13,10 @@ it('backs up legacy tool selections, enables all-tools defaults once, and retain
     seedTestBot(db);
     // Reconstruct the previous schema so the actual upgrade is exercised on reopen.
     db.run('DROP TABLE legacy_bot_tool_assignments');
-    db.run('DELETE FROM schema_migrations WHERE version=?', migrations.length);
+    const version =
+      migrations.findIndex((sql) => sql.includes('CREATE TABLE legacy_bot_tool_assignments')) + 1;
+    expect(version).toBeGreaterThan(0);
+    db.run('DELETE FROM schema_migrations WHERE version=?', version);
     db.run('INSERT INTO bot_tool_assignments VALUES(?,?,?)', 'scout', 'browser', 0);
     db.db.close();
     db = new Database(dir);

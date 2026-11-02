@@ -26,6 +26,8 @@ export const pursuitService = {
   status: (id: string, status: 'active' | 'paused') =>
     api<Pursuit>(`/pursuits/${encodeURIComponent(id)}/status`, 'PUT', { status }),
   run: (id: string) => api<PursuitRun>(`/pursuits/${encodeURIComponent(id)}/run`, 'POST'),
+  retry: (id: string, runId: string) =>
+    api<PursuitRun>(`/pursuits/${encodeURIComponent(id)}/retry`, 'POST', { runId }),
   runDetail: (id: string, runId: string) =>
     api<PursuitRun>(`/pursuits/${encodeURIComponent(id)}/run?runId=${encodeURIComponent(runId)}`),
 };

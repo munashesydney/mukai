@@ -1,3 +1,5 @@
+import { RetryResponseButton } from '../ai/RetryResponseButton';
+import { pursuitService } from '../../services/pursuitService';
 import { useAIActivity } from '../../services/aiActivityStore';
 import { AIQueueNotice } from '../ai/AIQueueNotice';
 import { useEffect, useState } from 'react';
@@ -24,11 +26,26 @@ export function PursuitRunView({
   run,
   bot,
   onBack,
+  onRetried,
 }: {
   run: PursuitRun;
   bot?: Bot;
   onBack: () => void;
+  onRetried: (run: PursuitRun) => void;
 }) {
+  const [retrying, setRetrying] = useState(false);
+  async function retry() {
+    if (retrying) return;
+    setRetrying(true);
+    setError('');
+    try {
+      onRetried(await pursuitService.retry(run.pursuitId, run.id));
+    } catch (caught) {
+      setError(errorText(caught));
+    } finally {
+      setRetrying(false);
+    }
+  }
   const activity = useAIActivity();
   const queued = [...activity.queued, ...(activity.pursuitQueued || [])].some(
     (work) => work.conversationId === run.conversationId,
@@ -112,6 +129,14 @@ export function PursuitRunView({
           >
             <Square size={13} /> Stop run
           </button>
+        )}
+        {['failed', 'interrupted', 'stopped'].includes(run.status) && (
+          <RetryResponseButton
+            className="button button--small"
+            label={retrying ? 'Retrying…' : 'Retry run'}
+            disabled={retrying}
+            onRetry={() => void retry()}
+          />
         )}
         <div className="conversation-tabs" role="tablist" aria-label="Run views">
           {['Messages', 'Artifacts'].map((name) => (

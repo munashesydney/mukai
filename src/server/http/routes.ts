@@ -42,6 +42,7 @@ import { browserDefinition } from '../tools/browser/definition';
 import type { CapabilityService } from '../capabilities/service';
 import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
+import type { FailureService } from '../services/failureService';
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
 import { trustedLocalRequest, nativeClientRequest } from '../web/origin';
@@ -104,6 +105,7 @@ export function createRoutes({
   chatOutputs,
   conversationArtifacts,
   notifications,
+  failures,
   desktops,
   approvals,
   token,
@@ -131,6 +133,7 @@ export function createRoutes({
   chatOutputs: ChatOutputService;
   conversationArtifacts: ConversationArtifactService;
   notifications: NotificationService;
+  failures: FailureService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
   token: string;
@@ -196,7 +199,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(telegram|settings|limits|ai-activity|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(telegram|settings|limits|ai-activity|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications|failures)(\/|$)/.test(
         path,
       )
     )
@@ -395,6 +398,20 @@ export function createRoutes({
       if (id && !action && method === 'DELETE')
         return send(response, skills.remove(workspaceId, id));
       throw new ApiError(404, 'Not found');
+    }
+    if (resource === 'failures') {
+      if (!id && method === 'GET') {
+        const offset = z.coerce
+          .number()
+          .int()
+          .min(0)
+          .max(100000)
+          .parse(url.searchParams.get('offset') || 0);
+        return sendRead(request, response, failures.list(offset));
+      }
+      if (!action && method === 'DELETE')
+        return send(response, id ? failures.dismiss(id) : failures.dismissAll());
+      throw new ApiError(405, 'Method not allowed.');
     }
     if (resource === 'notifications') {
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
@@ -643,6 +660,13 @@ export function createRoutes({
       }
       if (id && action === 'run' && method === 'POST')
         return send(response, pursuits.runNow(id), 201);
+      if (id && action === 'retry' && method === 'POST') {
+        const input = z
+          .object({ runId: z.string().uuid() })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, pursuits.retryRun(id, input.runId));
+      }
       if (id && action === 'run' && method === 'GET')
         return send(
           response,
@@ -798,6 +822,13 @@ export function createRoutes({
             spaceChatSchema.parse(await jsonBody(request)),
             chatOutput(response, request),
           );
+        }
+        if (action === 'retry' && method === 'POST') {
+          const input = z
+            .object({ messageId: z.string().uuid() })
+            .strict()
+            .parse(await jsonBody(request));
+          return conversations.retry(id, input.messageId, chatOutput(response, request));
         }
         if (action === 'attachments' && method === 'GET') {
           if (conversation.kind === 'space') return sendRead(request, response, []);

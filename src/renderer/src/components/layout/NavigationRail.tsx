@@ -1,10 +1,11 @@
-import { Layers3, Target, Puzzle, Settings, Plus, Bell } from 'lucide-react';
+import { Layers3, Target, Puzzle, Settings, Plus, Bell, TriangleAlert } from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { botAvatarSrc } from '../../../../shared/mascots';
 import { TelegramLogo } from '../ui/TelegramLogo';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
+  { id: 'failed', label: 'Failed', icon: TriangleAlert },
   { id: 'notifications', label: 'Updates', icon: Bell },
   { id: 'pursuits', label: 'Pursuits', icon: Target },
   { id: 'spaces', label: 'Spaces', icon: Layers3 },
@@ -20,6 +21,7 @@ export function NavigationRail({
   disabled = false,
   hasBots = true,
   hasPendingApprovals = false,
+  failureCount = 0,
   notificationCount = 0,
   unreadNotifications = 0,
 }: {
@@ -31,6 +33,7 @@ export function NavigationRail({
   disabled?: boolean;
   hasBots?: boolean;
   hasPendingApprovals?: boolean;
+  failureCount?: number;
   notificationCount?: number;
   unreadNotifications?: number;
 }) {
@@ -51,16 +54,19 @@ export function NavigationRail({
       </button>
       <div className="rail-links">
         {items
+          .filter((item) => item.id !== 'failed' || failureCount > 0)
           .filter((item) => disabled || item.id !== 'notifications' || notificationCount > 0)
           .map(({ id, label, icon: Icon }) => (
             <button
               className={`rail-link ${!disabled && section === id ? 'is-active' : ''}`}
               key={id}
-              disabled={disabled || (!hasBots && id !== 'bots' && id !== 'telegram')}
+              disabled={
+                disabled || (!hasBots && id !== 'bots' && id !== 'telegram' && id !== 'failed')
+              }
               title={
                 disabled
                   ? 'Create your first workspace to unlock this'
-                  : !hasBots && id !== 'bots' && id !== 'telegram'
+                  : !hasBots && id !== 'bots' && id !== 'telegram' && id !== 'failed'
                     ? 'Add your first bot to unlock this'
                     : undefined
               }
@@ -78,6 +84,14 @@ export function NavigationRail({
                 {id === 'bots' && hasPendingApprovals && (
                   <i className="rail-notification" aria-label="Pending approvals" />
                 )}
+                {id === 'failed' && failureCount > 0 && (
+                  <i
+                    className="rail-unread rail-failed"
+                    aria-label={`${failureCount} failed chats`}
+                  >
+                    {failureCount > 99 ? '99+' : failureCount}
+                  </i>
+                )}
                 {id === 'notifications' && unreadNotifications > 0 && (
                   <i className="rail-unread" aria-label={`${unreadNotifications} unread updates`}>
                     {unreadNotifications > 99 ? '99+' : unreadNotifications}
@@ -89,22 +103,25 @@ export function NavigationRail({
           ))}
       </div>
       <div className="rail-bottom">
-        {section !== 'pursuits' && section !== 'notifications' && section !== 'telegram' && (
-          <button
-            className="rail-add"
-            disabled={disabled}
-            onClick={onCreate}
-            aria-label={
-              disabled || section === 'tools'
-                ? 'Create workspace'
-                : section === 'bots'
-                  ? 'Create a new bot'
-                  : 'Create a space'
-            }
-          >
-            <Plus size={21} />
-          </button>
-        )}
+        {section !== 'failed' &&
+          section !== 'pursuits' &&
+          section !== 'notifications' &&
+          section !== 'telegram' && (
+            <button
+              className="rail-add"
+              disabled={disabled}
+              onClick={onCreate}
+              aria-label={
+                disabled || section === 'tools'
+                  ? 'Create workspace'
+                  : section === 'bots'
+                    ? 'Create a new bot'
+                    : 'Create a space'
+              }
+            >
+              <Plus size={21} />
+            </button>
+          )}
         <button
           className="rail-settings"
           disabled={disabled}

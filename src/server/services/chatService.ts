@@ -406,6 +406,15 @@ export class ChatService {
       ? this.messages.message(request.messageId).requestId
       : this.jobs.delegationRequest(conversationId);
   }
+  retryableRequest(conversationId: string) {
+    const latestUser = this.messages.latestUserId(conversationId);
+    if (!latestUser) return;
+    const request = this.messages.message(String(latestUser));
+    const response = this.messages.forRequest(conversationId, request.requestId, 'assistant');
+    return response && ['failed', 'interrupted', 'stopped'].includes(response.status)
+      ? request.requestId
+      : undefined;
+  }
   suspended(conversationId: string) {
     return Boolean(this.pendingRequest(conversationId));
   }
@@ -647,6 +656,7 @@ export class ChatService {
     runtime?: {
       system: string;
       tools: ToolSet;
+      resumeSavedProgress?: boolean;
       completionNotice?: () => string | undefined;
       restore?: (toolName: string, input: unknown, output: unknown) => void;
     },
@@ -1170,7 +1180,7 @@ export class ChatService {
         };
       }
       let checkpoint =
-        existingUser && (!runtime || recoveringStep)
+        existingUser && (!runtime || runtime.resumeSavedProgress || recoveringStep)
           ? this.jobs.read(assistantId, fingerprint, recoveringStep)
           : undefined;
       // Model context can survive configuration changes. Executable pending calls

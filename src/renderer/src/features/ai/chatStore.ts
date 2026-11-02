@@ -408,6 +408,13 @@ export const chatStore = {
         {
           requestId,
           text: retryId ? '' : state.text,
+          ...(retryId && (id.startsWith('private:') || id.startsWith('space:'))
+            ? {
+                retryMessageId: state.messages.find(
+                  (message) => message.requestId === retryId && message.role === 'assistant',
+                )?.id,
+              }
+            : {}),
           attachmentIds: retryId ? [] : state.files.map((file) => file.id),
           ...(id.startsWith('space:')
             ? {

@@ -362,6 +362,72 @@ describe('AI-owned pursuits and scheduled runs', () => {
       expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
     },
   );
+  it.each(['workpad-fail', 'report-fail'] as const)(
+    'retries %s in the same run with saved tool results and no duplicate work',
+    async (failure) => {
+      const p = await createWithAI();
+      workpadPursuitId = p.id;
+      mode = failure;
+      await request(`/pursuits/${p.id}/run`, 'POST');
+      const failed = (await settled(p.id)).runs[0];
+      expect(failed.status).toBe('failed');
+      const history = (
+        await request<ChatMessage[]>(`/conversations/${failed.conversationId}/messages`)
+      ).data;
+      const before = api.pursuits.workpad(p.id).entries;
+      mode = failure === 'workpad-fail' ? 'workpad' : 'waiting';
+      const callsBeforeRetry = calls.length;
+      const retry = await request<PursuitRun>(`/pursuits/${p.id}/retry`, 'POST', {
+        runId: failed.id,
+      });
+      expect(retry.response.status).toBe(200);
+      expect(retry.data).toMatchObject({
+        id: failed.id,
+        conversationId: failed.conversationId,
+        status: 'running',
+      });
+      const done = await settled(p.id);
+      expect(done.runs).toHaveLength(1);
+      expect(done.runs[0]).toMatchObject({ id: failed.id, status: 'complete', error: null });
+      expect(done.pursuit.status).toBe('waiting');
+      expect(calls[callsBeforeRetry].messages.some((m) => m.role === 'tool')).toBe(true);
+      expect(api.pursuits.workpad(p.id).entries).toEqual(before);
+      const after = (
+        await request<ChatMessage[]>(`/conversations/${failed.conversationId}/messages`)
+      ).data;
+      expect(after.map((m) => [m.id, m.requestId])).toEqual(
+        history.map((m) => [m.id, m.requestId]),
+      );
+      expect(
+        (await request(`/pursuits/${p.id}/retry`, 'POST', { runId: failed.id })).response.status,
+      ).toBe(409);
+    },
+  );
+  it('rejects retries for a different pursuit, concurrent runs and expired deadlines', async () => {
+    const p = await createWithAI();
+    mode = 'report-fail';
+    api.pursuits.runNow(p.id);
+    const run = (await settled(p.id)).runs[0];
+    const other = api.pursuits.create(new BotRepository(api.store).find('scout')!, input);
+    expect(
+      (await request(`/pursuits/${other.id}/retry`, 'POST', { runId: run.id })).response.status,
+    ).toBe(404);
+    api.store.run(
+      'UPDATE pursuits SET deadline=? WHERE id=?',
+      new Date(Date.now() - 1000).toISOString(),
+      p.id,
+    );
+    expect(
+      (await request(`/pursuits/${p.id}/retry`, 'POST', { runId: run.id })).response.status,
+    ).toBe(409);
+    api.store.run('UPDATE pursuits SET deadline=NULL WHERE id=?', p.id);
+    api.pursuits.control(p.id, 'active');
+    mode = 'slow';
+    api.pursuits.runNow(p.id);
+    expect(
+      (await request(`/pursuits/${p.id}/retry`, 'POST', { runId: run.id })).response.status,
+    ).toBe(409);
+  });
   it.each(['workpad', 'workpad-fail'] as const)(
     'persists model-authored entries with run provenance when the run is %s',
     async (runMode) => {

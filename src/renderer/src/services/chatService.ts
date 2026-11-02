@@ -20,21 +20,23 @@ export const chatService = {
     api<ChatFollowup[]>(`${root(id)}/followups`, 'PUT', input),
   async stream(
     id: string,
-    input: ChatInput & { botId?: string | null },
+    input: ChatInput & { botId?: string | null; retryMessageId?: string },
     onEvent: (event: ChatEvent) => void,
   ) {
-    const response = await apiFetch(`${root(id)}/chat`, {
+    const response = await apiFetch(`${root(id)}/${input.retryMessageId ? 'retry' : 'chat'}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(
-        id.startsWith('space:')
-          ? {
-              requestId: input.requestId,
-              text: input.text,
-              botId: input.botId ?? null,
-              attachmentIds: input.attachmentIds,
-            }
-          : input,
+        input.retryMessageId
+          ? { messageId: input.retryMessageId }
+          : id.startsWith('space:')
+            ? {
+                requestId: input.requestId,
+                text: input.text,
+                botId: input.botId ?? null,
+                attachmentIds: input.attachmentIds,
+              }
+            : input,
       ),
     });
     const reader = response.body?.getReader();

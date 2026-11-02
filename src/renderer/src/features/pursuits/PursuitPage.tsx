@@ -52,19 +52,23 @@ export function PursuitPage({
   useEffect(() => {
     if (!selectedRun || knownRun) return;
     let alive = true;
-    void pursuitService
-      .runDetail(id, selectedRun)
-      .then((value) => {
-        if (alive) {
-          setOlderRun(value);
-          setError('');
+    const poll = startPoll(
+      async () => {
+        try {
+          const value = await pursuitService.runDetail(id, selectedRun);
+          if (alive) {
+            setOlderRun(value);
+            setError('');
+          }
+        } catch (caught) {
+          if (alive) setError(errorText(caught));
         }
-      })
-      .catch((caught) => {
-        if (alive) setError(errorText(caught));
-      });
+      },
+      { interval: 2000, maxInterval: 8000 },
+    );
     return () => {
       alive = false;
+      poll.stop();
     };
   }, [id, selectedRun, knownRun]);
   useEffect(() => {
@@ -141,7 +145,23 @@ export function PursuitPage({
   if (run)
     return (
       <main className="conversation pursuit-page">
-        <PursuitRunView key={run.id} run={run} bot={owner} onBack={() => setSelectedRun(null)} />
+        <PursuitRunView
+          key={run.id}
+          run={run}
+          bot={owner}
+          onBack={() => setSelectedRun(null)}
+          onRetried={(resumed) => {
+            setOlderRun(resumed);
+            setDetail((current) =>
+              current
+                ? {
+                    ...current,
+                    runs: current.runs.map((item) => (item.id === resumed.id ? resumed : item)),
+                  }
+                : current,
+            );
+          }}
+        />
       </main>
     );
   return (

@@ -49,10 +49,16 @@ export function useSpaces(workspaceId: string) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  const include = useCallback((conversation: Conversation) => {
+    setSpaces((previous) => [
+      conversation,
+      ...previous.filter((space) => space.id !== conversation.id),
+    ]);
+  }, []);
   async function create(name: string, description: string, botIds: string[]) {
     const space = await conversationService.create(workspaceId, { name, description, botIds });
     setSpaces((previous) => [...previous, space]);
     return space;
   }
-  return { spaces, error, loading, refresh, create };
+  return { spaces, error, loading, refresh, create, include };
 }

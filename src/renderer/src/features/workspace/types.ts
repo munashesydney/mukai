@@ -1,5 +1,5 @@
 export type Section =
-  'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications' | 'telegram';
+  'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications' | 'failed' | 'telegram';
 export type SettingsSection =
   | 'workspace'
   | 'appearance'

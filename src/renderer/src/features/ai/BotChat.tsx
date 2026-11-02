@@ -1,3 +1,4 @@
+import { RetryResponseButton } from './RetryResponseButton';
 import { AIQueueNotice } from './AIQueueNotice';
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
@@ -7,7 +8,6 @@ import {
   Info,
   LoaderCircle,
   MessageCirclePlus,
-  RotateCcw,
   SlidersHorizontal,
   X,
   ListTree,
@@ -282,15 +282,10 @@ export function BotChat({
                     isBotConversation={isBotConversation}
                     busy={state.busy}
                     canRetry={
-                      composerVisible &&
                       message.id === latestAssistant?.id &&
-                      (!isBotConversation ||
-                        state.messages.some(
-                          (turn) =>
-                            turn.requestId === message.requestId &&
-                            turn.role === 'user' &&
-                            !turn.botId,
-                        ))
+                      message.requestId ===
+                        [...state.messages].reverse().find((turn) => turn.role === 'user')
+                          ?.requestId
                     }
                     onReview={openReview}
                     onRetry={retryResponse}
@@ -456,14 +451,7 @@ const MessageRow = memo(function MessageRow({
             <div className="ai-response-status">
               <span>{message.error || 'Response stopped.'}</span>
               {canRetry && (
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  onClick={() => onRetry(message.requestId)}
-                >
-                  <RotateCcw size={13} />
-                  Retry response
-                </button>
+                <RetryResponseButton disabled={busy} onRetry={() => onRetry(message.requestId)} />
               )}
             </div>
           )}

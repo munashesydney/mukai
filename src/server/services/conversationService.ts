@@ -88,6 +88,31 @@ export class ConversationService {
       throw new ApiError(403, 'Bot-authored requests cannot be retried as a user.');
     return this.chats.respond(bot, input, output, id);
   }
+  retry(id: string, messageId: string, output: ChatOutput) {
+    const conversation = this.require(id);
+    if (conversation.kind === 'pursuit_run')
+      throw new ApiError(400, 'Retry pursuit runs through their pursuit.');
+    let message;
+    try {
+      message = this.messages.message(messageId);
+    } catch {
+      throw new ApiError(404, 'Response not found in this conversation.');
+    }
+    if (message.conversationId !== id || message.role !== 'assistant' || !message.botId)
+      throw new ApiError(404, 'Response not found in this conversation.');
+    if (!['failed', 'interrupted', 'stopped'].includes(message.status))
+      throw new ApiError(409, 'Only an unfinished response can be retried.');
+    const bot = this.bots.require(message.botId);
+    if (bot.workspaceId !== conversation.workspaceId || !conversation.botIds.includes(bot.id))
+      throw new ApiError(403, 'The original bot no longer belongs to this conversation.');
+    // This explicit owner action preserves saved bot-authored provenance; /chat still forbids spoofing it.
+    return this.chats.respond(
+      bot,
+      { requestId: message.requestId, text: '', attachmentIds: [] },
+      output,
+      id,
+    );
+  }
   create(workspaceId: string, input: SpaceInput) {
     const available = this.bots.list(workspaceId);
     if (input.botIds.some((id) => !available.some((bot) => bot.id === id)))

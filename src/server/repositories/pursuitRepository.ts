@@ -211,6 +211,15 @@ export class PursuitRepository {
       return this.findRun(runId)!;
     });
   }
+  retry(runId: string) {
+    const run = this.findRun(runId);
+    if (!run) return;
+    const result = this.database.run(
+      "UPDATE pursuit_runs SET status='running',finished_at=NULL,error=NULL WHERE id=? AND status IN ('failed','interrupted','stopped') AND NOT EXISTS (SELECT 1 FROM pursuit_runs other WHERE other.pursuit_id=pursuit_runs.pursuit_id AND other.status='running')",
+      runId,
+    );
+    return result.changes ? this.findRun(runId) : undefined;
+  }
   finish(
     runId: string,
     status: Exclude<PursuitRun['status'], 'running'>,
