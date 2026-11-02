@@ -52,15 +52,12 @@ export const PROVIDER_TIMEOUT_NOTICE =
   'Mukai ended the previous generation at its response time limit before any tool in that generation entered execution or approval. Continue the original request from saved results and commentary; do not repeat successful operations. Use smaller, focused tool calls instead of one very large tool call. The partial generation did not complete its pending work. Respect the latest user instructions, approval requirements, stop requests, and runtime limits. Finish with an accurate final report.';
 
 export const REASONING_ECHO_NOTICE =
-  'Your previous response repeated your reasoning and ended while announcing more work. Continue the original request from saved progress, using available tools when needed. Preserve completed results and do not repeat successful operations. Respect the latest user instructions, stop requests, approval requirements, and runtime limits. If the request is finished or you need user input, give a substantive final answer explaining the result or what is needed; do not end with another continuation announcement.';
+  'you were nudged because you exhibited symptoms of an AI that is about to prematurely stop - please call the stop_generation action in the System tool if you actually wanted to stop. Your final text exactly matched your reasoning. Continue the original request from saved progress, using available tools when needed. Preserve completed results and do not repeat successful operations. Respect the latest user instructions, stop requests, approval requirements, and runtime limits. If you intentionally finished or need user input, call system with action stop_generation; you may supply finalResponse with your final answer or explanation.';
 
-/** Equality alone can be a valid short answer (for example, "42"). */
+/** Ask the model to continue or explicitly confirm an intentional stop for every nonempty echo. */
 export function isPrematureReasoningEcho(text: string, lastReasoning: string | undefined) {
   const answer = text.trim();
-  if (!answer || answer !== lastReasoning?.trim()) return false;
-  return /^(?:continue|continuing|proceed|proceeding)\b|(?:^|[.!?]\s+)(?:let me|let['’]s|i (?:need to|will)|i['’]ll)\s+(?:continue|proceed|check|investigate|look|inspect|review|run|apply|fix|implement|finish|verify|test|read|update)\b/i.test(
-    answer,
-  );
+  return Boolean(answer && answer === lastReasoning?.trim());
 }
 
 export const FINAL_REPLY_NOTICE =

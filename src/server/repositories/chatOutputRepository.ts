@@ -3,6 +3,7 @@ import type { ChatActivity } from '../../shared/ai';
 import type { ChatServerOutput } from '../../shared/chatActivity';
 import type { Database, Row } from '../db/database';
 import type { TerminalSnapshot } from '../../shared/terminal';
+import type { ProcessActivity } from '../../shared/processActivity';
 
 type SavedOutput = Omit<ChatServerOutput, 'status' | 'computer'>;
 function output(row: Row): SavedOutput {
@@ -63,6 +64,42 @@ export class ChatOutputRepository {
       messageId,
       conversationId,
     );
+  }
+  saveProcessActivity(conversationId: string, botId: string, sessions: ProcessActivity[]) {
+    const updates = new Map(sessions.map((session) => [session.id, session]));
+    for (const source of this.sources(conversationId)) {
+      if (source.botId !== botId) continue;
+      let changed = false;
+      for (const activity of source.activities) {
+        if (activity.tool !== 'terminal') continue;
+        let id = activity.processSessionId;
+        if (!id) {
+          try {
+            id = JSON.parse(activity.summary)?.id;
+          } catch {
+            /* Truncated legacy preview. */
+          }
+        }
+        const session = id ? updates.get(id) : undefined;
+        if (!session) continue;
+        const urls = [...new Set([...(activity.serverUrls || []), ...session.serverUrls])];
+        if (
+          activity.processStatus === session.status &&
+          JSON.stringify(activity.serverUrls || []) === JSON.stringify(urls)
+        )
+          continue;
+        activity.processStatus = session.status;
+        activity.serverUrls = urls;
+        changed = true;
+      }
+      if (changed)
+        this.db.run(
+          'UPDATE messages SET activity_json=? WHERE id=? AND conversation_id=?',
+          JSON.stringify(source.activities),
+          source.messageId,
+          conversationId,
+        );
+    }
   }
   list(conversationId: string) {
     return this.db

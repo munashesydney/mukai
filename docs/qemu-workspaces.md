@@ -75,6 +75,8 @@ Text clipboard sharing works while controlling the focused viewer: Ctrl+V sends 
 
 UI artifact previews and downloads support files up to 100 MiB. Guest revision 18 transfers them in 4 MiB chunks, below the bridge frame limit, and preserves actionable file errors. Model-facing reads retain their existing smaller limits. Existing VMs receive this update on their next start; restart the workspace VM after updating Mukai to use large-file previews.
 
+Guest revision 23 batches chat activity refreshes into one compact process-status read per bot, with no full terminal-output transfers. Finished session statuses and discovered server links are saved so they do not need repeated VM reads. Each VM schedules up to 24 requests at once, including at most four background reads, with foreground work taking priority in the bounded waiting queue. Image galleries download at most three previews at a time per app window and cancel queued previews when scrolled out of view. Reads already in progress finish into the gallery cache. Restart the workspace VM after updating Mukai to activate the compact status endpoint.
+
 ## Configure Mukai
 
 For manual setup, set absolute paths in Mukai's environment before launching. Automatic setup does not require these variables. PowerShell example:

@@ -28,6 +28,7 @@ import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
 import { mukaiEnvironmentInstructions } from '../shared/botSystemPrompt';
 import { ArtifactRepository } from './repositories/artifactRepository';
 import { ProviderService } from './services/providerService';
+import { ChatJobRepository } from './repositories/chatJobRepository';
 import { wavFixture, mp4Fixture } from './testMediaFixtures';
 
 function inputBot() {
@@ -78,6 +79,11 @@ let mode:
   | 'reasoning-echo-always'
   | 'reasoning-echo-stop'
   | 'reasoning-echo-answer'
+  | 'reasoning-echo-observation'
+  | 'system-stop'
+  | 'system-stop-empty'
+  | 'system-stop-parallel'
+  | 'system-stop-slow'
   | 'reasoning-echo-stale'
   | 'reasoning-echo-approval'
   | 'memory-failure'
@@ -925,7 +931,7 @@ beforeEach(async () => {
       res.end('data: [DONE]\n\n');
       return;
     }
-    if (mode.startsWith('reasoning-echo-')) {
+    if (mode.startsWith('reasoning-echo-') || mode.startsWith('system-stop')) {
       const send = (delta: unknown, finish_reason: string | null = null) =>
         res.write(
           `data: ${JSON.stringify({ id: 'echo-fixture', model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
@@ -934,7 +940,7 @@ beforeEach(async () => {
         (message: { role: string }) => message.role === 'tool',
       ).length;
       const recovering = JSON.stringify(body.messages).includes(
-        'Your previous response repeated your reasoning',
+        'Your final text exactly matched your reasoning',
       );
       const invoke = (name: string, input: unknown) => {
         send(
@@ -951,9 +957,81 @@ beforeEach(async () => {
           'tool_calls',
         );
       };
-      if (mode === 'reasoning-echo-answer') {
-        send({ reasoning_content: '42' });
-        send({ content: '42' }, 'stop');
+      if (mode.startsWith('system-stop')) {
+        if (completed) send({ content: 'Unexpected extra generation.' }, 'stop');
+        else if (mode === 'system-stop-parallel')
+          send(
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'write-before-stop',
+                  type: 'function',
+                  function: {
+                    name: 'file_operations',
+                    arguments: JSON.stringify({
+                      action: 'write_file',
+                      path: 'once.txt',
+                      content: 'Saved before stopping.',
+                    }),
+                  },
+                },
+                {
+                  index: 1,
+                  id: 'explicit-stop',
+                  type: 'function',
+                  function: {
+                    name: 'system',
+                    arguments: JSON.stringify({
+                      action: 'stop_generation',
+                      finalResponse: 'Finished intentionally.',
+                    }),
+                  },
+                },
+              ],
+            },
+            'tool_calls',
+          );
+        else if (mode === 'system-stop-slow') {
+          send({
+            tool_calls: [
+              {
+                index: 0,
+                id: 'explicit-stop',
+                type: 'function',
+                function: {
+                  name: 'system',
+                  arguments: JSON.stringify({ action: 'stop_generation' }),
+                },
+              },
+            ],
+          });
+          const timer = setTimeout(() => {
+            send({}, 'tool_calls');
+            res.end('data: [DONE]\n\n');
+          }, 200);
+          res.once('close', () => clearTimeout(timer));
+          return;
+        } else
+          invoke('system', {
+            action: 'stop_generation',
+            ...(mode === 'system-stop-empty' ? {} : { finalResponse: 'Finished intentionally.' }),
+          });
+      } else if (mode === 'reasoning-echo-observation') {
+        if (recovering)
+          invoke('system', { action: 'stop_generation', finalResponse: 'The check is complete.' });
+        else {
+          const observation =
+            'The composer modal is STILL open with “Drag photos and videos here / Select from computer” — meaning the';
+          send({ reasoning_content: observation });
+          send({ content: observation }, 'stop');
+        }
+      } else if (mode === 'reasoning-echo-answer') {
+        if (recovering) invoke('system', { action: 'stop_generation' });
+        else {
+          send({ reasoning_content: '42' });
+          send({ content: '42' }, 'stop');
+        }
       } else if (mode === 'reasoning-echo-stop') {
         send({ reasoning_content: 'Continue.' });
         send({ content: 'Continue.' });
@@ -2697,7 +2775,7 @@ describe('Mukai bots and AI API', () => {
     expect(calls).toHaveLength(4);
     expect(calls[2].tools?.length).toBeGreaterThan(0);
     expect(JSON.stringify(calls[2].messages)).toContain(
-      'Your previous response repeated your reasoning',
+      'Your final text exactly matched your reasoning',
     );
     expect(JSON.stringify(calls[2].messages)).toContain('Saved once.');
     const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
@@ -2740,11 +2818,14 @@ describe('Mukai bots and AI API', () => {
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
   });
 
-  it('accepts a legitimate identical short answer without a recovery request', async () => {
+  it('nudges an identical short answer and accepts an explicit stop without another generation', async () => {
     await configure();
     mode = 'reasoning-echo-answer';
     await chat('What is six times seven?');
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1].messages)).toContain(
+      'please call the stop_generation action in the System tool',
+    );
     expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1]).toMatchObject({
       status: 'complete',
       content: '42',
@@ -2797,6 +2878,123 @@ describe('Mukai bots and AI API', () => {
     const logs = readFileSync(join(dir, 'logs', 'errors.log'), 'utf8');
     expect(logs.match(/"event":"chat.reasoning_echo_recovery"/g)).toHaveLength(2);
     expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(0);
+  });
+
+  it('nudges an exact echoed observation without requiring continuation wording', async () => {
+    await configure();
+    mode = 'reasoning-echo-observation';
+    await chat('Check the open composer.');
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1].messages)).toContain(
+      'you were nudged because you exhibited symptoms of an AI that is about to prematurely stop',
+    );
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('complete');
+    expect(reply.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'The check is complete.',
+      final: true,
+    });
+    expect(reply.activity).toMatchObject([
+      { tool: 'system', action: 'stop_generation', status: 'complete' },
+    ]);
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  });
+
+  it('ends the current response through System without another generation or a user approval', async () => {
+    await configure();
+    await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+    mode = 'system-stop';
+    await chat('Finish intentionally.');
+    expect(calls).toHaveLength(1);
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply).toMatchObject({ status: 'complete', content: 'Finished intentionally.' });
+    expect(reply.parts?.at(-1)).toMatchObject({
+      type: 'text',
+      text: 'Finished intentionally.',
+      final: true,
+    });
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  });
+
+  it('keeps stop_generation available when workspace System facts are disabled', async () => {
+    await configure();
+    await request('/tools/assignments', 'PUT', {
+      botId: 'scout',
+      toolId: 'system',
+      enabled: false,
+    });
+    mode = 'system-stop-empty';
+    await chat('Stop here.');
+    expect(calls).toHaveLength(1);
+    const definitions = calls[0].tools as { function: { name: string; parameters: unknown } }[];
+    const definition = definitions.find((item) => item.function.name === 'system');
+    expect(JSON.stringify(definition)).toContain('stop_generation');
+    expect(JSON.stringify(definition?.function.parameters)).not.toContain('list_env_vars');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply).toMatchObject({ status: 'complete', content: 'Generation stopped.' });
+  });
+
+  it('settles and saves operations already in flight before honoring stop_generation', async () => {
+    await configure();
+    project = mkdtempSync(join(tmpdir(), 'mukai-project-'));
+    await request('/workspaces/default', 'PUT', { name: 'Explicit stop', folder: project });
+    mode = 'system-stop-parallel';
+    await chat('Save once.txt and finish.');
+    expect(calls).toHaveLength(1);
+    expect(readFileSync(join(project, 'once.txt'), 'utf8')).toBe('Saved before stopping.');
+    const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
+    expect(reply.status).toBe('complete');
+    expect(reply.activity?.map((item) => item.status)).toEqual(['complete', 'complete']);
+    expect(reply.parts?.at(-1)).toMatchObject({ type: 'text', text: 'Finished intentionally.' });
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  });
+
+  it('restores an acknowledged stop after a checkpoint interruption without generating or replaying tools', async () => {
+    await configure();
+    mode = 'system-stop';
+    const original = ChatJobRepository.prototype.save;
+    let interrupted = false;
+    const checkpoint = vi.spyOn(ChatJobRepository.prototype, 'save').mockImplementation(function (
+      this: ChatJobRepository,
+      id,
+      fingerprint,
+      value,
+    ) {
+      original.call(this, id, fingerprint, value);
+      if (value.stopGeneration && !interrupted) {
+        interrupted = true;
+        throw new Error('Fixture interruption after persisting the stop receipt');
+      }
+    });
+    const sent = await chat('Finish intentionally.');
+    expect(interrupted).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('failed');
+    checkpoint.mockRestore();
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    mode = 'normal';
+    await chat('', sent.requestId);
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1]).toMatchObject({
+      status: 'complete',
+      content: 'Finished intentionally.',
+    });
+    expect(api.store.all('SELECT * FROM chat_jobs')).toHaveLength(0);
+  });
+
+  it('honors user Stop while an explicit model stop call is still streaming', async () => {
+    await configure();
+    mode = 'system-stop-slow';
+    const running = chat('Finish when ready.');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await request('/bots/scout/stop', 'POST');
+    await running;
+    expect(calls).toHaveLength(1);
+    expect((await request<ChatMessage[]>('/bots/scout/messages')).data[1].status).toBe('stopped');
   });
 
   it('returns a failed memory save to the model and still finishes the chat', async () => {
@@ -3250,7 +3448,8 @@ describe('Mukai bots and AI API', () => {
   });
   it('rejects an oversized pinned request clearly instead of silently truncating it', async () => {
     await configure(false, {
-      contextWindowTokens: 28000,
+      // Leave room for built-in control schemas while the long request still exceeds capacity.
+      contextWindowTokens: 32000,
       maxOutputTokens: 1024,
     });
     await chat('Short request fits');

@@ -12,6 +12,12 @@ import {
 } from '../../shared/terminal';
 import { z } from 'zod';
 import { ProcessRedactor } from './processRedactor';
+import { serverUrls } from '../../shared/chatActivity';
+import {
+  PROCESS_ACTIVITY_URL_LIMIT,
+  PROCESS_ACTIVITY_URL_LENGTH,
+  type ProcessActivity,
+} from '../../shared/processActivity';
 
 interface ManagedProcess {
   info: ProcessSession;
@@ -44,6 +50,17 @@ export class ProcessService {
     return [...this.sessions.values()]
       .filter((entry) => sameOwner(entry.info, owner))
       .map((entry) => entry.info);
+  }
+  activity(owner: RuntimeOwner): ProcessActivity[] {
+    return [...this.sessions.values()]
+      .filter((entry) => sameOwner(entry.info, owner))
+      .map((entry) => ({
+        id: entry.info.id,
+        status: entry.info.status,
+        serverUrls: serverUrls(entry.output)
+          .filter((url) => url.length <= PROCESS_ACTIVITY_URL_LENGTH)
+          .slice(0, PROCESS_ACTIVITY_URL_LIMIT),
+      }));
   }
   private require(owner: RuntimeOwner, id: string) {
     const entry = this.sessions.get(id);

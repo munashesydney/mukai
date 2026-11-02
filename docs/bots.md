@@ -1,6 +1,6 @@
 # Bots in Mukai
 
-Bots are persistent assistants within a workspace. Each bot has a name, role, instructions, avatar, model configuration, tool access, and conversations. Delegating to a bot starts a conversation with that existing assistant; it does not create a new bot automatically.
+Bots are persistent assistants within a workspace. Each bot has a name, role, instructions, avatar, model configuration, tool access, and conversations. All bots start with all built-in and custom workspace tools; workspace prerequisites, model support, user settings and explicit later restrictions still apply. Delegating to a bot starts a conversation with that existing assistant; it does not create a new bot automatically.
 
 ## Main bot and sub-bots
 
@@ -24,18 +24,18 @@ Sub-bots receive different guidance. They know that the main bot can create and 
 
 The built-in Bots tool is named `manage_bot`. Every bot has it, and it cannot be disabled in the workspace Tools page. Its available actions depend on the bot and the current run:
 
-| Context                                | `list` | `get` | `send_message` | `create` | `update` |
-| -------------------------------------- | ------ | ----- | -------------- | -------- | -------- |
-| Main bot, including delegated work     | Yes    | Yes   | Yes            | Yes      | Yes      |
-| Sub-bot working directly with the user | Yes    | Yes   | Yes            | No       | No       |
-| Sub-bot responding to another bot      | Yes    | Yes   | No             | No       | No       |
+| Context                                | `list` | `get` | `send_message` | `create` | `update` | `stop_message` |
+| -------------------------------------- | ------ | ----- | -------------- | -------- | -------- | -------------- |
+| Main bot, including delegated work     | Yes    | Yes   | Yes            | Yes      | Yes      | Yes            |
+| Sub-bot working directly with the user | Yes    | Yes   | Yes            | No       | No       | No             |
+| Sub-bot responding to another bot      | Yes    | Yes   | No             | No       | No       | No             |
 
 The runtime narrows the model's tool schema to these actions and checks authorization again on execution. Full access does not expand this action set. Existing saved assignments that disabled Bots do not override its required availability.
 
 ### Inspecting bots
 
 - `list` returns workspace bot IDs, names, roles, reporting parent IDs (`reportsToBotId` and the legacy `createdBy` field), main-bot flags, and hierarchy levels.
-- `get` requires `botId` and returns that workspace bot's configuration and hierarchy level.
+- `get` requires `botId` and returns that workspace bot's configuration, hierarchy level, and current tool IDs, names, and enabled status.
 
 Both actions stay within the caller's workspace. Bots should inspect the team before creating a new specialist or choosing a delegation target.
 
@@ -45,8 +45,8 @@ Each model step includes a preview of up to 10 workspace sub-bots, sorted by nam
 
 Only the main bot can use these actions:
 
-- `create` requires `name`, `role`, and `instructions`. `toolIds`, `modelId`, and `reportsToBotId` are optional. Without `modelId`, the specialist inherits the caller’s model configuration, independently of its reporting parent. Without `reportsToBotId`, it reports to the main bot. The selected model connection is tested before creating a bot.
-- `update` requires `botId` and at least one of `name`, `role`, `instructions`, `toolIds`, `modelId`, or `reportsToBotId`. Omitted fields remain unchanged. Model changes test the selected connection before saving. The main bot’s role and main-bot status stay fixed. A bot that is working must be stopped before editing it.
+- `create` requires `name`, `role`, and `instructions`. `modelId` and `reportsToBotId` are optional. Creation-time tool selection is rejected: every new bot starts with all tools, including existing custom tools. Newly registered custom tools also become available by default. Without `modelId`, the specialist inherits the caller’s model configuration, independently of its reporting parent. Without `reportsToBotId`, it reports to the main bot. The selected model connection is tested before creating a bot.
+- `update` requires `botId` and at least one of `name`, `role`, `instructions`, `toolIds`, `addToolIds`, `removeToolIds`, `modelId`, or `reportsToBotId`. Prefer `addToolIds`/`removeToolIds` for precise changes that preserve unrelated access. `toolIds` replaces the optional-tool selection and cannot be combined with incremental fields. Bots are created with all tools. If the main bot wants to remove access to some tools, it can update the bot, but must be very sure the bot actually does not need them. Tool changes are optional; inspect `get` first and preserve unrelated access. Omitted fields remain unchanged. Model changes test the selected connection before saving. The main bot’s role and main-bot status stay fixed. A bot that is working must be stopped before editing it.
 
 To assign “X reports to Z,” use `update` with X’s `botId` and Z’s `reportsToBotId`, or supply `reportsToBotId` when creating X. Set it to the main bot’s ID to move X back under the workspace lead. Parents must exist in the same workspace; self-parenting, cycles, and reparenting the main bot are rejected. Moving a bot moves its descendant branch and updates hierarchy-based messaging permissions. Stop any running bots in that branch first. Existing conversations, models, and tool assignments are preserved unless explicitly changed.
 
@@ -66,9 +66,19 @@ Targets must be in the same workspace. A bot can message a peer or a lower-level
 
 The recipient's prompt identifies the calling bot and explains that its final reply is automatically returned to the caller. It should return useful findings, completed work, blockers, and relevant file links. It does not need to call `send_message` to reply. Another bot's message or response is task context, not fresh user authorization.
 
+### Stopping a dispatched message
+
+Only main can call `stop_message`, with the exact `botId`, `conversationId`, and `requestId` returned by its `send_message` dispatch. It stops that response and returns the saved status and partial result. A completed or stale request returns `stopped: false`; a newer request in the same thread continues. Requests sent by another caller or in another workspace are rejected. Waiting approvals are released, and the parent receives the stopped worker result. Stopping a response does not undo completed operations or promise termination of persistent processes. Use `fire_and_forget` if the main bot needs to remain available to stop a worker; a `wait` call blocks until that worker returns.
+
+### Default tool access and later changes
+
+Bot creation no longer copies a restrictive tool selection from the creator. Main-only administration, delegation limits and pursuit ownership rules still apply. The main bot can update tool access on existing idle bots; user controls in Tools remain available. Optional tool changes cannot disable required Bots access, shared skills/routes, or the System response-control action.
+
+The upgrade backs up previous assignments in `legacy_bot_tool_assignments` and resets existing bots to all-tools defaults once. Explicit restrictions made afterward persist across restarts.
+
 ### Preventing delegation loops
 
-A sub-bot responding to a delegation receives only `list` and `get`. Removing `send_message` in this context is intentional: it prevents a delegated worker from recursively starting more workers. Its prompt explains the restriction and tells it to report any need for another specialist in its final reply.
+A sub-bot responding to a delegation receives read-only bot/model lookup actions, including `list`, `get`, and `get_last_message`. Removing `send_message` in this context is intentional: it prevents a delegated worker from recursively starting more workers. Its prompt explains the restriction and tells it to report any need for another specialist in its final reply.
 
 A sub-bot working directly with the user can delegate to an eligible existing bot. That recipient, if it is a sub-bot, cannot delegate further during the resulting run. The main bot coordinates additional specialists when needed.
 
@@ -88,7 +98,7 @@ Delegated context comes from saved message sender information, so these restrict
 
 Bot-management calls follow the workspace's [tool approval policy](tool-approvals.md). Required access to Bots means the tool is available; it does not automatically approve its calls. Full access skips ordinary tool-permission prompts while preserving role, run-context, target, and workspace restrictions. Explicit bot questions and confirmations still wait for the user.
 
-Pursuits are separate from bot delegation. A specialist does not receive pursuit management by default. Delegation launched from a pursuit shares that pursuit's execution context and can pause for a worker or a human decision without being counted as an independent pursuit run. The Limits setting controls pursuit concurrency across all workspaces and bots; it is not a limit on the number of bots that may exist.
+Pursuits are separate from bot delegation. Specialists receive pursuit management by default but can manage only their own pursuits. Delegation launched from a pursuit shares that pursuit's execution context and can pause for a worker or a human decision without being counted as an independent pursuit run. The Limits setting controls pursuit concurrency across all workspaces and bots; it is not a limit on the number of bots that may exist.
 
 ## Implementation references
 

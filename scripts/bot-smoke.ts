@@ -2053,7 +2053,7 @@ async function main() {
       supportsImages: null,
       contextWindowTokens: null,
     };
-    const architect = await api.botManagement.create(main, specialistInput, ['manage_bot']);
+    const architect = await api.botManagement.create(main, specialistInput);
     const engineer = await api.botManagement.create(main, {
       ...specialistInput,
       name: 'Nova',

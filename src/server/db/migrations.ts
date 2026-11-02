@@ -463,6 +463,13 @@ export const migrations = [
     skill_id TEXT REFERENCES skills(id) ON DELETE SET NULL,
     version TEXT NOT NULL,
     PRIMARY KEY(workspace_id,name));`,
+  // All bots now start with all workspace tools. Preserve old selections for recovery.
+  `CREATE TABLE legacy_bot_tool_assignments (
+    bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    tool_id TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+    PRIMARY KEY(bot_id,tool_id));
+   INSERT INTO legacy_bot_tool_assignments SELECT * FROM bot_tool_assignments;
+   DELETE FROM bot_tool_assignments;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

@@ -156,6 +156,20 @@ describe('guest services', () => {
     )) as { id: string; output: string };
     expect(result.output).toContain('guest-output');
     expect(await computer.request('process', { action: 'list' }, owner, signal())).toHaveLength(1);
+    const compact = await computer.request('process', { action: 'activity' }, owner, signal());
+    expect(compact).toEqual([{ id: result.id, status: 'exited', serverUrls: [] }]);
+    expect(
+      await computer.request(
+        'process',
+        { action: 'activity' },
+        { ...owner, conversationId: 'other' },
+        signal(),
+      ),
+    ).toEqual([]);
+    await expect(
+      computer.request('process', { action: 'activity', sessionId: result.id }, owner, signal()),
+    ).rejects.toThrow();
+
     expect(
       await computer.request('process', { action: 'list' }, { ...owner, botId: 'other' }, signal()),
     ).toEqual([]);
@@ -383,6 +397,26 @@ describe('QEMU lifecycle over a real loopback bridge', () => {
     cleanup.push(() => vm.shutdown());
     return { vm, launch, image };
   }
+  it('queues a burst above the guest request limit instead of rejecting previews or tools', async () => {
+    const { vm } = await fixture();
+    await vm.start();
+    const results = await Promise.all(
+      Array.from({ length: 80 }, (_, index) =>
+        vm.request(
+          'terminal',
+          { command: `echo-${index}` },
+          owner,
+          signal(),
+          undefined,
+          index < 40 ? { priority: 'background' } : undefined,
+        ),
+      ),
+    );
+    expect(results).toHaveLength(80);
+    results.forEach((result, index) =>
+      expect(result).toMatchObject({ input: { command: `echo-${index}` } }),
+    );
+  });
   it.each([18, 19, 20])(
     'upgrades revision %i before exposing route credentials and skips repeat upgrades',
     async (revision) => {

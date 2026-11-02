@@ -20,14 +20,16 @@ export function ToolImagePreview({
   const [error, setError] = useState('');
   const name = artifactId ? 'Screenshot' : activity.path.split(/[\\/]/).at(-1) || 'Image';
   useEffect(() => {
+    const controller = new AbortController();
     let disposed = false,
       objectUrl = '';
     const load = artifactId
-      ? artifactService.blob(artifactId)
+      ? artifactService.blob(artifactId, controller.signal)
       : artifactService.activityImage(
           message.conversationId || 'bot-' + message.botId,
           message.id,
           activity.id,
+          controller.signal,
         );
     void load
       .then((blob) => {
@@ -40,6 +42,7 @@ export function ToolImagePreview({
       });
     return () => {
       disposed = true;
+      controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [artifactId, activity.id, message.id, message.conversationId, message.botId]);

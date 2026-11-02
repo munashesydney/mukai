@@ -112,18 +112,18 @@ export class ConversationArtifactService {
     const { bytes } = await this.artifacts.read(metadata.id, signal, maxBytes);
     return { metadata: this.metadata(workspaceId, input), bytes };
   }
-  async image(workspaceId: string, input: ArtifactReference) {
+  async image(workspaceId: string, input: ArtifactReference, signal = AbortSignal.timeout(45000)) {
     const result = await executeImage(
       { action: 'view', ...input },
       {
         owner: { workspaceId, botId: 'preview', conversationId: 'preview' },
         folder: null,
         vision: true,
-        signal: AbortSignal.timeout(45000),
+        signal,
         budget: { remaining: 1 },
         onActivity: () => {},
         readImage: async (reference) => {
-          const source = await this.bytes(workspaceId, reference);
+          const source = await this.bytes(workspaceId, reference, signal);
           return { bytes: source.bytes, name: source.metadata.name };
         },
       },

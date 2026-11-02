@@ -46,19 +46,13 @@ afterEach(async () => {
 it('discovers late process output, isolates conversations, and retains links when the runtime ends', async () => {
   const sessionId = randomUUID();
   let log = '';
-  const read = vi.spyOn(api.processes, 'read').mockImplementation((owner, id) => ({
-    ...owner,
-    id,
-    command: '',
-    cwd: '',
-    pid: 1,
-    status: 'running',
-    exitCode: null,
-    createdAt: '',
-    output: log,
-    nextOffset: log.length,
-    truncated: false,
-  }));
+  const read = vi.spyOn(api.processes, 'activity').mockImplementation(() => [
+    {
+      id: sessionId,
+      status: 'running',
+      serverUrls: log ? ['http://localhost:3001/'] : [],
+    },
+  ]);
   api.store.run(
     'UPDATE messages SET activity_json=? WHERE id=?',
     JSON.stringify([
@@ -86,10 +80,7 @@ it('discovers late process output, isolates conversations, and retains links whe
     sessionId,
     computer: 'local',
   });
-  expect(read).toHaveBeenCalledWith(
-    { workspaceId: 'default', botId: 'scout', conversationId },
-    sessionId,
-  );
+  expect(read).toHaveBeenCalledWith({ workspaceId: 'default', botId: 'scout', conversationId });
   const other = new ConversationRepository(api.store).createPrivate('default', 'scout');
   expect((await request(`/conversations/${other.id}/outputs`)).data).toEqual([]);
   expect(
@@ -118,7 +109,7 @@ it('discovers late process output, isolates conversations, and retains links whe
   ]);
 });
 it('records URLs beyond the truncated tool preview and validates structured output addresses', async () => {
-  vi.spyOn(api.processes, 'read').mockImplementation(() => {
+  vi.spyOn(api.processes, 'activity').mockImplementation(() => {
     throw new Error('Runtime ended');
   });
   await executeRuntime(
@@ -209,4 +200,125 @@ it('opens VM outputs in the guest and never starts a stopped VM while refreshing
     expect.objectContaining({ conversationId }),
     expect.any(AbortSignal),
   );
+});
+
+it('refreshes a thousand historical VM sessions with one compact request and retains finished results', async () => {
+  api.store.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+  vi.spyOn(api.computers, 'status').mockReturnValue({ kind: 'qemu', state: 'running' });
+  const ids = Array.from({ length: 1000 }, () => randomUUID());
+  api.store.run(
+    'UPDATE messages SET activity_json=? WHERE id=?',
+    JSON.stringify(
+      ids.map((id, index) => ({
+        id: `run-${index}`,
+        tool: 'terminal',
+        action: 'run',
+        status: 'complete',
+        path: '',
+        summary: '',
+        processSessionId: id,
+      })),
+    ),
+    messageId,
+  );
+  const compact = vi.fn().mockResolvedValue([
+    { id: ids[0], status: 'running', serverUrls: ['http://localhost:3000/'] },
+    { id: ids[1], status: 'exited', serverUrls: ['http://localhost:3001/'] },
+  ]);
+  vi.spyOn(api.computers, 'guest').mockReturnValue({ requestRunning: compact } as never);
+  const first = await request(`/conversations/${conversationId}/outputs`);
+  expect(first.data).toMatchObject([
+    { sessionId: ids[0], status: 'running', url: 'http://localhost:3000/' },
+    { sessionId: ids[1], status: 'exited', url: 'http://localhost:3001/' },
+  ]);
+  expect(compact).toHaveBeenCalledTimes(1);
+  expect(compact).toHaveBeenCalledWith(
+    'process',
+    { action: 'activity' },
+    { workspaceId: 'default', botId: 'scout', conversationId },
+    expect.any(AbortSignal),
+    undefined,
+    { priority: 'background' },
+  );
+  compact.mockResolvedValue([{ id: ids[0], status: 'running', serverUrls: [] }]);
+  const next = await request(`/conversations/${conversationId}/outputs`);
+  expect(next.data).toMatchObject([{ status: 'running' }, { status: 'exited' }]);
+  expect(compact).toHaveBeenCalledTimes(2);
+  const other = new ConversationRepository(api.store).createPrivate('default', 'scout');
+  expect((await request(`/conversations/${other.id}/outputs`)).data).toEqual([]);
+  expect(compact).toHaveBeenCalledTimes(2);
+});
+
+it('does not contact the VM for known finished sessions, including legacy saved output', async () => {
+  api.store.run("UPDATE workspaces SET computer='qemu' WHERE id='default'");
+  vi.spyOn(api.computers, 'status').mockReturnValue({ kind: 'qemu', state: 'running' });
+  const guest = vi.spyOn(api.computers, 'guest');
+  api.store.run(
+    'UPDATE messages SET activity_json=? WHERE id=?',
+    JSON.stringify([
+      {
+        id: 'old',
+        tool: 'terminal',
+        action: 'run',
+        status: 'complete',
+        path: '',
+        summary: JSON.stringify({
+          id: randomUUID(),
+          status: 'exited',
+          output: 'http://localhost:3000/',
+        }),
+      },
+      {
+        id: 'new',
+        tool: 'terminal',
+        action: 'run',
+        status: 'complete',
+        path: '',
+        summary: '',
+        processSessionId: randomUUID(),
+        processStatus: 'killed',
+        serverUrls: ['http://localhost:3001/'],
+      },
+    ]),
+    messageId,
+  );
+  for (let index = 0; index < 3; index++) {
+    expect((await request(`/conversations/${conversationId}/outputs`)).data).toMatchObject([
+      { status: 'exited', url: 'http://localhost:3000/' },
+      { status: 'killed', url: 'http://localhost:3001/' },
+    ]);
+  }
+  expect(guest).not.toHaveBeenCalled();
+});
+
+it('stops polling after a live session exits and discovers its final URLs', async () => {
+  const id = randomUUID();
+  api.store.run(
+    'UPDATE messages SET activity_json=? WHERE id=?',
+    JSON.stringify([
+      {
+        id: 'run',
+        tool: 'terminal',
+        action: 'run',
+        status: 'complete',
+        path: '',
+        summary: '',
+        processSessionId: id,
+      },
+    ]),
+    messageId,
+  );
+  const activity = vi
+    .spyOn(api.processes, 'activity')
+    .mockReturnValue([{ id, status: 'running', serverUrls: [] }]);
+  expect((await request(`/conversations/${conversationId}/outputs`)).data).toEqual([]);
+  activity.mockReturnValue([{ id, status: 'exited', serverUrls: ['http://localhost:4000/'] }]);
+  expect((await request(`/conversations/${conversationId}/outputs`)).data).toMatchObject([
+    { status: 'exited', url: 'http://localhost:4000/' },
+  ]);
+  activity.mockClear();
+  expect((await request(`/conversations/${conversationId}/outputs`)).data).toMatchObject([
+    { status: 'exited' },
+  ]);
+  expect(activity).not.toHaveBeenCalled();
 });

@@ -27,11 +27,13 @@ import {
   type Computer,
   type ComputerMethod,
   type ComputerHelper,
+  type ComputerRequestOptions,
   helperRequest,
   guestResponse,
   decodeGuestError,
 } from './protocol';
 import { answerHelper } from './helpers';
+import { RequestScheduler } from '../../shared/requestScheduler';
 import { upgradeGuest } from './upgradeGuest';
 import { qemuControl } from './qemuControl';
 import { guestHealthSchema, type GuestHealth } from './guestHealth';
@@ -176,6 +178,7 @@ export class QemuComputer implements Computer {
   private starting?: Promise<void>;
   private stopping?: Promise<void>;
   private pending = new Map<string, Pending>();
+  private requests = new RequestScheduler();
   private closeConnection?: () => void;
   private exited?: Promise<void>;
   private log = '';
@@ -1017,10 +1020,11 @@ export class QemuComputer implements Computer {
     owner: RuntimeOwner,
     signal: AbortSignal,
     helper?: ComputerHelper,
+    options?: ComputerRequestOptions,
   ) {
     if (this.starting || this.maintenance)
       return Promise.reject(new Error('Workspace VM is starting or updating; retry when ready.'));
-    return this.exchange(method, input, owner, signal, helper);
+    return this.exchange(method, input, owner, signal, helper, options);
   }
   async request(
     method: ComputerMethod,
@@ -1028,6 +1032,7 @@ export class QemuComputer implements Computer {
     owner: RuntimeOwner,
     signal: AbortSignal,
     helper?: ComputerHelper,
+    options?: ComputerRequestOptions,
   ) {
     signal.throwIfAborted();
     // Boot is shared across callers; cancelling a caller must not tear down peers.
@@ -1045,9 +1050,23 @@ export class QemuComputer implements Computer {
       signal.removeEventListener('abort', abortStart);
     }
     signal.throwIfAborted();
-    return this.exchange(method, input, owner, signal, helper);
+    return this.exchange(method, input, owner, signal, helper, options);
   }
   private async exchange(
+    method: ComputerMethod,
+    input: unknown,
+    owner: RuntimeOwner,
+    signal: AbortSignal,
+    helper?: ComputerHelper,
+    options?: ComputerRequestOptions,
+  ) {
+    return this.requests.run(
+      () => this.exchangeNow(method, input, owner, signal, helper),
+      signal,
+      options?.priority,
+    );
+  }
+  private async exchangeNow(
     method: ComputerMethod,
     input: unknown,
     owner: RuntimeOwner,
@@ -1100,6 +1119,7 @@ export class QemuComputer implements Computer {
     });
   }
   private failPending(error: Error) {
+    this.requests.clear(error);
     for (const pending of this.pending.values()) {
       pending.cleanup();
       pending.reject(error);

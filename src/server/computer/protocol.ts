@@ -3,8 +3,8 @@ import type { RuntimeOwner } from '../../shared/runtime';
 import { ApiError } from '../config';
 
 export const PROTOCOL_VERSION = 1;
-// Revision 22 provisions output audio and the authenticated capture service.
-export const GUEST_REVISION = 22;
+// Revision 23 adds compact process activity reads for chat refreshes.
+export const GUEST_REVISION = 23;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',
@@ -45,6 +45,9 @@ export function decodeGuestError(reply: { error?: string; errorStatus?: number }
   return reply.errorStatus ? new ApiError(reply.errorStatus, message) : new Error(message);
 }
 export type ComputerHelper = (action: string, args: unknown[]) => Promise<unknown>;
+export interface ComputerRequestOptions {
+  priority?: 'foreground' | 'background';
+}
 export const helperRequest = z.object({
   requestId: z.string().uuid(),
   rpcId: z.string().uuid(),
@@ -66,6 +69,7 @@ export interface Computer {
     owner: RuntimeOwner,
     signal: AbortSignal,
     helper?: ComputerHelper,
+    options?: ComputerRequestOptions,
   ): Promise<unknown>;
 }
 

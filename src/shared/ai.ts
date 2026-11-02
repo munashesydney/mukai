@@ -140,6 +140,7 @@ export interface ChatActivity {
   attachmentId?: string;
   artifactId?: string;
   processSessionId?: string;
+  processStatus?: TerminalSnapshot['status'];
   terminal?: TerminalSnapshot;
   serverUrls?: string[];
 }

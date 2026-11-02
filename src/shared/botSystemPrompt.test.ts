@@ -216,3 +216,14 @@ it('builds explicit runtime snapshots with fresh time and cleared notices', () =
   expect(cleared).not.toContain('Reassess.');
   expect(cleared).not.toContain('Tools are now disabled');
 });
+
+it('describes automatic tool access, careful main-only changes, and scoped worker cancellation', () => {
+  expect(v2).toContain('all workspace tools by default');
+  expect(mukaiMainBotInstructions).toContain('Bots are created with all tools');
+  expect(mukaiMainBotInstructions).toContain('addToolIds/removeToolIds');
+  expect(mukaiMainBotInstructions).toContain('be very sure the bot actually does not need them');
+  expect(mukaiMainBotInstructions).toContain('Tool changes are optional');
+  expect(mukaiMainBotInstructions).toContain('stop_message');
+  expect(mukaiMainBotInstructions).toContain('botId/conversationId/requestId');
+  expect(mukaiMainBotInstructions).not.toContain('Grant needed tools only');
+});

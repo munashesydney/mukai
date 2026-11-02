@@ -726,17 +726,29 @@ export function createRoutes({
             )
           )
             throw new ApiError(404, 'Viewed image not found in this conversation.');
-          const bytes =
-            activity.attachmentId || activity.artifactId
-              ? await conversationArtifacts.image(conversation.workspaceId, {
-                  attachmentId: activity.attachmentId,
-                  artifactId: activity.artifactId,
-                })
-              : await artifacts.previewImage(message.botId, id, activity.path);
-          response.setHeader('Content-Type', 'image/png');
-          response.setHeader('X-Content-Type-Options', 'nosniff');
-          response.setHeader('Cache-Control', 'no-store');
-          response.writeHead(200).end(bytes);
+          const controller = new AbortController();
+          const cancel = () => controller.abort();
+          response.once('close', cancel);
+          const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]);
+          try {
+            const bytes =
+              activity.attachmentId || activity.artifactId
+                ? await conversationArtifacts.image(
+                    conversation.workspaceId,
+                    {
+                      attachmentId: activity.attachmentId,
+                      artifactId: activity.artifactId,
+                    },
+                    signal,
+                  )
+                : await artifacts.previewImage(message.botId, id, activity.path, signal);
+            response.setHeader('Content-Type', 'image/png');
+            response.setHeader('X-Content-Type-Options', 'nosniff');
+            response.setHeader('Cache-Control', 'no-store');
+            response.writeHead(200).end(bytes);
+          } finally {
+            response.off('close', cancel);
+          }
           return;
         }
         if (action === 'open-output' && method === 'POST') {

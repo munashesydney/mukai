@@ -39,6 +39,7 @@ let mode:
   | 'revoke'
   | 'delegate'
   | 'delegate-slow'
+  | 'delegate-stop'
   | 'delegate-many'
   | 'delegate-fail'
   | 'delegate-approval'
@@ -203,7 +204,7 @@ beforeEach(async () => {
       ?.content?.startsWith('[Mukai runtime continuation');
     if (mode === 'slow') return;
     if (
-      (mode === 'delegate-slow' || mode === 'delegate-many' || mode === 'delegate-fail') &&
+      ['delegate-slow', 'delegate-stop', 'delegate-many', 'delegate-fail'].includes(mode) &&
       child
     ) {
       heldChildren.push((text) => {
@@ -422,6 +423,34 @@ beforeEach(async () => {
       });
       send({}, 'tool_calls');
     } else if (
+      mode === 'delegate-stop' &&
+      !child &&
+      !call.messages.some((item) => item.tool_call_id === 'stop-worker')
+    ) {
+      const dispatch = JSON.parse(
+        call.messages.find((item) => item.tool_call_id === 'send-message-call')!.content,
+      ).result;
+      send({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'stop-worker',
+            type: 'function',
+            function: {
+              name: 'manage_bot',
+              arguments: JSON.stringify({
+                action: 'stop_message',
+                botId: dispatch.botId,
+                conversationId: dispatch.conversationId,
+                requestId: dispatch.requestId,
+              }),
+            },
+          },
+        ],
+      });
+      send({}, 'tool_calls');
+    } else if (
       mode === 'delegate-fail' &&
       !child &&
       call.messages.some((item) => item.role === 'tool')
@@ -517,7 +546,7 @@ describe('Bot architecture', () => {
   it('creates reporting branches through the tool and reparents existing bots without losing their configuration or history', async () => {
     const main = await bot();
     await provider();
-    const manager = await api.botManagement.create(main, input('Manager'), []);
+    const manager = await api.botManagement.create(main, input('Manager'));
     const alternate = await bot('Alternate');
     const context = {
       bot: main,
@@ -532,7 +561,6 @@ describe('Bot architecture', () => {
         role: 'Software engineer',
         instructions: 'Build and verify features.',
         reportsToBotId: manager.id,
-        toolIds: ['terminal'],
       }),
       context,
       randomUUID(),
@@ -543,7 +571,7 @@ describe('Bot architecture', () => {
     });
     const engineer = (await request<Bot[]>('/bots')).data.find((bot) => bot.name === 'Engineer')!;
     expect(api.access.allowed(engineer, 'terminal')).toBe(true);
-    expect(api.access.allowed(manager, 'terminal')).toBe(false);
+    expect(api.access.allowed(manager, 'terminal')).toBe(true);
     const leaf = await api.botManagement.create(main, {
       ...input('Junior'),
       reportsToBotId: engineer.id,
@@ -915,7 +943,7 @@ describe('Bot architecture', () => {
     await chat(main);
     expect(calls.at(-1)!.tools.map((item) => item.function.name)).not.toContain('web_search');
     const denied = await api.botManagement.create(main, { ...input('Nova'), role: 'Researcher' });
-    expect(api.access.allowed(denied, 'web_search')).toBe(false);
+    expect(api.access.allowed(denied, 'web_search')).toBe(true);
   });
   it('requires roles in the API and AI tool, keeps the main role fixed, and supplies names/roles in prompts', async () => {
     for (const role of [undefined, '', '  ']) {
@@ -1309,7 +1337,7 @@ describe('Bot architecture', () => {
   it('leaves all bot settings and assignments intact when a model update fails', async () => {
     const main = await bot();
     await modelProvider('Models', '/models');
-    const child = await api.botManagement.create(main, input('Ada'), ['browser']);
+    const child = await api.botManagement.create(main, input('Ada'));
     const before = api.botManagement.get(main, child.id);
     const assignments = api.access.list('default');
     const context = {
@@ -1584,7 +1612,7 @@ describe('Bot architecture', () => {
         'register_custom_route',
       ]),
     );
-    expect(names(1)).not.toContain('manage_pursuit');
+    expect(names(1)).toContain('manage_pursuit');
     expect(names(1)).toContain('manage_bot');
     expect(
       calls[0].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
@@ -1599,6 +1627,7 @@ describe('Bot architecture', () => {
       'get_model',
       'send_message',
       'get_last_message',
+      'stop_message',
     ]);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
@@ -1723,13 +1752,82 @@ describe('Bot architecture', () => {
       enabled: false,
     });
   });
-  it('accepts process as the terminal assignment alias when creating children and changing access', async () => {
+  it('gives new and existing bots custom tools regardless of creation order and supports precise main-only updates', async () => {
     const main = await bot();
-    const child = await api.botManagement.create(main, input('VM helper'), ['terminal', 'process']);
+    await provider();
+    mkdirSync(join(root, 'project'));
+    await request('/workspaces/default', 'PUT', {
+      name: 'Shared tools',
+      folder: join(root, 'project'),
+    });
+    const register = async (name: string) => {
+      writeFileSync(
+        join(root, 'project', name + '.ts'),
+        `export default {name:'${name}',description:'Shared helper',inputSchema:{type:'object',properties:{}},execute:()=>({ok:true})};`,
+      );
+      const result = await api.capabilities.manage('default', main.id, 'tool', {
+        operation: 'register',
+        modulePath: name + '.ts',
+        permissionMode: 'auto_approve',
+      });
+      return 'custom:' + (result as { id: string }).id;
+    };
+    const before = await register('before');
+    const child = await api.botManagement.create(main, input('Ada'));
+    const after = await register('after');
+    for (const id of [before, after, 'browser', 'terminal', 'manage_pursuit'])
+      expect(api.access.allowed(child, id)).toBe(true);
+    expect(api.store.all('SELECT * FROM bot_tool_assignments WHERE bot_id=?', child.id)).toEqual(
+      [],
+    );
+    await api.botManagement.update(main, child.id, { removeToolIds: ['browser', before] });
+    expect(api.access.allowed(child, 'browser')).toBe(false);
+    expect(api.access.allowed(child, before)).toBe(false);
+    expect(api.access.allowed(child, after)).toBe(true);
+    expect(api.access.allowed(child, 'terminal')).toBe(true);
+    await api.botManagement.update(main, child.id, { addToolIds: ['browser'] });
+    expect(api.access.allowed(child, 'browser')).toBe(true);
+    expect(api.access.allowed(child, before)).toBe(false);
+    const described = api.botManagement.describe(api.botManagement.get(main, child.id));
+    expect(described.tools).toContainEqual({ id: before, name: 'before', enabled: false });
+    expect(described.tools).toContainEqual({ id: after, name: 'after', enabled: true });
+    await expect(
+      api.botManagement.update(child, main.id, { removeToolIds: ['terminal'] }),
+    ).rejects.toThrow('Only the workspace main bot');
+    await expect(
+      api.botManagement.update(main, child.id, {
+        name: 'Must not save',
+        removeToolIds: ['manage_bot'],
+      }),
+    ).rejects.toThrow('Bots access');
+    await expect(
+      api.botManagement.update(main, child.id, {
+        addToolIds: ['browser'],
+        removeToolIds: ['browser'],
+      }),
+    ).rejects.toThrow('both');
+    expect(api.botManagement.get(main, child.id).name).toBe('Ada');
+    expect(api.access.allowed(child, 'browser')).toBe(true);
+    expect(
+      botManagementDefinition.inputSchema.safeParse({
+        action: 'create',
+        name: 'Invalid',
+        role: 'Helper',
+        instructions: 'Help',
+        toolIds: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('creates bots with all tools and accepts process as the terminal assignment alias on updates', async () => {
+    const main = await bot();
+    const child = await api.botManagement.create(main, input('VM helper'));
     expect(api.access.allowed(child, 'terminal')).toBe(true);
     expect(api.access.allowed(child, 'process')).toBe(true);
+    expect(api.access.allowed(child, 'browser')).toBe(true);
+    await api.botManagement.update(main, child.id, { toolIds: ['terminal', 'process'] });
     expect(api.access.allowed(child, 'browser')).toBe(false);
-    const aliasOnly = await api.botManagement.create(main, input('Process helper'), ['process']);
+    const aliasOnly = await api.botManagement.create(main, input('Process helper'));
     expect(api.access.allowed(aliasOnly, 'terminal')).toBe(true);
     expect(api.access.allowed(aliasOnly, 'process')).toBe(true);
     expect(api.access.set('default', child.id, 'process', false)).toEqual({
@@ -1740,11 +1838,11 @@ describe('Bot architecture', () => {
     expect(api.access.allowed(child, 'terminal')).toBe(false);
     expect(api.access.allowed(child, 'process')).toBe(false);
     api.access.set('default', main.id, 'terminal', false);
-    await expect(api.botManagement.create(main, input('Denied'), ['process'])).rejects.toThrow(
-      'cannot grant',
-    );
     await expect(
-      api.botManagement.create(main, input('Invalid'), ['unknown-tool']),
+      api.botManagement.update(main, child.id, { addToolIds: ['process'] }),
+    ).rejects.toThrow('cannot grant');
+    await expect(
+      api.botManagement.update(main, child.id, { addToolIds: ['unknown-tool'] }),
     ).rejects.toThrow('Choose a workspace');
   });
   it('reserves creation and updates for the main bot, bounds grants, and requires Bots access', async () => {
@@ -1758,16 +1856,15 @@ describe('Bot architecture', () => {
       'Only the workspace main bot',
     );
     api.access.set('default', main.id, 'terminal', false);
-    await expect(api.botManagement.create(main, input('Denied'), ['terminal'])).rejects.toThrow(
-      'cannot grant',
-    );
+    await expect(
+      api.botManagement.update(main, peer.id, { addToolIds: ['terminal'] }),
+    ).rejects.toThrow('cannot grant');
     const result = await executeBotManagement(
       {
         action: 'create',
         name: 'Researcher',
         role: 'Researcher',
         instructions: 'Research the task.',
-        toolIds: ['manage_bot', 'browser'],
       },
       {
         bot: main,
@@ -1781,7 +1878,7 @@ describe('Bot architecture', () => {
     const child = result.result as Bot;
     expect(child).toMatchObject({ createdBy: main.id, isMain: false });
     expect(api.access.allowed(child, 'manage_bot')).toBe(true);
-    expect(api.access.allowed(child, 'memory')).toBe(false);
+    expect(api.access.allowed(child, 'memory')).toBe(true);
     await expect(api.botManagement.create(child, input('Helper'))).rejects.toThrow(
       'Only the workspace main bot',
     );
@@ -1988,6 +2085,130 @@ describe('Bot architecture', () => {
       'between you and the target',
     );
   });
+  it('executes stop_message inside the real model tool loop and incorporates the stopped worker result', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-stop';
+    await chat(main);
+    const parent = (await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)!;
+    expect(parent.status).toBe('complete');
+    expect(parent.activity).toContainEqual(
+      expect.objectContaining({ tool: 'manage_bot', action: 'stop_message', status: 'complete' }),
+    );
+    const reply = calls
+      .flatMap((call) => call.messages)
+      .find((message) => message.tool_call_id === 'stop-worker');
+    expect(JSON.parse(reply!.content)).toMatchObject({
+      ok: true,
+      result: { stopped: true, status: 'stopped' },
+    });
+    expect(
+      parent.activity?.find((item) => item.action === 'send_message')?.delegation?.status,
+    ).toBe('stopped');
+    expect(api.store.all("SELECT * FROM bot_delegations WHERE state='waiting'")).toEqual([]);
+  });
+
+  it('stops a dispatched bot waiting for a human answer without leaving an approval or blocked parent', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-approval';
+    const parent = chat(main);
+    await waitFor(async () =>
+      expect((await request<ApprovalState>('/approvals')).data.pending).toHaveLength(1),
+    );
+    const conversationId = (await request<Conversation[]>('/conversations?kind=bot')).data[0].id;
+    const receipt = api.botManagement.getLastMessage(main, child.id, conversationId);
+    expect(
+      await api.botManagement.stopMessage(main, child.id, conversationId, receipt.requestId!),
+    ).toMatchObject({ stopped: true, status: 'stopped' });
+    await parent;
+    expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+      'complete',
+    );
+  });
+
+  it('stops an exact dispatched run through Bots and leaves a newer response untouched', async () => {
+    const main = await bot();
+    await provider();
+    const child = await api.botManagement.create(main, input('Ada'));
+    delegatedId = child.id;
+    sendMode = 'fire_and_forget';
+    mode = 'delegate-slow';
+    const parent = chat(main);
+    await waitFor(() => expect(calls).toHaveLength(3));
+    const conversations = (await request<Conversation[]>('/conversations?kind=bot')).data;
+    const conversationId = conversations[0].id;
+    const receipt = api.botManagement.getLastMessage(main, child.id, conversationId);
+    const context = {
+      bot: main,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      onActivity() {},
+    };
+    await expect(
+      api.botManagement.stopMessage(child, main.id, conversationId, receipt.requestId!),
+    ).rejects.toThrow('Only the workspace main bot');
+    await expect(
+      api.botManagement.stopMessage(main, child.id, conversationId, randomUUID()),
+    ).rejects.toThrow('No send_message dispatch');
+    mkdirSync(join(root, 'foreign'));
+    const foreignWorkspace = (
+      await request<{ id: string }>('/workspaces', 'POST', {
+        name: 'Foreign',
+        folder: join(root, 'foreign'),
+      })
+    ).data;
+    const foreign = await bot('Foreign bot', foreignWorkspace.id);
+    await expect(
+      api.botManagement.stopMessage(main, foreign.id, conversationId, receipt.requestId!),
+    ).rejects.toThrow('workspace');
+    const stopped = await executeBotManagement(
+      { action: 'stop_message', botId: child.id, conversationId, requestId: receipt.requestId! },
+      context,
+      randomUUID(),
+    );
+    expect(stopped).toMatchObject({
+      ok: true,
+      result: { stopped: true, status: 'stopped', requestId: receipt.requestId },
+    });
+    await parent;
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe('stopped');
+    expect((await request<ChatMessage[]>(`/bots/${main.id}/messages`)).data.at(-1)?.status).toBe(
+      'complete',
+    );
+    expect(
+      await api.botManagement.stopMessage(main, child.id, conversationId, receipt.requestId!),
+    ).toMatchObject({ stopped: false, status: 'stopped' });
+    // Reuse the pair thread for newer work, then replay the old stop receipt.
+    mode = 'slow';
+    const controller = new AbortController();
+    const newer = api.botManagement
+      .sendMessage(main, child.id, 'New task', controller.signal, conversationId)
+      .catch((error) => error);
+    await waitFor(() =>
+      expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+        'streaming',
+      ),
+    );
+    const latest = api.botManagement.getLastMessage(main, child.id, conversationId);
+    expect(latest.requestId).not.toBe(receipt.requestId);
+    expect(
+      await api.botManagement.stopMessage(main, child.id, conversationId, receipt.requestId!),
+    ).toMatchObject({ stopped: false, status: 'stopped' });
+    expect(api.botManagement.getLastMessage(main, child.id, conversationId).status).toBe(
+      'streaming',
+    );
+    controller.abort();
+    await newer;
+  });
+
   it('keeps a background result when the parent response fails and delivers it on the next response', async () => {
     const main = await bot();
     await provider();
@@ -2712,7 +2933,7 @@ describe('Bot architecture', () => {
     const main = await bot();
     await provider();
     const child = await api.botManagement.create(main, input('Ada'));
-    const other = await api.botManagement.create(main, input('Nova'), ['manage_bot']);
+    const other = await api.botManagement.create(main, input('Nova'));
     const signal = new AbortController().signal;
     const first = await api.botManagement.sendMessage(
       main,
@@ -3083,8 +3304,8 @@ describe('Bot architecture', () => {
   it('allows peer and lower-level messaging across branches, but rejects every higher-level target', async () => {
     const main = await bot();
     await provider();
-    const ada = await api.botManagement.create(main, input('Ada'), ['manage_bot']);
-    const nova = await api.botManagement.create(main, input('Nova'), ['manage_bot']);
+    const ada = await api.botManagement.create(main, input('Ada'));
+    const nova = await api.botManagement.create(main, input('Nova'));
     const junior = await api.botManagement.create(main, input('Junior'));
     const colleague = await api.botManagement.create(main, input('Colleague'));
     api.store.run('UPDATE bots SET created_by=? WHERE id=?', ada.id, junior.id);
@@ -3129,7 +3350,7 @@ describe('Bot architecture', () => {
       ]),
     );
     expect(api.access.allowed(junior, 'manage_bot')).toBe(true);
-    const noTools = await api.botManagement.create(main, input('Restricted'), []);
+    const noTools = await api.botManagement.create(main, input('Restricted'));
     expect(api.access.allowed(noTools, 'manage_bot')).toBe(true);
     expect(
       await api.botManagement.sendMessage(noTools, colleague.id, 'Focused help', signal),

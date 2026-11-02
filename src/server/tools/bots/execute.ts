@@ -47,6 +47,8 @@ export async function executeBotManagement(
           role: input.role,
           instructions: input.instructions,
           toolIds: input.toolIds,
+          addToolIds: input.addToolIds,
+          removeToolIds: input.removeToolIds,
           modelId: input.modelId,
           reportsToBotId: input.reportsToBotId,
         },
@@ -57,6 +59,17 @@ export async function executeBotManagement(
         throw new Error('Create requires name, role, and instructions.');
       result = await context.management.createFromTool(context.bot, input, context.signal);
       activity.createdBotId = result.id;
+    } else if (input.action === 'stop_message') {
+      if (!input.botId || !input.conversationId || !input.requestId)
+        throw new Error(
+          'stop_message requires botId, conversationId, and requestId from send_message.',
+        );
+      result = await context.management.stopMessage(
+        context.bot,
+        input.botId,
+        input.conversationId,
+        input.requestId,
+      );
     } else if (input.action === 'get_last_message') {
       if (!input.botId || !input.conversationId)
         throw new Error('get_last_message requires botId and conversationId.');

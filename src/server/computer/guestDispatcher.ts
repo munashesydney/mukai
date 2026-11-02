@@ -13,7 +13,7 @@ import { imageDefinition } from '../tools/image/definition';
 import { mediaDefinition } from '../tools/media/definition';
 import { executeMedia } from '../tools/media/execute';
 import type { FileMutationSnapshot } from '../../shared/fileChanges';
-import type { Computer, ComputerHelper } from './protocol';
+import type { Computer } from './protocol';
 import { GuestCapabilities } from './guestCapabilities';
 import { guestBrowserExecutable } from './guestBrowser';
 import { ComputerUseService } from '../services/computerUseService';
@@ -40,11 +40,7 @@ export class GuestDispatcher implements Computer {
     );
   }
   async request(
-    method: Parameters<Computer['request']>[0],
-    input: unknown,
-    owner: Parameters<Computer['request']>[2],
-    signal: AbortSignal,
-    helper?: ComputerHelper,
+    ...[method, input, owner, signal, helper]: Parameters<Computer['request']>
   ): Promise<unknown> {
     signal.throwIfAborted();
     switch (method) {
@@ -92,6 +88,17 @@ export class GuestDispatcher implements Computer {
         );
       }
       case 'process': {
+        if (
+          input &&
+          typeof input === 'object' &&
+          'action' in input &&
+          input.action === 'activity'
+        ) {
+          z.object({ action: z.literal('activity') })
+            .strict()
+            .parse(input);
+          return this.processes.activity(owner);
+        }
         const value = processDefinition.inputSchema.parse(input);
         if (value.action === 'list') return this.processes.list(owner);
         const id = z.string().uuid().parse(value.sessionId);

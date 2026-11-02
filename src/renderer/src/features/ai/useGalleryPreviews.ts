@@ -3,7 +3,7 @@ import { artifactService } from '../../services/artifactService';
 import { errorText } from '../../utils/errors';
 import type { ResponseImage } from './responseImages';
 
-type Preview = { controller: AbortController; url?: string; error?: string };
+type Preview = { controller: AbortController; started?: boolean; url?: string; error?: string };
 
 export function useGalleryPreviews(
   conversationId: string | null,
@@ -30,14 +30,24 @@ export function useGalleryPreviews(
     if (!owner || !galleryRef.current || !images.length) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        observer.disconnect();
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          // Cancel queued work off-screen; let active reads finish so revisiting uses the cache.
+          for (const image of images) {
+            const preview = cache.previews.get(image.key);
+            if (!preview || preview.started || preview.url || preview.error) continue;
+            preview.controller.abort();
+            cache.previews.delete(image.key);
+          }
+          return;
+        }
         for (const image of images) {
           if (cache.previews.has(image.key)) continue;
           const preview: Preview = { controller: new AbortController() };
           cache.previews.set(image.key, preview);
           void artifactService
-            .reference(owner, image.href, true, preview.controller.signal)
+            .reference(owner, image.href, true, preview.controller.signal, () => {
+              preview.started = true;
+            })
             .then(({ blob }) => {
               if (preview.controller.signal.aborted) return;
               preview.url = URL.createObjectURL(blob);

@@ -18,12 +18,13 @@ const variable = (name: string, configured: boolean, usedBy: string[]): Environm
 });
 
 describe('system tool family', () => {
-  it('registers a normal bot-assignable family with one read-only action', () => {
+  it('registers environment facts and explicit generation control', () => {
     expect(workspaceToolIds).toContain('system');
     const tool = toolCatalog().find((entry) => entry.id === 'system');
     expect(tool?.name).toBe('System');
     expect(tool?.actions).toContain('list_env_vars');
-    expect(tool?.actions).toHaveLength(1);
+    expect(tool?.actions).toContain('stop_generation');
+    expect(tool?.actions).toHaveLength(2);
   });
 
   it('pages by name without a query and stops paging on the last slice', () => {
@@ -134,5 +135,45 @@ describe('system tool family', () => {
       action: 'list_env_vars',
     });
     expect(onActivity.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'complete' });
+  });
+});
+
+it('acknowledges an intentional stop without reading environment data', async () => {
+  const list = vi.fn();
+  const onActivity = vi.fn();
+  const tools = systemTools({
+    bot: { id: 'scout', workspaceId: 'default' } as Bot,
+    conversationId: 'conversation',
+    environment: { list } as never,
+    signal: new AbortController().signal,
+    onActivity,
+  });
+  expect(
+    await tools.system.execute!({ action: 'stop_generation', finalResponse: 'Finished.' }, options),
+  ).toEqual({
+    ok: true,
+    result: { stopGeneration: true, finalResponse: 'Finished.' },
+  });
+  expect(list).not.toHaveBeenCalled();
+  expect(onActivity.mock.calls.at(-1)?.[0]).toMatchObject({
+    tool: 'system',
+    action: 'stop_generation',
+    status: 'complete',
+  });
+});
+
+it('exposes response control alone when workspace facts are unavailable', async () => {
+  const tools = systemTools({
+    bot: { id: 'scout', workspaceId: 'default' } as Bot,
+    conversationId: 'conversation',
+    signal: new AbortController().signal,
+    onActivity: vi.fn(),
+  });
+  expect(await tools.system.execute!({ action: 'stop_generation' }, options)).toEqual({
+    ok: true,
+    result: { stopGeneration: true },
+  });
+  expect(await tools.system.execute!({ action: 'list_env_vars' }, options)).toMatchObject({
+    ok: false,
   });
 });

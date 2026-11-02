@@ -9,6 +9,7 @@ export interface ChatCheckpoint {
   steps: number;
   emptyReplyRecoveries?: number;
   reasoningEchoRecoveries?: number;
+  stopGeneration?: { finalResponse?: string };
   providerTimeoutRecoveries?: number;
   providerToolCallRecoveries?: number;
   response?: {
@@ -88,6 +89,17 @@ export class ChatJobRepository {
       state: row.state as BotDelegation['state'],
       mode: row.mode as BotDelegation['mode'],
     };
+  }
+  sentDelegation(callerId: string, targetId: string, conversationId: string, requestId: string) {
+    return Boolean(
+      this.database.get(
+        'SELECT 1 FROM bot_delegations WHERE caller_id=? AND target_id=? AND conversation_id=? AND child_request_id=?',
+        callerId,
+        targetId,
+        conversationId,
+        requestId,
+      ),
+    );
   }
   saveDelegation(value: BotDelegation) {
     this.database.run(

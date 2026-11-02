@@ -36,6 +36,7 @@ export class BotManagementService {
         'get_model',
         'send_message',
         'get_last_message',
+        'stop_message',
       ];
     return messageId && this.chats.delegatedMessage(messageId)
       ? ['list', 'get', 'list_models', 'get_model', 'get_last_message']
@@ -48,7 +49,7 @@ export class BotManagementService {
         403,
         action === 'send_message'
           ? 'send_message is intentionally unavailable in a delegated sub-bot run to prevent delegation loops. Return your final reply to the calling bot.'
-          : 'Only the workspace main bot can create, update, or delete bots. Ask the user to discuss this with the main bot.',
+          : 'Only the workspace main bot can create, update, delete bots or stop dispatched messages. Ask the user to discuss this with the main bot.',
       );
   }
   get(caller: Bot, botId: string) {
@@ -68,6 +69,7 @@ export class BotManagementService {
       reportsToBotId: bot.createdBy,
       ...this.providers.describeModel(bot),
       hierarchyLevel: this.level(bot),
+      tools: this.access.describe(bot),
     };
   }
   remove(caller: Bot, botId: string) {
@@ -83,7 +85,14 @@ export class BotManagementService {
     botId: string,
     patch: Pick<
       z.infer<typeof botManagementDefinition.inputSchema>,
-      'name' | 'role' | 'instructions' | 'toolIds' | 'modelId' | 'reportsToBotId'
+      | 'name'
+      | 'role'
+      | 'instructions'
+      | 'toolIds'
+      | 'addToolIds'
+      | 'removeToolIds'
+      | 'modelId'
+      | 'reportsToBotId'
     >,
     signal?: AbortSignal,
   ) {
@@ -91,8 +100,8 @@ export class BotManagementService {
     let target = this.get(caller, botId);
     if (Object.values(patch).every((value) => value === undefined))
       throw new ApiError(400, 'Update requires at least one field.');
-    this.access.validateSelection(caller, patch.toolIds);
-    const { toolIds, modelId, ...fields } = patch;
+    this.access.validateToolChanges(caller, target, patch);
+    const { toolIds, addToolIds, removeToolIds, modelId, ...fields } = patch;
     const selection = modelId ? this.providers.resolveModelSelection(modelId) : undefined;
     if (modelId && selection) {
       if (this.chats.busy(botId) || this.reserved.has(botId))
@@ -105,7 +114,7 @@ export class BotManagementService {
       // Re-read after the connection test so unrelated edits are not overwritten.
       this.requireAction(caller, 'update');
       target = this.get(caller, botId);
-      this.access.validateSelection(caller, toolIds);
+      this.access.validateToolChanges(caller, target, patch);
       if (this.chats.busy(botId) || this.reserved.has(botId))
         throw new ApiError(409, 'Stop this bot’s response before editing it.');
     }
@@ -131,7 +140,8 @@ export class BotManagementService {
       },
       target.id,
     );
-    if (toolIds !== undefined) this.access.initializeChild(caller, updated, toolIds);
+    if (toolIds !== undefined || addToolIds !== undefined || removeToolIds !== undefined)
+      this.access.updateTools(caller, updated, { toolIds, addToolIds, removeToolIds });
     return updated;
   }
   list(caller: Bot) {
@@ -182,7 +192,11 @@ export class BotManagementService {
     signal: AbortSignal,
   ) {
     this.requireAction(caller, 'create');
-    this.access.validateSelection(caller, input.toolIds);
+    if (input.toolIds !== undefined)
+      throw new ApiError(
+        400,
+        'New bots receive all tools; change access only with update after creation.',
+      );
     if (!input.name || !input.role?.trim() || !input.instructions)
       throw new ApiError(400, 'Create requires name, role, and instructions.');
     const current = this.bots.require(caller.id);
@@ -209,28 +223,23 @@ export class BotManagementService {
     };
     await this.providers.testBotModel(configuration, signal);
     if (input.modelId) this.providers.resolveModelSelection(input.modelId);
-    return this.create(current, configuration, input.toolIds, signal);
+    return this.create(current, configuration, signal);
   }
   async create(
     caller: Bot,
     input: Omit<BotInput, 'avatar'> & { reportsToBotId?: string },
-    toolIds?: string[],
     signal?: AbortSignal,
   ) {
     this.requireAction(caller, 'create');
-    this.access.validateSelection(caller, toolIds);
     signal?.throwIfAborted();
     await this.providers.validateModel(input.providerId, input.model);
     signal?.throwIfAborted();
+    this.requireAction(caller, 'create');
     return this.bots.save(
       { ...input, avatar: undefined },
       undefined,
       caller.workspaceId,
       caller.id,
-      (child) => {
-        this.access.require(caller, 'manage_bot');
-        this.access.initializeChild(caller, child, toolIds);
-      },
     );
   }
   private level(bot: Bot) {
@@ -277,6 +286,28 @@ export class BotManagementService {
       status: reply?.status ?? 'empty',
       response: reply?.content.slice(-12000) ?? '',
       error: reply?.error ?? null,
+    };
+  }
+  async stopMessage(caller: Bot, botId: string, conversationId: string, requestId: string) {
+    this.requireAction(caller, 'stop_message');
+    const target = this.requireMessageTarget(caller, botId);
+    if (!this.jobs.sentDelegation(caller.id, target.id, conversationId, requestId))
+      throw new ApiError(
+        404,
+        'No send_message dispatch matches this bot, conversation, and request.',
+      );
+    const stopped = await this.chats.stopRequest(conversationId, requestId, target.id);
+    const reply = this.conversations.latestBotReply(conversationId, target.id, requestId);
+    if (!reply) throw new ApiError(409, 'The dispatched response is not available yet.');
+    return {
+      botId: target.id,
+      conversationId,
+      requestId,
+      messageId: reply.id,
+      stopped,
+      status: reply.status,
+      response: reply.content.slice(-12000),
+      error: reply.error,
     };
   }
   async sendMessage(

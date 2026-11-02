@@ -13,11 +13,12 @@ export class ToolAssignmentRepository {
   customTools(workspaceId: string) {
     return this.db
       .all(
-        "SELECT id,owner_bot_id FROM capabilities WHERE workspace_id=? AND kind='tool'",
+        "SELECT id,owner_bot_id,definition_json FROM capabilities WHERE workspace_id=? AND kind='tool'",
         workspaceId,
       )
       .map((row) => ({
         id: String(row.id),
+        name: String(JSON.parse(String(row.definition_json)).name),
         ownerBotId: row.owner_bot_id === null ? null : String(row.owner_bot_id),
       }));
   }
@@ -28,6 +29,11 @@ export class ToolAssignmentRepository {
       toolId,
     );
     return row ? Boolean(row.enabled) : undefined;
+  }
+  setMany(botId: string, values: { id: string; enabled: boolean }[]) {
+    this.db.transaction(() => {
+      for (const value of values) this.set(botId, value.id, value.enabled);
+    });
   }
   set(botId: string, toolId: string, enabled: boolean) {
     this.db.run(

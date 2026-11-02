@@ -35,12 +35,16 @@ export class ArtifactService {
   forConversation(id: string) {
     return this.artifacts.forConversation(id);
   }
-  async previewImage(botId: string, conversationId: string, path: string) {
+  async previewImage(
+    botId: string,
+    conversationId: string,
+    path: string,
+    signal = AbortSignal.timeout(45000),
+  ) {
     const bot = this.bots.find(botId);
     if (!bot) throw new ApiError(404, 'Bot not found.');
     const workspace = this.workspaces.require(bot.workspaceId);
     const owner = { workspaceId: workspace.id, botId, conversationId };
-    const signal = AbortSignal.timeout(45000);
     try {
       let result: unknown;
       if (workspace.computer === 'qemu') {

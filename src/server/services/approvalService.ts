@@ -171,8 +171,16 @@ export class ApprovalService {
     force = false,
   ): Promise<ApprovalDecision> {
     signal.throwIfAborted();
-    // This reserved built-in records a validated outcome; it performs no external action.
-    if (!force && details.toolName === 'report_pursuit') {
+    // These reserved built-ins record an outcome or end a response; neither performs an external action.
+    if (
+      !force &&
+      (details.toolName === 'report_pursuit' ||
+        (details.toolName === 'system' &&
+          details.input &&
+          typeof details.input === 'object' &&
+          'action' in details.input &&
+          details.input.action === 'stop_generation'))
+    ) {
       const restored = this.restored(details);
       if (restored) {
         this.repository.remove(restored.request.id);

@@ -1,10 +1,11 @@
 import { tool } from 'ai';
+import { z } from 'zod';
 import type { Bot, ChatActivity } from '../../../shared/ai';
 import type { EnvironmentVariable } from '../../../shared/customCapabilities';
 import type { CapabilityEnvironment } from '../../capabilities/environment';
 import { RUNTIME_TOOL_CALL_LIMIT } from '../../services/responsePolicy';
 import { executeRuntime } from '../runtimeContext';
-import { systemDefinition } from './definition';
+import { systemDefinition, type SystemInput } from './definition';
 
 export const ENV_VAR_PAGE_DEFAULT = 25;
 export const ENV_VAR_PAGE_MAX = 100;
@@ -51,10 +52,13 @@ export function listEnvironmentVariables(
 export function systemTools(context: {
   bot: Bot;
   conversationId: string;
-  environment: CapabilityEnvironment;
+  environment?: CapabilityEnvironment;
   signal: AbortSignal;
   onActivity: (activity: ChatActivity) => void;
 }) {
+  const actions: SystemInput['action'][] = context.environment
+    ? ['list_env_vars', 'stop_generation']
+    : ['stop_generation'];
   const runtime = {
     ...context,
     owner: {
@@ -66,22 +70,33 @@ export function systemTools(context: {
   };
   return {
     [systemDefinition.name]: tool({
-      description: systemDefinition.description,
-      inputSchema: systemDefinition.inputSchema,
+      description: context.environment
+        ? systemDefinition.description
+        : 'stop_generation explicitly ends only this response, without another model generation. Call it by itself when you intentionally finish, including after a reasoning/text echo nudge. Optional finalResponse supplies the final answer; otherwise the latest visible text is preserved. Completed work is saved. Newer user guidance and required outcome reporting take priority. Environment access is unavailable in this tool.',
+      inputSchema: systemDefinition.inputSchema.safeExtend({
+        action: z.enum(actions),
+      }),
       execute: (input, options) =>
         executeRuntime(
           runtime,
           options.toolCallId,
           'system',
           input.action,
-          input.query || 'environment',
+          input.action === 'stop_generation' ? 'current response' : input.query || 'environment',
           async () => {
             switch (input.action) {
               case 'list_env_vars':
+                if (!context.environment)
+                  throw new Error('Workspace environment variables are unavailable.');
                 return listEnvironmentVariables(
                   context.environment.list(context.bot.workspaceId),
                   input,
                 );
+              case 'stop_generation':
+                return {
+                  stopGeneration: true,
+                  ...(input.finalResponse ? { finalResponse: input.finalResponse } : {}),
+                };
             }
           },
         ),

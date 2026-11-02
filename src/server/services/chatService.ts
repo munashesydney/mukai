@@ -40,6 +40,7 @@ import { ProviderService, safeProviderError, isContextOverflow } from './provide
 import { AttachmentService } from './attachmentService';
 import { ApiError } from '../config';
 import { ToolService } from './toolService';
+import { systemTools } from '../tools/system/execute';
 import type { ApprovalService } from './approvalService';
 import { approvalReviewNotice, type ApprovalDecision } from '../../shared/approvals';
 import { customToolReceipt } from './customToolReceipt';
@@ -470,6 +471,37 @@ export class ChatService {
   stop(id: string) {
     this.stopConversation('bot-' + id);
   }
+  async stopRequest(conversationId: string, requestId: string, botId: string) {
+    const active = this.active.get(conversationId);
+    if (active) {
+      if (active.requestId !== requestId || active.botId !== botId) return false;
+      this.stopConversation(conversationId);
+      await active.done;
+      return true;
+    }
+    const message = this.messages.forRequest(conversationId, requestId, 'assistant');
+    if (
+      !message ||
+      message.botId !== botId ||
+      !['streaming', 'interrupted'].includes(message.status)
+    )
+      return false;
+    // Only settle this suspended request; never cancel a newer response in the same conversation.
+    this.followups?.pause(conversationId);
+    this.approvals?.discard(message.id);
+    this.cancelDelegations(message.id);
+    this.jobs.remove(message.id);
+    this.messages.finish(
+      message.id,
+      message.content,
+      'stopped',
+      null,
+      message.reasoning || '',
+      message.activity || [],
+      message.parts || [],
+    );
+    return true;
+  }
   private cancelDelegations(messageId: string) {
     for (const child of this.jobs.cancelDelegations(messageId)) {
       const message = this.messages.forRequest(child.conversationId, child.requestId, 'assistant');
@@ -841,6 +873,7 @@ export class ChatService {
       emit({ type: 'part', id: assistantId, part });
     };
     try {
+      let stopGeneration: { finalResponse?: string } | undefined;
       const scope = this.tools.checkpointScope(bot);
       const tools: ToolSet = {
         ...this.tools.forBot(
@@ -886,6 +919,18 @@ export class ChatService {
         ),
         ...runtime?.tools,
       };
+      // Response control remains available even if workspace facts were not assigned.
+      // This fallback exposes only stop_generation, never environment-variable access.
+      if (!tools.system)
+        Object.assign(
+          tools,
+          systemTools({
+            bot,
+            conversationId,
+            signal: generation.controller.signal,
+            onActivity,
+          }),
+        );
       // Keep one tool context/budget ready for the first upload arriving mid-run.
       // Its schema enters the model context only when saved attachments exist.
       const pendingFileOperations =
@@ -1308,6 +1353,7 @@ export class ChatService {
         mediaRecoveryUsed = true;
         return true;
       };
+      stopGeneration = checkpoint?.stopGeneration;
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let reasoningEchoRecoveries = restoreSavedStep ? checkpoint?.reasoningEchoRecoveries || 0 : 0;
       let providerTimeoutRecoveries = restoreSavedStep
@@ -1331,6 +1377,7 @@ export class ChatService {
           steps: stepsUsed,
           emptyReplyRecoveries,
           reasoningEchoRecoveries,
+          stopGeneration,
           providerTimeoutRecoveries,
           providerToolCallRecoveries,
           response: {
@@ -1643,6 +1690,25 @@ export class ChatService {
             pendingTools.add(operation);
             try {
               const result = await operation;
+              if (
+                name === 'system' &&
+                input &&
+                typeof input === 'object' &&
+                'action' in input &&
+                input.action === 'stop_generation'
+              ) {
+                const stopped = z
+                  .object({
+                    ok: z.literal(true),
+                    result: z.object({
+                      stopGeneration: z.literal(true),
+                      finalResponse: z.string().optional(),
+                    }),
+                  })
+                  .safeParse(result);
+                if (stopped.success)
+                  stopGeneration = { finalResponse: stopped.data.result.finalResponse };
+              }
               return customPermission
                 ? customToolReceipt(customPermission, 'completed', { result })
                 : result;
@@ -1874,6 +1940,7 @@ export class ChatService {
           });
         }
         manager.pinRequests(pinnedRequests);
+        stopGeneration = undefined;
         finalReplyOnly = false;
         generation.parts = generation.parts.map((part) =>
           part.type === 'reasoning' ? { ...part, state: 'complete' } : part,
@@ -1929,6 +1996,7 @@ export class ChatService {
             child.result,
           );
         }
+        stopGeneration = undefined;
         // Commit receipt consumption with its model context, so restart cannot lose a result.
         this.jobs.consumeBackground(
           [
@@ -2047,6 +2115,54 @@ export class ChatService {
           : stepsUsed >= TOOL_STEP_LIMIT
             ? 'This run reached its safety step ceiling.'
             : '';
+        if (stopGeneration && !pausedReason) {
+          if (await waitForDelegatedBots()) continue;
+          const completionNotice = runtime?.completionNotice?.();
+          if (completionNotice) {
+            stopGeneration = undefined;
+            if (completionRecoveries++ < 2) {
+              notice =
+                completionNotice +
+                ' Continue this same run using structured tools. Do not repeat successful operations. Give a final response after reporting.';
+              saveCheckpoint();
+              continue;
+            }
+            status = 'failed';
+            error =
+              completionNotice +
+              ' Required outcome reporting failed after two reminders. Saved work needs review before resuming.';
+            break;
+          }
+          const previous = [...generation.parts]
+            .reverse()
+            .find((part) => part.type === 'text' && part.text.trim());
+          const finalResponse =
+            stopGeneration.finalResponse ||
+            (previous?.type === 'text' ? previous.text : 'Generation stopped.');
+          const reuse = previous?.type === 'text' && previous.text === finalResponse;
+          const part: ResponsePart = {
+            id: reuse ? previous.id : randomUUID(),
+            type: 'text',
+            text: finalResponse,
+            final: true,
+          };
+          if (reuse) generation.parts = generation.parts.filter((item) => item.id !== previous.id);
+          else generation.content += (generation.content ? '\n\n' : '') + finalResponse;
+          generation.parts.push(part);
+          save();
+          // Moving existing answer text past the stop receipt preserves a single visible answer.
+          emit({
+            type: 'start',
+            user: this.messages.message(userId),
+            assistant: this.messages.message(assistantId),
+          });
+          this.diagnostics.info(
+            'chat.generation_stopped',
+            'The model explicitly finished this response with system.stop_generation.',
+            diagnosticContext(),
+          );
+          break;
+        }
         const runtimeState = {
           pursuits: this.tools.currentPursuits(bot).map(({ name }) => ({ name })),
           previousOperations: Boolean(existingUser && generation.activity.length),
@@ -2639,7 +2755,7 @@ export class ChatService {
             notice = REASONING_ECHO_NOTICE;
             this.diagnostics.info(
               'chat.reasoning_echo_recovery',
-              `Reasoning echoed as a continuation announcement; requesting continuation, attempt ${reasoningEchoRecoveries}/${REASONING_ECHO_RECOVERY_LIMIT}.`,
+              `Final text exactly matched reasoning; requesting continuation, attempt ${reasoningEchoRecoveries}/${REASONING_ECHO_RECOVERY_LIMIT}.`,
               diagnosticContext(),
             );
             saveCheckpoint();
@@ -2647,7 +2763,7 @@ export class ChatService {
           }
           status = 'failed';
           error =
-            'The model repeatedly ended with a continuation announcement matching its reasoning after two recovery attempts. Completed work is saved; retry to resume.';
+            'The model repeatedly ended with text matching its reasoning after two recovery attempts. Completed work is saved; retry to resume.';
           this.diagnostics.record(
             'chat.reasoning_echo_failed',
             new Error(error),

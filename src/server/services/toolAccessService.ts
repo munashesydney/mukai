@@ -38,10 +38,7 @@ export class ToolAccessService {
       return Boolean(item && (override ?? true));
     }
     if (override !== undefined) return override;
-    return (
-      (workspaceToolIds as readonly string[]).includes(toolId) &&
-      (current.isMain || (toolId !== 'manage_pursuit' && toolId !== 'manage_bot'))
-    );
+    return (workspaceToolIds as readonly string[]).includes(toolId);
   }
   list(workspaceId: string): ToolAssignment[] {
     const ids = [
@@ -76,20 +73,52 @@ export class ToolAccessService {
           throw new ApiError(403, 'You cannot grant a tool you are not assigned: ' + id);
       }
   }
-  initializeChild(caller: Bot, child: Bot, selected?: string[]) {
-    selected = selected?.map(canonicalToolId);
+  validateToolChanges(
+    caller: Bot,
+    child: Bot,
+    changes: { toolIds?: string[]; addToolIds?: string[]; removeToolIds?: string[] },
+  ) {
+    if (!this.bot(caller.id).isMain || caller.workspaceId !== child.workspaceId)
+      throw new ApiError(403, 'Only the workspace main bot can change bot tool access.');
+    const selected = changes.toolIds?.map(canonicalToolId);
+    const added = changes.addToolIds?.map(canonicalToolId) || [];
+    const removed = changes.removeToolIds?.map(canonicalToolId) || [];
+    if (selected && (changes.addToolIds !== undefined || changes.removeToolIds !== undefined))
+      throw new ApiError(400, 'Use either toolIds or addToolIds/removeToolIds.');
+    if (added.some((id) => removed.includes(id)))
+      throw new ApiError(400, 'A tool cannot be both added and removed.');
+    this.validateSelection(caller, selected);
+    this.validateSelection(caller, added);
+    for (const id of removed) this.valid(child.workspaceId, id);
+    if (removed.includes('manage_bot')) throw new ApiError(400, 'Bots access is required.');
     const ids = [
       ...workspaceToolIds,
-      ...this.repository.customTools(caller.workspaceId).map((tool) => 'custom:' + tool.id),
+      ...this.repository.customTools(child.workspaceId).map((tool) => 'custom:' + tool.id),
     ];
-    this.validateSelection(caller, selected);
-    for (const id of ids.filter((id) => id !== 'manage_bot'))
-      this.set(
-        child.workspaceId,
-        child.id,
-        id,
-        this.allowed(caller, id) && (selected ? selected.includes(id) : this.allowed(child, id)),
-      );
+    const updates = selected
+      ? ids
+          .filter((id) => id !== 'manage_bot')
+          .map((id) => ({ id, enabled: selected.includes(id) }))
+      : [
+          ...added.map((id) => ({ id, enabled: true })),
+          ...removed.map((id) => ({ id, enabled: false })),
+        ];
+    return updates;
+  }
+  updateTools(
+    caller: Bot,
+    child: Bot,
+    changes: { toolIds?: string[]; addToolIds?: string[]; removeToolIds?: string[] },
+  ) {
+    this.repository.setMany(child.id, this.validateToolChanges(caller, child, changes));
+  }
+  describe(bot: Bot) {
+    return [
+      ...workspaceToolIds.map((id) => ({ id, name: id })),
+      ...this.repository
+        .customTools(bot.workspaceId)
+        .map((tool) => ({ id: 'custom:' + tool.id, name: tool.name })),
+    ].map((tool) => ({ ...tool, enabled: this.allowed(bot, tool.id) }));
   }
   require(bot: Bot, toolId: string) {
     if (!this.allowed(bot, toolId))

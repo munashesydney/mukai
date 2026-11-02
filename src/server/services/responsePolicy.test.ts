@@ -43,24 +43,25 @@ describe('provider recovery policy', () => {
 describe('premature reasoning echoes', () => {
   it.each([
     'Continue.',
+    '42',
+    'The update is complete.',
+    'Let me know if you need anything else.',
+    'I need your approval before proceeding.',
+    'The composer modal is STILL open with “Drag photos and videos here / Select from computer” — meaning the',
     'Proceed with the changes.',
     "Let's continue the investigation. I need to check the logs.",
     'I need to investigate this further. Let me check the details.',
     'The file is present. Let me look at the project structure.',
     'I’ll verify the result.',
-  ])('recognizes an exact echo announcing unfinished work: %s', (text) => {
+  ])('recognizes every nonempty exact echo: %s', (text) => {
     expect(isPrematureReasoningEcho('\n' + text, text + '\n')).toBe(true);
   });
 
   it.each([
-    ['42', '42'],
-    ['The update is complete.', 'The update is complete.'],
-    ['Let me know if you need anything else.', 'Let me know if you need anything else.'],
-    ['I need your approval before proceeding.', 'I need your approval before proceeding.'],
     ['Continue.', 'I will inspect the files.'],
     ['Continue.', undefined],
     ['', ''],
-  ])('leaves valid answers and nonmatching reasoning alone', (text, reasoning) => {
+  ])('leaves empty answers and nonmatching reasoning alone', (text, reasoning) => {
     expect(isPrematureReasoningEcho(text!, reasoning)).toBe(false);
   });
 });

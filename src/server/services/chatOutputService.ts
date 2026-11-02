@@ -9,6 +9,7 @@ import type { BrowserService } from './browserService';
 import type { ComputerManager } from '../computer/manager';
 import { ApiError } from '../config';
 import { terminalSnapshotSchema, type TerminalSnapshot } from '../../shared/terminal';
+import { processActivitySchema, type ProcessActivity } from '../../shared/processActivity';
 
 const sessionSchema = z.object({
   id: z.string(),
@@ -93,15 +94,22 @@ export class ChatOutputService {
     for (const source of this.repository.sources(conversationId)) {
       for (const activity of source.activities) {
         if (activity.tool !== 'terminal' || activity.status !== 'complete') continue;
-        // Read older saved activity too, before structured session references existed.
-        let legacy: z.infer<typeof sessionSchema> | undefined;
-        try {
-          legacy = sessionSchema.parse(JSON.parse(activity.summary));
-        } catch {
-          /* Truncated preview. */
-        }
-        const sessionId = activity.processSessionId || legacy?.id;
+        let saved: z.infer<typeof sessionSchema> | undefined;
+        const terminal = sessionSchema.safeParse(activity.terminal);
+        if (terminal.success) saved = terminal.data;
+        else
+          try {
+            saved = sessionSchema.parse(JSON.parse(activity.summary));
+          } catch {
+            /* Truncated legacy preview. */
+          }
+        const sessionId = activity.processSessionId || saved?.id;
         if (!sessionId) continue;
+        const status =
+          activity.processStatus && activity.processStatus !== 'running'
+            ? activity.processStatus
+            : saved?.status;
+        if (status) statuses.set(sessionId, status);
         const prior = refs.get(sessionId);
         refs.set(sessionId, {
           owner: { workspaceId: workspace.id, botId: source.botId, conversationId },
@@ -110,46 +118,67 @@ export class ChatOutputService {
             ...new Set([
               ...(prior?.urls || []),
               ...(activity.serverUrls || []).flatMap((value) => localServerUrl(value) || []),
-              ...serverUrls(legacy?.output || ''),
+              ...serverUrls(saved?.output || ''),
             ]),
           ],
         });
       }
     }
+    // A single compact read per owner replaces one full-output RPC per historical command.
+    // Completed sessions retain their saved status and URLs, even after the runtime restarts.
+    const groups = new Map<string, RuntimeOwner>();
+    for (const [sessionId, ref] of refs) {
+      const status = statuses.get(sessionId);
+      if (!status || status === 'running') groups.set(ref.owner.botId, ref.owner);
+    }
     const guestReady =
       workspace.computer === 'qemu' && this.computers.status(workspace).state === 'running';
-    await Promise.all(
-      [...refs].map(async ([sessionId, ref]) => {
-        let urls = ref.urls;
-        try {
-          const value =
-            workspace.computer === 'qemu'
-              ? guestReady
-                ? await this.computers
-                    .guest(workspace)
-                    .request(
-                      'process',
-                      { action: 'poll', sessionId },
-                      ref.owner,
-                      AbortSignal.timeout(2500),
-                    )
-                : undefined
-              : this.processes.read(ref.owner, sessionId);
-          const session = sessionSchema.parse(value);
-          statuses.set(sessionId, session.status);
-          urls = [...new Set([...urls, ...serverUrls(session.output || '')])];
-        } catch {
-          statuses.set(sessionId, 'unavailable');
-        }
-        for (const url of urls)
-          this.repository.save(conversationId, {
-            botId: ref.owner.botId,
-            messageId: ref.messageId,
-            sessionId,
-            url,
-          });
-      }),
-    );
+    for (const owner of groups.values()) {
+      let sessions: ProcessActivity[] = [];
+      try {
+        if (workspace.computer !== 'qemu') sessions = this.processes.activity(owner);
+        else if (guestReady)
+          sessions = processActivitySchema.parse(
+            await this.computers
+              .guest(workspace)
+              .requestRunning(
+                'process',
+                { action: 'activity' },
+                owner,
+                AbortSignal.timeout(2500),
+                undefined,
+                { priority: 'background' },
+              ),
+          );
+      } catch {
+        /* A refresh must not erase saved links when the computer is busy or offline. */
+      }
+      const live = new Map(sessions.map((session) => [session.id, session]));
+      for (const [sessionId, ref] of refs) {
+        if (ref.owner.botId !== owner.botId) continue;
+        const status = statuses.get(sessionId);
+        if (status && status !== 'running') continue;
+        const session = live.get(sessionId);
+        statuses.set(sessionId, session?.status || 'unavailable');
+        if (session)
+          ref.urls = [
+            ...new Set([
+              ...ref.urls,
+              ...session.serverUrls.flatMap((url) => localServerUrl(url) || []),
+            ]),
+          ];
+      }
+      this.repository.saveProcessActivity(conversationId, owner.botId, sessions);
+    }
+    for (const [sessionId, ref] of refs) {
+      for (const url of ref.urls)
+        this.repository.save(conversationId, {
+          botId: ref.owner.botId,
+          messageId: ref.messageId,
+          sessionId,
+          url,
+        });
+    }
     return this.repository.list(conversationId).map((row) => ({
       ...row,
       status: statuses.get(row.sessionId) || 'unavailable',
