@@ -57,6 +57,7 @@ export function contextSummarizer(
   signal: AbortSignal,
   account: (tokens: number, estimated: boolean) => void,
   onRecovery?: (recovery: SummaryRecovery) => void,
+  context?: { conversationId: string; messageId: string },
 ): Summarizer {
   return async (data, summaryTokens) => {
     const previousEnd = data.indexOf('\n</previous-summary>\n<historical-data>\n');
@@ -101,16 +102,21 @@ export function contextSummarizer(
       attempts++;
       let summary: Awaited<ReturnType<typeof generateText>>;
       try {
-        summary = await generateText({
-          model: config.model,
-          maxOutputTokens: output,
-          maxRetries: PROVIDER_MAX_RETRIES,
-          abortSignal: signal,
-          timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: RESPONSE_IDLE_TIMEOUT_MS },
-          providerOptions: summaryOptions(config),
-          system,
-          prompt,
-        });
+        summary = await config.ai.run(
+          { ...config.aiContext, ...context, kind: 'compaction' },
+          signal,
+          () =>
+            generateText({
+              model: config.model,
+              maxOutputTokens: output,
+              maxRetries: PROVIDER_MAX_RETRIES,
+              abortSignal: signal,
+              timeout: { totalMs: RESPONSE_TIMEOUT_MS, chunkMs: RESPONSE_IDLE_TIMEOUT_MS },
+              providerOptions: summaryOptions(config),
+              system,
+              prompt,
+            }),
+        );
       } catch {
         signal.throwIfAborted();
         // The SDK already retried transport failures. Resume with saved evidence.

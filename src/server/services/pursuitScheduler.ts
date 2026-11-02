@@ -8,6 +8,9 @@ export class PursuitScheduler {
   get used() {
     return this.owners.size;
   }
+  queued(owner: PursuitExecution) {
+    return this.queue.has(owner);
+  }
   owns(owner: PursuitExecution) {
     return this.owners.has(owner);
   }
@@ -65,6 +68,12 @@ export class PursuitExecution {
   private active = 0;
   private controller = new AbortController();
   constructor(private pool: PursuitScheduler) {}
+  get occupiesSlot() {
+    return this.pool.owns(this);
+  }
+  get queued() {
+    return this.pool.queued(this);
+  }
   async run<T>(operation: () => Promise<T>) {
     // Reserve immediately, but let restored chats attach their pending cards and
     // cancellation handlers before waiting for capacity at an execution boundary.

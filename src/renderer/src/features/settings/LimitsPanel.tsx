@@ -2,11 +2,18 @@ import { SettingsHeading } from './SettingsHeading';
 import { useEffect, useState } from 'react';
 import { limitsService } from '../../services/limitsService';
 import { errorText } from '../../utils/errors';
-import { DEFAULT_PURSUIT_CONCURRENCY, MAX_PURSUIT_CONCURRENCY } from '../../../../shared/limits';
+import {
+  DEFAULT_PURSUIT_CONCURRENCY,
+  MAX_PURSUIT_CONCURRENCY,
+  DEFAULT_AI_CONCURRENCY,
+  MAX_AI_CONCURRENCY,
+} from '../../../../shared/limits';
 import { Tooltip } from '../../components/ui/Tooltip';
 
 export function LimitsPanel() {
   const [saved, setSaved] = useState<number | null>(null);
+  const [aiSaved, setAISaved] = useState<number | null>(null);
+  const [aiValue, setAIValue] = useState(String(DEFAULT_AI_CONCURRENCY));
   const [value, setValue] = useState(String(DEFAULT_PURSUIT_CONCURRENCY));
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -18,6 +25,8 @@ export function LimitsPanel() {
       .get()
       .then((result) => {
         if (!disposed) {
+          setAISaved(result.aiConcurrency);
+          setAIValue(String(result.aiConcurrency));
           setSaved(result.pursuitConcurrency);
           setValue(String(result.pursuitConcurrency));
           setError('');
@@ -36,15 +45,25 @@ export function LimitsPanel() {
     Number.isInteger(parsed) &&
     parsed >= 1 &&
     parsed <= MAX_PURSUIT_CONCURRENCY;
+  const aiParsed = Number(aiValue);
+  const aiValid =
+    /^\d+$/.test(aiValue) &&
+    Number.isInteger(aiParsed) &&
+    aiParsed >= 1 &&
+    aiParsed <= MAX_AI_CONCURRENCY;
   async function save() {
-    if (!valid || saved === null || saving) return;
+    if (!valid || !aiValid || saved === null || saving) return;
     setSaving(true);
     setError('');
     setNotice('');
     try {
-      const result = await limitsService.save({ pursuitConcurrency: parsed });
+      const result = await limitsService.save({
+        pursuitConcurrency: parsed,
+        aiConcurrency: aiParsed,
+      });
       setSaved(result.pursuitConcurrency);
-      setNotice('Saved. The shared scheduler now uses this limit.');
+      setAISaved(result.aiConcurrency);
+      setNotice('Saved. The shared schedulers now use these limits.');
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -56,7 +75,7 @@ export function LimitsPanel() {
       <SettingsHeading
         eyebrow="SHARED ACROSS YOUR WORKSPACES"
         title="Limits"
-        description="Choose how much pursuit work Mukai can run at once."
+        description="Choose how much AI work Mukai can run at once across all workspaces."
       />
       {error && (
         <div role="alert" className="ai-alert">
@@ -75,6 +94,83 @@ export function LimitsPanel() {
           void save();
         }}
       >
+        <div className="limits-card">
+          <div className="limits-card-heading">
+            <div>
+              <h4>Concurrent AIs</h4>
+              <p>
+                One shared pool for chats, pursuits, memory reviews, and compaction across every
+                workspace.
+              </p>
+            </div>
+          </div>
+          <div className="limits-field">
+            <div className="limits-field-heading">
+              <label htmlFor="ai-concurrency">Maximum concurrent AIs</label>
+              <Tooltip
+                label="About the AI limit"
+                content="Limits active AI generation across all workspaces. Tools, approvals and delegated waits do not occupy an AI slot. Queued requests continue automatically. Lowering the limit lets existing requests finish; raising it makes more slots available immediately."
+              />
+            </div>
+            <div className="limits-stepper">
+              <button
+                type="button"
+                className="button"
+                aria-label="Decrease AI limit"
+                disabled={aiSaved === null || saving || aiParsed <= 1}
+                onClick={() => {
+                  setAIValue(
+                    String(Math.max(1, (aiValid ? aiParsed : DEFAULT_AI_CONCURRENCY) - 1)),
+                  );
+                  setNotice('');
+                }}
+              >
+                −
+              </button>
+              <input
+                id="ai-concurrency"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]+"
+                value={aiValue}
+                disabled={aiSaved === null || saving}
+                aria-invalid={!aiValid}
+                aria-describedby="ai-limit-help"
+                onChange={(event) => {
+                  setAIValue(event.target.value);
+                  setNotice('');
+                }}
+              />
+              <button
+                type="button"
+                className="button"
+                aria-label="Increase AI limit"
+                disabled={aiSaved === null || saving || aiParsed >= MAX_AI_CONCURRENCY}
+                onClick={() => {
+                  setAIValue(
+                    String(
+                      Math.min(
+                        MAX_AI_CONCURRENCY,
+                        (aiValid ? aiParsed : DEFAULT_AI_CONCURRENCY) + 1,
+                      ),
+                    ),
+                  );
+                  setNotice('');
+                }}
+              >
+                +
+              </button>
+            </div>
+            <p id="ai-limit-help" className="ai-caption">
+              Between 1 and {MAX_AI_CONCURRENCY} AIs. Default: {DEFAULT_AI_CONCURRENCY}.
+            </p>
+            {!aiValid && (
+              <p role="alert" className="ai-alert">
+                Enter a whole number between 1 and {MAX_AI_CONCURRENCY}.
+              </p>
+            )}
+          </div>
+        </div>
         <div className="limits-card">
           <div className="limits-card-heading">
             <div>
@@ -152,7 +248,13 @@ export function LimitsPanel() {
         <button
           type="submit"
           className="button button--primary"
-          disabled={!valid || saved === null || parsed === saved || saving}
+          disabled={
+            !valid ||
+            !aiValid ||
+            saved === null ||
+            (parsed === saved && aiParsed === aiSaved) ||
+            saving
+          }
         >
           {saving ? 'Saving…' : 'Save limit'}
         </button>

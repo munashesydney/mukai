@@ -15,6 +15,8 @@ import { PursuitRepository } from '../repositories/pursuitRepository';
 import { LimitsRepository } from '../repositories/limitsRepository';
 import {
   DEFAULT_PURSUIT_CONCURRENCY,
+  DEFAULT_AI_CONCURRENCY,
+  MAX_AI_CONCURRENCY,
   MAX_PURSUIT_CONCURRENCY,
   type LimitsSettings,
 } from '../../shared/limits';
@@ -49,9 +51,24 @@ export class PursuitService {
     private settings?: LimitsRepository,
   ) {}
   limits(): LimitsSettings {
-    return this.settings?.get() || { pursuitConcurrency: DEFAULT_PURSUIT_CONCURRENCY };
+    return (
+      this.settings?.get() || {
+        pursuitConcurrency: DEFAULT_PURSUIT_CONCURRENCY,
+        aiConcurrency: DEFAULT_AI_CONCURRENCY,
+      }
+    );
   }
-  setLimits(value: LimitsSettings) {
+  setLimits(patch: Partial<LimitsSettings>) {
+    const value = { ...this.limits(), ...patch };
+    if (
+      !Number.isInteger(value.aiConcurrency) ||
+      value.aiConcurrency < 1 ||
+      value.aiConcurrency > MAX_AI_CONCURRENCY
+    )
+      throw new ApiError(
+        400,
+        `Concurrent AIs must be an integer between 1 and ${MAX_AI_CONCURRENCY}.`,
+      );
     if (
       !Number.isInteger(value.pursuitConcurrency) ||
       value.pursuitConcurrency < 1 ||
@@ -94,6 +111,16 @@ export class PursuitService {
     const value = this.repository.find(id);
     if (!value) throw new ApiError(404, 'Pursuit not found.');
     return value;
+  }
+  runningRuns() {
+    return [...this.executions]
+      .filter(([, execution]) => execution.occupiesSlot)
+      .flatMap(([id]) => this.repository.findRun(id) || []);
+  }
+  queuedRuns() {
+    return [...this.executions]
+      .filter(([, execution]) => execution.queued)
+      .flatMap(([id]) => this.repository.findRun(id) || []);
   }
   list(workspaceId: string) {
     this.bots.list(workspaceId);

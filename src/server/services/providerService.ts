@@ -4,6 +4,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, wrapLanguageModel } from 'ai';
+import { AIConcurrency } from './aiConcurrency';
 import {
   compatibleImageMiddleware,
   compatibleAudioDataUrlMiddleware,
@@ -172,6 +173,7 @@ export class ProviderService {
     private bots: BotRepository,
     dir: string,
     private diagnostics: DiagnosticService,
+    readonly ai = new AIConcurrency(),
   ) {
     this.key = privateSecret(dir, 'credentials.key', 32);
     this.chatgpt = new ChatGPTService(
@@ -505,10 +507,15 @@ export class ProviderService {
       );
     return {
       ...config,
+      ai: this.ai,
+      aiContext: { workspaceId: bot.workspaceId, botId: bot.id },
       vision: config.supportsImages,
       model: wrapLanguageModel({
         model: this.model(provider, modelId),
-        middleware: toolMediaMiddleware,
+        middleware: [
+          toolMediaMiddleware,
+          this.ai.middleware({ workspaceId: bot.workspaceId, botId: bot.id }),
+        ],
       }),
       reasoningEffort: effort,
       reasoningProfile: reasoningProfile(provider, modelId),
@@ -608,16 +615,21 @@ export class ProviderService {
     if (!modelId.trim())
       throw new ApiError(400, 'Add a model in Settings before testing this connection.');
     try {
-      const result = await generateText({
-        model: this.model(provider, modelId),
-        prompt: 'Reply with OK.',
-        maxOutputTokens: 64,
-        maxRetries: PROVIDER_MAX_RETRIES,
-        abortSignal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
-          : AbortSignal.timeout(20000),
-        providerOptions: { openai: { store: false } },
-      });
+      const result = await this.ai.run(
+        { kind: 'connection' },
+        signal ?? new AbortController().signal,
+        () =>
+          generateText({
+            model: this.model(provider, modelId),
+            prompt: 'Reply with OK.',
+            maxOutputTokens: 64,
+            maxRetries: PROVIDER_MAX_RETRIES,
+            abortSignal: signal
+              ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+              : AbortSignal.timeout(20000),
+            providerOptions: { openai: { store: false } },
+          }),
+      );
       if (!result.text.trim())
         return {
           ok: true,

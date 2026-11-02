@@ -4,11 +4,17 @@ All bots use the existing chat tool loop, including space responses and schedule
 Runtime ownership includes workspace, bot and conversation. AI tools cannot control another
 conversation's tabs or processes. The authenticated desktop UI can browse its workspace tabs.
 
+## Shared AI concurrency
+
+Settings → Limits includes **Maximum concurrent AIs**, default **4**, shared by all workspaces. Chats, pursuit inference, memory extraction and local embeddings, context compaction, and model connection tests share one FIFO pool. A streamed generation releases its slot when the provider stream ends, so tool execution, approval waits and delegation do not hold AI capacity. Queued work can be stopped without starting a provider request, and waiting time does not consume a chat's provider watchdog budget.
+
+Main and pursuit chats display queue position, the workspaces using slots, and a link to Settings → Limits. Raising the limit admits queued work immediately; lowering it lets existing requests finish. The independent pursuit-run limit remains available and can also queue runs. Limits persist across restarts; runtime queue/activity snapshots are available through authenticated `GET /ai-activity`.
+
 ## Web search and page content
 
 `web_search` is one built-in tool family with `search` and `fetch` actions, enabled by default
 for all bots. It works without a workspace folder or provider credentials. Tool assignments
-can disable it; children created by a bot inherit its permitted tools.
+can disable it after creation; new bots receive all workspace tools by default.
 
 - `search` accepts `query` or `queries` (not both), with up to three queries. `maxResults`
   defaults to five per query and is capped at ten. Optional `includeDomains`, `excludeDomains`,

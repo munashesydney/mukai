@@ -1,6 +1,6 @@
 import { COMPUTER_AUDIO } from '../../../../shared/computerAudio';
 
-export type ComputerAudioState = 'connecting' | 'playing' | 'retrying' | 'failed';
+export type ComputerAudioState = 'connecting' | 'playing' | 'retrying' | 'blocked' | 'failed';
 
 /** Small independently decodable PCM packets, with bounded scheduling and stale-packet rejection. */
 export class ComputerAudioPlayer {
@@ -17,6 +17,9 @@ export class ComputerAudioPlayer {
   ) {
     this.gain = context.createGain();
     this.gain.connect(context.destination);
+  }
+  get needsGesture() {
+    return this.context.state !== 'running';
   }
   async resume() {
     await this.context.resume();
@@ -187,17 +190,23 @@ export function startComputerAudio(options: {
       );
     }
   };
-  options.state('connecting');
-  void player
-    .resume()
-    .then(() => connect())
-    .catch(() => {
-      if (!stopped) {
-        player.close();
-        options.state('failed', 'Sound is blocked. Click Retry sound to enable playback.');
-      }
-    });
+  let activated = false;
+  const resume = async () => {
+    await player.resume();
+    if (stopped || activated) return;
+    activated = true;
+    options.state('connecting');
+    void connect();
+  };
+  options.state(
+    player.needsGesture ? 'blocked' : 'connecting',
+    player.needsGesture ? 'Sound is on. Click anywhere to allow playback.' : undefined,
+  );
+  void resume().catch(() => {
+    if (!stopped) options.state('blocked', 'Sound is on. Click anywhere to allow playback.');
+  });
   return {
+    resume,
     volume(value: number) {
       player.volume(value);
     },

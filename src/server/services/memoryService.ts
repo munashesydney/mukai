@@ -174,6 +174,9 @@ export class MemoryService {
   ) {
     this.store = new SQLiteMemoryStore(connection);
     this.embedding = new BgeEmbedder(join(dataDir, 'memory-models'));
+    const embed = this.embedding.embed.bind(this.embedding);
+    this.embedding.embed = (texts, kind) =>
+      this.providers.ai.run({ kind: 'memory' }, this.controller.signal, () => embed(texts, kind));
     this.engine = new MemoryEngine(
       this.store,
       async (request) => {
@@ -191,160 +194,174 @@ export class MemoryService {
             : controller.signal,
         };
         request.signal?.throwIfAborted();
-        const result = await (
-          extractor ||
-          (async ({ episode, candidates, signal }) => {
-            const bot = episode.actorId ? this.bots.find(episode.actorId) : undefined;
-            if (episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
-            if (bot && bot.workspaceId !== episode.workspaceId)
-              throw new Error('Memory actor changed workspace.');
-            const actor = bot || this.bots.list(episode.workspaceId)[0];
-            if (!actor) throw new Error('A bot is required to resolve the memory model.');
-            const config = this.providers.resolve(actor);
-            const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
-            const compatible = config.provider.kind === 'compatible';
-            const repairInstructions =
-              '\nThe previous attempt did not produce a valid result. Return only a JSON object matching the required schema, including facts and reviewSummary. Include every required field; use null for unknown IDs/dates and [] for empty arrays. Do not include reasoning or markdown.';
-            const system =
-              extractionInstructions +
-              '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.' +
-              (compatible
-                ? '\nRequired output JSON schema (include every required field, using null or empty arrays where appropriate):\n' +
-                  JSON.stringify(await asSchema(memoryReviewOutputSchema).jsonSchema)
-                : '');
-            const instructionTokens =
-              estimateTokens(system) + (compatible ? estimateTokens(repairInstructions) : 0);
-            const data = {
-              content: episode.content,
-              referenceTime: episode.referenceTime,
-              recentContext: episode.context,
-              candidates: candidates.map((fact) => ({
-                id: fact.id,
-                subject: fact.subject,
-                subjectId: fact.subjectId,
-                relation: fact.relation,
-                object: fact.object,
-                objectId: fact.objectId,
-                text: fact.text,
-                validFrom: fact.validFrom,
-                validTo: fact.validTo,
-              })),
-            };
-            while (
-              data.candidates.length &&
-              estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input
-            )
-              data.candidates.pop();
-            if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input) {
-              data.recentContext = '';
-              if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input)
-                throw new Error('Memory episode exceeds model context.');
-            }
-            // Bound the whole operation, while giving each repair a fresh request deadline.
-            const operationSignal = AbortSignal.timeout(240000);
-            let repair = '';
-            let outputLimit = Math.min(limits.output, 12000);
-            for (let attempt = 0; attempt < (compatible ? 2 : 1); attempt++) {
-              const timeoutSignal = AbortSignal.timeout(120000);
-              const abortSignal = AbortSignal.any([
-                operationSignal,
-                timeoutSignal,
-                ...(signal ? [signal] : []),
-              ]);
-              let outputDetails: {
-                finishReason?: string;
-                generatedTextBytes?: number;
-                outputTokens?: number;
-                reasoningTokens?: number;
-              } = {};
-              try {
-                const result = await generateText({
-                  model: config.model,
-                  // Native adapters validate structured output themselves. Compatible
-                  // adapters ignore the schema, so parse the returned text instead.
-                  ...(compatible
-                    ? {}
-                    : { output: Output.object({ schema: memoryReviewOutputSchema }) }),
-                  system,
-                  prompt: JSON.stringify(data) + repair,
-                  abortSignal,
-                  timeout: { totalMs: 120000 },
-                  maxRetries: PROVIDER_MAX_RETRIES,
-                  maxOutputTokens: config.provider.kind === 'chatgpt' ? undefined : outputLimit,
-                  providerOptions: {
-                    openai: {
-                      store: false,
-                      ...(config.provider.kind === 'chatgpt'
-                        ? { systemMessageMode: 'developer' }
-                        : {}),
-                    },
-                    anthropic: { thinking: { type: 'disabled' } },
-                    google: { thinkingConfig: { includeThoughts: false } },
-                    ...(compatible
-                      ? { mukaiCustom: { thinking: { type: 'disabled' }, enable_thinking: false } }
-                      : {}),
-                  },
-                });
-                outputDetails = {
-                  finishReason: result.finishReason,
-                  generatedTextBytes: Buffer.byteLength(result.text),
-                  outputTokens: result.usage.outputTokens,
-                  reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
-                };
-                return compatible
-                  ? parseMemoryExtraction(result.text, result.finishReason)
-                  : result.output;
-              } catch (error) {
-                if (NoObjectGeneratedError.isInstance(error))
-                  outputDetails = {
-                    finishReason: error.finishReason,
-                    generatedTextBytes:
-                      error.text === undefined ? undefined : Buffer.byteLength(error.text),
-                    outputTokens: error.usage?.outputTokens,
-                    reasoningTokens: error.usage?.outputTokenDetails?.reasoningTokens,
-                  };
-                const retry =
-                  compatible &&
-                  attempt === 0 &&
-                  !signal?.aborted &&
-                  !operationSignal.aborted &&
-                  (error instanceof ExtractionParseError ||
-                    NoObjectGeneratedError.isInstance(error) ||
-                    NoOutputGeneratedError.isInstance(error) ||
-                    timeoutSignal.aborted);
-                if (!signal?.aborted)
-                  this.diagnostics?.record(
-                    retry ? 'memory.extraction_retry' : 'memory.extraction_failed',
-                    error,
-                    {
-                      providerId: config.provider.id,
-                      providerKind: config.provider.kind,
-                      model: config.modelId,
-                      botId: actor.id,
-                      conversationId: episode.conversationId || undefined,
-                      messageId: episode.messageId || undefined,
-                      phase: 'memory-extraction',
-                      ...outputDetails,
-                    },
-                    retry ? 'warn' : 'error',
-                  );
-                if (!retry) throw error;
-                // Regenerate from the evidence rather than treating the rejected output as facts.
-                repair =
-                  repairInstructions +
-                  (error instanceof ExtractionParseError
-                    ? '\nValidation issues to fix: ' + error.issues
+        const result = await this.providers.ai.run(
+          {
+            kind: 'memory',
+            workspaceId: request.episode.workspaceId,
+            botId: request.episode.actorId ?? undefined,
+          },
+          request.signal ?? this.controller.signal,
+          () =>
+            (
+              extractor ||
+              (async ({ episode, candidates, signal }) => {
+                const bot = episode.actorId ? this.bots.find(episode.actorId) : undefined;
+                if (episode.actorId && !bot) throw new Error('Memory actor is unavailable.');
+                if (bot && bot.workspaceId !== episode.workspaceId)
+                  throw new Error('Memory actor changed workspace.');
+                const actor = bot || this.bots.list(episode.workspaceId)[0];
+                if (!actor) throw new Error('A bot is required to resolve the memory model.');
+                const config = this.providers.resolve(actor);
+                const limits = contextLimits(config.contextWindow, config.maxOutputTokens);
+                const compatible = config.provider.kind === 'compatible';
+                const repairInstructions =
+                  '\nThe previous attempt did not produce a valid result. Return only a JSON object matching the required schema, including facts and reviewSummary. Include every required field; use null for unknown IDs/dates and [] for empty arrays. Do not include reasoning or markdown.';
+                const system =
+                  extractionInstructions +
+                  '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.' +
+                  (compatible
+                    ? '\nRequired output JSON schema (include every required field, using null or empty arrays where appropriate):\n' +
+                      JSON.stringify(await asSchema(memoryReviewOutputSchema).jsonSchema)
                     : '');
-                if (
-                  outputDetails.finishReason === 'length' ||
-                  NoOutputGeneratedError.isInstance(error)
+                const instructionTokens =
+                  estimateTokens(system) + (compatible ? estimateTokens(repairInstructions) : 0);
+                const data = {
+                  content: episode.content,
+                  referenceTime: episode.referenceTime,
+                  recentContext: episode.context,
+                  candidates: candidates.map((fact) => ({
+                    id: fact.id,
+                    subject: fact.subject,
+                    subjectId: fact.subjectId,
+                    relation: fact.relation,
+                    object: fact.object,
+                    objectId: fact.objectId,
+                    text: fact.text,
+                    validFrom: fact.validFrom,
+                    validTo: fact.validTo,
+                  })),
+                };
+                while (
+                  data.candidates.length &&
+                  estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input
                 )
-                  outputLimit = Math.min(limits.output, outputLimit * 2);
-              }
-            }
-            throw new Error('Memory extraction attempts exhausted.');
-          })
-        )(request);
+                  data.candidates.pop();
+                if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input) {
+                  data.recentContext = '';
+                  if (estimateTokens(JSON.stringify(data)) + instructionTokens > limits.input)
+                    throw new Error('Memory episode exceeds model context.');
+                }
+                // Bound the whole operation, while giving each repair a fresh request deadline.
+                const operationSignal = AbortSignal.timeout(240000);
+                let repair = '';
+                let outputLimit = Math.min(limits.output, 12000);
+                for (let attempt = 0; attempt < (compatible ? 2 : 1); attempt++) {
+                  const timeoutSignal = AbortSignal.timeout(120000);
+                  const abortSignal = AbortSignal.any([
+                    operationSignal,
+                    timeoutSignal,
+                    ...(signal ? [signal] : []),
+                  ]);
+                  let outputDetails: {
+                    finishReason?: string;
+                    generatedTextBytes?: number;
+                    outputTokens?: number;
+                    reasoningTokens?: number;
+                  } = {};
+                  try {
+                    const result = await generateText({
+                      model: config.model,
+                      // Native adapters validate structured output themselves. Compatible
+                      // adapters ignore the schema, so parse the returned text instead.
+                      ...(compatible
+                        ? {}
+                        : { output: Output.object({ schema: memoryReviewOutputSchema }) }),
+                      system,
+                      prompt: JSON.stringify(data) + repair,
+                      abortSignal,
+                      timeout: { totalMs: 120000 },
+                      maxRetries: PROVIDER_MAX_RETRIES,
+                      maxOutputTokens: config.provider.kind === 'chatgpt' ? undefined : outputLimit,
+                      providerOptions: {
+                        openai: {
+                          store: false,
+                          ...(config.provider.kind === 'chatgpt'
+                            ? { systemMessageMode: 'developer' }
+                            : {}),
+                        },
+                        anthropic: { thinking: { type: 'disabled' } },
+                        google: { thinkingConfig: { includeThoughts: false } },
+                        ...(compatible
+                          ? {
+                              mukaiCustom: {
+                                thinking: { type: 'disabled' },
+                                enable_thinking: false,
+                              },
+                            }
+                          : {}),
+                      },
+                    });
+                    outputDetails = {
+                      finishReason: result.finishReason,
+                      generatedTextBytes: Buffer.byteLength(result.text),
+                      outputTokens: result.usage.outputTokens,
+                      reasoningTokens: result.usage.outputTokenDetails?.reasoningTokens,
+                    };
+                    return compatible
+                      ? parseMemoryExtraction(result.text, result.finishReason)
+                      : result.output;
+                  } catch (error) {
+                    if (NoObjectGeneratedError.isInstance(error))
+                      outputDetails = {
+                        finishReason: error.finishReason,
+                        generatedTextBytes:
+                          error.text === undefined ? undefined : Buffer.byteLength(error.text),
+                        outputTokens: error.usage?.outputTokens,
+                        reasoningTokens: error.usage?.outputTokenDetails?.reasoningTokens,
+                      };
+                    const retry =
+                      compatible &&
+                      attempt === 0 &&
+                      !signal?.aborted &&
+                      !operationSignal.aborted &&
+                      (error instanceof ExtractionParseError ||
+                        NoObjectGeneratedError.isInstance(error) ||
+                        NoOutputGeneratedError.isInstance(error) ||
+                        timeoutSignal.aborted);
+                    if (!signal?.aborted)
+                      this.diagnostics?.record(
+                        retry ? 'memory.extraction_retry' : 'memory.extraction_failed',
+                        error,
+                        {
+                          providerId: config.provider.id,
+                          providerKind: config.provider.kind,
+                          model: config.modelId,
+                          botId: actor.id,
+                          conversationId: episode.conversationId || undefined,
+                          messageId: episode.messageId || undefined,
+                          phase: 'memory-extraction',
+                          ...outputDetails,
+                        },
+                        retry ? 'warn' : 'error',
+                      );
+                    if (!retry) throw error;
+                    // Regenerate from the evidence rather than treating the rejected output as facts.
+                    repair =
+                      repairInstructions +
+                      (error instanceof ExtractionParseError
+                        ? '\nValidation issues to fix: ' + error.issues
+                        : '');
+                    if (
+                      outputDetails.finishReason === 'length' ||
+                      NoOutputGeneratedError.isInstance(error)
+                    )
+                      outputLimit = Math.min(limits.output, outputLimit * 2);
+                  }
+                }
+                throw new Error('Memory extraction attempts exhausted.');
+              })
+            )(request),
+        );
         request.signal?.throwIfAborted();
         this.workspaces.require(request.episode.workspaceId);
         this.reviews?.describe(
@@ -445,7 +462,9 @@ export class MemoryService {
       throw new ApiError(503, this.modelError || 'Embedding setup failed.');
     this.requireEnabled(workspaceId);
     this.saveSettings(workspaceId, { ...this.settings(workspaceId), semanticSearch: true });
-    await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
+    await this.providers.ai.withContext({ kind: 'memory', workspaceId }, () =>
+      this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal),
+    );
     return { ready: true };
   }
   start() {
@@ -481,7 +500,9 @@ export class MemoryService {
         this.settings(workspaceId).semanticSearch
       ) {
         try {
-          await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
+          await this.providers.ai.withContext({ kind: 'memory', workspaceId }, () =>
+            this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal),
+          );
         } catch {
           this.modelError =
             'Some memories could not be embedded. Keyword search remains available.';
@@ -541,7 +562,9 @@ export class MemoryService {
         this.settings(workspaceId).semanticSearch
       ) {
         try {
-          await this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal);
+          await this.providers.ai.withContext({ kind: 'memory', workspaceId }, () =>
+            this.engine.indexEmbeddings(this.admin(workspaceId), this.controller.signal),
+          );
         } catch {
           this.modelError =
             'Some memories could not be embedded. Keyword search remains available.';
@@ -589,7 +612,9 @@ export class MemoryService {
         query,
         options,
       );
-    return this.engine.searchMemory(scope, query, options);
+    return this.providers.ai.withContext({ kind: 'memory', workspaceId: scope.workspaceId }, () =>
+      this.engine.searchMemory(scope, query, options),
+    );
   }
   async recall(
     bot: Bot,

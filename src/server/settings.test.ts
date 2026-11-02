@@ -66,7 +66,10 @@ it('shares appearance, existing public base URL and limits when switching backen
   api = await startApiServer(0, { dataDir: join(directory, 'data') });
   expect(api.url).not.toBe(previousUrl);
   expect(await (await request('/settings/appearance')).json()).toEqual({ appearance });
-  expect(await (await request('/limits')).json()).toEqual({ pursuitConcurrency: 9 });
+  expect(await (await request('/limits')).json()).toEqual({
+    pursuitConcurrency: 9,
+    aiConcurrency: 4,
+  });
   expect(await (await request('/capabilities/settings')).json()).toMatchObject({
     publicBaseUrl: 'https://mukai.example',
     localBaseUrl: api.url,

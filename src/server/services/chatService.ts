@@ -1252,16 +1252,28 @@ export class ChatService {
       }
       // Fresh recall replaces prior retrieval, including when resuming a checkpoint.
       // Keep it outside compaction so stale copies do not enter the working notebook.
-      const memoryData = await this.memory
-        ?.recall(
-          bot,
+      const memoryData = await this.providers.ai.withContext(
+        {
+          kind: 'memory',
+          workspaceId: bot.workspaceId,
+          botId,
           conversationId,
-          userId,
-          assistantId,
-          Math.floor(contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.08) *
-            3,
-        )
-        .catch(() => '');
+          messageId: assistantId,
+        },
+        () =>
+          this.memory
+            ?.recall(
+              bot,
+              conversationId,
+              userId,
+              assistantId,
+              Math.floor(
+                contextLimits(config.contextWindow, config.maxOutputTokens).capacity * 0.08,
+              ) * 3,
+            )
+            .catch(() => ''),
+        generation.controller.signal,
+      );
       const memoryMessage: ModelMessage | undefined = memoryData
         ? {
             role: 'user',
@@ -1297,6 +1309,7 @@ export class ChatService {
               `Compaction recovered using ${recovery.method}; reason=${recovery.reason}; attempts=${recovery.attempts}; sources=${recovery.sourceCount}.`,
               { ...diagnosticContext(), phase: 'context-compaction' },
             ),
+          { conversationId, messageId: assistantId },
         ),
         chatOutputReserve(config) - config.maxOutputTokens,
       );
@@ -2216,24 +2229,34 @@ export class ChatService {
           steeredGeneration = true;
           stepController.abort();
         };
-        const result = streamText({
-          model: config.model,
-          system: currentSystem,
-          messages:
-            memoryMessage && this.memory?.settings(bot.workspaceId).enabled
-              ? [memoryMessage, ...attemptMessages]
-              : attemptMessages,
-          maxRetries: PROVIDER_MAX_RETRIES,
-          abortSignal: stepSignal,
-          ...chatReasoningSettings(config, manager.outputAllowance(attemptMessages)),
-          tools: pausedReason || finalReplyOnly ? {} : tools,
-          activeTools: pausedReason || finalReplyOnly ? [] : undefined,
-          toolChoice: pausedReason || finalReplyOnly ? 'none' : 'auto',
-          stopWhen: isStepCount(1),
-          onError: (event) => {
-            providerError = event.error;
+        const result = this.providers.ai.withContext(
+          {
+            workspaceId: bot.workspaceId,
+            botId,
+            conversationId,
+            messageId: assistantId,
+            kind: scheduling ? 'pursuit' : 'chat',
           },
-        });
+          () =>
+            streamText({
+              model: config.model,
+              system: currentSystem,
+              messages:
+                memoryMessage && this.memory?.settings(bot.workspaceId).enabled
+                  ? [memoryMessage, ...attemptMessages]
+                  : attemptMessages,
+              maxRetries: PROVIDER_MAX_RETRIES,
+              abortSignal: stepSignal,
+              ...chatReasoningSettings(config, manager.outputAllowance(attemptMessages)),
+              tools: pausedReason || finalReplyOnly ? {} : tools,
+              activeTools: pausedReason || finalReplyOnly ? [] : undefined,
+              toolChoice: pausedReason || finalReplyOnly ? 'none' : 'auto',
+              stopWhen: isStepCount(1),
+              onError: (event) => {
+                providerError = event.error;
+              },
+            }),
+        );
         void Promise.resolve(result.warnings)
           .then((warnings) => {
             if (
@@ -2259,6 +2282,7 @@ export class ChatService {
         const timeout = new GenerationTimeout(
           () =>
             pendingTools.size > 0 ||
+            this.providers.ai.waiting(assistantId) ||
             Boolean(this.approvals?.waiting(assistantId)) ||
             Boolean(scheduling?.waiting()),
           stepController,

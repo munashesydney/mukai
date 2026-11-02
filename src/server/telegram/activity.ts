@@ -142,8 +142,7 @@ export class TelegramActivity {
         ...(reviewable ? [this.button(event, 'Approve', 'yes')] : []),
         this.button(event, 'Deny', 'no'),
       ]);
-      if (question?.action === 'approval')
-        rows.push([this.button(event, 'Deny with reason', 'reason')]);
+      rows.push([this.button(event, 'Deny with reason', 'reason')]);
     }
     this.send(event, text, { inline_keyboard: rows }, key ?? `event:${event.id}`);
   }
@@ -341,8 +340,6 @@ export class TelegramActivity {
             );
           } else {
             if (action.action === 'reason') {
-              if (request.ask?.action !== 'approval')
-                throw new ApiError(400, 'This request does not accept a denial reason.');
               this.send(
                 event,
                 'Reply to this message with your reason for denying this request. It will be denied when you send your reason. You can still use Approve or Deny on the original request.',

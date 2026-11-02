@@ -1,3 +1,4 @@
+import { AIQueueNotice } from '../ai/AIQueueNotice';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LoaderCircle, ArrowUp, Square } from 'lucide-react';
 import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
@@ -117,6 +118,7 @@ export function SpaceChat({
   );
   return (
     <>
+      <AIQueueNotice conversationId={space.id} />
       {savedOpen && (
         <div className="saved-view-heading">
           <h2>Saved messages</h2>

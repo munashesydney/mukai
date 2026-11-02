@@ -110,9 +110,8 @@ async function main() {
     );
     const address = server.address() as { port: number };
     await page.goto(`http://127.0.0.1:${address.port}`);
-    await page.getByRole('button', { name: 'Enable sound' }).waitFor();
-    assert.equal(audioRequests, 0, 'Audio must remain off until a click.');
-    await page.getByRole('button', { name: 'Enable sound' }).click();
+    await page.locator('.computer-audio-controls button[aria-pressed=true]').waitFor();
+    await page.locator('body').click({ position: { x: 5, y: 5 } });
     await page.getByRole('button', { name: 'Mute', exact: true }).waitFor();
     await page.waitForFunction('window.audioPeak() > 0.02');
     const peak = await page.evaluate('window.audioPeak()');
@@ -190,12 +189,18 @@ async function main() {
     await page.evaluate('window.setAudioOpen(false)');
     await page.waitForFunction('window.audioGraphs.at(-1).context.state === "closed"');
     await page.evaluate('window.setAudioOpen(true)');
-    await page.getByRole('button', { name: 'Enable sound' }).waitFor();
-    await page.getByRole('button', { name: 'Enable sound' }).click();
     await page.getByRole('button', { name: 'Mute', exact: true }).waitFor();
+    const graphs = (await page.evaluate('window.audioGraphs.length')) as number;
     await page.evaluate('window.setAudioWorkspace("other")');
-    await page.waitForFunction('window.audioGraphs.at(-1).context.state === "closed"');
-    await page.getByRole('button', { name: 'Enable sound' }).waitFor();
+    await page.waitForFunction(
+      (count) =>
+        (window as unknown as { audioGraphs: { context: AudioContext }[] }).audioGraphs.length >
+          count &&
+        (window as unknown as { audioGraphs: { context: AudioContext }[] }).audioGraphs[count - 1]
+          .context.state === 'closed',
+      graphs,
+    );
+    await page.getByRole('button', { name: 'Mute', exact: true }).waitFor();
     assert.deepEqual(errors, []);
     await writeFile(
       'artifacts/audio-smoke/result.json',

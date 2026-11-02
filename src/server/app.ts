@@ -38,6 +38,7 @@ import { ConversationHistoryRepository } from './repositories/conversationHistor
 import { PursuitService } from './services/pursuitService';
 import { PursuitRepository } from './repositories/pursuitRepository';
 import { LimitsRepository } from './repositories/limitsRepository';
+import { AIConcurrency } from './services/aiConcurrency';
 import { SettingsRepository } from './repositories/settingsRepository';
 import { SettingsService } from './services/settingsService';
 import { ToolAccessService } from './services/toolAccessService';
@@ -144,11 +145,17 @@ export function createApiServer(options: ApiOptions = {}) {
       browsers,
       desktop,
     );
+    const limits = new LimitsRepository(store);
+    const ai = new AIConcurrency(
+      () => limits.get().aiConcurrency,
+      (id) => workspaceRepository.find(id)?.name || 'Deleted workspace',
+    );
     const providers = new ProviderService(
       providerRepository,
       botRepository,
       store.dir,
       diagnostics,
+      ai,
     );
     const skills = new SkillService(store, workspaces);
     tools.attachSkills(skills);
@@ -238,7 +245,7 @@ export function createApiServer(options: ApiOptions = {}) {
       bots,
       chats,
       Date.now,
-      new LimitsRepository(store),
+      limits,
     );
     tools.attachPursuits(pursuits);
     const conversations = new ConversationService(
@@ -396,6 +403,7 @@ export function createApiServer(options: ApiOptions = {}) {
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
+        ai.close();
         desktops.shutdown();
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.

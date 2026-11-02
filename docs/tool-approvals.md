@@ -21,7 +21,7 @@ The model's next step waits for the tool decision. Provider response timeouts ex
 
 A disconnected UI can recover pending requests through authenticated `GET /approvals`. Stop and failed provider steps cancel requests and remove their durable records. Shutdown preserves waiting requests; responses without a pending approval still become interrupted and can be retried. Animated activity icons are clipped within fixed-size containers to keep their rotation from changing scroll bounds.
 
-The pursuit scheduler defaults to five concurrent runs across all bots and workspaces. **Settings → Limits** configures this installation-wide pool from 1 to 50. Human approval and clarification waits release their slot; approved continuations queue in order and reacquire capacity before executing. A parallel sibling that is still working keeps its pursuit's slot. Delegated bots share their parent pursuit's slot. Decisions queued for capacity remain durable across restarts. Raising the limit makes capacity available immediately; lowering it allows current work to finish and holds new or resumed work until capacity is available. Ordinary chats are outside this pool.
+The pursuit scheduler defaults to five concurrent runs across all bots and workspaces. **Settings → Limits** configures this installation-wide pool from 1 to 50. Human approval and clarification waits release their slot; approved continuations queue in order and reacquire capacity before executing. A parallel sibling that is still working keeps its pursuit's slot. Delegated bots share their parent pursuit's slot. Decisions queued for capacity remain durable across restarts. Raising the limit makes capacity available immediately; lowering it allows current work to finish and holds new or resumed work until capacity is available. Ordinary chats are outside the pursuit-run pool. A separate global AI-generation limit defaults to four and includes chats, pursuits, memory and compaction.
 
 Authenticated API endpoints:
 
@@ -31,6 +31,8 @@ Authenticated API endpoints:
 - `POST /approvals/:id` with `{ "answer": "..." }`: answer one live clarification with a suggested choice or custom text (1–16000 trimmed characters). Approval requests require a boolean instead.
 - `POST /approvals/batch` with `{ "conversationId", "batchId", "ids": [...], "approved": true | false }`: resolve an explicit snapshot of pending calls from one model step. Mixed or stale batches return 409 without granting any calls; empty or duplicate IDs return 400.
 - All decision endpoints accept `workspaceId` in the query to select the mode included in their response.
-- `GET /limits` and `PUT /limits` with `{ "pursuitConcurrency": 5 }`: read or update the shared pursuit concurrency limit.
+- `GET /limits` and `PUT /limits` with `{ "pursuitConcurrency": 5, "aiConcurrency": 4 }`: read or update the independent shared pursuit-run and AI-generation limits. Either field may be omitted to preserve it.
 
 Implementation plan: central persisted policy and cancellable gate → authenticated approval API → shared renderer state, dropup, and cards → stop/reconnect/timeout behavior → regression tests covering real SDK workspace and custom-tool dispatch.
+
+Telegram shows **Deny with reason** for both explicit AI approval questions and tool-execution approvals, including custom tools. Selecting it requests a reply; the tool remains pending until a reason is submitted. The reason is returned to the requesting bot, while stale replies cannot change a settled decision.

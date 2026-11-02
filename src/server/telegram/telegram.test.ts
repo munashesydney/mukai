@@ -730,6 +730,7 @@ function pendingApproval(
   botId = 'scout',
   input: unknown = { action: 'run', command: 'echo safe' },
   presentation?: CustomToolPresentation,
+  toolName = 'computer_use',
 ) {
   const bot = new BotRepository(api.store).find(botId)!;
   const conversation = new ConversationRepository(api.store).createPrivate(bot.workspaceId, botId);
@@ -750,7 +751,7 @@ function pendingApproval(
     messageId: id,
     toolCallId: id,
     batchId: id,
-    toolName: 'computer_use',
+    toolName,
     input,
     presentation,
   };
@@ -928,6 +929,51 @@ describe('Telegram workspace approvals and updates', () => {
         ).toBe(7654321),
       { timeout: 5000 },
     );
+  }, 15000);
+
+  it('offers denial with reason for a custom-tool execution approval and ignores late replies', async () => {
+    await paired();
+    const custom = pendingApproval(
+      'scout',
+      { destination: 'production' },
+      undefined,
+      'deploy_preview',
+    );
+    expect(custom.request.ask).toBeUndefined();
+    const event = await postedEvent(custom.request.id);
+    const markup = String(
+      api.store.get('SELECT markup_json FROM telegram_outbox WHERE event_id=?', String(event.id))!
+        .markup_json,
+    );
+    expect(markup).toContain('Deny with reason');
+    tap(String(event.id), 'reason');
+    await vi.waitFor(() =>
+      expect(
+        api.store.get(
+          "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+          String(event.id),
+        ),
+      ).toBeTruthy(),
+    );
+    expect(api.approvals.state().pending).toHaveLength(1);
+    const prompt = api.store.get(
+      "SELECT id FROM telegram_outbox WHERE event_id=? AND reply_action='deny_reason'",
+      String(event.id),
+    )!;
+    api.telegram.jobs.delivered(String(prompt.id), 701119);
+    const reply = message('  Use the staging workspace first.  ');
+    reply.message!.reply_to_message = { message_id: 701119 };
+    accept(reply);
+    expect(await custom.decision).toEqual({
+      approved: false,
+      reason: 'Use the staging workspace first.',
+    });
+    const late = message('A second reason');
+    late.message!.reply_to_message = { message_id: 701119 };
+    accept(late);
+    await vi.waitFor(() => expect(api.telegram.jobs.inbox()).toHaveLength(0));
+    expect(api.approvals.state().pending).toHaveLength(0);
+    expect(api.store.all('SELECT id FROM telegram_chat_jobs')).toHaveLength(0);
   }, 15000);
 
   it('waits for a denial reason, passes it to the asking bot, and rejects a late reason after approval', async () => {

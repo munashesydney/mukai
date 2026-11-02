@@ -35,7 +35,7 @@ import type { FileChangeService } from '../services/fileChangeService';
 import type { ConversationService } from '../services/conversationService';
 import type { PursuitService } from '../services/pursuitService';
 import { workpadQuerySchema } from '../tools/pursuits/workpad';
-import { MAX_PURSUIT_CONCURRENCY } from '../../shared/limits';
+import { MAX_PURSUIT_CONCURRENCY, MAX_AI_CONCURRENCY } from '../../shared/limits';
 import { z } from 'zod';
 import type { BrowserService } from '../services/browserService';
 import { browserDefinition } from '../tools/browser/definition';
@@ -196,7 +196,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(telegram|settings|limits|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
+      !/^\/(telegram|settings|limits|ai-activity|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications)(\/|$)/.test(
         path,
       )
     )
@@ -262,14 +262,37 @@ export function createRoutes({
       if (method === 'POST')
         return send(response, settings.saveAppearance(await jsonBody(request), true));
     }
+    if (resource === 'ai-activity' && method === 'GET') {
+      const describe = (runs: ReturnType<PursuitService['queuedRuns']>) =>
+        runs.map((run) => ({
+          id: run.id,
+          kind: 'pursuit',
+          conversationId: run.conversationId,
+          workspaceId: run.snapshot.workspaceId,
+          workspaceName: workspaces.require(run.snapshot.workspaceId).name,
+          botId: run.snapshot.ownerBotId || undefined,
+          queuedAt: run.startedAt,
+        }));
+      return sendRead(request, response, {
+        ...providers.ai.snapshot(),
+        pursuitLimit: pursuits.limits().pursuitConcurrency,
+        pursuitQueued: describe(pursuits.queuedRuns()),
+        pursuitRunning: describe(pursuits.runningRuns()),
+      });
+    }
     if (resource === 'limits' && !id) {
       if (method === 'GET') return sendRead(request, response, pursuits.limits());
       if (method === 'PUT') {
         const input = z
-          .object({ pursuitConcurrency: z.number().int().min(1).max(MAX_PURSUIT_CONCURRENCY) })
+          .object({
+            pursuitConcurrency: z.number().int().min(1).max(MAX_PURSUIT_CONCURRENCY).optional(),
+            aiConcurrency: z.number().int().min(1).max(MAX_AI_CONCURRENCY).optional(),
+          })
           .strict()
           .parse(await jsonBody(request));
-        return send(response, pursuits.setLimits(input));
+        const saved = pursuits.setLimits(input);
+        providers.ai.drain();
+        return send(response, saved);
       }
     }
     if (resource === 'approvals') {

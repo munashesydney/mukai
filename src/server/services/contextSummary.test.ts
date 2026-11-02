@@ -2,12 +2,15 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { generateText } from 'ai';
 import type { ProviderService } from './providerService';
 import { contextSummarizer } from './contextSummary';
+import { AIConcurrency } from './aiConcurrency';
 vi.mock('ai', async (original) => ({
   ...(await original<typeof import('ai')>()),
   generateText: vi.fn(),
 }));
 const generate = vi.mocked(generateText);
 const config = {
+  ai: new AIConcurrency(),
+  aiContext: {},
   provider: { kind: 'compatible' },
   modelId: 'fixture',
   model: {},

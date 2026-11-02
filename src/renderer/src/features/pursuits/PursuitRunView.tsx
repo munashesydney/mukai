@@ -1,3 +1,5 @@
+import { useAIActivity } from '../../services/aiActivityStore';
+import { AIQueueNotice } from '../ai/AIQueueNotice';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Square } from 'lucide-react';
 import type { Bot, ChatMessage } from '../../../../shared/ai';
@@ -27,6 +29,10 @@ export function PursuitRunView({
   bot?: Bot;
   onBack: () => void;
 }) {
+  const activity = useAIActivity();
+  const queued = [...activity.queued, ...(activity.pursuitQueued || [])].some(
+    (work) => work.conversationId === run.conversationId,
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]),
     [error, setError] = useState(''),
     [tab, setTab] = useState('Messages');
@@ -85,7 +91,9 @@ export function PursuitRunView({
         </button>
         <div className="pursuit-title">
           <h1>{run.snapshot.name}</h1>
-          <span className="status-label">{run.status === 'running' ? 'Running' : run.status}</span>
+          <span className="status-label">
+            {run.status === 'running' ? (queued ? 'Queued' : 'Running') : run.status}
+          </span>
           <BrowserToggle />
         </div>
         <p>
@@ -119,6 +127,7 @@ export function PursuitRunView({
           ))}
         </div>
       </header>
+      <AIQueueNotice conversationId={run.conversationId} />
       {error && (
         <p role="alert" className="ai-alert">
           {error}

@@ -1,3 +1,4 @@
+import { AIQueueSettings } from '../features/ai/aiQueueContext';
 import { SkillsPage } from '../features/workspace/SkillsPage';
 import { Target, Plus } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
@@ -35,13 +36,17 @@ import { TelegramPage } from '../features/telegram/TelegramPage';
 function WorkspaceLayout({
   children,
   onOpen,
+  onLimits,
 }: {
   children: ReactNode;
   onOpen: (conversationId: string) => void;
+  onLimits: () => void;
 }) {
   return (
     <ConversationNavigation.Provider value={onOpen}>
-      <BrowserLayout>{children}</BrowserLayout>
+      <AIQueueSettings.Provider value={onLimits}>
+        <BrowserLayout>{children}</BrowserLayout>
+      </AIQueueSettings.Provider>
     </ConversationNavigation.Provider>
   );
 }
@@ -269,6 +274,7 @@ function WorkspaceApp({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
 
   return (
     <WorkspaceLayout
+      onLimits={() => openSettings('limits')}
       onOpen={(conversationId) => {
         botPairs.refresh();
         select({ section: 'bots', item: 'bot-conversations', conversationId });

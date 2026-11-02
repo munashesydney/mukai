@@ -145,3 +145,41 @@ it('uses fresh tickets for bounded reconnects and never opens late connections a
   expect(signal.aborted).toBe(true);
   expect(sockets.length).toBe(previous);
 });
+
+it('keeps default sound armed while autoplay is blocked and starts once on a user gesture', async () => {
+  vi.useFakeTimers();
+  const mock = audio();
+  mock.context.state = 'suspended';
+  let allow!: () => void;
+  mock.context.resume.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        allow = resolve;
+      }),
+  );
+  mock.context.resume.mockImplementationOnce(async () => {
+    mock.context.state = 'running';
+    allow();
+  });
+  vi.stubGlobal('AudioContext', function () {
+    return mock.context;
+  });
+  vi.stubGlobal(
+    'WebSocket',
+    class {
+      close = vi.fn();
+    },
+  );
+  const open = vi.fn(async () => 'ws://fixture/audio');
+  const state = vi.fn();
+  const stream = startComputerAudio({ open, state, volume: 0.7 });
+  expect(state).toHaveBeenCalledWith('blocked', expect.stringContaining('Sound is on'));
+  expect(open).not.toHaveBeenCalled();
+  await stream.resume();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(open).toHaveBeenCalledOnce();
+  expect(mock.context.close).not.toHaveBeenCalled();
+  stream.stop();
+  expect(mock.context.close).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});

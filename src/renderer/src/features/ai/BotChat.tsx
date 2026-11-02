@@ -1,3 +1,4 @@
+import { AIQueueNotice } from './AIQueueNotice';
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -217,6 +218,7 @@ export function BotChat({
               </div>
             </div>
           </header>
+          <AIQueueNotice conversationId={conversation.id} />
           {filesOpen ? (
             <ArtifactsView
               conversationId={conversation.id}

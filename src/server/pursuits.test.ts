@@ -284,7 +284,7 @@ afterEach(async () => {
 });
 describe('AI-owned pursuits and scheduled runs', () => {
   it('defaults to five shared slots, validates changes and persists limits across a restart', async () => {
-    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 5 });
+    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 5, aiConcurrency: 4 });
     for (const value of [0, -1, 1.5, 51, '3']) {
       expect((await request('/limits', 'PUT', { pursuitConcurrency: value })).response.status).toBe(
         400,
@@ -292,11 +292,12 @@ describe('AI-owned pursuits and scheduled runs', () => {
     }
     expect((await request('/limits', 'PUT', { pursuitConcurrency: 3 })).data).toEqual({
       pursuitConcurrency: 3,
+      aiConcurrency: 4,
     });
     await api.shutdown();
     await close(api.server);
     api = await startApiServer(0, { dataDir: dir });
-    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 3 });
+    expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 3, aiConcurrency: 4 });
   });
   it('shares capacity across bots and workspaces instead of allowing five per workspace', async () => {
     const bots = new BotRepository(api.store);
