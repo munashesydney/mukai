@@ -482,6 +482,43 @@ export const migrations = [
    CREATE TRIGGER failure_run_retry AFTER UPDATE OF status ON pursuit_runs
      WHEN NEW.status='running' AND OLD.status<>'running'
      BEGIN DELETE FROM chat_failure_dismissals WHERE conversation_id=NEW.conversation_id; END;`,
+  `CREATE TABLE mobile_push_devices (
+     id TEXT PRIMARY KEY, session_hash TEXT NOT NULL REFERENCES web_sessions(token_hash) ON DELETE CASCADE,
+     relay_url TEXT NOT NULL, credential TEXT NOT NULL, created_at INTEGER NOT NULL);
+   CREATE TABLE mobile_push_outbox (
+     id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_push_devices(id) ON DELETE CASCADE,
+     payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+     next_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+   CREATE INDEX mobile_push_pending ON mobile_push_outbox(status,next_at);
+   CREATE TRIGGER mobile_push_response AFTER UPDATE OF status ON messages
+     WHEN OLD.status='streaming' AND NEW.status='complete' AND NEW.role='assistant'
+     BEGIN
+       INSERT OR IGNORE INTO mobile_push_outbox(id,device_id,payload,created_at)
+       SELECT 'response:'||NEW.id||':'||d.id,d.id,json_object('eventId','response:'||NEW.id,
+         'kind',CASE WHEN c.kind='pursuit_run' THEN 'pursuit-complete' ELSE 'response-complete' END,
+         'workspaceId',c.workspace_id,'conversationId',c.id,'botId',NEW.bot_id),unixepoch()*1000
+       FROM conversations c,mobile_push_devices d JOIN web_sessions s ON s.token_hash=d.session_hash
+       WHERE c.id=NEW.conversation_id AND c.kind IN ('private','pursuit_run','space') AND NEW.bot_id IS NOT NULL
+         AND s.expires_at>unixepoch()*1000 AND (SELECT count(*) FROM mobile_push_outbox)<10000;
+     END;
+   CREATE TRIGGER mobile_push_approval AFTER INSERT ON pending_tool_approvals
+     WHEN json_extract(NEW.request_json,'$.decision') IS NULL
+     BEGIN
+       INSERT OR IGNORE INTO mobile_push_outbox(id,device_id,payload,created_at)
+       SELECT 'approval:'||NEW.id||':'||d.id,d.id,json_object('eventId','approval:'||NEW.id,'kind','approval-required',
+         'workspaceId',c.workspace_id,'conversationId',c.id,'botId',m.bot_id),unixepoch()*1000
+       FROM messages m JOIN conversations c ON c.id=m.conversation_id,mobile_push_devices d JOIN web_sessions s ON s.token_hash=d.session_hash
+       WHERE m.id=NEW.message_id AND m.bot_id IS NOT NULL AND s.expires_at>unixepoch()*1000
+         AND (SELECT count(*) FROM mobile_push_outbox)<10000;
+     END;
+   CREATE TRIGGER mobile_push_update AFTER INSERT ON bot_notifications
+     BEGIN
+       INSERT OR IGNORE INTO mobile_push_outbox(id,device_id,payload,created_at)
+       SELECT 'update:'||NEW.id||':'||d.id,d.id,json_object('eventId','update:'||NEW.id,'kind','update',
+         'workspaceId',NEW.workspace_id,'conversationId',NEW.source_conversation_id,'botId',NEW.bot_id),unixepoch()*1000
+       FROM mobile_push_devices d JOIN web_sessions s ON s.token_hash=d.session_hash
+       WHERE s.expires_at>unixepoch()*1000 AND (SELECT count(*) FROM mobile_push_outbox)<10000;
+     END;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

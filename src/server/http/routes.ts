@@ -51,6 +51,7 @@ import type { SettingsService } from '../services/settingsService';
 import type { TelegramService } from '../services/telegramService';
 import { telegramRoutes } from './telegramRoutes';
 import type { UpdateController } from '../../shared/updates';
+import type { PushService } from '../services/pushService';
 
 const followupText = z.string().trim().max(16000);
 const followupAttachments = z
@@ -105,6 +106,7 @@ export function createRoutes({
   chatOutputs,
   conversationArtifacts,
   notifications,
+  push,
   failures,
   desktops,
   approvals,
@@ -133,6 +135,7 @@ export function createRoutes({
   chatOutputs: ChatOutputService;
   conversationArtifacts: ConversationArtifactService;
   notifications: NotificationService;
+  push: PushService;
   failures: FailureService;
   desktops: DesktopTransport;
   approvals: ApprovalService;
@@ -199,7 +202,7 @@ export function createRoutes({
       return;
     }
     if (
-      !/^\/(telegram|settings|limits|ai-activity|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications|failures)(\/|$)/.test(
+      !/^\/(push|telegram|settings|limits|ai-activity|approvals|bots|providers|attachments|workspaces|artifacts|tools|changes|conversations|pursuits|browser|capabilities|environment|memory|skills|notifications|failures)(\/|$)/.test(
         path,
       )
     )
@@ -273,6 +276,27 @@ export function createRoutes({
       if (method === 'PUT') return send(response, settings.saveAppearance(await jsonBody(request)));
       if (method === 'POST')
         return send(response, settings.saveAppearance(await jsonBody(request), true));
+    }
+    if (resource === 'push') {
+      const session = request.headers['x-mukai-session'];
+      const credential = typeof session === 'string' ? session : '';
+      if (id === 'config' && method === 'GET') return send(response, push.configuration());
+      if (id === 'devices' && !action && method === 'POST') {
+        const input = z
+          .object({
+            installationId: z.string().uuid(),
+            relayUrl: z.string().url().max(300),
+            deliveryToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+          })
+          .strict()
+          .parse(await jsonBody(request, 2048));
+        return send(response, push.register(credential, input));
+      }
+      if (id === 'devices' && action && method === 'DELETE') {
+        return send(response, push.remove(credential, z.string().uuid().parse(action)));
+      }
+      if (id === 'test' && method === 'POST') return send(response, push.test(credential));
+      throw new ApiError(404, 'Not found.');
     }
     if (resource === 'ai-activity' && method === 'GET') {
       const describe = (runs: ReturnType<PursuitService['queuedRuns']>) =>
@@ -709,6 +733,7 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
+        if (!action && method === 'GET') return send(response, conversation);
         if (action === 'reference' && method === 'POST') {
           const input = z
             .object({ href: z.string().min(1).max(4500), image: z.boolean().default(false) })

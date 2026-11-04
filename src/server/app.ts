@@ -71,6 +71,9 @@ import { TelegramService } from './services/telegramService';
 import { TelegramRuntime } from './telegram/runtime';
 import { TelegramActivity } from './telegram/activity';
 import type { UpdateController } from '../shared/updates';
+import { PushRepository } from './repositories/pushRepository';
+import { PushService } from './services/pushService';
+import type { PushSender } from './push/transport';
 
 export interface ApiOptions {
   updates?: UpdateController;
@@ -86,6 +89,8 @@ export interface ApiOptions {
   desktopHelperDir?: string;
   /** Injectable transport for integration tests; production always uses the fixed Telegram origin. */
   telegramFetch?: typeof fetch;
+  /** Test-only transport injection; production validates and pins public HTTPS destinations. */
+  pushSender?: PushSender;
 }
 export function createApiServer(options: ApiOptions = {}) {
   const startedAt = Date.now();
@@ -180,6 +185,7 @@ export function createApiServer(options: ApiOptions = {}) {
       join(dir, 'uploads'),
     );
     const approvals = new ApprovalService(new ApprovalRepository(store));
+    const push = new PushService(new PushRepository(store), options.pushSender);
     const notifications = new NotificationService(new NotificationRepository(store), workspaces);
     const conversationHistory = new ConversationHistoryService(
       new ConversationHistoryRepository(store),
@@ -347,6 +353,7 @@ export function createApiServer(options: ApiOptions = {}) {
       chatOutputs,
       conversationArtifacts,
       notifications,
+      push,
       failures: new FailureService(new FailureRepository(store)),
       desktops,
       approvals,
@@ -407,6 +414,7 @@ export function createApiServer(options: ApiOptions = {}) {
     const shutdown = () =>
       (shutdownPromise ??= (async () => {
         ai.close();
+        await push.close();
         desktops.shutdown();
         providers.chatgpt.shutdown();
         // Stop new capability jobs before stopping chat runs that may be processing wakes.
@@ -439,6 +447,7 @@ export function createApiServer(options: ApiOptions = {}) {
         });
       });
     server.once('listening', () => {
+      push.start();
       chats.restorePending((id) => bots.require(id));
       chats.restoreFollowups();
       pursuits.start();
@@ -460,6 +469,7 @@ export function createApiServer(options: ApiOptions = {}) {
       token,
       store,
       shutdown,
+      push,
       dispose,
       pursuits,
       browsers,

@@ -347,3 +347,23 @@ unsigned and updater downloads are checked against the release manifest's SHA-51
 Mac releases retain Developer ID signing and notarization.
 Cloud sync, user accounts, and OCR are not included. Pursuit scheduling
 runs while the local backend is running.
+
+## iPhone push notifications
+
+The backend forwards new completed replies, tool approval requests, pursuit results,
+and bot updates to the publisher's separate APNs relay. Electron has no push
+notification UI. The Apple `.p8` stays on the relay; this server stores only an
+encrypted credential scoped to each paired phone, tied to that phone's signed-in
+owner device session. Notification payloads contain event types and opaque IDs;
+chat text and tool arguments are not forwarded.
+
+Official iOS builds carry `MUKAI_PUSH_RELAY_URL` as a Dart build setting. Developers
+can instead set the same environment variable on this backend as a fallback for
+local builds. It must be a public HTTPS origin without a path. Private destinations
+and redirects are blocked. With no relay configured, chats continue normally.
+Recipients only sign in and allow notifications on their phone.
+
+The durable notification outbox retries transient failures, deduplicates events,
+and stops forwarding when a phone is removed or its device session expires/is
+revoked. Back up `push-encryption.key` with the server data directory; it decrypts
+stored per-phone delivery credentials. The Apple signing key does not belong here.
