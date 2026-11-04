@@ -23,6 +23,10 @@ import { BotConversationsSidebar } from '../../features/ai/BotConversationsSideb
 import { BotPairConversationsSidebar } from '../../features/ai/BotPairConversationsSidebar';
 import { activeConversationGroup } from '../../features/ai/conversationSidebar';
 import { PopupMenu } from '../ui/PopupMenu';
+import { WorkingIndicator } from '../ui/WorkingIndicator';
+import { useAIActivity } from '../../services/aiActivityStore';
+import { useConversationsBusy } from '../../features/ai/chatStore';
+import { runningWorkspaceIds } from '../../features/workspace/workspaceActivity';
 
 export function WorkspaceSidebar({
   location,
@@ -67,6 +71,17 @@ export function WorkspaceSidebar({
   onWorkspace: (id: string) => void;
   onCreateWorkspace: () => void;
 }) {
+  const activity = useAIActivity();
+  const conversations = [...botConversations, ...botPairConversations].filter(
+    (chat) => chat.workspaceId === workspace?.id,
+  );
+  const liveConversationBusy = useConversationsBusy(
+    conversations.map((chat) => `${chat.kind === 'bot' ? 'space' : 'private'}:${chat.id}`),
+  );
+  const workingWorkspaces = runningWorkspaceIds(activity);
+  if (workspace && (liveConversationBusy || conversations.some((chat) => chat.isWorking))) {
+    workingWorkspaces.add(workspace.id);
+  }
   const [spacesOpen, setSpacesOpen] = useState(true);
   const locationKey = JSON.stringify(location);
   const [expansion, setExpansion] = useState<{ locationKey: string; group: string | null }>();
@@ -103,6 +118,9 @@ export function WorkspaceSidebar({
               {workspace?.name || 'Your workspace'}
               <span className="workspace-subtitle">A little momentum, every day.</span>
             </span>
+            {workspace && workingWorkspaces.has(workspace.id) && (
+              <WorkingIndicator label={`Agents are working in ${workspace.name}`} />
+            )}
             <ChevronDown size={16} />
           </>
         }
@@ -131,6 +149,9 @@ export function WorkspaceSidebar({
                         : 'Personal workspace'}
                   </small>
                 </span>
+                {workingWorkspaces.has(item.id) && (
+                  <WorkingIndicator label={`Agents are working in ${item.name}`} />
+                )}
                 {item.id === workspace?.id && <Check size={15} />}
               </button>
             ))}

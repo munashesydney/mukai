@@ -62,34 +62,59 @@ export class CapabilityEnvironment {
     }
     this.redactor = new CapabilityRedactor(this.secrets);
   }
-  save(workspaceId: string, entries: { name: string; value: string; secret?: boolean }[]) {
+  save(
+    workspaceId: string,
+    entries: { name: string; value?: string; secret?: boolean; originalName?: string }[],
+  ) {
     const values = z
       .array(
-        z.object({
-          name: variableName,
-          value: z.string().max(16384),
-          secret: z.boolean().optional(),
-        }),
+        z
+          .object({
+            name: variableName,
+            value: z.string().max(16384).optional(),
+            secret: z.boolean().optional(),
+            originalName: variableName.optional(),
+          })
+          .refine((entry) => entry.value !== undefined || entry.originalName !== undefined, {
+            message: 'A value is required for a new variable.',
+          }),
       )
       .max(200)
       .parse(entries);
     const retired: string[] = [];
     this.db.transaction(() => {
-      for (const { name, value, secret } of values) {
+      for (const { name, value, secret, originalName } of values) {
+        const renaming = originalName !== undefined && originalName !== name;
+        if (
+          renaming &&
+          this.db.get(
+            'SELECT name FROM capability_env WHERE workspace_id=? AND name=?',
+            workspaceId,
+            name,
+          )
+        )
+          throw new ApiError(409, 'A variable with this name already exists.');
         const previous = this.db.get(
           'SELECT value,secret FROM capability_env WHERE workspace_id=? AND name=?',
           workspaceId,
-          name,
+          originalName ?? name,
         );
         const old = previous ? this.decrypt(String(previous.value), false) : '';
-        if (previous?.secret && old && old !== value) retired.push(old);
+        const nextValue = value ?? old;
+        if (previous?.secret && old && old !== nextValue) retired.push(old);
         this.db.run(
           'INSERT INTO capability_env(workspace_id,name,value,secret) VALUES(?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET value=excluded.value,secret=excluded.secret',
           workspaceId,
           name,
-          this.encrypt(value),
+          this.encrypt(nextValue),
           secret === undefined ? Number(previous?.secret ?? 1) : Number(secret),
         );
+        if (renaming)
+          this.db.run(
+            'DELETE FROM capability_env WHERE workspace_id=? AND name=?',
+            workspaceId,
+            originalName,
+          );
       }
     });
     for (const value of retired) this.retired.add(value);

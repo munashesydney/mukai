@@ -13,6 +13,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   const [editor, setEditor] = useState<'variable' | 'import' | null>(null);
   const [variables, setVariables] = useState<EnvironmentVariable[]>([]);
   const [secret, setSecret] = useState(true);
+  const [originalName, setOriginalName] = useState<string>();
   const [name, setName] = useState(''),
     [value, setValue] = useState(''),
     [block, setBlock] = useState('');
@@ -26,6 +27,8 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
   );
   useEffect(() => {
     setName('');
+    setOriginalName(undefined);
+    setEditor(null);
     setSecret(true);
     setValue('');
     setBlock('');
@@ -84,6 +87,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               className="button button--primary"
               onClick={() => {
                 setName('');
+                setOriginalName(undefined);
                 setSecret(true);
                 setValue('');
                 setError('');
@@ -149,7 +153,14 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               onSubmit={(event) => {
                 event.preventDefault();
                 void perform(async () => {
-                  await capabilityService.saveEnvironment(workspaceId, [{ name, value, secret }]);
+                  await capabilityService.saveEnvironment(workspaceId, [
+                    {
+                      name,
+                      value: originalName !== undefined && value === '' ? undefined : value,
+                      secret,
+                      originalName,
+                    },
+                  ]);
                   setName('');
                   setValue('');
                 });
@@ -190,6 +201,9 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                   onChange={(event) => setValue(event.target.value)}
                   autoComplete="new-password"
                 />
+                {originalName !== undefined && (
+                  <span className="ai-caption">Leave blank to keep the saved value.</span>
+                )}
               </label>
               <button className="button button--primary" disabled={busy}>
                 Save variable
@@ -301,6 +315,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
                 disabled={busy}
                 onClick={() => {
                   setName(variable.name);
+                  setOriginalName(variable.name);
                   setSecret(variable.secret !== false);
                   setValue('');
                   setError('');

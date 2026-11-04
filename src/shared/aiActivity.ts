@@ -24,6 +24,8 @@ export interface AIMemoryPressure {
   cooldownUntil?: string;
 }
 export interface AIActivity {
+  /** Live responses remain working through tool calls and delegation waits. */
+  workingWorkspaceIds?: string[];
   memoryPressure?: AIMemoryPressure[];
   limit: number;
   running: AIWork[];

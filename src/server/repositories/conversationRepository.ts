@@ -23,6 +23,16 @@ export class ConversationRepository {
         .map((row) => String(row.bot_id)),
     };
   }
+  workingWorkspaceIds(): string[] {
+    return this.database
+      .all(
+        `SELECT DISTINCT c.workspace_id FROM messages m
+         JOIN conversations c ON c.id=m.conversation_id
+         WHERE m.role='assistant' AND m.status='streaming'
+         ORDER BY c.workspace_id`,
+      )
+      .map((row) => String(row.workspace_id));
+  }
   find(id: string) {
     const row = this.database.get('SELECT * FROM conversations WHERE id=?', id);
     return row ? this.project(row) : undefined;

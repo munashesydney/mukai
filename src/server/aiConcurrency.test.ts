@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
-import { seedTestWorkspace } from './testFixtures';
+import { seedTestWorkspace, seedTestBot } from './testFixtures';
+import { BotRepository } from './repositories/botRepository';
+import { MessageRepository } from './repositories/messageRepository';
+import { AttachmentRepository } from './repositories/attachmentRepository';
+import { FileChangeRepository } from './repositories/fileChangeRepository';
+import { scoutBot } from './services/botService';
 import { WorkspaceRepository } from './repositories/workspaceRepository';
 import type { Bot, ProviderSettings } from '../shared/ai';
 import type { AIActivity } from '../shared/aiActivity';
@@ -57,6 +62,52 @@ it('defaults to four globally, validates and persists updates, and preserves the
     queued: [],
   });
   expect((await fetch(api.url + '/ai-activity')).status).toBe(401);
+});
+
+it('reports working workspaces during tool calls without a provider request and clears finished responses', async () => {
+  seedTestBot(api.store);
+  new WorkspaceRepository(api.store).create({
+    id: 'second',
+    name: 'Second workspace',
+    folder: null,
+    computer: 'local',
+    createdAt: new Date().toISOString(),
+  });
+  new BotRepository(api.store).create(scoutBot('second', 'other-bot'));
+  const messages = new MessageRepository(
+    api.store,
+    new AttachmentRepository(api.store),
+    new FileChangeRepository(api.store),
+  );
+  const turn = (botId: string) => {
+    const assistantId = randomUUID();
+    messages.createTurn({
+      botId,
+      conversationId: `bot-${botId}`,
+      authorName: 'Scout',
+      requestId: randomUUID(),
+      userId: randomUUID(),
+      assistantId,
+      text: 'Use tools',
+      attachmentIds: [],
+    });
+    return assistantId;
+  };
+  const first = turn('scout'),
+    second = turn('scout'),
+    other = turn('other-bot');
+  const activity = (await request<AIActivity>('/ai-activity')).data;
+  expect(activity.running).toEqual([]);
+  expect(activity.workingWorkspaceIds).toEqual(['default', 'second']);
+  messages.finish(first, 'Done', 'complete', null, '', []);
+  expect((await request<AIActivity>('/ai-activity')).data.workingWorkspaceIds).toEqual([
+    'default',
+    'second',
+  ]);
+  messages.finish(second, 'Done', 'complete', null, '', []);
+  expect((await request<AIActivity>('/ai-activity')).data.workingWorkspaceIds).toEqual(['second']);
+  messages.finish(other, 'Stopped', 'stopped', null, '', []);
+  expect((await request<AIActivity>('/ai-activity')).data.workingWorkspaceIds).toEqual([]);
 });
 
 it('queues actual chats across workspaces, shows their owners, cancels a queued chat, and admits the next one', async () => {

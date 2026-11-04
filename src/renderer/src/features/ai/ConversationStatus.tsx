@@ -2,17 +2,7 @@ import type { ReactNode } from 'react';
 import type { Conversation } from '../../../../shared/conversations';
 import { useChatBusy, useConversationsBusy } from './chatStore';
 
-function WorkingIndicator() {
-  return (
-    <span className="bot-conversation-working" role="status" aria-label="AI is working">
-      <span className="typing-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
-    </span>
-  );
-}
+import { WorkingIndicator } from '../../components/ui/WorkingIndicator';
 
 export function BotConversationStatus({ conversations }: { conversations: Conversation[] }) {
   const busy = useConversationsBusy(

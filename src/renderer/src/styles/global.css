@@ -416,6 +416,20 @@ p {
   font-weight: 650;
   letter-spacing: -0.25px;
 }
+.workspace-switcher > button > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-switcher > button > .bot-conversation-working,
+.workspace-choice > .bot-conversation-working {
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.workspace-switcher > button > .bot-conversation-working {
+  margin: 5px 10px 0;
+}
 .workspace-switcher > button > svg {
   margin-top: 2px;
   color: var(--text-secondary);

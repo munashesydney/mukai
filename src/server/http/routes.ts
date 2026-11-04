@@ -287,6 +287,7 @@ export function createRoutes({
         }));
       return sendRead(request, response, {
         ...providers.ai.snapshot(),
+        workingWorkspaceIds: conversations.workingWorkspaceIds(),
         pursuitLimit: pursuits.limits().pursuitConcurrency,
         pursuitQueued: describe(pursuits.queuedRuns()),
         pursuitRunning: describe(pursuits.runningRuns()),
@@ -541,7 +542,12 @@ export function createRoutes({
             .object({
               entries: z
                 .array(
-                  z.object({ name: z.string(), value: z.string(), secret: z.boolean().optional() }),
+                  z.object({
+                    name: z.string(),
+                    value: z.string().optional(),
+                    secret: z.boolean().optional(),
+                    originalName: z.string().optional(),
+                  }),
                 )
                 .max(200),
             })

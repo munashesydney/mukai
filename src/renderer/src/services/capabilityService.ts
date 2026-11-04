@@ -48,7 +48,7 @@ export const capabilityService = {
     api<EnvironmentVariable[]>('/environment' + scope(workspaceId)),
   saveEnvironment: (
     workspaceId: string,
-    entries: { name: string; value: string; secret?: boolean }[],
+    entries: { name: string; value?: string; secret?: boolean; originalName?: string }[],
   ) => api<EnvironmentVariable[]>('/environment' + scope(workspaceId), 'PUT', { entries }),
   setEnvironmentSensitivity: (workspaceId: string, name: string, secret: boolean) =>
     api<EnvironmentVariable[]>(

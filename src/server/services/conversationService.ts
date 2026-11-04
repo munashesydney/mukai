@@ -20,6 +20,9 @@ export class ConversationService {
     if (!conversation) throw new ApiError(404, 'Conversation not found.');
     return conversation;
   }
+  workingWorkspaceIds() {
+    return this.conversations.workingWorkspaceIds();
+  }
   list(workspaceId: string) {
     this.bots.list(workspaceId);
     return this.conversations.list(workspaceId);
