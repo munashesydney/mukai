@@ -135,7 +135,7 @@ it('requires ownership proof, atomically claims one owner, and stores only hashe
     session.cookie.split('=')[1],
   );
 });
-it('protects APIs, rejects cross-origin and public bearer/bootstrap access, persists login and revokes logout', async () => {
+it('protects browser APIs, accepts native bearer access, persists login and revokes logout', async () => {
   const session = await setup();
   expect(session.status).toBe(200);
   expect((await call('/api/workspaces')).status).toBe(401);
@@ -165,7 +165,7 @@ it('protects APIs, rejects cross-origin and public bearer/bootstrap access, pers
     );
     request.end();
   });
-  expect(bearer).toBe(401);
+  expect(bearer).toBe(200);
   for (const origin of ['null', 'file://']) {
     expect(
       (

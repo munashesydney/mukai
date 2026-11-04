@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+/** Originless native login; subsequent requests use X-Mukai-Session. */
+export interface OwnerDeviceSession {
+  authenticated: true;
+  sessionToken: string;
+  expiresAt: string;
+}
+
 export const ownerCredentialsSchema = z
   .object({
     username: z

@@ -254,6 +254,15 @@ export function createRoutes({
       if (method === 'PUT')
         return send(response, capabilities.saveRouteSettings(await jsonBody(request)));
     }
+    if (resource === 'settings' && id === 'api' && !action) {
+      if (method !== 'GET') {
+        response.setHeader('Allow', 'GET');
+        throw new ApiError(405, 'Method not allowed');
+      }
+      // Deliberate owner action in Settings. Never use a conditional/cached
+      // read for this credential or include it in general settings payloads.
+      return send(response, { token });
+    }
     if (resource === 'settings' && id === 'profile' && !action) {
       if (method === 'GET') return sendRead(request, response, settings.userProfile());
       if (method === 'PUT')

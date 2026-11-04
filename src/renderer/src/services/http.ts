@@ -66,6 +66,15 @@ export async function apiWebSocketUrl(path: string) {
   return url.toString();
 }
 
+/** The connection address to display in owner settings, without reading a secret. */
+export async function apiBaseUrl(): Promise<string> {
+  const config = await resolveConfig();
+  return new URL(config.url, window.location.href)
+    .toString()
+    .replace(/\/api\/?$/, '')
+    .replace(/\/$/, '');
+}
+
 /**
  * Last answer per polled path, so a body-less 304 can be served without
  * re-reading or re-parsing megabytes of unchanged JSON. Entries are keyed by the

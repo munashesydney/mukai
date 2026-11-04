@@ -8,6 +8,7 @@ export type SettingsSection =
   | 'environment'
   | 'memory'
   | 'routes'
+  | 'api'
   | 'limits';
 export type BotId = 'atlas' | 'nova' | 'scout';
 export type PersonId = BotId | 'munashe';

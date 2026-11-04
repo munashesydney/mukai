@@ -1,4 +1,4 @@
-import { Layers3, Palette, KeyRound, Brain, Globe, Gauge, Download } from 'lucide-react';
+import { Layers3, Palette, KeyRound, Brain, Globe, Gauge, Download, Cable } from 'lucide-react';
 import { UpdatesPanel } from './UpdatesPanel';
 import { LimitsPanel } from './LimitsPanel';
 import { Brand } from '../../components/ui/Brand';
@@ -8,6 +8,7 @@ import { ProvidersPanel } from './ProvidersPanel';
 import { EnvironmentPanel } from './EnvironmentPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { CustomRoutesPanel } from './CustomRoutesPanel';
+import { ApiPanel } from './ApiPanel';
 import type { Workspace } from '../../../../shared/ai';
 import type { SettingsSection } from '../workspace/types';
 import { useDesktopUpdate } from '../updates/useDesktopUpdate';
@@ -17,6 +18,7 @@ const sections = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'updates', label: 'Updates', icon: Download },
   { id: 'routes', label: 'Domain', icon: Globe },
+  { id: 'api', label: 'API', icon: Cable },
   { id: 'providers', label: 'Providers', icon: KeyRound },
   { id: 'environment', label: 'E Variables', icon: KeyRound },
   { id: 'memory', label: 'Memory', icon: Brain },
@@ -105,6 +107,8 @@ export function SettingsPage({
             />
           ) : section === 'routes' ? (
             <CustomRoutesPanel />
+          ) : section === 'api' ? (
+            <ApiPanel />
           ) : section === 'environment' ? (
             <EnvironmentPanel
               key={workspace?.id || 'default'}

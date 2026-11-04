@@ -436,6 +436,7 @@ function WorkspaceApp({
                 location.item === 'providers' ||
                 location.item === 'environment' ||
                 location.item === 'routes' ||
+                location.item === 'api' ||
                 location.item === 'limits' ||
                 location.item === 'memory'
                   ? location.item

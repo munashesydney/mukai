@@ -157,6 +157,39 @@ it('keeps originless cookie-authenticated tickets bound to the browser', async (
   }
 });
 
+it('does not turn a remote native HTTP bearer into a local renderer viewer ticket', async () => {
+  const result = await new Promise<{ status: number | undefined; text: string }>(
+    (resolve, reject) => {
+      const probe = request(
+        api.url + endpoint,
+        {
+          method: 'POST',
+          headers: { Host: 'mukai.example', Authorization: `Bearer ${api.token}` },
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.once('error', reject);
+          response.on('end', () => {
+            resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString() });
+          });
+        },
+      );
+      probe.once('error', reject);
+      probe.end();
+    },
+  );
+  expect(result.status).toBe(200);
+  const session = JSON.parse(result.text) as ComputerViewSession;
+  await denied(viewer(session, 'file://'));
+  const browser = viewer(session, api.url, cookie);
+  try {
+    expect(await greeting(browser)).toBe('RFB fixture');
+  } finally {
+    browser.terminate();
+  }
+});
+
 it('rejects missing or invalid credentials and bearer requests from foreign origins', async () => {
   const requests: Record<string, string>[] = [
     {},

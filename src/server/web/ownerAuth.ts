@@ -4,10 +4,14 @@ import type { Database } from '../db/database';
 import { ApiError } from '../config';
 import { jsonBody, send } from '../http/transport';
 import { z } from 'zod';
-import { localBrowserRequest, guestGatewayBrowserRequest } from './origin';
-import { ownerCredentialsSchema } from '../../shared/ownerAuth';
+import { localBrowserRequest, guestGatewayBrowserRequest, trustedLocalRequest } from './origin';
+import { ownerCredentialsSchema, type OwnerDeviceSession } from '../../shared/ownerAuth';
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
+// Separate credential domains in the existing session table. A device token
+// must not become a browser cookie, or a browser cookie a native credential.
+const deviceDigest = (token: string) => digest('mukai-device:' + token);
+const sessionLifetime = 7 * 86400_000;
 const equal = (a: string, b: string) => {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
@@ -46,6 +50,22 @@ export class OwnerAuth {
       this.store.get(
         'SELECT token_hash FROM web_sessions WHERE token_hash=? AND expires_at>?',
         digest(token),
+        Date.now(),
+      ),
+    );
+  }
+  private deviceToken(request: IncomingMessage) {
+    const token = request.headers['x-mukai-session'];
+    return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? token : '';
+  }
+  deviceAuthenticated(request: IncomingMessage) {
+    if (request.headers.origin !== undefined || !trustedLocalRequest(request, true)) return false;
+    const token = this.deviceToken(request);
+    return Boolean(
+      token &&
+      this.store.get(
+        'SELECT token_hash FROM web_sessions WHERE token_hash=? AND expires_at>?',
+        deviceDigest(token),
         Date.now(),
       ),
     );
@@ -101,9 +121,58 @@ export class OwnerAuth {
     this.store.run('DELETE FROM web_sessions WHERE expires_at<=?', now);
     const previous = cookie(request, this.sessionName);
     if (previous) this.store.run('DELETE FROM web_sessions WHERE token_hash=?', digest(previous));
-    this.store.run('INSERT INTO web_sessions VALUES(?,?)', digest(token), now + 7 * 86400_000);
+    this.store.run('INSERT INTO web_sessions VALUES(?,?)', digest(token), now + sessionLifetime);
     this.setCookie(request, response, this.sessionName, token, 7 * 86400);
     send(response, { authenticated: true });
+  }
+  private async verifyLogin(request: IncomingMessage) {
+    // Browser and device logins share both the guessing and scrypt concurrency
+    // limits; switching endpoints must not buy another guessing budget.
+    this.limit('login');
+    const input = z
+      .object({ username: z.string().max(254), password: z.string().max(256) })
+      .strict()
+      .parse(await jsonBody(request, 4096));
+    const owner = this.store.get('SELECT username,password_hash,salt FROM web_owner WHERE id=1');
+    const hash = await this.hash(input.password, String(owner?.salt || this.dummySalt));
+    if (
+      !owner ||
+      !equal(hash, String(owner.password_hash)) ||
+      !equal(input.username.trim(), String(owner.username))
+    )
+      throw new ApiError(401, 'The username or password is incorrect.');
+  }
+  private async handleDevice(action: string, request: IncomingMessage, response: ServerResponse) {
+    if (request.headers.origin !== undefined || !trustedLocalRequest(request, true))
+      throw new ApiError(403, 'Device authentication requires an originless native request.');
+    if (request.method !== 'POST') throw new ApiError(405, 'Method not allowed');
+    if (action === 'device-logout') {
+      if (!this.deviceAuthenticated(request))
+        throw new ApiError(401, 'Device authentication required.');
+      this.store.run(
+        'DELETE FROM web_sessions WHERE token_hash=?',
+        deviceDigest(this.deviceToken(request)),
+      );
+      send(response, { authenticated: false });
+      return;
+    }
+    if (!this.configured())
+      throw new ApiError(
+        409,
+        "Set up an owner account in Mukai's browser before signing in from this device.",
+      );
+    await this.verifyLogin(request);
+    const token = randomBytes(32).toString('hex');
+    const now = Date.now();
+    const expiresAt = now + sessionLifetime;
+    this.store.run('DELETE FROM web_sessions WHERE expires_at<=?', now);
+    this.store.run('INSERT INTO web_sessions VALUES(?,?)', deviceDigest(token), expiresAt);
+    const result: OwnerDeviceSession = {
+      authenticated: true,
+      sessionToken: token,
+      expiresAt: new Date(expiresAt).toISOString(),
+    };
+    send(response, result);
   }
   async handle(action: string, request: IncomingMessage, response: ServerResponse) {
     response.setHeader('Cache-Control', 'no-store');
@@ -111,11 +180,13 @@ export class OwnerAuth {
     if (action === 'status' && request.method === 'GET') {
       send(response, {
         configured: this.configured(),
-        authenticated: this.authenticated(request),
+        authenticated: this.authenticated(request) || this.deviceAuthenticated(request),
         verified: !this.configured() && this.verified(request),
       });
       return;
     }
+    if (action === 'device' || action === 'device-logout')
+      return this.handleDevice(action, request, response);
     if (!['verify', 'setup', 'login', 'logout'].includes(action))
       throw new ApiError(404, 'Not found');
     if (request.method !== 'POST') throw new ApiError(405, 'Method not allowed');
@@ -136,7 +207,7 @@ export class OwnerAuth {
       send(response, { authenticated: false });
       return;
     }
-    this.limit(action);
+    if (action !== 'login') this.limit(action);
     if (action === 'verify') {
       if (this.configured())
         throw new ApiError(409, 'An owner login already exists. Sign in instead.');
@@ -190,18 +261,7 @@ export class OwnerAuth {
       this.signIn(request, response);
       return;
     }
-    const input = z
-      .object({ username: z.string().max(254), password: z.string().max(256) })
-      .strict()
-      .parse(await jsonBody(request, 4096));
-    const owner = this.store.get('SELECT username,password_hash,salt FROM web_owner WHERE id=1');
-    const hash = await this.hash(input.password, String(owner?.salt || this.dummySalt));
-    if (
-      !owner ||
-      !equal(hash, String(owner.password_hash)) ||
-      !equal(input.username.trim(), String(owner.username))
-    )
-      throw new ApiError(401, 'The username or password is incorrect.');
+    await this.verifyLogin(request);
     this.signIn(request, response);
   }
 }

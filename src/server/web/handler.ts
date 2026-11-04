@@ -39,15 +39,19 @@ export function createWebHandler(
   return async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url || '/', 'http://localhost');
     if (url.pathname.startsWith('/custom/')) return route(request, response);
-    // Native clients keep their local bearer credential; browser cookies never
+    // Native clients keep their bearer credential; browser cookies never
     // authorize a file/null/dev origin. Preflights carry no bearer credential.
+    const nativeAuthenticated =
+      url.pathname.startsWith('/api/') &&
+      !url.pathname.startsWith('/api/auth/') &&
+      url.pathname !== '/api/session' &&
+      authenticateNativeApiRequest(request, token);
     if (
       url.pathname.startsWith('/api/') &&
       url.pathname !== '/api/instance' &&
       !url.pathname.startsWith('/api/auth/') &&
       url.pathname !== '/api/session' &&
-      ((request.method === 'OPTIONS' && nativeClientRequest(request)) ||
-        authenticateNativeApiRequest(request, token))
+      ((request.method === 'OPTIONS' && nativeClientRequest(request)) || nativeAuthenticated)
     ) {
       request.url = url.pathname.slice(4) + url.search;
       return route(request, response);
@@ -68,7 +72,9 @@ export function createWebHandler(
     if (url.pathname === '/api/instance') {
       if (request.method !== 'GET') throw new ApiError(405, 'Method not allowed');
       if (
+        !nativeAuthenticated &&
         !owner?.authenticated(request) &&
+        !owner?.deviceAuthenticated(request) &&
         !(
           localBrowserRequest(request) &&
           (session.authenticated(request) ||
@@ -84,12 +90,14 @@ export function createWebHandler(
     if (url.pathname.startsWith('/api/')) {
       const authenticated =
         owner?.authenticated(request) ||
+        owner?.deviceAuthenticated(request) ||
         (!owner?.configured() && localBrowserRequest(request) && session.authenticated(request));
       if (authenticated) request.headers.authorization = `Bearer ${token}`;
       else if (!localBrowserRequest(request)) delete request.headers.authorization;
-      if (owner?.authenticated(request)) {
+      if (owner && (owner.authenticated(request) || owner.deviceAuthenticated(request))) {
         const timer = setInterval(() => {
-          if (!owner.authenticated(request)) response.destroy();
+          if (!owner.authenticated(request) && !owner.deviceAuthenticated(request))
+            response.destroy();
         }, 5000).unref();
         response.once('close', () => clearInterval(timer));
       }

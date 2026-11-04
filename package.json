@@ -17,6 +17,7 @@
     "test:cli:browser": "tsx scripts/cli/browser-smoke.ts",
     "test:cli:updates": "npm run build:web && tsx scripts/cli/update-smoke.ts",
     "test:settings-ui": "tsx scripts/run-shared-settings-smoke.ts",
+    "test:api-settings-ui": "npm run build:web && tsx scripts/api-settings-smoke.ts",
     "test:shared-backend": "npm run build:web && electron-vite build && tsx scripts/shared-backend-smoke.ts",
     "test:providers-ui": "node --import tsx scripts/provider-settings-smoke.ts",
     "test:reasoning-ui": "node --import tsx scripts/reasoning-smoke.ts",

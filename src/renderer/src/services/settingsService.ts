@@ -1,8 +1,10 @@
-import { api } from './http';
+import { api, apiBaseUrl } from './http';
 import type { AppearanceSettings, ThemePreferences } from '../../../shared/appearance';
 import type { UserProfile } from '../../../shared/userProfile';
 
 export const settingsService = {
+  apiBaseUrl,
+  apiToken: () => api<{ token: string }>('/settings/api'),
   profile: () => api<UserProfile>('/settings/profile'),
   saveProfile: (value: UserProfile) => api<UserProfile>('/settings/profile', 'PUT', value),
   appearance: () => api<AppearanceSettings>('/settings/appearance'),

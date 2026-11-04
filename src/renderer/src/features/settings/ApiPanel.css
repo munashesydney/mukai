@@ -1,0 +1,33 @@
+.api-connection-fields {
+  display: grid;
+  gap: 24px;
+}
+.api-connection-fields label {
+  display: block;
+  margin-bottom: 8px;
+}
+.api-connection-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.api-connection-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.api-connection-row .button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.api-connection-row .api-token-visibility {
+  padding-inline: 12px;
+}
+@media (max-width: 640px) {
+  .api-connection-row {
+    flex-wrap: wrap;
+  }
+  .api-connection-row input {
+    flex-basis: 100%;
+  }
+}

@@ -27,6 +27,29 @@ async function request(path: string, method = 'GET', value?: unknown, authentica
     ...(value === undefined ? {} : { body: JSON.stringify(value) }),
   });
 }
+it('exposes the owner API token only through an authenticated, uncached settings read', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'mukai-api-settings-'));
+  api = await startApiServer(0, { dataDir: directory });
+  const unauthorized = await request('/settings/api', 'GET', undefined, false);
+  expect(unauthorized.status).toBe(401);
+  expect(await unauthorized.text()).not.toContain(api.token);
+  const response = await request('/settings/api');
+  expect(response.status).toBe(200);
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(response.headers.get('etag')).toBeNull();
+  expect(await response.json()).toEqual({ token: api.token });
+  const conditional = await fetch(api.url + '/settings/api', {
+    headers: { Authorization: `Bearer ${api.token}`, 'If-None-Match': '*' },
+  });
+  expect(conditional.status).toBe(200);
+  expect(await conditional.json()).toEqual({ token: api.token });
+  for (const method of ['POST', 'PUT', 'DELETE']) {
+    const rejected = await request('/settings/api', method);
+    expect(rejected.status).toBe(405);
+    expect(rejected.headers.get('allow')).toBe('GET');
+    expect(await rejected.text()).not.toContain(api.token);
+  }
+});
 it('shares appearance, existing public base URL and limits when switching backends', async () => {
   directory = await mkdtemp(join(tmpdir(), 'mukai-settings-'));
   await mkdir(join(directory, 'project'));
