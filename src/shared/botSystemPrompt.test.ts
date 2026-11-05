@@ -151,6 +151,15 @@ it('recommends procedural self-improvement and explains available skill operatio
   expect(prompt({})).not.toContain(mukaiSkillInstructions);
 });
 
+it('recommends code execution only when assigned, with explicit output and permission rules', () => {
+  const system = prompt({ execute_code: {} });
+  expect(system).toContain('Prefer execute_code');
+  expect(system).toContain('without model-context truncation');
+  expect(system).toContain('Each execution starts fresh');
+  expect(system).toContain('Never use scripts to bypass a denied or unassigned tool');
+  expect(prompt({})).not.toContain('Prefer execute_code');
+});
+
 it('gives all roles the same shared prompt and adds main-bot instructions only for main bots', () => {
   const build = (isMain: boolean, delegated = false) =>
     buildBotSystemPrompt({

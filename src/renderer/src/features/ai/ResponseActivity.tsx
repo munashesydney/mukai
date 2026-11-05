@@ -17,6 +17,7 @@ import {
   MessageCircleQuestion,
   Headphones,
   Video,
+  Code,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
@@ -31,6 +32,7 @@ import { mediaActivityKind, toolGroupLabel } from './toolGroupLabel';
 import { useWorkDisclosure } from './useWorkDisclosure';
 
 const actionLabels: Record<string, string> = {
+  execute: 'Ran',
   create_directory: 'Created folder',
   copy_attachment: 'Copied attachment to',
   write_file: 'Wrote',
@@ -85,25 +87,27 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
     complete: 'Completed pursuit',
   };
   const Icon =
-    activity.tool === 'ask'
-      ? MessageCircleQuestion
-      : activity.tool === 'image' || activity.tool === 'media'
-        ? activity.action.includes('audio')
-          ? Headphones
-          : activity.action.includes('video')
-            ? Video
-            : Image
-        : activity.tool === 'terminal'
-          ? Terminal
-          : activity.tool === 'browser'
-            ? Globe
-            : activity.tool === 'manage_pursuit'
-              ? Target
-              : activity.action === 'search_files'
-                ? Search
-                : ['write_file', 'patch', 'create_directory'].includes(activity.action)
-                  ? Pencil
-                  : FileText;
+    activity.tool === 'execute_code'
+      ? Code
+      : activity.tool === 'ask'
+        ? MessageCircleQuestion
+        : activity.tool === 'image' || activity.tool === 'media'
+          ? activity.action.includes('audio')
+            ? Headphones
+            : activity.action.includes('video')
+              ? Video
+              : Image
+          : activity.tool === 'terminal'
+            ? Terminal
+            : activity.tool === 'browser'
+              ? Globe
+              : activity.tool === 'manage_pursuit'
+                ? Target
+                : activity.action === 'search_files'
+                  ? Search
+                  : ['write_file', 'patch', 'create_directory'].includes(activity.action)
+                    ? Pencil
+                    : FileText;
   const running = activity.status === 'running';
   const problem = activity.status === 'failed' || activity.status === 'interrupted';
   const label = (
@@ -111,9 +115,11 @@ function ToolRow({ activity, message }: { activity: ChatActivity; message: ChatM
       {running ? <ActivitySpinner /> : <Icon size={14} />}
       <span className="response-tool-label">
         {running
-          ? activity.action === 'wait_for_bots'
-            ? 'Waiting for delegated bots'
-            : `Running ${activity.action.replaceAll('_', ' ')}`
+          ? activity.tool === 'execute_code'
+            ? 'Running JavaScript'
+            : activity.action === 'wait_for_bots'
+              ? 'Waiting for delegated bots'
+              : `Running ${activity.action.replaceAll('_', ' ')}`
           : problem
             ? `${activity.status === 'failed' ? 'Failed' : 'Interrupted'}: ${activity.action.replaceAll('_', ' ')}`
             : (activity.tool === 'image'

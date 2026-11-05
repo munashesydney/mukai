@@ -72,6 +72,19 @@ export class ApprovalService {
       }
   }
 
+  // A running script is never replayed after restart. Its nested approvals must
+  // not remain actionable after the parent is reported as interrupted/uncertain.
+  discardCodeChildren(messageId: string, parentCallId: string) {
+    for (const [id, item] of this.pending)
+      if (
+        item.request.messageId === messageId &&
+        item.request.toolCallId.startsWith(parentCallId + ':code:')
+      ) {
+        this.pending.delete(id);
+        this.repository.remove(id);
+      }
+  }
+
   forgetWorkspace(id: string, botIds: string[]) {
     for (const item of this.pending.values()) {
       if (item.request.target?.workspaceId === id || botIds.includes(item.request.botId))

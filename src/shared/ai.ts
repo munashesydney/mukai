@@ -125,6 +125,8 @@ export interface WorkspaceInput {
 }
 export interface ChatActivity {
   id: string;
+  /** Internal Code Execution calls retain UI details but omit them from automatic model history. */
+  parentToolCallId?: string;
   tool: string;
   action: string;
   path: string;

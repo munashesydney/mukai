@@ -1,6 +1,7 @@
 export const workspaceToolIds = [
   'file_operations',
   'terminal',
+  'execute_code',
   'browser',
   'computer_use',
   'media',

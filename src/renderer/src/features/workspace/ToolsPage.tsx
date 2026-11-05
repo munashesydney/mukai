@@ -16,6 +16,7 @@ import {
   Users,
   MessageCircleQuestion,
   Monitor,
+  Code,
 } from 'lucide-react';
 import type { Bot, ToolInfo } from '../../../../shared/ai';
 import { ToolAssignments } from './ToolAssignments';
@@ -33,6 +34,7 @@ function ToolIcon({ toolId, size = 23 }: { toolId: string; size?: number }) {
   if (toolId === 'manage_pursuit') return <Target size={size} />;
   if (toolId === 'manage_bot') return <Users size={size} />;
   if (toolId === 'system') return <Settings2 size={size} />;
+  if (toolId === 'execute_code') return <Code size={size} />;
   if (toolId === 'browser') return <Globe size={size} />;
   if (toolId === 'computer_use') return <Monitor size={size} />;
   if (toolId === 'media') return <Image size={size} />;
@@ -53,6 +55,8 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (tool.id === 'manage_bot')
     return 'Required for all bots · Actions depend on bot and conversation';
   if (tool.id === 'system') return 'Workspace environment variables · Names and status only';
+  if (tool.id === 'execute_code')
+    return 'JavaScript tool workflows · Only selected output enters chat context';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';
   if (tool.id === 'computer_use') return 'Local desktop · Mouse, keyboard and screenshots';
   if (tool.id === 'media')

@@ -40,8 +40,11 @@ import { tool } from 'ai';
 import { ComputerUseService } from './computerUseService';
 import type { InputCapabilities } from '../../shared/modelCapabilities';
 import { terminalDefinition } from '../tools/terminal/definition';
+import { codeExecutionTools } from '../tools/code-execution/execute';
+import { CodeExecutionRuntime, type CodeToolBridge } from '../tools/code-execution/runtime';
 
 export class ToolService {
+  private codeExecution = new CodeExecutionRuntime();
   private telegram?: Pick<TelegramService, 'workspaceConnected'>;
   attachTelegram(service: Pick<TelegramService, 'workspaceConnected'>) {
     this.telegram = service;
@@ -117,6 +120,8 @@ export class ToolService {
     this.capabilities = service;
   }
   customRegistration(bot: Bot, name: string) {
+    // A pre-existing custom registration cannot shadow the new built-in family.
+    if (name === 'execute_code') return;
     const registration = this.capabilities
       ?.list(bot.workspaceId)
       .find((item) => item.kind === 'tool' && item.definition.name === name);
@@ -263,6 +268,7 @@ export class ToolService {
                         'computer_use',
                         'media',
                         'web_search',
+                        'execute_code',
                         'communicate',
                         'conversations',
                         ...(canCopyAttachments ? ['file_operations'] : []),
@@ -322,6 +328,7 @@ export class ToolService {
     skillContextBytes?: number,
     ask?: AskHandler,
     futureAttachments = false,
+    codeBridge?: CodeToolBridge,
   ) {
     const capabilities =
       typeof inputs === 'boolean'
@@ -363,6 +370,18 @@ export class ToolService {
     return this.assigned(
       bot,
       {
+        ...codeExecutionTools({
+          runtime: this.codeExecution,
+          bridge: codeBridge ?? {
+            names: () => [],
+            call: async () => {
+              throw new Error('Tool bridge is unavailable outside a chat run.');
+            },
+          },
+          signal,
+          onActivity,
+          budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
+        }),
         ...(ask && this.notifications
           ? communicateTools({
               ask,
@@ -430,7 +449,13 @@ export class ToolService {
                 execute: (input, options) =>
                   executeWebSearch(
                     input,
-                    { ...runtime, webSearch: this.webSearch },
+                    {
+                      ...runtime,
+                      signal: options.abortSignal
+                        ? AbortSignal.any([signal, options.abortSignal])
+                        : signal,
+                      webSearch: this.webSearch,
+                    },
                     options.toolCallId,
                   ),
               }),

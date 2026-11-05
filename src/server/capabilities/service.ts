@@ -63,6 +63,7 @@ function validateResponse(value: unknown) {
 }
 
 const reserved = new Set([
+  'execute_code',
   'file_operations',
   'terminal',
   'process',
@@ -1335,7 +1336,8 @@ export class CapabilityService {
   forBot(bot: Bot, signal: AbortSignal, onActivity: (activity: ChatActivity) => void): ToolSet {
     const tools = customRegistrationTools({ bot, signal, onActivity, capabilities: this });
     for (const registration of this.list(bot.workspaceId).filter(
-      (item) => item.kind === 'tool' && item.status === 'ready',
+      (item) =>
+        item.kind === 'tool' && item.status === 'ready' && item.definition.name !== 'execute_code',
     )) {
       tools[registration.definition.name] = tool({
         description:

@@ -4,6 +4,8 @@
 
 Bots, chats, spaces, pursuits, workspaces, artifacts, and tools use a local Node backend, SQLite, and the Vercel AI SDK. Bots can create specialists and delegate work within their workspace hierarchy.
 
+The **Code Execution** tool family lets bots call supported tools from isolated JavaScript, process full intermediate responses, and return selected printed output to the model. It retains normal tool permissions and final context limits. See [Code Execution](docs/code-execution.md) for supported tools, examples, limits and recovery behavior.
+
 ## Run
 
 For the standalone terminal command and production browser mode, see [Mukai CLI](docs/cli.md). The CLI and desktop share this application's renderer and backend.

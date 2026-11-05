@@ -39,6 +39,7 @@ import { mediaTools } from './media/execute';
 import { computerUseDefinition } from './computer_use/definition';
 import { computerUseTools, type ComputerUseContext } from './computer_use/execute';
 import { systemDefinition } from './system/definition';
+import { codeExecutionDefinition } from './code-execution/definition';
 
 export function botManagementTools(context: Parameters<typeof executeBotManagement>[1]): ToolSet {
   const actions = context.management.actionsFor(context.bot);
@@ -117,19 +118,49 @@ export function runtimeTools(
             description: terminalDefinition.description,
             inputSchema: terminalDefinition.inputSchema,
             execute: (input, options) =>
-              executeTerminal(input, { ...context, folder: context.folder! }, options.toolCallId),
+              executeTerminal(
+                input,
+                {
+                  ...context,
+                  signal: options.abortSignal
+                    ? AbortSignal.any([context.signal, options.abortSignal])
+                    : context.signal,
+                  folder: context.folder!,
+                },
+                options.toolCallId,
+              ),
           }),
           process: tool({
             description: processDefinition.description,
             inputSchema: processDefinition.inputSchema,
-            execute: (input, options) => executeProcess(input, context, options.toolCallId),
+            execute: (input, options) =>
+              executeProcess(
+                input,
+                {
+                  ...context,
+                  signal: options.abortSignal
+                    ? AbortSignal.any([context.signal, options.abortSignal])
+                    : context.signal,
+                },
+                options.toolCallId,
+              ),
           }),
         }
       : {}),
     browser: tool({
       description: browserDefinition.description,
       inputSchema: browserDefinition.inputSchema,
-      execute: (input, options) => executeBrowser(input, context, options.toolCallId),
+      execute: (input, options) =>
+        executeBrowser(
+          input,
+          {
+            ...context,
+            signal: options.abortSignal
+              ? AbortSignal.any([context.signal, options.abortSignal])
+              : context.signal,
+          },
+          options.toolCallId,
+        ),
       toModelOutput: ({ output }) => {
         const result = output.result;
         if (
@@ -243,6 +274,7 @@ export function toolCatalog() {
     },
     ...[
       terminalDefinition,
+      codeExecutionDefinition,
       botManagementDefinition,
       browserDefinition,
       computerUseDefinition,

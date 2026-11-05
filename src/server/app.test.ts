@@ -3774,11 +3774,11 @@ describe('Mukai bots and AI API', () => {
       text: 'All browser checks finished.',
     });
   }, 20000);
-  // The default instructions, tool schemas, and skill catalog need about 25K
-  // tokens before results. Use 30K/32K windows so the fixture tests result
-  // bounding rather than an undersized mandatory context. The multi-megabyte
-  // results and 16000x16000 screenshot still exceed both windows.
-  it.each([30000, 32768])(
+  // Default instructions, enabled tool schemas (including Code Execution), and
+  // the skill catalog need most of a 32K window before results. Use 32K/40K
+  // windows to test result bounding rather than an undersized mandatory context.
+  // The multi-megabyte results and 16000x16000 screenshot still exceed both windows.
+  it.each([32768, 40000])(
     'finishes with huge parallel results and an oversized screenshot at %i context',
     async (contextWindowTokens) => {
       await configure(true, {

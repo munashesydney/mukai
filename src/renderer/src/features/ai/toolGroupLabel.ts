@@ -41,6 +41,7 @@ function liveLabel(activity: ChatActivity): string {
   if (activity.tool === 'ask')
     return activity.action === 'clarification' ? 'Waiting for your answer' : 'Waiting for approval';
   if (activity.tool === 'web_search') return 'Searching the web';
+  if (activity.tool === 'execute_code') return 'Running JavaScript';
   if (activity.tool === 'browser') return 'Using the browser';
   if (activity.tool === 'computer_use') return 'Using the computer';
   if (activity.tool === 'system') return 'Checking saved variables';
@@ -68,6 +69,7 @@ function completedLabel(activity: ChatActivity): string {
     browser: 'Used browser',
     computer_use: 'Used computer',
     web_search: 'Searched the web',
+    execute_code: 'Ran JavaScript',
     media: 'Inspected media',
     image: 'Inspected images',
     manage_bot: 'Managed bots',

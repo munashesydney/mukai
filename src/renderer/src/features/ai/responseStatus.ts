@@ -22,6 +22,7 @@ function toolStatus(activity: ChatActivity): string {
   };
   if (fileActions[activity.action]) return fileActions[activity.action];
   if (activity.tool === 'browser') return 'Using the browser';
+  if (activity.tool === 'execute_code') return 'Running JavaScript';
   if (activity.tool === 'computer_use') return 'Using the computer';
   if (activity.tool === 'media') return 'Inspecting media';
   return 'Calling tools';

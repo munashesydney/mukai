@@ -22,6 +22,8 @@ export const scoutInstructions =
 
 /** Guidance is included only when the corresponding tool is available on this run. */
 const toolGuidance: Record<string, string> = {
+  execute_code:
+    'Prefer execute_code for loops, filtering, aggregation and conditional workflows across supported tools. Process internal data without model-context truncation and print compact results with evidence, file references and URLs. Each execution starts fresh. Never use scripts to bypass a denied or unassigned tool. Inspect failed or partial actions before retrying; use direct tools when the model needs the observation, including images.',
   skills:
     mukaiSkillInstructions +
     '\nCatalog: first 10 enabled skills with IDs, names and descriptions. Load directly by ID or exact name; skills operation search finds more. Inspect before updating with expectedVersion. Never save secrets.',
