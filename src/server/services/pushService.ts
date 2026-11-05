@@ -10,7 +10,10 @@ export class PushService {
     private sender: PushSender = sendPush,
   ) {}
   configuration() {
-    return { serverId: this.repository.serverId, relayUrl: process.env.MUKAI_PUSH_RELAY_URL || '' };
+    return {
+      serverId: this.repository.serverId,
+      relayUrl: process.env.MUKAI_PUSH_RELAY_URL || 'https://mukai-relay.munashesydney.com',
+    };
   }
   start() {
     this.timer = setInterval(() => {

@@ -357,11 +357,12 @@ encrypted credential scoped to each paired phone, tied to that phone's signed-in
 owner device session. Notification payloads contain event types and opaque IDs;
 chat text and tool arguments are not forwarded.
 
-Official iOS builds carry `MUKAI_PUSH_RELAY_URL` as a Dart build setting. Developers
-can instead set the same environment variable on this backend as a fallback for
-local builds. It must be a public HTTPS origin without a path. Private destinations
-and redirects are blocked. With no relay configured, chats continue normally.
-Recipients only sign in and allow notifications on their phone.
+The backend defaults to `https://mukai-relay.munashesydney.com` and supplies that
+URL to the iOS app automatically. No environment variable or Dart build setting
+is needed. Developers can override it with `MUKAI_PUSH_RELAY_URL` on this backend,
+or use the same name as a Dart build setting to override the server-provided URL.
+Custom relays must be public HTTPS origins without a path; private destinations
+and redirects are blocked. Recipients only sign in and allow notifications.
 
 The durable notification outbox retries transient failures, deduplicates events,
 and stops forwarding when a phone is removed or its device session expires/is
