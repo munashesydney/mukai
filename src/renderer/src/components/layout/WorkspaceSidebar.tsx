@@ -118,9 +118,6 @@ export function WorkspaceSidebar({
               {workspace?.name || 'Your workspace'}
               <span className="workspace-subtitle">A little momentum, every day.</span>
             </span>
-            {workspace && workingWorkspaces.has(workspace.id) && (
-              <WorkingIndicator label={`Agents are working in ${workspace.name}`} />
-            )}
             <ChevronDown size={16} />
           </>
         }
@@ -149,10 +146,10 @@ export function WorkspaceSidebar({
                         : 'Personal workspace'}
                   </small>
                 </span>
+                {item.id === workspace?.id && <Check size={15} />}
                 {workingWorkspaces.has(item.id) && (
                   <WorkingIndicator label={`Agents are working in ${item.name}`} />
                 )}
-                {item.id === workspace?.id && <Check size={15} />}
               </button>
             ))}
             <button

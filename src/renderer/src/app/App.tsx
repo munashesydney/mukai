@@ -389,6 +389,7 @@ function WorkspaceApp({
             unreadNotifications={notifications.unread}
             hasPendingApprovals={approvals.pending.length > 0}
             hasBots={hasBots}
+            workspaceId={ai.workspaceId}
             workspaceName={ai.workspace?.name}
             section={location.section}
             onNavigate={navigateSection}

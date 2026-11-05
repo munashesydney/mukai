@@ -1,10 +1,14 @@
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NavigationRail } from './NavigationRail';
+import type { AIActivity } from '../../../../shared/aiActivity';
 
-function renderLinks(props: Partial<ComponentProps<typeof NavigationRail>>) {
-  const html = renderToStaticMarkup(
+const activity = vi.hoisted(() => ({ limit: 4, running: [], queued: [] }) as AIActivity);
+vi.mock('../../services/aiActivityStore', () => ({ useAIActivity: () => activity }));
+
+function render(props: Partial<ComponentProps<typeof NavigationRail>>) {
+  return renderToStaticMarkup(
     createElement(NavigationRail, {
       onNavigate: () => {},
       onSettings: () => {},
@@ -12,7 +16,10 @@ function renderLinks(props: Partial<ComponentProps<typeof NavigationRail>>) {
       ...props,
     }),
   );
-  return [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
+}
+
+function renderLinks(props: Partial<ComponentProps<typeof NavigationRail>>) {
+  return [...render(props).matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
     .filter(([, attributes]) => /class="rail-link(?:\s|")/.test(attributes))
     .map(([, attributes, content]) => ({
       label: content.replace(/<[^>]*>/g, ''),
@@ -61,6 +68,31 @@ describe('sidebar navigation', () => {
       current: true,
     });
   });
+
+  it('swaps the Pursuits icon only while a run is active in the current workspace', () => {
+    const run = {
+      id: 'run',
+      kind: 'pursuit' as const,
+      workspaceId: 'current',
+      workspaceName: 'Current',
+      queuedAt: '2026-11-04T00:00:00Z',
+    };
+    const props = { workspaceId: run.workspaceId, section: 'bots' } as const;
+    activity.pursuitQueued = [run];
+    expect(render(props)).toContain('lucide-target');
+
+    activity.pursuitQueued = [];
+    activity.pursuitRunning = [run];
+    const running = render(props);
+    expect(running).toMatch(/lucide-loader-circle[^"]* is-spinning/);
+    expect(running).toContain('aria-description="Pursuit running"');
+    expect(running).not.toContain('lucide-target');
+    expect(render({ ...props, workspaceId: 'other' })).toContain('lucide-target');
+
+    activity.pursuitRunning = [];
+    expect(render(props)).toContain('lucide-target');
+  });
+
   it('shows Failed only with global failures, even when the current workspace has no bots', () => {
     expect(renderLinks({ failureCount: 0 }).some((link) => link.label.endsWith('Failed'))).toBe(
       false,

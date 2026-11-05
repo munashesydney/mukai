@@ -106,15 +106,19 @@ describe('Workspace picker activity', () => {
     ).toEqual(new Set(['current', 'other', 'using-tools']));
   });
 
-  it('shows dots on each working workspace, keeps the selection check and clears when work ends', () => {
+  it('shows activity only at the end of busy menu rows, after the selection check', () => {
     state.activity.workingWorkspaceIds = ['current'];
     state.activity.pursuitRunning = [work('other', 'pursuit')];
     const html = render();
-    expect(row(html, 'Current')).toContain('Agents are working in Current');
-    expect(row(html, 'Other')).toContain('Agents are working in Other');
+    expect(html.slice(0, html.indexOf('</button>'))).not.toContain('typing-dots');
+    expect(row(html, 'Current')).toMatch(
+      /lucide-check[\s\S]*Agents are working in Current[\s\S]*<\/span><\/span><\/button>$/,
+    );
+    expect(row(html, 'Other')).toMatch(
+      /Agents are working in Other[\s\S]*<\/span><\/span><\/button>$/,
+    );
     expect(row(html, 'Idle')).not.toContain('typing-dots');
     expect(row(html, 'Current')).toContain('aria-checked="true"');
-    expect(row(html, 'Current')).toContain('lucide-check');
     state.activity = { limit: 4, running: [], queued: [] };
     expect(render()).not.toContain('typing-dots');
   });

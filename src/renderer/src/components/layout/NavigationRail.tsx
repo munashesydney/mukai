@@ -1,7 +1,17 @@
-import { Layers3, Target, Puzzle, Settings, Plus, Bell, TriangleAlert } from 'lucide-react';
+import {
+  Layers3,
+  LoaderCircle,
+  Target,
+  Puzzle,
+  Settings,
+  Plus,
+  Bell,
+  TriangleAlert,
+} from 'lucide-react';
 import type { Section } from '../../features/workspace/types';
 import { botAvatarSrc } from '../../../../shared/mascots';
 import { TelegramLogo } from '../ui/TelegramLogo';
+import { useAIActivity } from '../../services/aiActivityStore';
 
 const items = [
   { id: 'bots', label: 'Bots', icon: null },
@@ -17,6 +27,7 @@ export function NavigationRail({
   onNavigate,
   onSettings,
   onCreate,
+  workspaceId,
   workspaceName = 'Your workspace',
   disabled = false,
   hasBots = true,
@@ -29,6 +40,7 @@ export function NavigationRail({
   onNavigate: (section: Section) => void;
   onSettings: () => void;
   onCreate: () => void;
+  workspaceId?: string;
   workspaceName?: string;
   disabled?: boolean;
   hasBots?: boolean;
@@ -37,6 +49,11 @@ export function NavigationRail({
   notificationCount?: number;
   unreadNotifications?: number;
 }) {
+  const { pursuitRunning } = useAIActivity();
+  const hasRunningPursuit =
+    !disabled &&
+    Boolean(workspaceId && pursuitRunning?.some((run) => run.workspaceId === workspaceId));
+
   return (
     <nav
       className={`navigation-rail ${disabled ? 'is-disabled' : ''}`}
@@ -72,10 +89,20 @@ export function NavigationRail({
               }
               onClick={() => onNavigate(id)}
               aria-current={!disabled && section === id ? 'page' : undefined}
+              aria-description={
+                id === 'pursuits' && hasRunningPursuit ? 'Pursuit running' : undefined
+              }
             >
               <span className="rail-icon">
                 {id === 'telegram' ? (
                   <TelegramLogo size={22} />
+                ) : id === 'pursuits' && hasRunningPursuit ? (
+                  <LoaderCircle
+                    size={22}
+                    strokeWidth={1.8}
+                    className="is-spinning"
+                    aria-hidden="true"
+                  />
                 ) : Icon ? (
                   <Icon size={22} strokeWidth={1.8} />
                 ) : (

@@ -326,7 +326,12 @@
   height: 32px;
   color: var(--theme-text);
 }
+.workspace-picker-menu > .workspace-choice > .bot-conversation-working {
+  flex: 0 0 auto;
+  display: inline-flex;
+}
 .workspace-picker-menu > button[aria-checked='true'] > svg {
+  flex-shrink: 0;
   color: var(--teal);
 }
 .workspace-picker-menu > button[role='menuitem'] {
