@@ -7,7 +7,6 @@ import {
 import { telegramUserMessagePrefix } from '../../shared/telegram';
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  asSchema,
   tool,
   streamText,
   isStepCount,
@@ -67,6 +66,7 @@ import {
   estimateTokens,
   toolTokens,
   toolDefinitions,
+  cachedToolSchema,
 } from './contextPolicy';
 import { ProgressGuard } from './progressGuard';
 import { contextSummarizer } from './contextSummary';
@@ -945,7 +945,7 @@ export class ChatService {
               if (!codeCallableTools.has(name) || !definition || !execute)
                 throw new Error('Tool is unavailable inside code execution: ' + name);
               // Internal RPC bypasses SDK parsing, but never schema validation.
-              const validation = await asSchema(definition.inputSchema).validate?.(input);
+              const validation = await cachedToolSchema(definition.inputSchema).validate?.(input);
               if (validation && !validation.success)
                 throw new Error('Invalid arguments for ' + name + ': ' + String(validation.error));
               codeActivityParents.set(callId, callId.slice(0, callId.lastIndexOf(':code:')));
@@ -1584,6 +1584,12 @@ export class ChatService {
         if (!execute) return;
         const guarded: ToolSet[string] = {
           ...definition,
+          // Share the converted Zod schema with context accounting and the SDK.
+          // Function schemas are dynamic and must still resolve on each request.
+          inputSchema:
+            typeof definition.inputSchema === 'function'
+              ? definition.inputSchema
+              : cachedToolSchema(definition.inputSchema),
           toModelOutput: async (
             params: Parameters<NonNullable<ToolSet[string]['toModelOutput']>>[0],
           ) => {
@@ -1901,7 +1907,9 @@ export class ChatService {
                         'The custom tool changed while awaiting approval. Request a fresh call.',
                       );
                   }
-                  const validation = await asSchema(definition.inputSchema).validate?.(call.input);
+                  const validation = await cachedToolSchema(definition.inputSchema).validate?.(
+                    call.input,
+                  );
                   if (validation && !validation.success)
                     throw new ApiError(
                       400,
@@ -2284,7 +2292,9 @@ export class ChatService {
           );
         if (manager.estimate(messages) > capacity.input && contextUnits(messages).length > 1)
           await compact();
-        const attemptMessages = finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages;
+        const attemptMessages = manager.modelMessages(
+          finalReplyOnly ? emptyReplyRecoveryMessages(messages) : messages,
+        );
         usage.usedTokens = manager.estimate(attemptMessages);
         usage.estimated = true;
         const estimatedInput = manager.estimate(attemptMessages);

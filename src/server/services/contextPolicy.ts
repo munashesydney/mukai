@@ -2,6 +2,7 @@ import { workingMemoryMessage, historicalSources, appendMemoryNotice } from './c
 import { asSchema, type ModelMessage, type ToolSet } from 'ai';
 import { isBotRuntimeContext } from '../../shared/botSystemPrompt';
 import { IMAGE_OMITTED, limitToolGroups, utf8Prefix } from './toolResultPolicy';
+import { fileReadContext } from './fileReadContext';
 
 export class ContextError extends Error {}
 
@@ -75,8 +76,39 @@ function imageTokens(item: Record<string, unknown>) {
   return 8192;
 }
 
+const convertedSchemas = new WeakMap<object, ReturnType<typeof asSchema>>();
+const schemaEstimates = new WeakMap<object, { serialized: string; tokens: number }>();
+
+/** Zod's schema-building methods return new instances. Function schemas stay uncached. */
+export function cachedToolSchema(input: ToolSet[string]['inputSchema']) {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !('~standard' in input) ||
+    input['~standard'].vendor !== 'zod'
+  )
+    return asSchema(input);
+  let schema = convertedSchemas.get(input);
+  if (!schema) {
+    schema = asSchema(input);
+    convertedSchemas.set(input, schema);
+  }
+  return schema;
+}
+
 export async function toolTokens(tools: ToolSet) {
-  return estimateTokens(await toolDefinitions(tools));
+  let tokens = 0;
+  for (const definition of await toolDefinitions(tools)) {
+    // SDK JSON schemas may be edited in place. Check their contents, not just identity.
+    const serialized = JSON.stringify(definition.schema);
+    let cached = schemaEstimates.get(definition.schema);
+    if (!cached || cached.serialized !== serialized) {
+      cached = { serialized, tokens: estimateTokens(definition.schema) };
+      schemaEstimates.set(definition.schema, cached);
+    }
+    tokens += estimateTokens({ ...definition, schema: null }) + cached.tokens + 4;
+  }
+  return tokens;
 }
 export async function toolDefinitions(tools: ToolSet) {
   const definitions = [];
@@ -84,7 +116,7 @@ export async function toolDefinitions(tools: ToolSet) {
     definitions.push({
       name,
       description: tool.description,
-      schema: await asSchema(tool.inputSchema).jsonSchema,
+      schema: await cachedToolSchema(tool.inputSchema).jsonSchema,
     });
   return definitions;
 }
@@ -139,13 +171,16 @@ export class ContextManager {
     this.overhead = value;
   }
   estimate(messages: ModelMessage[]) {
-    return Math.ceil((this.overhead + estimateTokens(messages)) * this.factor);
+    return Math.ceil((this.overhead + estimateTokens(this.modelMessages(messages))) * this.factor);
+  }
+  modelMessages(messages: ModelMessage[]) {
+    return fileReadContext(messages);
   }
   calibrate(messages: ModelMessage[], input: number | undefined) {
     if (input)
       this.factor = Math.max(
         this.factor,
-        input / Math.max(1, this.overhead + estimateTokens(messages)),
+        input / Math.max(1, this.overhead + estimateTokens(this.modelMessages(messages))),
       );
   }
   toolAllowance(messages: ModelMessage[]) {

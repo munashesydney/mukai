@@ -11,6 +11,7 @@ import type { QemuComputer } from './computer/qemuComputer';
 import type { ApprovalState } from '../shared/approvals';
 import type { ChatActivity } from '../shared/ai';
 import { WebSearchService } from './services/webSearchService';
+import type { ModelMessage } from 'ai';
 
 describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) => {
   let api: Awaited<ReturnType<typeof startApiServer>>,
@@ -24,6 +25,8 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
     tools: { function: { name: string } }[];
   }[];
   let step: number;
+  let calls: { id: string; name: string; input: unknown }[] | undefined;
+  let savedCheckpoint: string | undefined;
 
   async function request(path: string, method = 'GET', input?: unknown) {
     const response = await fetch(api.url + path, {
@@ -94,11 +97,21 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
       'const r = await tools.file_operations({action:"search_files",query:"TODO",path:"."}); print(r.ok ? (r.matches || r.result.matches).length : r);';
     seen = [];
     step = 0;
+    calls = undefined;
+    savedCheckpoint = undefined;
     fixture = createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(chunk);
       seen.push(JSON.parse(Buffer.concat(chunks).toString()));
-      const call = step++ === 0;
+      const call = calls
+        ? calls[step++]
+        : step++ === 0
+          ? { id: 'script-call', name: 'execute_code', input: { code } }
+          : undefined;
+      if (calls && !call)
+        savedCheckpoint = String(
+          api.store.get('SELECT checkpoint_json FROM chat_jobs')?.checkpoint_json,
+        );
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.end(
         'data: ' +
@@ -115,9 +128,9 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
                       tool_calls: [
                         {
                           index: 0,
-                          id: 'script-call',
+                          id: call.id,
                           type: 'function',
-                          function: { name: 'execute_code', arguments: JSON.stringify({ code }) },
+                          function: { name: call.name, arguments: JSON.stringify(call.input) },
                         },
                       ],
                     }
@@ -177,6 +190,54 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
       ]),
     );
     expect(JSON.stringify(seen[0].messages)).toContain('Prefer execute_code');
+  });
+
+  it('deduplicates retained model reads while repeated execute_code reads still return full data', async () => {
+    // Leave ample room for the full enabled tool catalog and untruncated read evidence.
+    api.store.run(
+      "UPDATE providers SET context_window_tokens=262144,models_json=json_set(models_json,'$[0].contextWindowTokens',262144)",
+    );
+    const contents = 'Original file data with an exact identifier.\n'.repeat(120);
+    writeFileSync(join(folder, 'notes.txt'), contents);
+    const input = { action: 'read_file', path: 'notes.txt' };
+    calls = [
+      { id: 'first-read', name: 'file_operations', input },
+      { id: 'second-read', name: 'file_operations', input },
+      {
+        id: 'script-call',
+        name: 'execute_code',
+        input: {
+          code: 'for(let i=0;i<2;i++){const r=await tools.file_operations({action:"read_file",path:"notes.txt"}); const f=r.result||r; print(f.content.length, typeof f.unchanged);}',
+        },
+      },
+    ];
+    await chat();
+    const outputs = seen
+      .at(-1)!
+      .messages.filter((item) => item.role === 'tool')
+      .map((item) => JSON.parse(item.content));
+    expect(outputs).toHaveLength(3);
+    const first = outputs[0].result || outputs[0];
+    const second = outputs[1].result || outputs[1];
+    expect(first.content).toBe(contents);
+    expect(second).toMatchObject({ unchanged: true, sourceToolCallId: 'first-read' });
+    expect(second.content).toBeUndefined();
+    expect(outputs[2]).toMatchObject({
+      ok: true,
+      output: `${contents.length} undefined\n${contents.length} undefined\n`,
+      toolCalls: 2,
+    });
+    // The original result remains in durable checkpoint evidence.
+    const checkpoint = JSON.parse(savedCheckpoint!);
+    const saved = checkpoint.messages.flatMap((message: ModelMessage) =>
+      message.role === 'tool'
+        ? message.content.filter(
+            (part) => part.type === 'tool-result' && part.toolCallId === 'second-read',
+          )
+        : [],
+    );
+    expect(JSON.stringify(saved)).toContain('Original file data');
+    expect(JSON.stringify(saved)).not.toContain('sourceToolCallId');
   });
 
   it('passes responses larger than context previews to the script', async () => {
