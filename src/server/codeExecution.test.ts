@@ -240,16 +240,28 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
     expect(JSON.stringify(saved)).not.toContain('sourceToolCallId');
   });
 
-  it('passes responses larger than context previews to the script', async () => {
+  it('passes full internal responses through a small UTF-8 print budget', async () => {
     const payload = Array.from({ length: 10000 }, (_, i) => ({
       id: i,
       text: 'PRIVATE_INTERMEDIATE'.repeat(20),
     }));
     vi.spyOn(WebSearchService.prototype, 'execute').mockResolvedValue({ rows: payload } as never);
-    code =
-      'const r = await tools.web_search({action:"search",query:"fixture"}); print(r.result.rows.length, r.result.rows.at(-1).id);';
+    calls = [
+      {
+        id: 'script-call',
+        name: 'execute_code',
+        input: {
+          code: 'const r = await tools.web_search({action:"search",query:"fixture"}); print(r.result.rows.length, r.result.rows.at(-1).id); print("🦊".repeat(1000));',
+          maxOutputBytes: 257,
+        },
+      },
+    ];
     await chat();
-    expect(result()).toMatchObject({ ok: true, output: '10000 9999\n' });
+    const execution = result();
+    expect(execution).toMatchObject({ ok: true, toolCalls: 1 });
+    expect(execution.output).toMatch(/^10000 9999\n🦊+\n\n\[Printed output truncated/u);
+    expect(execution.output).not.toContain('\uFFFD');
+    expect(Buffer.byteLength(execution.output)).toBeLessThanOrEqual(257);
     expect(JSON.stringify(seen.at(-1)!.messages)).not.toContain('PRIVATE_INTERMEDIATE');
     // Rich previews remain available in the UI, but must not leak through the
     // history reconstruction used for the next user message.

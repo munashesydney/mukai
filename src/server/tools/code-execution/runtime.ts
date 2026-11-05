@@ -1,7 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { createRequire } from 'node:module';
 import { codeWorkerSource } from './worker';
-import { limitResultText, RESULT_TRUNCATED } from '../../services/toolResultPolicy';
+import { utf8Prefix } from '../../services/toolResultPolicy';
 
 export interface CodeExecutionResult {
   ok: boolean;
@@ -16,7 +16,7 @@ export interface CodeToolBridge {
   call(name: string, input: unknown, callId: string, signal: AbortSignal): Promise<unknown>;
 }
 
-const OUTPUT_BYTES = 96000;
+export const MAX_CODE_OUTPUT_BYTES = 96000;
 const MAX_TOOL_CALLS = 50;
 
 export class CodeExecutionRuntime {
@@ -28,12 +28,13 @@ export class CodeExecutionRuntime {
     callId: string,
     signal: AbortSignal,
     bridge: CodeToolBridge,
+    maxOutputBytes = MAX_CODE_OUTPUT_BYTES,
   ): Promise<CodeExecutionResult> {
     signal.throwIfAborted();
     if (this.active >= 8) throw new Error('Code execution concurrency limit reached.');
     this.active++;
     try {
-      return await this.execute(code, timeoutMs, callId, signal, bridge);
+      return await this.execute(code, timeoutMs, callId, signal, bridge, maxOutputBytes);
     } finally {
       this.active--;
     }
@@ -45,6 +46,7 @@ export class CodeExecutionRuntime {
     callId: string,
     signal: AbortSignal,
     bridge: CodeToolBridge,
+    maxOutputBytes: number,
   ): Promise<CodeExecutionResult> {
     const started = Date.now();
     const controller = new AbortController();
@@ -57,7 +59,7 @@ export class CodeExecutionRuntime {
         tools: names,
         code,
         timeoutMs,
-        outputBytes: OUTPUT_BYTES,
+        outputBytes: maxOutputBytes,
         maxToolCalls: MAX_TOOL_CALLS,
       },
       env: {},
@@ -82,6 +84,9 @@ export class CodeExecutionRuntime {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
         controller.abort();
+        const marker = truncated
+          ? `\n\n[Printed output truncated to fit the ${maxOutputBytes}-byte budget.]`
+          : '';
         // Never return while an internal host operation is still settling.
         void Promise.allSettled([worker.terminate(), ...pending]).then(() =>
           resolve({
@@ -90,10 +95,7 @@ export class CodeExecutionRuntime {
             ...(error ? { error } : {}),
             toolCalls,
             durationMs: Date.now() - started,
-            output: limitResultText(
-              output + (truncated ? '\n\n' + RESULT_TRUNCATED : ''),
-              OUTPUT_BYTES,
-            ),
+            output: utf8Prefix(output, maxOutputBytes - Buffer.byteLength(marker)) + marker,
           }),
         );
       };
@@ -134,6 +136,7 @@ export class CodeExecutionRuntime {
           type: string;
           status?: 'error' | 'timeout';
           text?: string;
+          truncated?: boolean;
           error?: string;
           id: number;
           name: string;
@@ -142,10 +145,10 @@ export class CodeExecutionRuntime {
           if (settled) return;
           if (message.type === 'busy') resume();
           else if (message.type === 'idle') pause();
-          else if (message.type === 'output')
-            output = limitResultText(output + (message.text || ''), OUTPUT_BYTES);
-          else if (message.type === 'output_truncated') truncated = true;
-          else if (message.type === 'error') finish(message.status || 'error', message.error);
+          else if (message.type === 'output') {
+            output += message.text || '';
+            truncated ||= message.truncated === true;
+          } else if (message.type === 'error') finish(message.status || 'error', message.error);
           else if (message.type === 'result') finish('success');
           else if (message.type === 'call') {
             const operation = Promise.resolve().then(async () => {

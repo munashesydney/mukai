@@ -37,6 +37,7 @@ export function codeExecutionTools(context: {
             options.toolCallId,
             signal,
             context.bridge,
+            input.maxOutputBytes,
           );
           context.onActivity({
             ...activity,

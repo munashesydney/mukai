@@ -3,6 +3,7 @@
 // A string keeps this entry point usable in Electron and the bundled CLI.
 export const codeWorkerSource = String.raw`
 const { parentPort, workerData } = require('node:worker_threads');
+const { StringDecoder } = require('node:string_decoder');
 const { getQuickJS } = require(workerData.enginePath);
 let vm, runtime, root, finished = false, sequence = 0;
 let remaining = workerData.timeoutMs, deadline = 0, outputBytes = 0, clipped = false;
@@ -15,15 +16,17 @@ function fail(error) {
   parentPort.postMessage({type:'error', status:timeout ? 'timeout' : 'error', error: timeout ? 'Script computation timed out. Verify completed actions before retrying.' : String(error && error.message || error).slice(0,4000)});
 }
 function emit(text) {
-  const bytes = Buffer.from(text + '\n');
-  const room = Math.max(0, workerData.outputBytes - outputBytes);
-  const part = bytes.subarray(0, room).toString('utf8');
-  if (room) parentPort.postMessage({type:'output', text: part});
-  outputBytes += Math.min(room, bytes.length);
-  if (bytes.length > room && !clipped) {
-    clipped = true;
-    parentPort.postMessage({type:'output_truncated'});
+  const room = workerData.outputBytes - outputBytes;
+  const bytes = Buffer.from((text + '\n').slice(0, room + 1));
+  if (bytes.length <= room) {
+    parentPort.postMessage({type:'output', text:bytes.toString('utf8')});
+    outputBytes += bytes.length;
+    return;
   }
+  // Keep only complete UTF-8 characters at the capture boundary.
+  const prefix = new StringDecoder('utf8').write(bytes.subarray(0, room));
+  clipped = true;
+  parentPort.postMessage({type:'output', text:prefix, truncated:true});
 }
 function compute(operation) {
   parentPort.postMessage({type:'busy'});
@@ -82,7 +85,7 @@ parentPort.on('message', message => {
   runtime.setMaxStackSize(512 * 1024);
   runtime.setInterruptHandler(() => Date.now() >= deadline);
   vm = runtime.newContext();
-  vm.newFunction('__print', text => { emit(vm.getString(text)); }).consume(fn => vm.setProp(vm.global, '__print', fn));
+  vm.newFunction('__print', text => { if (!clipped) emit(vm.getString(text)); }).consume(fn => vm.setProp(vm.global, '__print', fn));
   vm.newFunction('__callTool', (name, args) => {
     if (++sequence > workerData.maxToolCalls) return {error: vm.newError('Code execution tool-call limit reached. Summarize completed work.')};
     const promise = vm.newPromise();
