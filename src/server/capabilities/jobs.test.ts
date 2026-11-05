@@ -246,11 +246,12 @@ it('enforces job timeouts and releases the execution lock', async () => {
   expect(api.capabilities.schedules.busy(item.id)).toBe(false);
   expect(api.capabilities.detail(item.id, 'default').runs[0].status).toBe('failed');
 });
-it('provides workspacePath to job, queued-handler and route contexts without relying on cwd', async () => {
+it('provides workspacePath and timezone to job, queued-handler and route contexts without relying on the host clock or cwd', async () => {
+  api.workspaces.setTimeZone('default', 'Asia/Kathmandu');
   const route = await register(
     `import {join} from 'node:path'; import {writeFileSync} from 'node:fs';
     export default {name:'path_route',method:'GET',path:'/custom/path-probe',auth:'mukai',handle(request,context){
-      writeFileSync(join(context.workspacePath,'route-path.txt'),'route'); return {status:200,body:context.workspacePath};
+      writeFileSync(join(context.workspacePath,'route-path.txt'),context.timeZone); return {status:200,body:context.workspacePath};
     }}`,
     'route',
     'path-route.ts',
@@ -258,19 +259,19 @@ it('provides workspacePath to job, queued-handler and route contexts without rel
   const job = await register(`import {join} from 'node:path'; import {writeFileSync} from 'node:fs';
     export default {name:'path_job',description:'Write within the workspace',triggers:[{type:'workspace_start'}],
       async run(event,context){
-        writeFileSync(join(context.workspacePath,'job-path.txt'),'job');
+        writeFileSync(join(context.workspacePath,'job-path.txt'),context.timeZone);
         const response=await context.callRoute(${JSON.stringify(route.id)});
         await context.enqueue('path-test','event',{value:'queued'});
         return {path:context.workspacePath,routePath:response.body};
-      },processJob(payload,context){writeFileSync(join(context.workspacePath,'queue-path.txt'),payload.value);}
+      },processJob(payload,context){writeFileSync(join(context.workspacePath,'queue-path.txt'),context.timeZone);}
     }`);
   expect(
     await api.capabilities.manage('default', 'scout', 'job', { operation: 'run_now', id: job.id }),
   ).toEqual({ result: { path: folder, routePath: folder } });
   await waitFor(() => existsSync(join(folder, 'queue-path.txt')));
-  expect(readFileSync(join(folder, 'job-path.txt'), 'utf8')).toBe('job');
-  expect(readFileSync(join(folder, 'route-path.txt'), 'utf8')).toBe('route');
-  expect(readFileSync(join(folder, 'queue-path.txt'), 'utf8')).toBe('queued');
+  expect(readFileSync(join(folder, 'job-path.txt'), 'utf8')).toBe('Asia/Kathmandu');
+  expect(readFileSync(join(folder, 'route-path.txt'), 'utf8')).toBe('Asia/Kathmandu');
+  expect(readFileSync(join(folder, 'queue-path.txt'), 'utf8')).toBe('Asia/Kathmandu');
 });
 it('reports execution failures in list and inspect without changing configuration readiness, and resets them after success', async () => {
   const job = await register(

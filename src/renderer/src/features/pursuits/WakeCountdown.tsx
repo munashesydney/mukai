@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useEffect, useState } from 'react';
 import { Check, Clock3, LoaderCircle } from 'lucide-react';
 import { pursuitStatusLabels, scheduledStatus, type Pursuit } from '../../../../shared/pursuits';
@@ -8,6 +9,7 @@ export function WakeCountdown({
   pursuit: Pursuit;
   scheduledFrom?: string;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -83,7 +85,7 @@ export function WakeCountdown({
         </div>
         <p>
           {scheduled && pursuit.nextRunAt && !pursuit.currentRunId
-            ? new Date(pursuit.nextRunAt).toLocaleString()
+            ? dateTime(pursuit.nextRunAt)
             : pursuit.currentRunId
               ? 'The owner is working toward the objective.'
               : pursuit.status === 'completed'

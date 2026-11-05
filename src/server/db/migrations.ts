@@ -519,6 +519,7 @@ export const migrations = [
        FROM mobile_push_devices d JOIN web_sessions s ON s.token_hash=d.session_hash
        WHERE s.expires_at>unixepoch()*1000 AND (SELECT count(*) FROM mobile_push_outbox)<10000;
      END;`,
+  `ALTER TABLE workspaces ADD COLUMN time_zone TEXT;`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

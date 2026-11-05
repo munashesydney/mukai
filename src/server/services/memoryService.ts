@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { captureEpisodeTime, episodeClock } from '../../shared/memoryTime';
 import { asSchema, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import {
@@ -233,6 +234,7 @@ export class MemoryService {
                   '\nThe previous attempt did not produce a valid result. Return only a JSON object matching the required schema, including facts and reviewSummary. Include every required field; use null for unknown IDs/dates and [] for empty arrays. Do not include reasoning or markdown.';
                 const system =
                   extractionInstructions +
+                  '\nResolve relative dates in referenceClock.timeZone using the historical message timestamp, not the current clock. For multi-message reviews, resolve each statement against its own timestamp in that timezone. Use the timezone offset at the event date. Persist event dates as ISO timestamps with explicit offsets; do not invent dates.' +
                   '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.' +
                   (compatible
                     ? '\nRequired output JSON schema (include every required field, using null or empty arrays where appropriate):\n' +
@@ -243,6 +245,10 @@ export class MemoryService {
                 const data = {
                   content: episode.content,
                   referenceTime: episode.referenceTime,
+                  referenceClock: episodeClock(
+                    episode,
+                    this.workspaces.timeZone(episode.workspaceId),
+                  ),
                   recentContext: episode.context,
                   candidates: candidates.map((fact) => ({
                     id: fact.id,
@@ -402,6 +408,7 @@ export class MemoryService {
         this.settings(workspaceId).automaticCapture,
       reviewIdleMs,
       (scope, query) => this.searchScope(scope, query, { limit: 12 }),
+      (workspaceId) => this.workspaces.timeZone(workspaceId),
     );
   }
   settings(workspaceId: string): MemorySettings {
@@ -608,6 +615,11 @@ export class MemoryService {
       conversationId,
       messageId,
     };
+    input.context = captureEpisodeTime(
+      '',
+      input.referenceTime,
+      this.workspaces.timeZone(bot.workspaceId),
+    );
     const episode = this.engine.enqueue(input);
     this.kick();
     return {

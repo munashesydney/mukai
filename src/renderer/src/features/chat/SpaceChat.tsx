@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { RetryResponseButton } from '../ai/RetryResponseButton';
 import { AIQueueNotice } from '../ai/AIQueueNotice';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -368,6 +369,7 @@ const MessageRow = memo(function MessageRow({
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string, botId?: string) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const disclosure = useWorkDisclosure(message);
   return (
     <>
@@ -381,12 +383,7 @@ const MessageRow = memo(function MessageRow({
             </strong>
             <TelegramSourceBadge message={message} />
             {message.role === 'assistant' && <span className="bot-badge">BOT</span>}
-            <time dateTime={message.createdAt}>
-              {new Date(message.createdAt).toLocaleTimeString([], {
-                hour: 'numeric',
-                minute: '2-digit',
-              })}
-            </time>
+            <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
           </div>
           {message.role === 'assistant' ? (
             <>

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { captureEpisodeTime } from '../../shared/memoryTime';
+import { detectTimeZone } from '../../shared/timeZone';
 import type {
   MemoryEngine,
   SQLiteMemoryStore,
@@ -20,6 +22,7 @@ export class MemoryReviewService {
     private enabled: (workspaceId: string) => boolean,
     private idleMs = 60000,
     private search?: (scope: MemoryScope, query: string) => Promise<SearchHit[]>,
+    private timeZone: (workspaceId: string) => string = detectTimeZone,
   ) {}
 
   schedule(workspaceId: string, conversationId: string, actorId: string) {
@@ -232,16 +235,20 @@ export class MemoryReviewService {
         referenceTime: String(last.created_at),
         conversationId: c,
         messageId: String(last.id),
-        context: this.store
-          .all(
-            'SELECT role,content FROM messages WHERE conversation_id=? AND sequence<=? ORDER BY sequence DESC LIMIT 4',
-            c,
-            Number(job.checkpoint),
-          )
-          .reverse()
-          .map((row) => `${row.role}: ${row.content}`)
-          .join('\n')
-          .slice(-6000),
+        context: captureEpisodeTime(
+          this.store
+            .all(
+              'SELECT role,content FROM messages WHERE conversation_id=? AND sequence<=? ORDER BY sequence DESC LIMIT 4',
+              c,
+              Number(job.checkpoint),
+            )
+            .reverse()
+            .map((row) => `${row.role}: ${row.content}`)
+            .join('\n')
+            .slice(-5000),
+          String(last.created_at),
+          this.timeZone(w),
+        ),
       });
       const id = randomUUID(),
         started = new Date().toISOString();

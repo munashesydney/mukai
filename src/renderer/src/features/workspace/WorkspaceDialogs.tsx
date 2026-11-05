@@ -25,7 +25,7 @@ export function WorkspaceDialogs({
         <div className="draft-document">
           <div className="document-meta">
             <span className="draft-badge">Draft</span>
-            <span>Prepared by Nova · Today</span>
+            <span>Prepared by Nova · Sample draft</span>
             <FileText size={17} />
           </div>
           <h3>

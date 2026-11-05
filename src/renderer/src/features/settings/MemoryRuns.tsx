@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useState } from 'react';
 import { ArrowLeft, ArrowUpRight, ChevronRight } from 'lucide-react';
 import type { MemoryReviewRun } from '../../../../shared/memory';
@@ -12,9 +13,10 @@ export function MemoryRuns({
   onRetry: (id: string) => void;
   disabled?: boolean;
 }) {
+  const { dateTime: time } = useWorkspaceTime();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = runs.find((run) => run.id === selectedId);
-  const time = (value: string) => new Date(value).toLocaleString();
+
   const kind = (value: string) =>
     ({ private: 'Chat', space: 'Space', pursuit_run: 'Pursuit run' })[value] ||
     value.replaceAll('_', ' ');

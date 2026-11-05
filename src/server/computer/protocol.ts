@@ -4,7 +4,7 @@ import { ApiError } from '../config';
 
 export const PROTOCOL_VERSION = 1;
 // Revision 23 adds compact process activity reads for chat refreshes.
-export const GUEST_REVISION = 23;
+export const GUEST_REVISION = 24;
 export const FRAME_LIMIT = 24 * 1024 * 1024;
 export const methods = [
   'terminal',

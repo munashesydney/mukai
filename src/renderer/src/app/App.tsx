@@ -1,4 +1,6 @@
 import type { ChatFailure } from '../../../shared/failures';
+import { WorkspaceTimeContext } from '../features/timezone/WorkspaceTimeContext';
+import { effectiveTimeZone } from '../../../shared/timeZone';
 import { useFailures } from '../features/failures/useFailures';
 import { FailedPage } from '../features/failures/FailedPage';
 import { failureLocation } from '../features/failures/failureLocation';
@@ -66,15 +68,22 @@ export function App() {
   }
   if (!ai.workspace) return <EmptyWorkspaces ai={ai} />;
   return (
-    <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
-      <WorkspaceApp
-        ai={ai}
-        failures={failures}
-        onOpenFailure={openFailure}
-        pendingFailure={pendingFailure}
-        onFailureOpened={onFailureOpened}
-      />
-    </BrowserWorkspace>
+    <WorkspaceTimeContext.Provider
+      value={{
+        timeZone: effectiveTimeZone(ai.workspace.timeZone),
+        zones: Object.fromEntries(ai.workspaces.map((w) => [w.id, effectiveTimeZone(w.timeZone)])),
+      }}
+    >
+      <BrowserWorkspace key={ai.workspaceId} workspaceId={ai.workspaceId}>
+        <WorkspaceApp
+          ai={ai}
+          failures={failures}
+          onOpenFailure={openFailure}
+          pendingFailure={pendingFailure}
+          onFailureOpened={onFailureOpened}
+        />
+      </BrowserWorkspace>
+    </WorkspaceTimeContext.Provider>
   );
 }
 function EmptyWorkspaces({ ai }: { ai: ReturnType<typeof useAIWorkspace> }) {
@@ -432,6 +441,7 @@ function WorkspaceApp({
             <SettingsPage
               section={
                 location.item === 'appearance' ||
+                location.item === 'timezone' ||
                 location.item === 'updates' ||
                 location.item === 'providers' ||
                 location.item === 'environment' ||
@@ -445,6 +455,7 @@ function WorkspaceApp({
               onSection={(next) => navigate({ section: 'settings', item: next })}
               workspace={ai.workspace}
               onDeleteWorkspace={ai.deleteWorkspace}
+              onWorkspaceChanged={ai.updateWorkspace}
               onConnectFolder={() => {
                 if (ai.workspace) setEditingWorkspace(ai.workspace);
               }}

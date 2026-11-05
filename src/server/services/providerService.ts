@@ -12,6 +12,8 @@ import {
 } from './compatibleImageMiddleware';
 import { inputCapabilityLabel, modelInputCapabilities } from '../../shared/modelCapabilities';
 import { toolMediaMiddleware } from './toolMediaMiddleware';
+import { runtimeTimeMiddleware } from './runtimeTimeMiddleware';
+import { detectTimeZone } from '../../shared/timeZone';
 import { ApiError, privateSecret } from '../config';
 import type { BotRecord, ProviderRecord } from '../models/entities';
 import { publicProvider } from '../models/entities';
@@ -180,6 +182,7 @@ export class ProviderService {
     dir: string,
     private diagnostics: DiagnosticService,
     readonly ai = new AIConcurrency(),
+    private workspaceTimeZone: (workspaceId: string) => string = detectTimeZone,
   ) {
     this.key = privateSecret(dir, 'credentials.key', 32);
     this.chatgpt = new ChatGPTService(
@@ -501,6 +504,7 @@ export class ProviderService {
     };
   }
   resolve(bot: BotRecord) {
+    let onRuntimeClock: ((source: string, stamped: string) => void) | undefined;
     const config = this.configuration(bot);
     if (!config) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
     const { provider, modelId, reasoningEffort: effort } = config;
@@ -513,6 +517,9 @@ export class ProviderService {
       );
     return {
       ...config,
+      onRuntimeClock: (handler: (source: string, stamped: string) => void) => {
+        onRuntimeClock = handler;
+      },
       ai: this.ai,
       aiContext: { workspaceId: bot.workspaceId, botId: bot.id, ...this.ai.provider(provider) },
       vision: config.supportsImages,
@@ -525,6 +532,11 @@ export class ProviderService {
             botId: bot.id,
             ...this.ai.provider(provider),
           }),
+          runtimeTimeMiddleware(
+            () => this.workspaceTimeZone(bot.workspaceId),
+            undefined,
+            (source, stamped) => onRuntimeClock?.(source, stamped),
+          ),
         ],
       }),
       reasoningEffort: effort,

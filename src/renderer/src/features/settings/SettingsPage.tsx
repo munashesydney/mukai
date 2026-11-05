@@ -1,4 +1,15 @@
-import { Layers3, Palette, KeyRound, Brain, Globe, Gauge, Download, Cable } from 'lucide-react';
+import {
+  Layers3,
+  Palette,
+  KeyRound,
+  Brain,
+  Globe,
+  Gauge,
+  Download,
+  Cable,
+  Clock3,
+} from 'lucide-react';
+import { TimezonePanel } from './TimezonePanel';
 import { UpdatesPanel } from './UpdatesPanel';
 import { LimitsPanel } from './LimitsPanel';
 import { Brand } from '../../components/ui/Brand';
@@ -15,6 +26,7 @@ import { useDesktopUpdate } from '../updates/useDesktopUpdate';
 
 const sections = [
   { id: 'workspace', label: 'Workspace', icon: Layers3 },
+  { id: 'timezone', label: 'Timezone', icon: Clock3 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'updates', label: 'Updates', icon: Download },
   { id: 'routes', label: 'Domain', icon: Globe },
@@ -32,6 +44,7 @@ export function SettingsPage({
   workspace,
   onConnectFolder,
   onDeleteWorkspace,
+  onWorkspaceChanged,
 }: {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
@@ -39,6 +52,7 @@ export function SettingsPage({
   workspace?: Workspace;
   onConnectFolder?: () => void;
   onDeleteWorkspace?: (id: string, name: string) => Promise<void>;
+  onWorkspaceChanged?: (workspace: Workspace) => void;
 }) {
   const update = useDesktopUpdate();
   return (
@@ -93,6 +107,12 @@ export function SettingsPage({
               workspace={workspace}
               onConnectFolder={onConnectFolder}
               onDelete={onDeleteWorkspace}
+            />
+          ) : section === 'timezone' && workspace ? (
+            <TimezonePanel
+              key={workspace.id}
+              workspace={workspace}
+              onSaved={onWorkspaceChanged || (() => {})}
             />
           ) : section === 'appearance' ? (
             <AppearancePanel />

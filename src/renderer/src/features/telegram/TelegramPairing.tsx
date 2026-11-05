@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useState } from 'react';
 import { Copy, ExternalLink, Loader2, UserRound } from 'lucide-react';
 import type { TelegramStatus } from '../../../../shared/telegram';
@@ -22,6 +23,7 @@ export function TelegramPairing({
   onResume: () => void;
   onError: (message: string) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const [copiedLink, setCopiedLink] = useState('');
   const [copiedCommand, setCopiedCommand] = useState('');
   const pairing = status.pairing;
@@ -151,13 +153,7 @@ export function TelegramPairing({
             </div>
           )}
           <div className="telegram-link-meta">
-            <span>
-              Expires at{' '}
-              {new Date(pairing.expiresAt).toLocaleTimeString([], {
-                hour: 'numeric',
-                minute: '2-digit',
-              })}
-            </span>
+            <span>Expires at {formatTime(pairing.expiresAt)}</span>
             <button className="text-button" disabled={pending} onClick={onPair}>
               Create a fresh link
             </button>

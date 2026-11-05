@@ -50,6 +50,7 @@ afterEach(async () => {
 
 describe('VM capability registration and execution', () => {
   it('runs custom jobs in the guest with shared helpers and only uses the already-running bridge', async () => {
+    api.workspaces.setTimeZone('default', 'America/Vancouver');
     const requestRunning = vi.fn(guest.request.bind(guest));
     vi.spyOn(api.computers, 'guest').mockReturnValue({
       request: guest.request.bind(guest),
@@ -67,7 +68,7 @@ describe('VM capability registration and execution', () => {
       async run(event,context){
         if(context.env.JOB_ENV!=='guest-secret-value')throw new Error('Missing guest env');
         await context.wakeBot('Guest job ready');
-        return {file:__filename,workspace:context.workspaceId,path:context.workspacePath,trigger:event.trigger,aborted:context.signal.aborted};
+        return {file:__filename,workspace:context.workspaceId,timeZone:context.timeZone,path:context.workspacePath,trigger:event.trigger,aborted:context.signal.aborted};
       }};`,
     );
     const output = (await api.capabilities.manage('default', 'scout', 'job', {
@@ -79,6 +80,7 @@ describe('VM capability registration and execution', () => {
     );
     expect(output.result).toMatchObject({
       workspace: 'default',
+      timeZone: 'America/Vancouver',
       path: folder,
       trigger: 'manual',
       aborted: false,

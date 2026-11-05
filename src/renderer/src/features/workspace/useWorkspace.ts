@@ -68,9 +68,8 @@ export function useWorkspace(workspaceId = 'default') {
       id: crypto.randomUUID(),
       author: 'munashe',
       text: text || 'Shared a file',
-      time: new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(
-        new Date(),
-      ),
+      time: '',
+      createdAt: new Date().toISOString(),
       attachment,
     };
     setState((previous) => ({

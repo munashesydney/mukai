@@ -22,6 +22,7 @@ import {
   providerModelsSchema,
   chatSchema,
   workspaceSchema,
+  timeZoneSchema,
   spaceSchema,
   spaceChatSchema,
   savedMessageSchema,
@@ -902,6 +903,13 @@ export function createRoutes({
     } else if (resource === 'changes' && id && !action && method === 'GET') {
       return send(response, changes.detail(id));
     } else if (resource === 'workspaces') {
+      if (id && action === 'timezone' && (method === 'PUT' || method === 'POST')) {
+        const input = z
+          .object({ timeZone: timeZoneSchema })
+          .strict()
+          .parse(await jsonBody(request));
+        return send(response, workspaces.setTimeZone(id, input.timeZone, method === 'POST'));
+      }
       if (id === 'computer-setup' && !action && method === 'POST') {
         if (!workspaces.computers) throw new ApiError(503, 'VM setup is unavailable.');
         return send(response, await workspaces.computers.installer.start(), 202);

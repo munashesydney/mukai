@@ -7,6 +7,7 @@ import { chatStore } from './chatStore';
 import { clearDeletedWorkspaceStorage, deletedChatKeys } from '../workspace/deletionStorage';
 import { workspaceService } from '../../services/workspaceService';
 import { startPoll } from '../../services/poll';
+import { detectTimeZone } from '../../../../shared/timeZone';
 
 export function useAIWorkspace() {
   const [workspaceId, setWorkspaceId] = useState(() => {
@@ -27,10 +28,18 @@ export function useAIWorkspace() {
   const refresh = useCallback(async () => {
     const current = ++revision.current;
     try {
-      const [workspaces, providers] = await Promise.all([
+      const [listedWorkspaces, providers] = await Promise.all([
         workspaceService.list(),
         providerService.list(),
       ]);
+      // Initialize legacy workspaces once. A concurrent saved choice always wins.
+      const workspaces = await Promise.all(
+        listedWorkspaces.map((workspace) =>
+          !workspace.timeZone && !workspace.deleting
+            ? workspaceService.saveTimeZone(workspace.id, detectTimeZone(), true)
+            : workspace,
+        ),
+      );
       const selected =
         workspaces.find((workspace) => workspace.id === workspaceId) ||
         workspaces.find((workspace) => !workspace.deleting) ||
@@ -132,6 +141,15 @@ export function useAIWorkspace() {
     loading,
     error,
     refresh,
+    updateWorkspace: (workspace: Workspace) => {
+      revision.current++;
+      setData((previous) => ({
+        ...previous,
+        workspaces: previous.workspaces.map((item) =>
+          item.id === workspace.id ? workspace : item,
+        ),
+      }));
+    },
     updateBot: (bot: Bot) => {
       revision.current++;
       setData((previous) => ({

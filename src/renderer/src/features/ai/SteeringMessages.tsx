@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { CornerDownRight } from 'lucide-react';
 import type { ChatMessage } from '../../../../shared/ai';
 import { Avatar } from '../../components/ui/Avatar';
@@ -11,6 +12,7 @@ export function SteeringMessages({
   message: ChatMessage;
   collapsed: boolean;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   if (!collapsed || message.role !== 'assistant') return null;
   return (
     <>
@@ -24,12 +26,7 @@ export function SteeringMessages({
               <div className="ai-message-body">
                 <div className="ai-message-meta">
                   <strong>You</strong>
-                  <time dateTime={createdAt}>
-                    {new Date(createdAt).toLocaleTimeString([], {
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })}
-                  </time>
+                  <time dateTime={createdAt}>{formatTime(createdAt)}</time>
                   <CornerDownRight
                     size={13}
                     className="steering-message-icon"

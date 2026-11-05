@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { ArrowUpRight } from 'lucide-react';
 import type { PursuitRun } from '../../../../shared/pursuits';
 
@@ -8,6 +9,7 @@ export function PursuitRuns({
   runs: PursuitRun[];
   onSelect: (id: string) => void;
 }) {
+  const { dateTime } = useWorkspaceTime();
   return (
     <section className="pursuit-runs">
       <div className="pursuit-section-heading">
@@ -23,7 +25,7 @@ export function PursuitRuns({
                 {item.status === 'running' ? 'Working now' : `Run ${runs.length - index}`}
               </strong>
               <small>
-                {new Date(item.startedAt).toLocaleString()} ·{' '}
+                {dateTime(item.startedAt)} ·{' '}
                 {item.trigger === 'schedule' ? 'Scheduled' : 'Requested'}
               </small>
               <p>

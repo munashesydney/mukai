@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import type { ReactNode } from 'react';
 import type { Conversation } from '../../../../shared/conversations';
 import { useChatBusy, useConversationsBusy } from './chatStore';
@@ -22,11 +23,12 @@ export function ConversationStatus({
   isWorking?: boolean;
   children: ReactNode;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const busy = useChatBusy(chatId);
   return busy || isWorking ? (
     <WorkingIndicator />
   ) : (
-    <time dateTime={updatedAt} title={new Date(updatedAt).toLocaleString()}>
+    <time dateTime={updatedAt} title={dateTime(updatedAt)}>
       {children}
     </time>
   );

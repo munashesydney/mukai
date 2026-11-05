@@ -24,6 +24,7 @@ export const capabilityInput = z.discriminatedUnion('operation', [
       operation: z.enum(['validate', 'execute', 'handle', 'processJob', 'runJob']),
       env: z.record(z.string(), z.string()),
       workspaceId: z.string(),
+      timeZone: z.string().optional(),
       input: z.unknown().optional(),
     }),
   }),

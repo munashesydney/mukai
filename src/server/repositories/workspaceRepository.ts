@@ -8,6 +8,7 @@ const workspaceRecord = (row: Row): Workspace => ({
   name: String(row.name),
   folder: row.folder as string | null,
   createdAt: String(row.created_at),
+  ...(row.time_zone ? { timeZone: String(row.time_zone) } : {}),
   ...(row.deleting ? { deleting: true } : {}),
   computer: row.computer === 'qemu' ? 'qemu' : 'local',
   ...(row.computer === 'qemu'
@@ -42,12 +43,13 @@ export class WorkspaceRepository {
   create(workspace: Workspace) {
     this.database.transaction(() => {
       this.database.run(
-        'INSERT INTO workspaces (id,name,folder,created_at,computer) VALUES (?,?,?,?,?)',
+        'INSERT INTO workspaces (id,name,folder,created_at,computer,time_zone) VALUES (?,?,?,?,?,?)',
         workspace.id,
         workspace.name,
         workspace.folder,
         workspace.createdAt,
         workspace.computer || 'local',
+        workspace.timeZone || null,
       );
     });
   }
@@ -168,6 +170,13 @@ export class WorkspaceRepository {
       'UPDATE workspaces SET vm_memory_mib=?,vm_vcpus=? WHERE id=?',
       resources.memoryMiB,
       resources.vcpus,
+      id,
+    );
+  }
+  setTimeZone(id: string, timeZone: string, initialize = false) {
+    this.database.run(
+      'UPDATE workspaces SET time_zone=? WHERE id=?' + (initialize ? ' AND time_zone IS NULL' : ''),
+      timeZone,
       id,
     );
   }

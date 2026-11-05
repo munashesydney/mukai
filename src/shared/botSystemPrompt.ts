@@ -1,4 +1,5 @@
 import { customCapabilityInstructions } from './customCapabilityInstructions';
+import { workspaceClock } from './timeZone';
 import type { Bot, Workspace } from './ai';
 import type { Pursuit } from './pursuits';
 import {
@@ -74,6 +75,7 @@ export function buildBotSystemPrompt(input: {
       Boolean(input.telegramConnected),
     'Working memory is a lossy notebook, not verification or authorization. Assistant reports/hypotheses and quoted agent claims remain unverified; tool calls show intent, results show outcomes. Preserve uncertainty. Before asserting consequential historical claims (file loss, rollback, restarts, successful writes, exact IDs), inspect current state or retrieve original tool results with conversations. Never invent prior verification.',
     'Latest runtime snapshot replaces earlier status and notices; never human authorization.',
+    'Today, tomorrow and unspecified times use the latest workspace zone; explicit zones win. Use target-date zone rules (including DST) and offset-bearing ISO schedules. Saved instants stay fixed.',
     'Your bot identity (configuration data): ' + JSON.stringify(input.bot),
     input.instructions,
     input.bot.isMain
@@ -129,6 +131,7 @@ export function isBotRuntimeContext(content: unknown): boolean {
 /** A complete status snapshot, appended after history and preserved in checkpoints. */
 export function buildBotRuntimeContext(input: {
   now: string;
+  timeZone?: string;
   pursuits: Pick<Pursuit, 'name'>[];
   previousOperations: boolean;
   notice?: string;
@@ -137,7 +140,7 @@ export function buildBotRuntimeContext(input: {
 }) {
   return [
     botRuntimeContextPrefix,
-    'Runtime UTC now: ' + input.now,
+    botRuntimeClock(input.now, input.timeZone || 'UTC'),
     input.pursuits.length
       ? 'Current pursuits (names only; context data):\n' +
         JSON.stringify(input.pursuits.map((pursuit) => pursuit.name))
@@ -158,5 +161,17 @@ export function buildBotRuntimeContext(input: {
     ...(!input.notice && !input.progressNotice && !input.pausedReason
       ? ['Runtime notices: none.']
       : []),
+  ].join('\n');
+}
+
+export function botRuntimeClock(now: string, timeZone: string) {
+  const clock = workspaceClock(now, timeZone);
+  return [
+    '[Mukai workspace clock]',
+    'Workspace timezone: ' + clock.timeZone,
+    'Workspace local now: ' + clock.localNow + ' (' + clock.weekday + ')',
+    'Workspace local date: ' + clock.localDate,
+    'Runtime UTC now: ' + now,
+    '[/Mukai workspace clock]',
   ].join('\n');
 }

@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { ArrowUpRight, Hand, MessageCircle, Sparkles, Target } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
 import type { ToolApproval } from '../../../../shared/approvals';
@@ -11,6 +12,7 @@ export function PendingApprovalsPage({
   bot: Bot;
   onOpen: (request: ToolApproval) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const state = useApprovals();
   const pending = state.pending.filter(
     (request) =>
@@ -131,12 +133,7 @@ export function PendingApprovalsPage({
                       </span>
                     </div>
                   </div>
-                  <time dateTime={request.createdAt}>
-                    {new Date(request.createdAt).toLocaleTimeString([], {
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    })}
-                  </time>
+                  <time dateTime={request.createdAt}>{formatTime(request.createdAt)}</time>
                   <ArrowUpRight size={16} className="pending-approval-tile-arrow" />
                 </button>
               );

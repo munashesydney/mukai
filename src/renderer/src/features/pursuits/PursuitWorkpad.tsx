@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useEffect, useState } from 'react';
 import {
   ClipboardList,
@@ -55,6 +56,7 @@ export function PursuitWorkpad({
   runs: PursuitRun[];
   onRun: (id: string) => void;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [type, setType] = useState<WorkpadEntryType | ''>('');
   const [status, setStatus] = useState<WorkpadStatus | ''>('');
   const [archived, setArchived] = useState(false);
@@ -150,7 +152,7 @@ export function PursuitWorkpad({
             Originating run <ExternalLink size={12} />
           </button>
         )}
-        <time dateTime={entry.updatedAt}>Updated {new Date(entry.updatedAt).toLocaleString()}</time>
+        <time dateTime={entry.updatedAt}>Updated {dateTime(entry.updatedAt)}</time>
       </div>
     </>
   );

@@ -102,6 +102,8 @@ export type BotModelInput = Pick<
 >;
 export const mainBotRole = 'Main Bot/Orchestrator';
 export interface Workspace {
+  /** Missing only for legacy workspaces awaiting one-time desktop initialization. */
+  timeZone?: string;
   id: string;
   name: string;
   folder: string | null;
@@ -116,6 +118,7 @@ export interface WorkspaceDeletionResult {
   conversationIds: string[];
 }
 export interface WorkspaceInput {
+  timeZone?: string;
   name: string;
   folder: string;
   computer?: 'local' | 'qemu';

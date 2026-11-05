@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { startPoll } from '../../services/poll';
 import { JobHealth } from './JobHealth';
 import { FileCode2, Webhook, ChevronRight, Clock } from 'lucide-react';
@@ -26,6 +27,7 @@ export function CustomCapabilities({
   section?: 'tool' | 'route' | 'job';
   vm?: boolean;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [items, setItems] = useState<CapabilityRegistration[]>([]);
   const sections = section ? [section] : (['tool', 'route', 'job'] as const);
   const [registering, setRegistering] = useState(false);
@@ -139,7 +141,7 @@ export function CustomCapabilities({
                               trigger.type === 'workspace_start'
                                 ? 'On workspace start'
                                 : trigger.type === 'once'
-                                  ? `Once at ${new Date(trigger.runAt).toLocaleString()}`
+                                  ? `Once at ${dateTime(trigger.runAt)}`
                                   : `Every ${trigger.intervalMs / 1000}s`,
                             )
                             .join(' · ')}

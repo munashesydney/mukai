@@ -6,6 +6,10 @@ export const workspaceService = {
   remove: (id: string, name: string) =>
     api<WorkspaceDeletionResult>(`/workspaces/${encodeURIComponent(id)}`, 'DELETE', { name }),
   list: () => api<Workspace[]>('/workspaces'),
+  saveTimeZone: (id: string, timeZone: string, initialize = false) =>
+    api<Workspace>(`/workspaces/${encodeURIComponent(id)}/timezone`, initialize ? 'POST' : 'PUT', {
+      timeZone,
+    }),
   computerSetup: () => api<QemuSetup>('/workspaces/computer-setup'),
   installComputer: () => api<QemuSetup>('/workspaces/computer-setup', 'POST', {}),
   computerStatus: (id: string) =>

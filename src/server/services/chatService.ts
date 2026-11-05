@@ -1927,6 +1927,13 @@ export class ChatService {
         pausedReason = '';
       let continuationOf = '';
       let pendingRuntime: { message: ModelMessage; state: string } | undefined;
+      config.onRuntimeClock((source, stamped) => {
+        if (pendingRuntime?.message.content !== source) return;
+        // Persist the exact dispatched snapshot so subsequent requests and restored
+        // checkpoints retain an identical history prefix.
+        pendingRuntime.message.content = stamped;
+        saveCheckpoint();
+      });
       const recoverProviderToolCall = (failure: ProviderToolCallFailure, stepRecorded = false) => {
         messages.push({ role: 'user', content: providerToolCallFeedback(failure) });
         if (providerToolCallRecoveries >= PROVIDER_TOOL_CALL_RECOVERY_LIMIT) {
@@ -2196,6 +2203,7 @@ export class ChatService {
           break;
         }
         const runtimeState = {
+          timeZone: this.tools.workspaceTimeZone(bot.workspaceId),
           pursuits: this.tools.currentPursuits(bot).map(({ name }) => ({ name })),
           previousOperations: Boolean(existingUser && generation.activity.length),
           notice,

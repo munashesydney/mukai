@@ -1,3 +1,5 @@
+import { formatTimestamp } from '../../../../shared/timeZone';
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useState } from 'react';
 import { TriangleAlert, X, ArrowUpRight } from 'lucide-react';
 import type { ChatFailure } from '../../../../shared/failures';
@@ -12,6 +14,7 @@ export function FailedPage({
   inbox: ReturnType<typeof useFailures>;
   onOpen: (failure: ChatFailure) => void;
 }) {
+  const { zoneFor } = useWorkspaceTime();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   async function clear(id?: string) {
@@ -84,7 +87,16 @@ export function FailedPage({
                   <span className="notification-type">
                     {item.botName} · {item.runId ? 'Pursuit run' : 'Chat'}
                   </span>
-                  <time dateTime={item.failedAt}>{new Date(item.failedAt).toLocaleString()}</time>
+                  <time dateTime={item.failedAt}>
+                    {formatTimestamp(item.failedAt, zoneFor(item.workspaceId), {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                      timeZoneName: 'short',
+                    })}
+                  </time>
                 </span>
                 <span className="notification-card-title">{item.conversation.name}</span>
                 <span className="notification-card-preview">{item.error}</span>

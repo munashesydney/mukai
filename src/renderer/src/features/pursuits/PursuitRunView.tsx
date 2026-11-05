@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { RetryResponseButton } from '../ai/RetryResponseButton';
 import { pursuitService } from '../../services/pursuitService';
 import { useAIActivity } from '../../services/aiActivityStore';
@@ -33,6 +34,7 @@ export function PursuitRunView({
   onBack: () => void;
   onRetried: (run: PursuitRun) => void;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [retrying, setRetrying] = useState(false);
   async function retry() {
     if (retrying) return;
@@ -115,7 +117,7 @@ export function PursuitRunView({
         </div>
         <p>
           {run.trigger === 'schedule' ? 'Scheduled wake' : 'Requested run'} ·{' '}
-          {new Date(run.startedAt).toLocaleString()}
+          {dateTime(run.startedAt)}
           {usage && <ContextMeter usage={usage} window={usage.contextWindow} />}
         </p>
         {run.status === 'running' && (

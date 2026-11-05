@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useEffect, useState } from 'react';
 import {
   ArrowUpRight,
@@ -41,6 +42,7 @@ export function PursuitPage({
   onDeleted: () => void;
   runId?: string;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [detail, setDetail] = useState<PursuitDetail | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -300,11 +302,7 @@ export function PursuitPage({
             <div className="pursuit-policy">
               <Clock3 size={16} />
               <span>The owner chooses when to run next</span>
-              {p.deadline && (
-                <time dateTime={p.deadline}>
-                  Deadline · {new Date(p.deadline).toLocaleString()}
-                </time>
-              )}
+              {p.deadline && <time dateTime={p.deadline}>Deadline · {dateTime(p.deadline)}</time>}
             </div>
           </>
         )}

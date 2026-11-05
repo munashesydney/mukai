@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Bot } from '../../../../shared/ai';
@@ -30,6 +31,7 @@ export function BotPairConversationsSidebar({
   expandedGroup: string | null;
   onToggleGroup: (group: string) => void;
 }) {
+  const { date } = useWorkspaceTime();
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const selectedRow = useRef<HTMLButtonElement>(null);
   const activeConversationId =
@@ -121,10 +123,7 @@ export function BotPairConversationsSidebar({
                       updatedAt={chat.updatedAt}
                       isWorking={chat.isWorking}
                     >
-                      {new Date(chat.updatedAt).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                      })}
+                      {date(chat.updatedAt)}
                     </ConversationStatus>
                   </button>
                 ))}

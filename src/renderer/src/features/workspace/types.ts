@@ -1,6 +1,7 @@
 export type Section =
   'spaces' | 'pursuits' | 'bots' | 'tools' | 'settings' | 'notifications' | 'failed' | 'telegram';
 export type SettingsSection =
+  | 'timezone'
   | 'workspace'
   | 'appearance'
   | 'updates'
@@ -33,6 +34,7 @@ export interface Pursuit {
   paused?: boolean;
 }
 export interface Message {
+  createdAt?: string;
   id: string;
   author: PersonId;
   time: string;

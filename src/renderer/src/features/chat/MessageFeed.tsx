@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useEffect, useRef } from 'react';
 import { SmilePlus, FileText, MessageCircle } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
@@ -24,6 +25,7 @@ export function MessageFeed({
   reactions: string[];
   onReact: (id: string) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const feed = useRef<HTMLDivElement>(null);
   const previousCount = useRef(messages.length);
   useEffect(() => {
@@ -40,7 +42,7 @@ export function MessageFeed({
       aria-live="polite"
     >
       <div className="date-divider">
-        <span /> <span>Today, October 1</span>
+        <span /> <span>Messages</span>
         <span />
       </div>
       <div className="messages">
@@ -55,7 +57,9 @@ export function MessageFeed({
                 <div className="message-meta">
                   <strong>{bot?.name ?? 'Munashe'}</strong>
                   {bot && <span className={`bot-tag bot-tag--${bot.color}`}>BOT</span>}
-                  <time>{message.time}</time>
+                  <time dateTime={message.createdAt}>
+                    {message.createdAt ? formatTime(message.createdAt) : message.time}
+                  </time>
                 </div>
                 <p>{message.text}</p>
                 {message.card && (

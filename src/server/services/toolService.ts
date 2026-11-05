@@ -301,6 +301,9 @@ export class ToolService {
           : undefined,
     };
   }
+  workspaceTimeZone(workspaceId: string) {
+    return this.workspaces.timeZone(workspaceId);
+  }
   fileOperationsReady(workspaceId: string) {
     const workspace = this.workspaces.require(workspaceId);
     return (

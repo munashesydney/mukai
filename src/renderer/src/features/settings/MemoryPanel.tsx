@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { SettingsCard } from './SettingsCard';
 import { PageLoader } from '../../components/ui/PageLoader';
@@ -22,8 +23,8 @@ const memoryTabs = [
   ['preferences', 'Preferences'],
 ] as const;
 
-const time = (value: string) => new Date(value).toLocaleString();
 export function MemoryPanel({ workspaceId }: { workspaceId: string }) {
+  const { dateTime: time } = useWorkspaceTime();
   const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
   const [query, setQuery] = useState('');
   const [history, setHistory] = useState(false);

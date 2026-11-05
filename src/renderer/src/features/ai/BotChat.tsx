@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { RetryResponseButton } from './RetryResponseButton';
 import { AIQueueNotice } from './AIQueueNotice';
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
@@ -416,6 +417,7 @@ const MessageRow = memo(function MessageRow({
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const disclosure = useWorkDisclosure(message);
   const botAuthored = isBotConversation ? Boolean(message.botId) : message.role === 'assistant';
   return (
@@ -430,12 +432,7 @@ const MessageRow = memo(function MessageRow({
             {botAuthored && (
               <span className={`bot-badge bot-badge--${author?.avatar || bot.avatar}`}>BOT</span>
             )}
-            <time dateTime={message.createdAt}>
-              {new Date(message.createdAt).toLocaleTimeString([], {
-                hour: 'numeric',
-                minute: '2-digit',
-              })}
-            </time>
+            <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
           </div>
           {message.role === 'assistant' && <ResponseActivity message={message} {...disclosure} />}
           {message.role === 'assistant' && <FileChanges message={message} onReview={onReview} />}

@@ -33,7 +33,12 @@ it.each(['openai', 'compatible', 'anthropic', 'google', 'chatgpt'] as const)(
             : createOpenAI(settings).responses('gpt-4.1');
     const runtime = (now: string): ModelMessage => ({
       role: 'user',
-      content: buildBotRuntimeContext({ now, pursuits: [], previousOperations: false }),
+      content: buildBotRuntimeContext({
+        now,
+        timeZone: 'America/Vancouver',
+        pursuits: [],
+        previousOperations: false,
+      }),
     });
     const first: ModelMessage[] = [
       { role: 'user', content: 'Check the saved work.' },
@@ -81,6 +86,8 @@ it.each(['openai', 'compatible', 'anthropic', 'google', 'chatgpt'] as const)(
     expect(after.slice(0, before.length)).toEqual(before);
     expect(requests[1].tools).toEqual(requests[0].tools);
     expect(JSON.stringify(after.at(-1))).toContain('2026-10-15T01:01:00Z');
+    expect(JSON.stringify(after.at(-1))).toContain('Workspace timezone: America/Vancouver');
+    expect(JSON.stringify(after.at(-1))).toContain('Workspace local date: 2026-10-14');
     const stable = { ...requests[1], [historyKey]: undefined };
     expect(JSON.stringify(stable)).not.toContain('Runtime UTC now:');
   },

@@ -2,6 +2,7 @@ import { Activity, ArrowUpRight, FileText, Target } from 'lucide-react';
 import { Avatar } from '../../components/ui/Avatar';
 import type { Message, DialogKind } from '../workspace/types';
 import { MessageFeed } from './MessageFeed';
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 
 export function FilesView({
   messages,
@@ -10,6 +11,7 @@ export function FilesView({
   messages: Message[];
   onDialog: (dialog: DialogKind) => void;
 }) {
+  const { time: formatTime } = useWorkspaceTime();
   const attachments = messages.filter((m) => m.attachment);
   return (
     <div className="alternate-view">
@@ -36,7 +38,9 @@ export function FilesView({
           </span>
           <span>
             <strong>{m.attachment}</strong>
-            <small>Filename preview · Munashe · {m.time}</small>
+            <small>
+              Filename preview · Munashe · {m.createdAt ? formatTime(m.createdAt) : m.time}
+            </small>
           </span>
           <span className="local-badge">Local</span>
         </div>
@@ -56,9 +60,9 @@ export function ActivityView({
       <div className="view-intro">
         <Activity size={24} />
         <h2>A little progress adds up.</h2>
-        <p>A snapshot of today’s workspace activity.</p>
+        <p>An example of workspace activity.</p>
       </div>
-      <div className="activity-date">TODAY</div>
+      <div className="activity-date">SAMPLE ACTIVITY</div>
       <div className="activity-item">
         <Avatar person="nova" />
         <div>

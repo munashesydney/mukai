@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isTimeZone } from '../../shared/timeZone';
 import { botAvatarIds, legacyAvatarIds, resolveBotAvatar } from '../../shared/mascots';
 import { reasoningEfforts, reasoningLevels } from '../../shared/reasoning';
 import { MAX_RESPONSE_TIMEOUT_SECONDS } from '../../shared/providerTimeouts';
@@ -94,9 +95,14 @@ export const botModelSchema = botSchema.pick({
   supportsImages: true,
   contextWindowTokens: true,
 });
+export const timeZoneSchema = z
+  .string()
+  .trim()
+  .refine(isTimeZone, 'Choose a valid timezone, such as America/Vancouver.');
 export const workspaceSchema = z
   .object({
     name: z.string().trim().min(1).max(60),
+    timeZone: timeZoneSchema.optional(),
     folder: z.string().trim().max(2000).default(''),
     computer: z.enum(['local', 'qemu']).default('local'),
   })

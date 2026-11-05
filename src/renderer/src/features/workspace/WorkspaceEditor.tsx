@@ -7,6 +7,9 @@ import { errorText } from '../../utils/errors';
 import { startPoll } from '../../services/poll';
 import type { QemuSetup } from '../../../../shared/computer';
 import { VmSetupProgress } from './VmSetupProgress';
+import { TimeZoneField } from '../timezone/TimeZoneField';
+import { detectTimeZone, isTimeZone } from '../../../../shared/timeZone';
+import '../../styles/timezone.css';
 
 export function WorkspaceEditor({
   workspace,
@@ -24,6 +27,12 @@ export function WorkspaceEditor({
   const [computer, setComputer] = useState<'local' | 'qemu'>('local');
   const [setup, setSetup] = useState<QemuSetup>();
   const [setupError, setSetupError] = useState('');
+  const [timeZone, setTimeZone] = useState(detectTimeZone);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     let active = true;
     void workspaceService
@@ -99,7 +108,12 @@ export function WorkspaceEditor({
       onSaved(
         await (workspace
           ? workspaceService.connect(workspace.id, { name, folder })
-          : workspaceService.create({ name, folder: computer === 'qemu' ? '' : folder, computer })),
+          : workspaceService.create({
+              name,
+              folder: computer === 'qemu' ? '' : folder,
+              computer,
+              timeZone,
+            })),
       );
     } catch (error) {
       setError(errorText(error));
@@ -198,6 +212,9 @@ export function WorkspaceEditor({
               </small>
             </label>
           )}
+          {!workspace && (
+            <TimeZoneField value={timeZone} onChange={setTimeZone} now={now} disabled={busy} />
+          )}
           <p className="ai-caption">
             {computer === 'qemu'
               ? 'VM files can be downloaded from file artifacts. No host folders are mounted.'
@@ -213,7 +230,10 @@ export function WorkspaceEditor({
             type="submit"
             className="button button--primary"
             disabled={
-              busy || !name.trim() || (computer === 'local' ? !folder.trim() : !setup?.available)
+              busy ||
+              !name.trim() ||
+              (!workspace && !isTimeZone(timeZone)) ||
+              (computer === 'local' ? !folder.trim() : !setup?.available)
             }
           >
             {busy ? 'Saving…' : workspace ? 'Connect folder' : 'Create workspace'}

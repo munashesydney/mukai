@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import type { CapabilityRegistration } from '../../../../shared/customCapabilities';
 
 export function JobHealth({
@@ -7,13 +8,14 @@ export function JobHealth({
   health: CapabilityRegistration['health'];
   compact?: boolean;
 }) {
+  const { dateTime } = useWorkspaceTime();
   if (!health) return null;
   const failed = health.consecutiveFailures > 0;
   return (
     <div className={`job-health ${failed ? 'has-failures' : ''}`}>
       <p>
         {health.lastRun
-          ? `Last run: ${health.lastRun.status} · ${new Date(health.lastRun.startedAt).toLocaleString()}`
+          ? `Last run: ${health.lastRun.status} · ${dateTime(health.lastRun.startedAt)}`
           : 'Execution: not run yet.'}
       </p>
       {failed && (

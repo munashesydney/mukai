@@ -905,6 +905,7 @@ export class CapabilityService {
           env: { ...env, ...routeAccess?.env },
           input,
           workspaceId: registration.workspaceId,
+          timeZone: this.workspaces.timeZone(registration.workspaceId),
         },
         definition.timeoutMs,
         signal,

@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { startPoll } from '../../services/poll';
 import { JobHealth } from './JobHealth';
 import { useCallback, useEffect, useState } from 'react';
@@ -24,6 +25,7 @@ export function CustomCapabilityPage({
   onBack: () => void;
   bots: Bot[];
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [tab, setTab] = useState('Overview');
   const [detail, setDetail] = useState<CapabilityDetail | null>(null),
     [error, setError] = useState(''),
@@ -234,14 +236,14 @@ export function CustomCapabilityPage({
                       trigger.type === 'workspace_start'
                         ? 'On workspace start'
                         : trigger.type === 'once'
-                          ? `Once at ${new Date(trigger.runAt).toLocaleString()}`
+                          ? `Once at ${dateTime(trigger.runAt)}`
                           : `Every ${trigger.intervalMs / 1000} seconds`,
                     )
                     .join(' · ')}
                 </p>
                 <p className="ai-caption">
                   {detail.registration.enabled && detail.registration.nextRunAt
-                    ? `Next run due: ${new Date(detail.registration.nextRunAt).toLocaleString()}`
+                    ? `Next run due: ${dateTime(detail.registration.nextRunAt)}`
                     : 'No timed run pending.'}{' '}
                   Runs require an available workspace runtime. Missed intervals run once when
                   available.
@@ -357,8 +359,8 @@ export function CustomCapabilityPage({
               <ul>
                 {detail.runs.map((run) => (
                   <li key={run.id}>
-                    {run.status} · {new Date(run.startedAt).toLocaleString()} ·{' '}
-                    {run.durationMs ?? '—'} ms · {run.version.slice(0, 8)}
+                    {run.status} · {dateTime(run.startedAt)} · {run.durationMs ?? '—'} ms ·{' '}
+                    {run.version.slice(0, 8)}
                     {run.error && <p>{run.error}</p>}
                   </li>
                 ))}

@@ -163,6 +163,7 @@ export function createApiServer(options: ApiOptions = {}) {
       store.dir,
       diagnostics,
       ai,
+      (workspaceId) => workspaces.timeZone(workspaceId),
     );
     const skills = new SkillService(store, workspaces);
     tools.attachSkills(skills);

@@ -50,6 +50,8 @@ export interface CustomRouteCallRequest {
   query?: Record<string, string>;
 }
 export interface CapabilityContext {
+  /** Saved workspace timezone; use explicitly with Intl for local calendar times. */
+  timeZone: string;
   env: Record<string, string>;
   signal: AbortSignal;
   workspaceId: string;

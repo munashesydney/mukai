@@ -41,6 +41,7 @@ console.log = console.info = console.warn = console.error = console.debug = () =
     return;
   }
   const context = {
+    timeZone: workerData.timeZone || 'UTC',
     env: workerData.env, workspaceId: workerData.workspaceId, workspacePath: workerData.workspacePath, signal: controller.signal,
     enqueue: (provider,eventId,payload) => rpc('enqueue',[provider,eventId,serializable(payload)]),
     wakeBot: (message, options) => rpc('wakeBot',[message, options]),

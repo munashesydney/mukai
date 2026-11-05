@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { useState } from 'react';
 import {
   MessageCircle,
@@ -37,6 +38,7 @@ export function NotificationsPage({
   onGoToBots: () => void;
   onOpenSoftwareUpdates: () => void;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [pending, setPending] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -152,9 +154,7 @@ export function NotificationsPage({
                     <span className="notification-type">
                       {item.sourceKind === 'pursuit_run' ? 'Pursuit update' : 'Bot update'}
                     </span>
-                    <time dateTime={item.createdAt}>
-                      {new Date(item.createdAt).toLocaleString()}
-                    </time>
+                    <time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time>
                   </div>
                   <span className="notification-card-title">{item.title}</span>
                   <span className="notification-card-preview">

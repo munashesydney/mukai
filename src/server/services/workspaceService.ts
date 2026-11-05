@@ -1,4 +1,5 @@
 import { workspaceBrowserProfile } from '../browser/profile';
+import { detectTimeZone, isTimeZone, effectiveTimeZone } from '../../shared/timeZone';
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { lstat, realpath, rm } from 'node:fs/promises';
@@ -149,6 +150,9 @@ export class WorkspaceService {
     return folder;
   }
   create(input: WorkspaceInput) {
+    const timeZone = input.timeZone === undefined ? detectTimeZone() : input.timeZone;
+    if (!isTimeZone(timeZone))
+      throw new ApiError(400, 'Choose a valid timezone, such as America/Vancouver.');
     const computer = input.computer || 'local';
     const folder = computer === 'qemu' ? null : this.folder(input.folder);
     if (computer === 'qemu' && !this.computers)
@@ -160,6 +164,7 @@ export class WorkspaceService {
       );
     const workspace = {
       id: randomUUID(),
+      timeZone,
       name: input.name,
       folder,
       computer,
@@ -195,6 +200,16 @@ export class WorkspaceService {
       throw new ApiError(400, 'Computer resources apply only to Linux VM workspaces.');
     const resources = vmResourcesSchema.parse(input);
     this.workspaces.updateComputerResources(id, resources);
+    return this.require(id);
+  }
+  timeZone(id: string) {
+    return effectiveTimeZone(this.require(id).timeZone);
+  }
+  setTimeZone(id: string, timeZone: string, initialize = false) {
+    this.require(id);
+    if (!isTimeZone(timeZone))
+      throw new ApiError(400, 'Choose a valid timezone, such as America/Vancouver.');
+    this.workspaces.setTimeZone(id, timeZone, initialize);
     return this.require(id);
   }
 }

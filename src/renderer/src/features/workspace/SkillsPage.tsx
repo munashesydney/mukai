@@ -1,3 +1,4 @@
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -36,6 +37,7 @@ export function SkillsPage({
   folder: string | null;
   onConnectFolder: () => void;
 }) {
+  const { dateTime } = useWorkspaceTime();
   const [items, setItems] = useState<SkillInfo[]>([]),
     [query, setQuery] = useState('');
   const [selected, setSelected] = useState<SkillDetail | null>(null),
@@ -276,8 +278,7 @@ export function SkillsPage({
               configured separately.
             </small>
             <p className="ai-caption">
-              Version {selected.version.slice(0, 12)} · Updated{' '}
-              {new Date(selected.updatedAt).toLocaleString()}
+              Version {selected.version.slice(0, 12)} · Updated {dateTime(selected.updatedAt)}
             </p>
           </section>
           {selected.source && (
