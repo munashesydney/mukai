@@ -1,3 +1,5 @@
+export const CONVERSATION_TITLE_LIMIT = 60;
+
 export interface Conversation {
   id: string;
   workspaceId: string;

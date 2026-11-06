@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database';
 import type { ChatActivity, ContextUsage, MessageStatus, ResponsePart } from '../../shared/ai';
+import { CONVERSATION_TITLE_LIMIT } from '../../shared/conversations';
 import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
@@ -279,7 +280,9 @@ export class MessageRepository {
         this.privateConversation(input.conversationId) &&
         !this.latestUserId(input.conversationId)
       ) {
-        const name = input.text.replace(/\s+/g, ' ').trim().slice(0, 60) || 'Shared files';
+        const name =
+          input.text.replace(/\s+/g, ' ').trim().slice(0, CONVERSATION_TITLE_LIMIT) ||
+          'Shared files';
         this.database.run('UPDATE conversations SET name=? WHERE id=?', name, input.conversationId);
       }
       for (const role of ['user', 'assistant'] as const) {

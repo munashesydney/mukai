@@ -1,9 +1,8 @@
 import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { RetryResponseButton } from './RetryResponseButton';
 import { AIQueueNotice } from './AIQueueNotice';
-import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
-import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   Info,
@@ -26,7 +25,7 @@ import type { FileChangeSummary } from '../../../../shared/fileChanges';
 import { FileChanges } from './FileChanges';
 import { DiffDrawer } from './DiffDrawer';
 import { BrowserToggle } from '../browser/BrowserToggle';
-import type { Conversation } from '../../../../shared/conversations';
+import { CONVERSATION_TITLE_LIMIT, type Conversation } from '../../../../shared/conversations';
 import { ToolApprovalCards } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { useApprovals } from './approvalStore';
@@ -81,6 +80,19 @@ export function BotChat({
   }
   const chatId = (isBotConversation ? 'space:' : 'private:') + conversation.id;
   const state = useChat(chatId, isBotConversation);
+  const firstPrompt = state.messages.find((message) => message.role === 'user')?.content;
+  const title = useMemo(() => {
+    if (!firstPrompt || conversation.name.length < CONVERSATION_TITLE_LIMIT)
+      return conversation.name;
+    // The saved title may already have been cut before the header renders it.
+    const prefix = conversation.name.replace(/\s+/g, ' ').trim();
+    const prompt = firstPrompt.replace(/\s+/g, ' ').trim();
+    return prompt.length > prefix.length &&
+      prompt.startsWith(prefix) &&
+      !/(?:…|\.\.\.)$/.test(prefix)
+      ? `${conversation.name.trimEnd()}…`
+      : conversation.name;
+  }, [conversation.name, firstPrompt]);
   const activity = useChatActivity(conversation.id, state.messages, bots, bot.id);
   const approvals = useApprovals();
   const hasRequests = approvals.pending.some((request) =>
@@ -90,7 +102,6 @@ export function BotChat({
     .sort()
     .map((id) => bots.find((item) => item.id === id))
     .filter((item): item is Bot => Boolean(item));
-  const title = isBotConversation ? participants.map((item) => item.name).join('/') : bot.name;
   const [creatingChat, setCreatingChat] = useState(false),
     [newChatError, setNewChatError] = useState('');
   async function createChat() {
@@ -151,24 +162,18 @@ export function BotChat({
       <div className="conversation-panels">
         <main className="conversation">
           <header className="conversation-header">
-            <div className="conversation-heading">
+            <div className="conversation-heading bot-chat-heading">
               <div className="heading-identity">
                 {isBotConversation ? (
                   <span className="bot-pair-avatars">
                     {participants.map((item) => (
-                      <Avatar key={item.id} person={item.avatar} />
+                      <Avatar key={item.id} person={item.avatar} size="xs" />
                     ))}
                   </span>
                 ) : (
-                  <Avatar person={bot.avatar} />
+                  <Avatar person={bot.avatar} size="xs" />
                 )}
-                <div>
-                  <h1>
-                    {title}
-                    {!isBotConversation && bot.isMain && <MainBotBadge />}
-                  </h1>
-                  <p title={conversation.name}>{conversation.name}</p>
-                </div>
+                <h1 title={title}>{title}</h1>
               </div>
               <div className="header-actions">
                 {!isBotConversation && <BrowserToggle />}
@@ -282,7 +287,7 @@ export function BotChat({
                   ref={feed}
                   className={`ai-message-feed${state.loading ? ' is-loading' : ''}`}
                   role="log"
-                  aria-label={`${title} chat`}
+                  aria-label={`${conversation.name} chat`}
                   aria-busy={state.loading || state.busy}
                   onScroll={() => {
                     if (feed.current)

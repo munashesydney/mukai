@@ -14,6 +14,7 @@ import { ArtifactRepository } from '../src/server/repositories/artifactRepositor
 import { FileChangeRepository } from '../src/server/repositories/fileChangeRepository';
 import { MukaiBrowserHost } from '../src/main/embeddedBrowserHost';
 import { IPC } from '../src/shared/contracts';
+import { CONVERSATION_TITLE_LIMIT } from '../src/shared/conversations';
 import type { ChatActivity } from '../src/shared/ai';
 import type { BrowserBounds } from '../src/shared/runtime';
 
@@ -126,13 +127,11 @@ async function main() {
       JSON.stringify(activities),
     );
   const telegramMessageId = randomUUID();
-  addMessage(
-    telegramMessageId,
-    conversation.id,
-    'user',
-    'Build a project preview and ask Nova to review it.',
-    null,
-  );
+  const firstPrompt =
+    'Build a project preview and ask Nova to review it before showing it to the team.';
+  const savedTitle = firstPrompt.slice(0, CONVERSATION_TITLE_LIMIT);
+  api.store.run('UPDATE conversations SET name=? WHERE id=?', savedTitle, conversation.id);
+  addMessage(telegramMessageId, conversation.id, 'user', firstPrompt, null);
   api.store.run("UPDATE messages SET source='telegram' WHERE id=?", telegramMessageId);
   const messageId = randomUUID();
   const png = await sharp({
@@ -390,6 +389,9 @@ async function main() {
     );
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
+    await wait(
+      `document.querySelector('.bot-chat-heading h1')?.textContent === ${JSON.stringify(savedTitle.trimEnd() + '…')}`,
+    );
     assert.equal(await evaluate('document.querySelectorAll(".message-telegram-source").length'), 1);
     assert(
       await evaluate(

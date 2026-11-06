@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Conversation, SpaceInput } from '../../shared/conversations';
+import {
+  CONVERSATION_TITLE_LIMIT,
+  type Conversation,
+  type SpaceInput,
+} from '../../shared/conversations';
 import type { Database, Row } from '../db/database';
 
 export class ConversationRepository {
@@ -71,7 +75,7 @@ export class ConversationRepository {
         "INSERT INTO conversations(id,workspace_id,kind,name,created_at,updated_at) VALUES(?,?,'bot',?,?,?)",
         id,
         workspaceId,
-        message.replace(/\s+/g, ' ').trim().slice(0, 60),
+        message.replace(/\s+/g, ' ').trim().slice(0, CONVERSATION_TITLE_LIMIT),
         now,
         now,
       );

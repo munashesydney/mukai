@@ -1031,6 +1031,25 @@ p {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.conversation-heading.bot-chat-heading {
+  padding-block: 5px;
+}
+.bot-chat-heading .heading-identity {
+  gap: 8px;
+}
+.bot-chat-heading .heading-identity .avatar {
+  width: 22px;
+  height: 22px;
+}
+.bot-chat-heading .heading-identity h1 {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: normal;
+}
 .header-actions {
   display: flex;
   align-items: center;
