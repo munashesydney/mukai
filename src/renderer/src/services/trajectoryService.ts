@@ -1,4 +1,8 @@
-import type { TrajectoryDetail, TrajectoryRecord } from '../../../shared/trajectory';
+import type {
+  TrajectoryDetail,
+  TrajectoryMessageStats,
+  TrajectoryRecord,
+} from '../../../shared/trajectory';
 import { api } from './http';
 
 function path(conversationId: string) {
@@ -12,4 +16,6 @@ export const trajectoryService = {
     ),
   detail: (conversationId: string, recordId: number) =>
     api<TrajectoryDetail>(`${path(conversationId)}?record=${recordId}`),
+  stats: (conversationId: string) =>
+    api<TrajectoryMessageStats[]>(`${path(conversationId)}?stats=1`),
 };

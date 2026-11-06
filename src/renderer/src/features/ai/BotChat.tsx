@@ -13,6 +13,7 @@ import {
   ListTree,
 } from 'lucide-react';
 import type { Bot, ChatMessage, ProviderSettings } from '../../../../shared/ai';
+import type { TrajectoryMessageStats } from '../../../../shared/trajectory';
 import { inputCapabilityLabel, modelInputCapabilities } from '../../../../shared/modelCapabilities';
 import { Avatar } from '../../components/ui/Avatar';
 import { IconButton } from '../../components/ui/IconButton';
@@ -36,6 +37,8 @@ import { BotChatComposer } from './BotChatComposer';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
 import { TrajectoryView } from './TrajectoryView';
+import { TurnFooter } from './ChatStats';
+import { useChatStats } from './useChatStats';
 
 export function BotChat({
   bot,
@@ -136,6 +139,10 @@ export function BotChat({
   const latestAssistant = [...state.messages]
     .reverse()
     .find((message) => message.role === 'assistant');
+  const latestSettledAssistant = [...state.messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.status !== 'streaming');
+  const stats = useChatStats(conversation.id, state.loading, state.busy, latestAssistant);
   useEffect(() => {
     if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
   }, [state.messages, state.loading, bot.id, trajectoryOpen, filesOpen]);
@@ -340,6 +347,8 @@ export function BotChat({
                       }
                       isBotConversation={isBotConversation}
                       busy={state.busy}
+                      stats={stats.get(message.id)}
+                      latestTurn={message.id === latestSettledAssistant?.id}
                       canRetry={
                         message.id === latestAssistant?.id &&
                         message.requestId ===
@@ -378,6 +387,7 @@ export function BotChat({
                   conversationId={conversation.id}
                   chatId={chatId}
                   state={state}
+                  stats={stats}
                   onSend={send}
                   onProviders={onProviders}
                   onBotChanged={onBotChanged}
@@ -463,6 +473,8 @@ const MessageRow = memo(function MessageRow({
   author,
   isBotConversation,
   busy,
+  stats,
+  latestTurn,
   canRetry,
   onReview,
   onRetry,
@@ -472,6 +484,8 @@ const MessageRow = memo(function MessageRow({
   author?: Bot;
   isBotConversation: boolean;
   busy: boolean;
+  stats?: TrajectoryMessageStats;
+  latestTurn: boolean;
   canRetry: boolean;
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string) => void;
@@ -510,6 +524,9 @@ const MessageRow = memo(function MessageRow({
                 <RetryResponseButton disabled={busy} onRetry={() => onRetry(message.requestId)} />
               )}
             </div>
+          )}
+          {message.role === 'assistant' && message.status !== 'streaming' && (
+            <TurnFooter message={message} stats={stats} latest={latestTurn} />
           )}
         </div>
       </article>

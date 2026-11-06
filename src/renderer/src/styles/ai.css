@@ -966,18 +966,81 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
 }
-.context-meter:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.context-meter:hover:not(:disabled),
-.context-meter:focus-visible {
+.context-meter:hover,
+.context-meter:focus-visible,
+.chat-stats-pill:hover,
+.chat-stats-pill:focus-visible {
   color: var(--ink);
   background: var(--surface-muted);
+}
+.conversation-stats,
+.chat-stats-reading,
+.chat-stats-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.conversation-stats {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+}
+.chat-stats-pill {
+  min-height: 24px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.chat-stats-details {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+}
+.chat-stats-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chat-stats-details dd {
+  margin: 0;
+  color: var(--ink);
+  text-align: end;
+}
+.context-meter-details {
+  white-space: pre-line;
+}
+.ai-message--assistant:has(.turn-footer) {
+  padding-bottom: 12px;
+}
+.turn-footer {
+  opacity: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.turn-footer.is-latest,
+.turn-footer:hover,
+.turn-footer:focus-within,
+.turn-footer:has([aria-expanded='true']) {
+  opacity: 1;
+}
+.message-footer-actions.turn-footer > .icon-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+.turn-footer time {
+  margin-inline-start: 6px;
+}
+@media (hover: none) {
+  .turn-footer {
+    opacity: 1;
+  }
 }
 .context-meter-ring {
   width: 13px;
@@ -1266,17 +1329,15 @@
 .ai-composer-area {
   flex-shrink: 0;
 }
+.composer-area.bot-chat-composer {
+  padding-bottom: 6px;
+}
 .is-dragging-files {
   outline: 2px dashed var(--accent);
   outline-offset: 3px;
 }
 .ai-composer-area .composer textarea {
   font-size: 14px;
-}
-.ai-composer-hint {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
 }
 .ai-model-label {
   font-size: 10px;
@@ -2258,9 +2319,6 @@ video.artifact-media-preview {
   }
   .ai-form-grid {
     grid-template-columns: 1fr;
-  }
-  .ai-composer-hint > span:last-child {
-    display: none;
   }
   .ai-message-feed {
     padding: 15px;

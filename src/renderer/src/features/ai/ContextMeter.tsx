@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { ContextUsage } from '../../../../shared/ai';
+import { Tooltip } from '../../components/ui/Tooltip';
 
 export function ContextMeter({
   usage,
@@ -35,18 +36,34 @@ export function ContextMeter({
   ]
     .filter(Boolean)
     .join('\n');
-  return (
-    <button
-      type="button"
-      className={`context-meter${usage?.phase === 'compacting' ? ' is-compacting' : ''}`}
-      title={detail}
-      aria-label={`${label}. ${detail}`}
-      onClick={onConfigure}
-      disabled={!onConfigure}
-      style={{ '--context-progress': `${percentage ?? 0}%` } as CSSProperties}
-    >
-      <span className="context-meter-ring" aria-hidden="true" />
+  const className = `context-meter${usage?.phase === 'compacting' ? ' is-compacting' : ''}`;
+  const content = (
+    <>
+      <span
+        className="context-meter-ring"
+        aria-hidden="true"
+        style={{ '--context-progress': `${percentage ?? 0}%` } as CSSProperties}
+      />
       <span>{label}</span>
-    </button>
+    </>
+  );
+  if (onConfigure)
+    return (
+      <button
+        type="button"
+        className={className}
+        title={detail}
+        aria-label={`${label}. ${detail}`}
+        onClick={onConfigure}
+      >
+        {content}
+      </button>
+    );
+  return (
+    <Tooltip
+      label={label}
+      content={<span className="context-meter-details">{detail}</span>}
+      clickTrigger={{ className, content }}
+    />
   );
 }

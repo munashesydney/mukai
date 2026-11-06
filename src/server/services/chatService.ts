@@ -206,6 +206,9 @@ export class ChatService {
   trajectoryHistory(conversationId: string, fromMessageId?: string) {
     return this.trajectory.list(conversationId, fromMessageId);
   }
+  trajectoryStats(conversationId: string) {
+    return this.trajectory.stats(conversationId);
+  }
   trajectoryDetail(conversationId: string, recordId: number) {
     const detail = this.trajectory.detail(conversationId, recordId);
     if (!detail) throw new ApiError(404, 'Trajectory record not found in this conversation.');
@@ -2567,6 +2570,7 @@ export class ChatService {
           steeredGeneration = true;
           stepController.abort();
         };
+        trace.beginModelStep();
         const result = this.providers.ai.withContext(
           {
             conversationId,

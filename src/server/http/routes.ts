@@ -846,6 +846,8 @@ export function createRoutes({
         if (action === 'messages' && method === 'GET')
           return sendRead(request, response, conversations.history(id));
         if (action === 'trajectory' && method === 'GET') {
+          if (url.searchParams.get('stats') === '1')
+            return sendRead(request, response, chats.trajectoryStats(id));
           const record = url.searchParams.get('record');
           if (record !== null) {
             const recordId = z.coerce.number().int().positive().parse(record);

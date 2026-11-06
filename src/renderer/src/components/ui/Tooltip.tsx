@@ -6,9 +6,11 @@ import './Tooltip.css';
 export function Tooltip({
   content,
   label = 'More information',
+  clickTrigger,
 }: {
   content: ReactNode;
   label?: string;
+  clickTrigger?: { content: ReactNode; className: string };
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -51,18 +53,21 @@ export function Tooltip({
     <span
       className="tooltip"
       onMouseEnter={() => {
+        if (clickTrigger) return;
         window.clearTimeout(closeTimer.current);
         setOpen(true);
       }}
       onMouseLeave={(event) => {
+        if (clickTrigger) return;
         if (!event.currentTarget.contains(document.activeElement))
           closeTimer.current = window.setTimeout(() => setOpen(false), 150);
       }}
       onBlur={(event) => {
+        if (clickTrigger) return;
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && open) {
           event.preventDefault();
           event.stopPropagation();
           setOpen(false);
@@ -72,13 +77,16 @@ export function Tooltip({
       <button
         ref={trigger}
         type="button"
-        className="tooltip-trigger"
+        className={clickTrigger?.className ?? 'tooltip-trigger'}
         aria-label={label}
         aria-describedby={open ? id : undefined}
-        onFocus={() => setOpen(true)}
-        onClick={() => setOpen(true)}
+        aria-expanded={clickTrigger ? open : undefined}
+        onFocus={() => {
+          if (!clickTrigger) setOpen(true);
+        }}
+        onClick={() => setOpen((previous) => !clickTrigger || !previous)}
       >
-        <Info size={15} aria-hidden="true" />
+        {clickTrigger?.content ?? <Info size={15} aria-hidden="true" />}
       </button>
       {open && (
         <div ref={bubble} id={id} role="tooltip" popover="manual" className="tooltip-bubble">

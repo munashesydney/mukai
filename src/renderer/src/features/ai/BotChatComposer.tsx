@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { ArrowUp, Paperclip, Square } from 'lucide-react';
 import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import type { TrajectoryMessageStats } from '../../../../shared/trajectory';
 import type { ChatState } from '../../models/chat';
 import {
   acceptedAttachments,
-  inputCapabilityLabel,
   modelInputCapabilities,
   supportsAttachment,
 } from '../../../../shared/modelCapabilities';
@@ -16,7 +16,7 @@ import { FollowupQueue } from './FollowupQueue';
 import { ToolApprovalCards, ApprovalModePicker } from './ToolApprovals';
 import { AskComposer } from './AskComposer';
 import { BotModelPicker } from './BotModelPicker';
-import { ContextMeter } from './ContextMeter';
+import { ConversationStats } from './ChatStats';
 import { useAttachmentInput } from './useAttachmentInput';
 
 export function BotChatComposer({
@@ -25,6 +25,7 @@ export function BotChatComposer({
   conversationId,
   chatId,
   state,
+  stats,
   onSend,
   onProviders,
   onBotChanged,
@@ -36,6 +37,7 @@ export function BotChatComposer({
   conversationId: string;
   chatId: string;
   state: ChatState;
+  stats: Map<string, TrajectoryMessageStats>;
   onSend: () => void;
   onProviders: () => void;
   onBotChanged: (bot: Bot) => void;
@@ -70,7 +72,7 @@ export function BotChatComposer({
     if (!blocked) onSend();
   }
   return (
-    <div className="composer-area ai-composer-area">
+    <div className="composer-area ai-composer-area bot-chat-composer">
       <FollowupQueue chatId={chatId} state={state} capabilities={capabilities} />
       <ToolApprovalCards conversationId={conversationId} />
       {newChatError && (
@@ -163,11 +165,6 @@ export function BotChatComposer({
                   onProviders={onProviders}
                 />
               )}
-              <ContextMeter
-                usage={latestAssistant?.contextUsage}
-                window={modelContextWindow(bot, provider)}
-                onConfigure={onProviders}
-              />
             </div>
             {state.busy ? (
               <div className="followup-send-actions">
@@ -225,18 +222,18 @@ export function BotChatComposer({
             }}
           />
         </div>
-        <div className="composer-hint ai-composer-hint">
-          <span>Enter to send · Shift + Enter for a new line</span>
-          <span>
-            Drop files or paste with Ctrl/Cmd + V · 4 files · 10 MB each ·{' '}
-            {inputCapabilityLabel(capabilities)}
-          </span>
-        </div>
         {!provider && (
           <button className="text-button ai-configure-link" onClick={onProviders}>
             Set up a provider in Settings
           </button>
         )}
+        <ConversationStats
+          messages={state.messages}
+          stats={stats}
+          usage={latestAssistant?.contextUsage}
+          window={modelContextWindow(bot, provider)}
+          loading={state.loading}
+        />
       </AskComposer>
     </div>
   );

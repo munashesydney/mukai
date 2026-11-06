@@ -296,6 +296,10 @@ async function main() {
   });
   host.attach(window);
   ipcMain.handle(IPC.apiConnection, () => ({ url: api.url, token: api.token }));
+  let copiedText = '';
+  ipcMain.handle(IPC.writeClipboardText, (_event, text: string) => {
+    copiedText = text;
+  });
   ipcMain.handle(IPC.health, () => ({ status: 'ok' }));
   ipcMain.handle(IPC.updateState, () => ({
     status: 'disabled',
@@ -1152,10 +1156,54 @@ async function main() {
                 finish_reason: 'stop',
               },
             ],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 40,
+              total_tokens: 140,
+              prompt_tokens_details: { cached_tokens: 75 },
+            },
           }) +
           '\n\ndata: [DONE]\n\n',
       );
       await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
+      await wait(
+        `document.querySelector('.conversation-stats')?.textContent.includes('2 steps') && document.querySelector('.conversation-stats')?.textContent.includes('tok/s') && document.querySelector('.conversation-stats')?.textContent.includes('Cache hit 75%')`,
+      );
+      await click('.turn-footer.is-latest .chat-stats-pill');
+      await wait(
+        `document.querySelector('.tooltip-bubble:popover-open')?.textContent.includes('Generation speed')`,
+      );
+      await click('.turn-footer.is-latest .chat-stats-pill');
+      await click('.conversation-stats .context-meter');
+      await wait(
+        `document.querySelector('.tooltip-bubble:popover-open .context-meter-details')?.textContent.includes('Last input: 100 tokens')`,
+      );
+      await click('.conversation-stats .context-meter');
+      await click('.turn-footer.is-latest button[aria-label="Copy message"]');
+      await wait(
+        `Boolean(document.querySelector('.turn-footer.is-latest button[aria-label="Copied message"]'))`,
+      );
+      assert.match(copiedText, /The live draft is ready\./);
+      const previousFooter = '.turn-footer:not(.is-latest)';
+      const footerPoint = await evaluate<{ x: number; y: number }>(`(() => {
+        const footer = Array.from(document.querySelectorAll(${JSON.stringify(previousFooter)})).at(-1);
+        footer.scrollIntoView({block:'center'});
+        const bounds = footer.getBoundingClientRect();
+        return {x:Math.round(bounds.left + 40),y:Math.round(bounds.top + bounds.height / 2)};
+      })()`);
+      window.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      await wait(
+        `getComputedStyle(Array.from(document.querySelectorAll(${JSON.stringify(previousFooter)})).at(-1)).opacity === '0'`,
+      );
+      window.webContents.sendInputEvent({ type: 'mouseMove', ...footerPoint });
+      await wait(
+        `getComputedStyle(Array.from(document.querySelectorAll(${JSON.stringify(previousFooter)})).at(-1)).opacity === '1'`,
+      );
+      window.webContents.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 });
+      await evaluate(
+        `(() => { const feed = document.querySelector('.ai-message-feed'); feed.scrollTop = feed.scrollHeight; })()`,
+      );
+      await capture('chat-turn-stats');
       await wait('document.querySelectorAll(".response-chart").length===4');
       await wait('Array.from(document.querySelectorAll(".response-work")).at(-1)?.open===false');
       await evaluate(
@@ -1200,6 +1248,18 @@ async function main() {
       );
       await wait(`!document.querySelector('button[aria-label="Stop generation"]')`);
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
+      await click('.header-actions button[aria-label="New conversation with Scout"]');
+      await wait(
+        `document.querySelector('.conversation-stats')?.textContent.includes('0 turns · 0 steps') && document.querySelector('.conversation-stats')?.textContent.includes('0 tok')`,
+      );
+      assert(
+        await evaluate(`(() => {
+        const area = document.querySelector('.bot-chat-composer');
+        area.querySelector('textarea').focus();
+        const stats = area.querySelector('.conversation-stats');
+        return !area.querySelector('.composer-hint') && area.getBoundingClientRect().bottom - stats.getBoundingClientRect().bottom <= 7;
+      })()`),
+      );
       // Space chats share the same manual full-area activity view.
       await evaluate(
         `Array.from(document.querySelectorAll('.rail-link')).find(b=>b.textContent.trim()==='Spaces').click()`,

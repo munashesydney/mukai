@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { LanguageModelMiddleware } from 'ai';
 import { isBotRuntimeContext } from '../../shared/botSystemPrompt';
 import type { TrajectoryDetail, TrajectoryRecord } from '../../shared/trajectory';
@@ -30,6 +30,7 @@ const sensitiveKey =
 /** Records dispatches independently of the checkpoint used to resume a response. */
 export class ChatTrajectory {
   private current?: Entry;
+  private modelStepId?: string;
   private running = new Set<Entry>();
   private calls = new Map<string, Entry>();
   private toolSchemas = new Map<string, FunctionTool>();
@@ -102,6 +103,10 @@ export class ChatTrajectory {
 
   linkPart(id: string) {
     this.current?.linkedParts?.add(id);
+  }
+
+  beginModelStep() {
+    this.modelStepId = randomUUID();
   }
 
   flushParts() {
@@ -209,6 +214,7 @@ export class ChatTrajectory {
     const entry = this.start(
       {
         kind: 'model',
+        modelStepId: this.modelStepId,
         title: this.text(model.modelId, 200),
         status: 'running',
         startedAt: Date.now(),
@@ -264,15 +270,19 @@ export class ChatTrajectory {
               return;
             }
             const part = chunk.value;
-            const firstToken =
+            const hasToken =
               ((part.type === 'text-delta' ||
                 part.type === 'reasoning-delta' ||
                 part.type === 'tool-input-delta') &&
                 part.delta.length > 0) ||
               part.type === 'tool-call';
-            if (firstToken && entry.summary.firstTokenAt === undefined) {
-              entry.summary.firstTokenAt = Date.now();
-              this.write(entry);
+            if (hasToken) {
+              const now = Date.now();
+              entry.summary.lastTokenAt = now;
+              if (entry.summary.firstTokenAt === undefined) {
+                entry.summary.firstTokenAt = now;
+                this.write(entry);
+              }
             }
             if (part.type === 'text-delta' || part.type === 'reasoning-delta') {
               const field = part.type === 'text-delta' ? 'output' : 'reasoning';

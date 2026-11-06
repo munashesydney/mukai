@@ -65,11 +65,15 @@ it('keeps failed provider attempts and redacted request detail after the chat ch
       model: 'trace-model',
       object: 'chat.completion.chunk',
       created: 1,
-      choices: [{ index: 0, delta: { content: `Reply with ${secret}.` }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 123, completion_tokens: 8, total_tokens: 131 },
     };
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.end(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`);
+    res.write(
+      `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: { content: 'Reply with ' }, finish_reason: null }] })}\n\n`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    res.end(
+      `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: { content: `${secret}.` }, finish_reason: 'stop' }], usage: { prompt_tokens: 123, completion_tokens: 8, total_tokens: 131, prompt_tokens_details: { cached_tokens: 82 } } })}\n\ndata: [DONE]\n\n`,
+    );
   });
   await new Promise<void>((resolve) => provider!.listen(0, '127.0.0.1', resolve));
   const address = provider.address() as { port: number };
@@ -116,9 +120,25 @@ it('keeps failed provider attempts and redacted request detail after the chat ch
     kind: 'model',
     status: 'complete',
     firstTokenAt: expect.any(Number),
-    usage: { input: 123, output: 8 },
+    usage: { input: 123, output: 8, cached: 82 },
     preview: 'Reply with [redacted].',
   });
+  expect(complete.modelStepId).toBeTruthy();
+  expect(failed.modelStepId).toBe(complete.modelStepId);
+  expect(complete.lastTokenAt).toBeGreaterThan(complete.firstTokenAt!);
+  expect(await (await request(`${path}?stats=1`)).json()).toEqual([
+    {
+      messageId: complete.messageId,
+      steps: 1,
+      input: 123,
+      output: 8,
+      cached: 82,
+      cacheInput: 123,
+      timedOutput: 8,
+      decodeMs: complete.lastTokenAt! - complete.firstTokenAt!,
+      speedEstimated: false,
+    },
+  ]);
   expect(JSON.stringify(records)).not.toContain(secret);
   const detailPath = `${path}?record=${complete.id}`;
   const detail = (await (await request(detailPath)).json()) as TrajectoryDetail;

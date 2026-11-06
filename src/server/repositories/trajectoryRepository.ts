@@ -1,4 +1,8 @@
-import type { TrajectoryDetail, TrajectoryRecord } from '../../shared/trajectory';
+import type {
+  TrajectoryDetail,
+  TrajectoryMessageStats,
+  TrajectoryRecord,
+} from '../../shared/trajectory';
 import type { Database } from '../db/database';
 
 type Summary = Omit<TrajectoryRecord, 'id' | 'messageId'>;
@@ -53,6 +57,41 @@ export class TrajectoryRepository {
       conversationId,
     );
     return row ? (JSON.parse(String(row.detail_json)) as TrajectoryDetail) : undefined;
+  }
+
+  stats(conversationId: string): TrajectoryMessageStats[] {
+    const rows = this.database.all(
+      `WITH attempts AS (
+         SELECT t.message_id, COALESCE(json_extract(t.summary_json,'$.modelStepId'), t.id) AS step_id,
+           json_extract(t.summary_json,'$.usage.input') AS input,
+           json_extract(t.summary_json,'$.usage.output') AS output,
+           json_extract(t.summary_json,'$.usage.cached') AS cached,
+           json_extract(t.summary_json,'$.lastTokenAt') IS NULL AS estimated,
+           COALESCE(json_extract(t.summary_json,'$.lastTokenAt'), json_extract(t.summary_json,'$.finishedAt'))
+             - json_extract(t.summary_json,'$.firstTokenAt') AS decode_ms
+         FROM messages m JOIN chat_trajectory t ON t.message_id=m.id
+         WHERE m.conversation_id=? AND json_extract(t.summary_json,'$.kind')='model'
+       )
+       SELECT message_id, COUNT(DISTINCT step_id) AS steps, SUM(input) AS input, SUM(output) AS output,
+         SUM(CASE WHEN cached IS NOT NULL AND input > 0 THEN cached END) AS cached,
+         SUM(CASE WHEN cached IS NOT NULL AND input > 0 THEN input END) AS cache_input,
+         SUM(CASE WHEN output > 0 AND decode_ms > 0 THEN output END) AS timed_output,
+         SUM(CASE WHEN output > 0 AND decode_ms > 0 THEN decode_ms END) AS decode_ms,
+         MAX(CASE WHEN output > 0 AND decode_ms > 0 THEN estimated END) AS speed_estimated
+       FROM attempts GROUP BY message_id`,
+      conversationId,
+    );
+    return rows.map((row) => ({
+      messageId: String(row.message_id),
+      steps: Number(row.steps),
+      input: typeof row.input === 'number' ? row.input : undefined,
+      output: typeof row.output === 'number' ? row.output : undefined,
+      cached: Number(row.cached ?? 0),
+      cacheInput: Number(row.cache_input ?? 0),
+      timedOutput: Number(row.timed_output ?? 0),
+      decodeMs: Number(row.decode_ms ?? 0),
+      speedEstimated: Boolean(row.speed_estimated),
+    }));
   }
 
   interruptRunning() {

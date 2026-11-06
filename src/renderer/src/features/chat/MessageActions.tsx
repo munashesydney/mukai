@@ -8,11 +8,13 @@ export function MessageActions({
   saved,
   onSave,
   children,
+  className = '',
 }: {
   text: string;
-  saved: boolean;
-  onSave: () => void;
+  saved?: boolean;
+  onSave?: () => void;
   children?: ReactNode;
+  className?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -22,15 +24,17 @@ export function MessageActions({
     return () => window.clearTimeout(timer);
   }, [copied]);
   return (
-    <div className="message-footer-actions">
-      <IconButton
-        label={saved ? 'Unsave message' : 'Save message'}
-        className={saved ? 'message-saved is-on' : ''}
-        aria-pressed={saved}
-        onClick={onSave}
-      >
-        <Bookmark size={14} fill={saved ? 'currentColor' : 'none'} />
-      </IconButton>
+    <div className={`message-footer-actions ${className}`}>
+      {onSave && (
+        <IconButton
+          label={saved ? 'Unsave message' : 'Save message'}
+          className={saved ? 'message-saved is-on' : ''}
+          aria-pressed={saved}
+          onClick={onSave}
+        >
+          <Bookmark size={14} fill={saved ? 'currentColor' : 'none'} />
+        </IconButton>
+      )}
       <IconButton
         label={copied ? 'Copied message' : 'Copy message'}
         disabled={!text}

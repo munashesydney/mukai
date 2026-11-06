@@ -7,6 +7,8 @@ export interface TrajectoryRecord {
   startedAt: number;
   finishedAt?: number;
   firstTokenAt?: number;
+  lastTokenAt?: number;
+  modelStepId?: string;
   stepId?: number;
   callId?: string;
   parentCallId?: string;
@@ -16,6 +18,18 @@ export interface TrajectoryRecord {
   systemPreview?: string;
   contextPreviews?: string[];
   usage?: { input?: number; output?: number; cached?: number; reasoning?: number };
+}
+
+export interface TrajectoryMessageStats {
+  messageId: string;
+  steps: number;
+  input?: number;
+  output?: number;
+  cached: number;
+  cacheInput: number;
+  timedOutput: number;
+  decodeMs: number;
+  speedEstimated: boolean;
 }
 
 export interface TrajectoryDetail {
