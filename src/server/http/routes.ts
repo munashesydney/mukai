@@ -734,7 +734,13 @@ export function createRoutes({
       }
       if (id) {
         const conversation = conversations.require(id);
-        if (!action && method === 'GET') return send(response, conversation);
+        if (!action && method === 'GET')
+          return send(
+            response,
+            conversation.kind === 'pursuit_run'
+              ? { ...conversation, ...pursuits.runReference(id) }
+              : conversation,
+          );
         if (action === 'reference' && method === 'POST') {
           const input = z
             .object({ href: z.string().min(1).max(4500), image: z.boolean().default(false) })

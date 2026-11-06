@@ -310,6 +310,11 @@ describe('AI-owned pursuits and scheduled runs', () => {
     });
     const run = api.pursuits.runNow(pursuit.id);
     const path = `/conversations/${run.conversationId}`;
+    expect((await request(path)).data).toMatchObject({
+      kind: 'pursuit_run',
+      pursuitId: pursuit.id,
+      runId: run.id,
+    });
     const message = { text: 'Which notes were verified?', attachmentIds: [] };
     try {
       const direct = await request(`${path}/chat`, 'POST', { ...message, requestId: randomUUID() });

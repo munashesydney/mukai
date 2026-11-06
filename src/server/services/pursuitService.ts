@@ -148,6 +148,10 @@ export class PursuitService {
     if (!run || run.pursuitId !== id) throw new ApiError(404, 'Run not found in this pursuit.');
     return run;
   }
+  runReference(conversationId: string) {
+    const run = this.repository.runForConversation(conversationId);
+    return run ? { pursuitId: run.pursuitId, runId: run.id } : undefined;
+  }
   listEntriesOwned(bot: Bot, id: string, query: WorkpadQuery) {
     this.owned(bot, id);
     return this.workpad(id, query);
