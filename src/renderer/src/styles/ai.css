@@ -1013,6 +1013,21 @@
   color: var(--ink);
   text-align: end;
 }
+.notification-source-link {
+  margin-top: 8px;
+}
+.notification-source-link > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pursuit-run-chat .conversation-tabs {
+  gap: min(22px, 4vw);
+  overflow-x: auto;
+}
+.pursuit-run-chat .conversation-tabs > button {
+  flex-shrink: 0;
+}
 .context-meter-details {
   white-space: pre-line;
 }

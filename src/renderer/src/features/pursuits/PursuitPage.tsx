@@ -12,7 +12,8 @@ import {
 } from 'lucide-react';
 import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { PopupMenu } from '../../components/ui/PopupMenu';
-import type { Bot } from '../../../../shared/ai';
+import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import type { NotificationSource } from '../../../../shared/notifications';
 import {
   pursuitStatusLabels,
   scheduledStatus,
@@ -35,29 +36,47 @@ export function PursuitPage({
   onOwner,
   onDeleted,
   runId,
+  detail,
+  detailError,
+  refresh,
+  onRun,
+  providers,
+  onProviders,
+  onBotChanged,
+  onOpenBot,
+  onOpenSource,
+  onViewComputer,
 }: {
   id: string;
   bots: Bot[];
   onOwner: (id: string) => void;
   onDeleted: () => void;
   runId?: string;
+  detail?: PursuitDetail;
+  detailError?: string;
+  refresh: (id: string) => Promise<PursuitDetail>;
+  onRun: (runId?: string) => void;
+  providers: ProviderSettings[];
+  onProviders: () => void;
+  onBotChanged: (bot: Bot) => void;
+  onOpenBot: (id: string) => Promise<void>;
+  onOpenSource: (source: NotificationSource) => Promise<void>;
+  onViewComputer: () => void;
 }) {
   const { dateTime } = useWorkspaceTime();
-  const [detail, setDetail] = useState<PursuitDetail | null>(null),
-    [error, setError] = useState(''),
+  const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [tab, setTab] = useState('Overview'),
-    [selectedRun, setSelectedRun] = useState<string | null>(runId || null);
+    [tab, setTab] = useState(runId ? 'Runs' : 'Overview');
   const [olderRun, setOlderRun] = useState<PursuitRun | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const knownRun = Boolean(detail?.runs.some((run) => run.id === selectedRun));
+  const knownRun = Boolean(detail?.runs.some((run) => run.id === runId));
   useEffect(() => {
-    if (!selectedRun || knownRun) return;
+    if (!runId || knownRun) return;
     let alive = true;
     const poll = startPoll(
       async () => {
         try {
-          const value = await pursuitService.runDetail(id, selectedRun);
+          const value = await pursuitService.runDetail(id, runId);
           if (alive) {
             setOlderRun(value);
             setError('');
@@ -72,42 +91,13 @@ export function PursuitPage({
       alive = false;
       poll.stop();
     };
-  }, [id, selectedRun, knownRun]);
-  useEffect(() => {
-    let alive = true,
-      pending = false;
-    let previous: string | undefined;
-    const load = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const value = await pursuitService.detail(id);
-        const snapshot = JSON.stringify(value);
-        const changed = snapshot !== previous;
-        previous = snapshot;
-        if (alive) {
-          if (changed) setDetail(value);
-          setError('');
-        }
-        return changed;
-      } catch (caught) {
-        if (alive) setError(errorText(caught));
-      } finally {
-        pending = false;
-      }
-    };
-    const poll = startPoll(() => load(), { interval: 2000, maxInterval: 8000 });
-    return () => {
-      alive = false;
-      poll.stop();
-    };
-  }, [id]);
+  }, [id, runId, knownRun]);
   async function action(fn: () => Promise<unknown>) {
     setBusy(true);
     setError('');
     try {
       await fn();
-      setDetail(await pursuitService.detail(id));
+      await refresh(id);
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -129,14 +119,14 @@ export function PursuitPage({
   if (!detail)
     return (
       <main className="conversation ai-main-state">
-        <p role={error ? 'alert' : undefined}>{error || 'Loading pursuit…'}</p>
+        <p role={error || detailError ? 'alert' : 'status'}>
+          {error || detailError || 'Loading pursuit…'}
+        </p>
       </main>
     );
   const { pursuit: p, runs } = detail,
     owner = bots.find((b) => b.id === p.ownerBotId),
-    run =
-      runs.find((item) => item.id === selectedRun) ||
-      (olderRun?.id === selectedRun ? olderRun : undefined);
+    run = runs.find((item) => item.id === runId) || (olderRun?.id === runId ? olderRun : undefined);
   const scheduledFrom = runs.reduce(
     (latest, item) =>
       item.finishedAt && Date.parse(item.finishedAt) > Date.parse(latest)
@@ -146,24 +136,31 @@ export function PursuitPage({
   );
   if (run)
     return (
-      <main className="conversation pursuit-page">
-        <PursuitRunView
-          key={run.id}
-          run={run}
-          bot={owner}
-          onBack={() => setSelectedRun(null)}
-          onRetried={(resumed) => {
-            setOlderRun(resumed);
-            setDetail((current) =>
-              current
-                ? {
-                    ...current,
-                    runs: current.runs.map((item) => (item.id === resumed.id ? resumed : item)),
-                  }
-                : current,
-            );
-          }}
-        />
+      <PursuitRunView
+        key={run.id}
+        run={run}
+        bot={bots.find((item) => item.id === run.snapshot.ownerBotId)}
+        bots={bots}
+        providers={providers}
+        onProviders={onProviders}
+        onBotChanged={onBotChanged}
+        onOpenBot={onOpenBot}
+        onOpenSource={onOpenSource}
+        onViewComputer={onViewComputer}
+        onBack={() => onRun()}
+        onRetried={(resumed) => {
+          setOlderRun(resumed);
+          void refresh(id).catch((caught) => setError(errorText(caught)));
+        }}
+      />
+    );
+  if (runId)
+    return (
+      <main className="conversation ai-main-state">
+        <p role={error ? 'alert' : 'status'}>{error || 'Loading run…'}</p>
+        <button className="text-button" onClick={() => onRun()}>
+          All runs
+        </button>
       </main>
     );
   return (
@@ -241,9 +238,9 @@ export function PursuitPage({
       )}
       <div className="pursuit-content">
         {tab === 'Workpad' ? (
-          <PursuitWorkpad id={id} bots={bots} runs={runs} onRun={setSelectedRun} />
+          <PursuitWorkpad id={id} bots={bots} runs={runs} onRun={onRun} />
         ) : tab === 'Runs' ? (
-          <PursuitRuns runs={runs} onSelect={setSelectedRun} />
+          <PursuitRuns runs={runs} onSelect={onRun} />
         ) : (
           <>
             <section className="pursuit-runtime">

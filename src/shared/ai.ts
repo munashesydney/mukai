@@ -215,6 +215,7 @@ export interface ChatMessage {
   authorName?: string;
   saved?: boolean;
   contextUsage?: ContextUsage;
+  notificationSource?: import('./notifications').NotificationSource;
 }
 export interface ContextUsage {
   usedTokens: number;

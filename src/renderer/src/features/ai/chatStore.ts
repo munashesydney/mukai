@@ -501,19 +501,21 @@ export function useChat(id: string, readOnly = false) {
     () => get(id),
   );
   useEffect(() => {
-    // `loading` is true until the first read lands, so the opening tick always
-    // fetches; afterwards only a conversation with live work stays at full rate.
+    // Revalidate cached history on open, including when following a source link.
+    let opening = true;
     const poll = startPoll(
       () => {
         if (active.has(id)) return undefined;
         const current = get(id);
-        return current.loading ||
+        const shouldLoad =
+          opening ||
+          current.loading ||
           current.busy ||
           readOnly ||
-          current.followups.length ||
-          followupWatching.has(id)
-          ? chatStore.load(id)
-          : undefined;
+          current.followups.length > 0 ||
+          followupWatching.has(id);
+        opening = false;
+        return shouldLoad ? chatStore.load(id) : undefined;
       },
       // A read-only transcript has no local work to interleave, so it can idle
       // much further back than a conversation the user is typing into.

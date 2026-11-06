@@ -76,25 +76,35 @@ export class ConversationService {
   userChatBot(id: string) {
     const conversation = this.require(id);
     if (conversation.kind === 'private') return this.privateBot(id);
-    if (conversation.kind !== 'bot' || conversation.botIds.length !== 2)
-      throw new ApiError(400, 'Choose a private or bot-to-bot conversation.');
+    const botId =
+      conversation.kind === 'pursuit_run' && conversation.botIds.length === 1
+        ? conversation.botIds[0]
+        : conversation.kind === 'bot' && conversation.botIds.length === 2
+          ? conversation.botIds[1]
+          : undefined;
+    if (!botId) throw new ApiError(400, 'This conversation has no available responding bot.');
     // Participant order records the original sender and receiver, independently of display order.
-    const bot = this.bots.require(conversation.botIds[1]);
+    const bot = this.bots.require(botId);
     if (bot.workspaceId !== conversation.workspaceId)
       throw new ApiError(400, 'Conversation workspace does not match its bot.');
     return bot;
   }
   sendToBot(id: string, input: ChatInput, output: ChatOutput) {
     const bot = this.userChatBot(id);
+    const conversation = this.require(id);
     const existing = this.messages.forRequest(id, input.requestId, 'user');
-    if (this.require(id).kind === 'bot' && existing?.botId)
+    if (conversation.kind === 'bot' && existing?.botId)
       throw new ApiError(403, 'Bot-authored requests cannot be retried as a user.');
+    if (conversation.kind === 'pursuit_run') {
+      if (this.chats.pursuitRunning(id))
+        throw new ApiError(409, 'This run is still working. Queue a follow-up instead.');
+      if (input.requestId === this.chats.pursuitRequest(id))
+        throw new ApiError(400, 'Retry pursuit runs through their pursuit.');
+    }
     return this.chats.respond(bot, input, output, id);
   }
   retry(id: string, messageId: string, output: ChatOutput) {
     const conversation = this.require(id);
-    if (conversation.kind === 'pursuit_run')
-      throw new ApiError(400, 'Retry pursuit runs through their pursuit.');
     let message;
     try {
       message = this.messages.message(messageId);
@@ -103,6 +113,11 @@ export class ConversationService {
     }
     if (message.conversationId !== id || message.role !== 'assistant' || !message.botId)
       throw new ApiError(404, 'Response not found in this conversation.');
+    if (
+      conversation.kind === 'pursuit_run' &&
+      (this.chats.pursuitRunning(id) || message.requestId === this.chats.pursuitRequest(id))
+    )
+      throw new ApiError(400, 'Retry pursuit runs through their pursuit.');
     if (!['failed', 'interrupted', 'stopped'].includes(message.status))
       throw new ApiError(409, 'Only an unfinished response can be retried.');
     const bot = this.bots.require(message.botId);

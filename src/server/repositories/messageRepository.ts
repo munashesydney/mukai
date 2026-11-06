@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/database';
 import type { ChatActivity, ContextUsage, MessageStatus, ResponsePart } from '../../shared/ai';
 import { CONVERSATION_TITLE_LIMIT } from '../../shared/conversations';
+import type { NotificationSource } from '../../shared/notifications';
 import type { MessageRecord } from '../models/entities';
 import { publicMessage } from '../models/entities';
 import { AttachmentRepository } from './attachmentRepository';
@@ -36,6 +37,7 @@ export class MessageRepository {
           ),
           parts: this.timedParts(message.parts),
           changes: changes.filter((change) => change.messageId === message.id),
+          notificationSource: this.notificationSource(conversationId, message.requestId),
         };
       });
   }
@@ -47,6 +49,10 @@ export class MessageRepository {
       ...publicMessage(message, this.attachments.forMessage(id)),
       parts: this.timedParts(message.parts),
       changes: this.changes.forMessage(id),
+      notificationSource:
+        (message.conversationId &&
+          this.notificationSource(message.conversationId, message.requestId)) ||
+        undefined,
     };
   }
   forRequest(conversationId: string, requestId: string, role: MessageRecord['role']) {
@@ -63,6 +69,32 @@ export class MessageRepository {
       "SELECT id FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY sequence DESC LIMIT 1",
       conversationId,
     )?.id;
+  }
+  firstUser(conversationId: string) {
+    const row = this.database.get(
+      "SELECT * FROM messages WHERE conversation_id=? AND role='user' ORDER BY sequence LIMIT 1",
+      conversationId,
+    );
+    return row ? messageRecord(row) : undefined;
+  }
+  notificationSource(conversationId: string, requestId: string): NotificationSource | undefined {
+    if (!requestId.startsWith('notification-')) return;
+    const row = this.database.get(
+      `SELECT c.id,c.name,c.kind,n.source_message_id,r.id AS run_id,r.pursuit_id
+       FROM bot_notifications n JOIN conversations c ON c.id=n.source_conversation_id
+       LEFT JOIN pursuit_runs r ON r.conversation_id=c.id
+       WHERE n.id=? AND n.conversation_id=?`,
+      requestId.slice('notification-'.length),
+      conversationId,
+    );
+    if (!row) return;
+    return {
+      conversationId: String(row.id),
+      messageId: String(row.source_message_id),
+      name: String(row.name),
+      kind: row.kind as NotificationSource['kind'],
+      ...(row.run_id ? { runId: String(row.run_id), pursuitId: String(row.pursuit_id) } : {}),
+    };
   }
   latestBotReply(conversationId: string, botId: string, requestId?: string) {
     const row = this.database.get(
@@ -88,7 +120,20 @@ export class MessageRepository {
     return this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'private';
   }
   persistentConversation(id: string) {
-    return this.privateConversation(id) || this.botConversation(id);
+    return this.privateConversation(id) || this.botConversation(id) || this.pursuitConversation(id);
+  }
+  pursuitConversation(id: string) {
+    return (
+      this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'pursuit_run'
+    );
+  }
+  pursuitRunning(id: string) {
+    return Boolean(
+      this.database.get(
+        "SELECT id FROM pursuit_runs WHERE conversation_id=? AND status='running'",
+        id,
+      ),
+    );
   }
   botConversation(id: string) {
     return this.database.get('SELECT kind FROM conversations WHERE id=?', id)?.kind === 'bot';

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { tool } from 'ai';
 import type { Bot, ChatMessage } from '../../shared/ai';
 import {
@@ -20,7 +19,7 @@ import {
   MAX_PURSUIT_CONCURRENCY,
   type LimitsSettings,
 } from '../../shared/limits';
-import { PursuitExecution, PursuitScheduler } from './pursuitScheduler';
+import { outsidePursuitExecution, PursuitExecution, PursuitScheduler } from './pursuitScheduler';
 import type { BotService } from './botService';
 import type { ChatService, ChatOutput } from './chatService';
 import { pursuitInputSchema } from '../tools/pursuits/definition';
@@ -93,6 +92,8 @@ export class PursuitService {
       .finally(() => {
         this.jobs.delete(run.id);
         this.executions.delete(run.id);
+        if (this.repository.findRun(run.id)?.status === 'complete')
+          outsidePursuitExecution(() => this.chats.drainPursuitFollowups(run.conversationId));
         this.tick();
       });
     this.jobs.set(run.id, job);
@@ -127,7 +128,11 @@ export class PursuitService {
     return this.repository.list(workspaceId);
   }
   detail(id: string) {
-    return { pursuit: this.require(id), runs: this.repository.runs(id) };
+    return {
+      pursuit: this.require(id),
+      runs: this.repository.runs(id),
+      runCount: this.repository.runCount(id),
+    };
   }
   workpad(id: string, query: WorkpadQuery = {}) {
     this.require(id);
@@ -332,6 +337,8 @@ export class PursuitService {
       throw new ApiError(409, 'Only failed, interrupted, or stopped runs can be retried.');
     if (this.closing || pursuit.currentRunId || this.jobs.has(runId))
       throw new ApiError(409, 'Wait for the current pursuit run to stop before retrying.');
+    if (!this.chats.canRetryPursuit(run.conversationId))
+      throw new ApiError(409, 'This run has follow-up activity. Start a new run from the pursuit.');
     if (!pursuit.ownerBotId || pursuit.ownerBotId !== run.snapshot.ownerBotId)
       throw new ApiError(409, 'The original owning bot is unavailable.');
     this.bots.require(pursuit.ownerBotId);
@@ -396,10 +403,7 @@ export class PursuitService {
       await this.chats.respond(
         bot,
         {
-          requestId:
-            this.chats.pendingRequest(run.conversationId) ||
-            this.chats.retryableRequest(run.conversationId) ||
-            randomUUID(),
+          requestId: this.chats.pursuitRequest(run.conversationId) || run.id,
           text:
             `Pursuit: ${p.name} · Run ${runNumber}\nRun this pursuit autonomously. Work toward its objective, check the success criteria, and summarize what you actually did. The user is not watching this run; use communicate action notify for a meaningful update when necessary.\n\nPursuit context:\n` +
             context,

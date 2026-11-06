@@ -261,9 +261,9 @@ export class ChatJobRepository {
         `SELECT DISTINCT m.id,m.bot_id,m.conversation_id,m.request_id
       FROM messages m JOIN chat_jobs j ON j.message_id=m.id
       JOIN bot_delegations d ON d.parent_message_id=m.id
-      JOIN conversations c ON c.id=m.conversation_id
       WHERE m.status IN ('streaming','interrupted') AND d.state IN ('waiting','complete')
-      AND c.kind!='pursuit_run' AND (j.approval_step_json IS NOT NULL OR (d.mode='fire_and_forget' AND d.delivered=0))
+      AND NOT EXISTS (SELECT 1 FROM pursuit_runs r WHERE r.conversation_id=m.conversation_id AND r.status='running')
+      AND (j.approval_step_json IS NOT NULL OR (d.mode='fire_and_forget' AND d.delivered=0))
       AND NOT EXISTS (SELECT 1 FROM bot_delegations p WHERE p.conversation_id=m.conversation_id
         AND p.child_request_id=m.request_id AND p.state='waiting')`,
       )

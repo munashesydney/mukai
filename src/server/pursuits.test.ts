@@ -48,6 +48,7 @@ let nextWake: string,
 let reportOverride: Record<string, unknown> = {};
 let workpadPursuitId = '';
 let createOwnerId: string | undefined;
+let holdPursuitReply: Promise<void> | undefined;
 const wakeReason = 'Allow time for the export to finish.';
 const wakeInstructions =
   'Check the export status, then validate the output against the success criteria.';
@@ -101,6 +102,7 @@ beforeEach(async () => {
   reportOverride = {};
   workpadPursuitId = '';
   createOwnerId = undefined;
+  holdPursuitReply = undefined;
   dir = mkdtempSync(join(tmpdir(), 'mukai-pursuit-test-'));
   fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -162,6 +164,20 @@ beforeEach(async () => {
       res.write(
         `data: ${JSON.stringify({ id: 'pursuit-test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
       );
+    if (holdPursuitReply) {
+      if (
+        body.tools?.some(
+          (entry: { function: { name: string } }) => entry.function.name === 'report_pursuit',
+        )
+      ) {
+        await holdPursuitReply;
+      } else {
+        send({ role: 'assistant', content: 'Here are the details from the review.' });
+        send({}, 'stop');
+        res.end('data: [DONE]\n\n');
+        return;
+      }
+    }
     if (mode === 'slow') {
       send({ role: 'assistant', content: 'Working…' });
       await new Promise<void>((resolve) => {
@@ -285,6 +301,83 @@ afterEach(async () => {
   }
 });
 describe('AI-owned pursuits and scheduled runs', () => {
+  it('queues a reply in the original run and links a notification follow-up back to it', async () => {
+    const pursuit = await createWithAI();
+    mode = 'completed';
+    let releaseRun!: () => void;
+    holdPursuitReply = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const run = api.pursuits.runNow(pursuit.id);
+    const path = `/conversations/${run.conversationId}`;
+    const message = { text: 'Which notes were verified?', attachmentIds: [] };
+    try {
+      const direct = await request(`${path}/chat`, 'POST', { ...message, requestId: randomUUID() });
+      expect(direct.response.status).toBe(409);
+      const queued = await request(`${path}/followups`, 'POST', { ...message, id: randomUUID() });
+      expect(queued.response.status).toBe(201);
+      const history = (await request<ChatMessage[]>(`${path}/messages`)).data;
+      expect(history.some((item) => item.content === message.text)).toBe(false);
+    } finally {
+      releaseRun();
+    }
+
+    const detail = await settled(pursuit.id);
+    expect(detail.runs).toHaveLength(1);
+    expect(detail.runs[0]).toMatchObject({
+      status: 'complete',
+      summary: 'Verified the notes. Recorded evidence and the next step.',
+    });
+    const history = await vi.waitFor(
+      async () => {
+        const { data } = await request<ChatMessage[]>(`${path}/messages`);
+        expect(data.at(-1)).toMatchObject({
+          role: 'assistant',
+          status: 'complete',
+          content: 'Here are the details from the review.',
+        });
+        return data;
+      },
+      { timeout: 5000 },
+    );
+    expect(history.at(-2)).toMatchObject({ role: 'user', content: message.text });
+    expect(api.pursuits.detail(pursuit.id).runs).toEqual(detail.runs);
+
+    const source = history.find((item) => item.role === 'assistant')!;
+    const update = { title: 'Review is ready', message: 'I verified the notes.' };
+    api.notifications.notify(scoutBot(), source.id, 'pursuit-update', update);
+    const notification = api.notifications.list('default').items[0];
+    const chat = api.notifications.continue('default', notification.id);
+    const seeded = (await request<ChatMessage[]>(`/conversations/${chat.id}/messages`)).data;
+    expect(seeded).toMatchObject([
+      {
+        role: 'assistant',
+        content: update.message,
+        notificationSource: {
+          conversationId: run.conversationId,
+          messageId: source.id,
+          runId: run.id,
+          pursuitId: pursuit.id,
+          kind: 'pursuit_run',
+        },
+      },
+    ]);
+    const response = await fetch(`${api.url}/conversations/${chat.id}/chat`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${api.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...message, requestId: randomUUID() }),
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(calls.at(-1)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          content: expect.stringMatching(new RegExp(`<notification-source>[\\s\\S]*${run.id}`)),
+        }),
+      ]),
+    );
+  });
   it('defaults to five shared slots, validates changes and persists limits across a restart', async () => {
     expect((await request('/limits')).data).toEqual({ pursuitConcurrency: 5, aiConcurrency: 4 });
     for (const value of [0, -1, 1.5, 51, '3']) {

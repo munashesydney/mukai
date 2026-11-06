@@ -1,41 +1,51 @@
-import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
-import { RetryResponseButton } from '../ai/RetryResponseButton';
-import { pursuitService } from '../../services/pursuitService';
-import { useAIActivity } from '../../services/aiActivityStore';
-import { AIQueueNotice } from '../ai/AIQueueNotice';
-import { useEffect, useState } from 'react';
-import { ArrowLeft, Square } from 'lucide-react';
-import type { Bot, ChatMessage } from '../../../../shared/ai';
-import type { FileChangeSummary } from '../../../../shared/fileChanges';
+import { useState } from 'react';
+import { Square } from 'lucide-react';
+import type { Bot, ProviderSettings } from '../../../../shared/ai';
+import type { NotificationSource } from '../../../../shared/notifications';
 import type { PursuitRun } from '../../../../shared/pursuits';
 import { chatService } from '../../services/chatService';
-import { conversationService } from '../../services/conversationService';
-import { startPoll } from '../../services/poll';
-import { Avatar } from '../../components/ui/Avatar';
-import { ResponseActivity } from '../ai/ResponseActivity';
-import { MessageMarkdown } from '../ai/MessageMarkdown';
-import { FileChanges } from '../ai/FileChanges';
-import { DiffDrawer } from '../ai/DiffDrawer';
-import { ArtifactsView } from '../ai/ArtifactsView';
-import { MessageActions } from '../chat/MessageActions';
+import { useAIActivity } from '../../services/aiActivityStore';
+import { pursuitService } from '../../services/pursuitService';
 import { errorText } from '../../utils/errors';
-import { BrowserToggle } from '../browser/BrowserToggle';
-import { ContextMeter } from '../ai/ContextMeter';
-import { ApprovalModePicker, ToolApprovalCards } from '../ai/ToolApprovals';
-import { AskComposer } from '../ai/AskComposer';
+import { BotChat } from '../ai/BotChat';
+import { MessageMarkdown } from '../ai/MessageMarkdown';
+import { RetryResponseButton } from '../ai/RetryResponseButton';
+import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
+
 export function PursuitRunView({
   run,
   bot,
+  bots,
+  providers,
   onBack,
   onRetried,
+  onProviders,
+  onBotChanged,
+  onOpenBot,
+  onOpenSource,
+  onViewComputer,
 }: {
   run: PursuitRun;
   bot?: Bot;
+  bots: Bot[];
+  providers: ProviderSettings[];
   onBack: () => void;
   onRetried: (run: PursuitRun) => void;
+  onProviders: () => void;
+  onBotChanged: (bot: Bot) => void;
+  onOpenBot: (id: string) => Promise<void>;
+  onOpenSource: (source: NotificationSource) => Promise<void>;
+  onViewComputer: () => void;
 }) {
   const { dateTime } = useWorkspaceTime();
   const [retrying, setRetrying] = useState(false);
+  const [error, setError] = useState('');
+  const activity = useAIActivity();
+  const active = run.status === 'running';
+  const queued = [...activity.queued, ...(activity.pursuitQueued || [])].some(
+    (work) => work.conversationId === run.conversationId,
+  );
+  const status = active ? (queued ? 'Queued' : 'Running') : run.status;
   async function retry() {
     if (retrying) return;
     setRetrying(true);
@@ -48,204 +58,92 @@ export function PursuitRunView({
       setRetrying(false);
     }
   }
-  const activity = useAIActivity();
-  const queued = [...activity.queued, ...(activity.pursuitQueued || [])].some(
-    (work) => work.conversationId === run.conversationId,
-  );
-  const [messages, setMessages] = useState<ChatMessage[]>([]),
-    [error, setError] = useState(''),
-    [tab, setTab] = useState('Messages');
-  const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    let alive = true,
-      pending = false;
-    let previous: string | undefined;
-    const load = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const values = await chatService.history('space:' + run.conversationId);
-        const snapshot = JSON.stringify(values);
-        const changed = snapshot !== previous;
-        previous = snapshot;
-        if (alive) {
-          if (changed) setMessages(values);
-          setError('');
-        }
-        return changed;
-      } catch (caught) {
-        if (alive) setError(errorText(caught));
-      } finally {
-        pending = false;
-      }
-    };
-    void load();
-    const poll =
-      run.status === 'running'
-        ? startPoll(() => load(), { interval: 1500, maxInterval: 6000, immediate: false })
-        : null;
-    return () => {
-      alive = false;
-      poll?.stop();
-    };
-  }, [run.conversationId, run.status]);
-  async function save(message: ChatMessage) {
-    try {
-      const saved = await conversationService.save(run.conversationId, message.id, !message.saved);
-      setMessages((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
-    } catch (caught) {
-      setError(errorText(caught));
-    }
-  }
-  const usage = [...messages]
-    .reverse()
-    .find((message) => message.role === 'assistant')?.contextUsage;
+
   return (
-    <>
-      <header className="pursuit-header">
-        <button className="text-button" onClick={onBack}>
-          <ArrowLeft size={16} /> All runs
-        </button>
-        <div className="pursuit-title">
-          <h1>{run.snapshot.name}</h1>
-          <span className="status-label">
-            {run.status === 'running' ? (queued ? 'Queued' : 'Running') : run.status}
-          </span>
-          <BrowserToggle />
-        </div>
-        <p>
-          {run.trigger === 'schedule' ? 'Scheduled wake' : 'Requested run'} ·{' '}
-          {dateTime(run.startedAt)}
-          {usage && <ContextMeter usage={usage} window={usage.contextWindow} />}
-        </p>
-        {run.status === 'running' && (
-          <button
-            className="button button--small"
-            onClick={() =>
-              void chatService
-                .stop('space:' + run.conversationId)
-                .catch((caught) => setError(errorText(caught)))
-            }
-          >
-            <Square size={13} /> Stop run
-          </button>
-        )}
-        {['failed', 'interrupted', 'stopped'].includes(run.status) && (
-          <RetryResponseButton
-            className="button button--small"
-            label={retrying ? 'Retrying…' : 'Retry run'}
-            disabled={retrying}
-            onRetry={() => void retry()}
-          />
-        )}
-        <div className="conversation-tabs" role="tablist" aria-label="Run views">
-          {['Messages', 'Artifacts'].map((name) => (
-            <button
-              key={name}
-              role="tab"
-              aria-selected={tab === name}
-              className={tab === name ? 'is-active' : ''}
-              onClick={() => setTab(name)}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      </header>
-      {error && (
-        <p role="alert" className="ai-alert">
-          {error}
-        </p>
-      )}
-      {tab === 'Artifacts' ? (
-        <ArtifactsView
-          conversationId={run.conversationId}
-          messages={messages}
-          attachments={messages.flatMap((m) => m.attachments)}
-        />
-      ) : (
-        <div className="ai-message-feed" role="log" aria-label="Pursuit run messages">
-          <details className="pursuit-run-context">
-            <summary>Run context</summary>
-            <dl>
-              <dt>Objective</dt>
-              <dd>{run.snapshot.objective}</dd>
-              <dt>Success criteria</dt>
-              <dd>{run.snapshot.successCriteria}</dd>
-            </dl>
-            {messages
-              .filter((m) => m.role === 'user')
-              .map((m) => (
-                <pre key={m.id}>{m.content}</pre>
-              ))}
-          </details>
-          {messages
-            .filter((m) => m.role === 'assistant')
-            .map((message) => (
-              <article className="ai-message" key={message.id}>
-                <Avatar person={bot?.avatar || 'scout'} size="sm" />
-                <div className="ai-message-body">
-                  <div className="ai-message-meta">
-                    <strong>{message.authorName || bot?.name || 'Owner'}</strong>
-                    <span className="bot-badge">BOT</span>
-                  </div>
-                  <ResponseActivity message={message} />
-                  <FileChanges
-                    message={message}
-                    onReview={(changes, selectedId) => setReview({ changes, selectedId })}
-                  />
-                  {message.error && <p className="ai-response-status">{message.error}</p>}
-                  <MessageActions
-                    text={message.content}
-                    saved={Boolean(message.saved)}
-                    onSave={() => void save(message)}
-                  />
-                </div>
-              </article>
-            ))}
-          {!messages.some((m) => m.role === 'assistant') && (
-            <p className="ai-caption">
-              {run.status === 'running'
-                ? 'Starting this run…'
-                : run.error || 'No response was generated.'}
-            </p>
-          )}
-          {run.error && (
-            <p role="status" className="ai-alert">
-              {run.error}
-            </p>
-          )}
-          {run.status !== 'running' && run.summary && (
+    <BotChat
+      bot={bot}
+      bots={bots}
+      providers={providers}
+      conversation={{
+        id: run.conversationId,
+        kind: 'pursuit_run',
+        workspaceId: run.snapshot.workspaceId,
+        name: run.snapshot.name,
+        description: run.snapshot.objective,
+        ownerBotId: run.snapshot.ownerBotId,
+        botIds: bot ? [bot.id] : [],
+        createdAt: run.startedAt,
+        updatedAt: run.finishedAt ?? run.startedAt,
+      }}
+      onProviders={onProviders}
+      onBotChanged={onBotChanged}
+      onOpenBot={onOpenBot}
+      onViewComputer={onViewComputer}
+      onOpenSource={onOpenSource}
+      run={{
+        id: run.id,
+        active,
+        onBack,
+        error,
+        controls: (
+          <>
+            <span className="status-label" title={dateTime(run.startedAt)}>
+              {status}
+            </span>
+            {active && (
+              <button
+                className="button button--small"
+                onClick={() => {
+                  setError('');
+                  void chatService
+                    .stop('private:' + run.conversationId)
+                    .catch((caught) => setError(errorText(caught)));
+                }}
+              >
+                <Square size={13} /> Stop run
+              </button>
+            )}
+            {bot && ['failed', 'interrupted', 'stopped'].includes(run.status) && (
+              <RetryResponseButton
+                className="button button--small"
+                label={retrying ? 'Retrying…' : 'Retry run'}
+                disabled={retrying}
+                onRetry={() => void retry()}
+              />
+            )}
+          </>
+        ),
+        outcome: (
+          <>
             <div className="pursuit-run-summary">
-              <span className="context-section-label">RUN OUTCOME</span>
-              <MessageMarkdown text={run.summary} />
+              <h2>Run outcome</h2>
+              <p>
+                {status} · {run.trigger === 'schedule' ? 'Scheduled wake' : 'Requested run'} ·{' '}
+                {dateTime(run.startedAt)}
+              </p>
+              {run.error && (
+                <p className="ai-alert" role="status">
+                  {run.error}
+                </p>
+              )}
+              {run.summary ? (
+                <MessageMarkdown text={run.summary} />
+              ) : (
+                <p>{active ? 'This run is still in progress.' : 'No outcome was recorded.'}</p>
+              )}
             </div>
-          )}
-          <AIQueueNotice conversationId={run.conversationId} />
-        </div>
-      )}
-      {review && (
-        <DiffDrawer
-          {...review}
-          onSelect={(selectedId) => setReview({ ...review, selectedId })}
-          onClose={() => setReview(null)}
-        />
-      )}
-      <div className="composer-area ai-composer-area">
-        <ToolApprovalCards conversationId={run.conversationId} />
-        <AskComposer
-          conversationId={run.conversationId}
-          onCancel={() => {
-            void chatService
-              .stop('space:' + run.conversationId)
-              .catch((caught) => setError(errorText(caught)));
-          }}
-        >
-          <ApprovalModePicker />
-        </AskComposer>
-      </div>
-    </>
+            <div className="pursuit-run-context">
+              <h3>Run context</h3>
+              <dl>
+                <dt>Objective</dt>
+                <dd>{run.snapshot.objective}</dd>
+                <dt>Success criteria</dt>
+                <dd>{run.snapshot.successCriteria}</dd>
+              </dl>
+            </div>
+          </>
+        ),
+      }}
+    />
   );
 }

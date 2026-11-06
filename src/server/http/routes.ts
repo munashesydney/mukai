@@ -775,7 +775,9 @@ export function createRoutes({
           if (method === 'POST') {
             const input = followupInputSchema.parse(await jsonBody(request));
             const bot =
-              conversation.kind === 'private' || conversation.kind === 'bot'
+              conversation.kind === 'private' ||
+              conversation.kind === 'bot' ||
+              conversation.kind === 'pursuit_run'
                 ? conversations.userChatBot(id)
                 : bots.require(input.botId || '');
             if (
@@ -863,7 +865,7 @@ export function createRoutes({
           return sendRead(request, response, chats.trajectoryHistory(id, from));
         }
         if (action === 'chat' && method === 'POST') {
-          if (conversation.kind === 'bot')
+          if (conversation.kind === 'bot' || conversation.kind === 'pursuit_run')
             return conversations.sendToBot(
               id,
               chatSchema.parse(await jsonBody(request)),

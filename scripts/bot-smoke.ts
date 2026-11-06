@@ -260,7 +260,7 @@ async function main() {
         'document.querySelector(\'button[aria-label="Open chat: Private export in Other workspace"]\').click()',
       );
       await wait(
-        'document.querySelector(".conversation-heading h1")?.textContent.includes("Orbit") && document.querySelector(".ai-message-feed")?.textContent.includes("Saved partial work")',
+        'document.querySelector(".conversation-heading h1")?.textContent.includes("Private export") && document.querySelector(".ai-message-feed")?.textContent.includes("Saved partial work")',
       );
       assert.equal(await evaluate('localStorage.getItem("mukai.active-workspace")'), 'other');
       await click('Retry response');
@@ -282,6 +282,8 @@ async function main() {
       await evaluate(
         'document.querySelector(\'button[aria-label="Open run: Interrupted review in Test workspace"]\').click()',
       );
+      await wait('Boolean(document.querySelector(".pursuit-run-chat"))');
+      await click('Run outcome');
       await wait('Boolean(document.querySelector(".pursuit-run-context"))');
       assert.equal(await evaluate('localStorage.getItem("mukai.active-workspace")'), 'default');
       await capture('pursuit-run-retry.png');
@@ -1441,8 +1443,10 @@ async function main() {
       await evaluate(
         'document.querySelector(".workpad-entry[open] .workpad-provenance button").click()',
       );
+      await wait('Boolean(document.querySelector(".pursuit-run-chat"))');
+      await click('Run outcome');
       await wait('Boolean(document.querySelector(".pursuit-run-context"))');
-      await click('All runs');
+      await evaluate('document.querySelector(\'button[aria-label="All runs"]\').click()');
       await wait('Boolean(document.querySelector(".pursuit-workpad"))');
       assert.deepEqual(errors, []);
       console.log(
@@ -1456,21 +1460,35 @@ async function main() {
         await evaluate('Boolean(document.querySelector(".rail-link .lucide-bell"))'),
         false,
       );
-      const source = new ConversationRepository(api.store).create(main.workspaceId, {
-        name: 'Autonomous review',
-        description: '',
-        botIds: [main.id],
-      });
-      api.store.run("UPDATE conversations SET kind='pursuit_run' WHERE id=?", source.id);
-      const messageId = randomUUID();
-      api.store.run(
-        "INSERT INTO messages(id,conversation_id,bot_id,request_id,role,content,status,created_at) VALUES(?,?,?,?,'assistant','','complete',?)",
-        messageId,
-        source.id,
+      const pursuits = new PursuitRepository(api.store);
+      const pursuit = pursuits.create(
+        main.workspaceId,
         main.id,
-        randomUUID(),
-        new Date().toISOString(),
+        {
+          name: 'Autonomous review',
+          objective: 'Review the saved export.',
+          successCriteria: 'Verify all 12 records.',
+          firstRunAt: new Date(Date.now() + 3600000).toISOString(),
+          deadline: null,
+        },
+        Date.now(),
       );
+      const run = pursuits.claim(pursuit.id, 'manual', Date.now())!;
+      pursuits.finish(run.id, 'complete', 'All records verified.', null, 'completed', Date.now());
+      function seedReply(conversationId: string, content: string) {
+        const messageId = randomUUID();
+        api.store.run(
+          "INSERT INTO messages(id,conversation_id,bot_id,request_id,role,content,status,created_at) VALUES(?,?,?,?,'assistant',?,'complete',?)",
+          messageId,
+          conversationId,
+          main.id,
+          randomUUID(),
+          content,
+          new Date().toISOString(),
+        );
+        return messageId;
+      }
+      const messageId = seedReply(run.conversationId, 'Original autonomous run reply.');
       api.notifications.notify(main, messageId, 'notification-smoke', {
         title: 'Review is ready',
         message:
@@ -1508,7 +1526,7 @@ async function main() {
       );
       const inbox = await request<NotificationInbox>('/notifications');
       assert.equal(inbox.items[0].readAt !== null, true);
-      assert.equal(inbox.items[0].conversationId !== source.id, true);
+      assert.equal(inbox.items[0].conversationId !== run.conversationId, true);
       assert.equal(
         api.store.all(
           'SELECT * FROM messages WHERE conversation_id=?',
@@ -1517,6 +1535,31 @@ async function main() {
         1,
       );
       await capture('notification-conversation.png');
+      await click('Open original run');
+      await wait(
+        'document.querySelector(".pursuit-run-chat .ai-message-feed")?.textContent.includes("Original autonomous run reply")',
+      );
+      await wait(
+        'document.querySelector(\'.pursuit-sidebar-runs [aria-current="page"]\')?.textContent.includes("Run 1")',
+      );
+      assert.deepEqual(
+        await evaluate(
+          'Array.from(document.querySelectorAll(".pursuit-run-chat [role=tab]"), tab=>tab.textContent.trim())',
+        ),
+        ['Chat', 'Trajectory', 'Artifacts', 'Run outcome'],
+      );
+      await click('Run outcome');
+      await wait(
+        'document.querySelector(".pursuit-run-summary")?.textContent.includes("All records verified")',
+      );
+      await click('Trajectory');
+      await wait(
+        'Boolean(document.querySelector(\'.pursuit-run-chat [role="tabpanel"][id$="Trajectory-panel"]\'))',
+      );
+      await click('Chat');
+      await click('Jump in the chat');
+      await wait('Boolean(document.querySelector(".pursuit-run-chat .composer textarea"))');
+      await capture('pursuit-run-chat.png');
       await evaluate('document.querySelector(".rail-link .lucide-bell").closest("button").click()');
       await wait('Boolean(document.querySelector(".notification-card"))');
       await evaluate('document.querySelector(".notification-card-summary").click()');
@@ -1533,9 +1576,37 @@ async function main() {
       await wait(
         '!document.querySelector(".rail-link .lucide-bell") && !document.querySelector(".notification-card")',
       );
+      const original = new ConversationRepository(api.store).createPrivate(
+        main.workspaceId,
+        main.id,
+      );
+      api.store.run(
+        'UPDATE conversations SET name=? WHERE id=?',
+        'Original export chat',
+        original.id,
+      );
+      api.notifications.notify(
+        main,
+        seedReply(original.id, 'Original private chat reply.'),
+        'chat-notification-smoke',
+        {
+          title: 'Chat update',
+          message: 'The export is ready.',
+        },
+      );
+      await wait('Boolean(document.querySelector(".notification-card"))');
+      await evaluate('document.querySelector(".notification-card-summary").click()');
+      await click('Continue in chat');
+      await wait(
+        'document.querySelector(".ai-message-feed")?.textContent.includes("The export is ready")',
+      );
+      await click('Open original conversation');
+      await wait(
+        'document.querySelector(".bot-chat-heading h1")?.textContent === "Original export chat" && document.querySelector(".ai-message-feed")?.textContent.includes("Original private chat reply")',
+      );
       assert.deepEqual(errors, []);
       console.log(
-        'PASS notification UI: conditional bell, pursuit update, unread state, continuation, reopen and dismissal.',
+        'PASS notification UI: continued chats link to the original pursuit run or private chat, and the run opens in the shared chat view.',
       );
       return;
     }
@@ -2057,7 +2128,7 @@ async function main() {
     );
     await evaluate('document.querySelector(".pending-approval-tile").click()');
     await wait(
-      'Boolean(document.querySelector("button")) && document.querySelector(".pursuit-title h1")?.textContent==="Approval navigation" && Boolean(document.querySelector(".tool-approval-card"))',
+      'document.querySelector(".pursuit-run-chat .bot-chat-heading h1")?.textContent==="Approval navigation" && Boolean(document.querySelector(".tool-approval-card"))',
     );
     assert(
       (await request<ApprovalState>('/approvals')).pending.some(

@@ -183,10 +183,12 @@ export function TurnFooter({
   message,
   stats,
   latest,
+  onSave,
 }: {
   message: ChatMessage;
   stats?: TrajectoryMessageStats;
   latest: boolean;
+  onSave?: () => void;
 }) {
   const { time } = useWorkspaceTime();
   const timestamp = message.finishedAt ?? message.createdAt;
@@ -194,6 +196,8 @@ export function TurnFooter({
     <MessageActions
       className={`turn-footer${latest ? ' is-latest' : ''}`}
       text={responsePresentation(message).answer || message.content}
+      saved={message.saved}
+      onSave={onSave}
     >
       <UsagePill
         reading={turnReading(message.contextUsage, stats)}

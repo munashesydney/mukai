@@ -16,7 +16,8 @@ import {
 import { useState } from 'react';
 import type { Bot, Workspace } from '../../../../shared/ai';
 import type { Location, Space, DialogKind } from '../../features/workspace/types';
-import type { Pursuit } from '../../../../shared/pursuits';
+import type { Pursuit, PursuitDetail } from '../../../../shared/pursuits';
+import { PursuitSidebarRuns } from '../../features/pursuits/PursuitSidebarRuns';
 import { IconButton } from '../ui/IconButton';
 import type { Conversation } from '../../../../shared/conversations';
 import { BotConversationsSidebar } from '../../features/ai/BotConversationsSidebar';
@@ -32,6 +33,7 @@ export function WorkspaceSidebar({
   location,
   spaces,
   pursuits,
+  pursuitDetail,
   pursuitsLoading = false,
   pursuitsError = '',
   onSelect,
@@ -53,6 +55,7 @@ export function WorkspaceSidebar({
   location: Location;
   spaces: Space[];
   pursuits: Pursuit[];
+  pursuitDetail?: PursuitDetail;
   pursuitsLoading?: boolean;
   pursuitsError?: string;
   onSelect: (location: Location) => void;
@@ -101,6 +104,31 @@ export function WorkspaceSidebar({
   const inMotion = pursuits.filter(
     (pursuit) => pursuit.status !== 'paused' && pursuit.status !== 'completed',
   );
+  function pursuitRow(pursuit: Pursuit) {
+    const detail = pursuitDetail?.pursuit.id === pursuit.id ? pursuitDetail : undefined;
+    const selected = isSelected(pursuit.id) || (location.item === 'empty' && Boolean(detail));
+    return (
+      <section key={pursuit.id}>
+        <button
+          type="button"
+          className={`sidebar-row pursuit-row ${selected && !location.runId ? 'is-selected' : ''}`}
+          aria-current={selected && !location.runId ? 'page' : undefined}
+          onClick={() => onSelect({ section: 'pursuits', item: pursuit.id })}
+        >
+          <Target size={18} />
+          <span>{pursuit.name}</span>
+        </button>
+        {selected && detail && (
+          <PursuitSidebarRuns
+            runs={detail.runs}
+            runCount={detail.runCount}
+            selectedId={location.runId}
+            onSelect={(runId) => onSelect({ section: 'pursuits', item: pursuit.id, runId })}
+          />
+        )}
+      </section>
+    );
+  }
   return (
     <aside
       className={`workspace-sidebar ${collapsed ? 'is-collapsed' : ''}`}
@@ -312,34 +340,14 @@ export function WorkspaceSidebar({
                 </button>
               </div>
             )}
-            <div className="sidebar-group">
-              {unpausedPursuits.map((p) => (
-                <button
-                  key={p.id}
-                  className={`sidebar-row pursuit-row ${isSelected(p.id) ? 'is-selected' : ''}`}
-                  onClick={() => onSelect({ section: 'pursuits', item: p.id })}
-                >
-                  <Target size={18} />
-                  <span>{p.name}</span>
-                </button>
-              ))}
-            </div>
+            <div className="sidebar-group">{unpausedPursuits.map(pursuitRow)}</div>
             {!!pausedPursuits.length && (
               <>
                 <div className="sidebar-section-heading plain-heading">
                   <span>Paused</span>
                   <span className="section-rule" />
                 </div>
-                {pausedPursuits.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`sidebar-row pursuit-row ${isSelected(p.id) ? 'is-selected' : ''}`}
-                    onClick={() => onSelect({ section: 'pursuits', item: p.id })}
-                  >
-                    <Target size={18} />
-                    <span>{p.name}</span>
-                  </button>
-                ))}
+                {pausedPursuits.map(pursuitRow)}
               </>
             )}
           </>

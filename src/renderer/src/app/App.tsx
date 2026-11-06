@@ -20,6 +20,9 @@ import { useSpaces } from '../features/workspace/useSpaces';
 import { SpaceConversation } from '../features/chat/SpaceConversation';
 import { usePursuits } from '../features/pursuits/usePursuits';
 import { PursuitPage } from '../features/pursuits/PursuitPage';
+import { usePursuitDetail } from '../features/pursuits/usePursuitDetail';
+import { conversationService } from '../services/conversationService';
+import type { NotificationSource } from '../../../shared/notifications';
 import { BotChat } from '../features/ai/BotChat';
 import { BotHierarchyPage } from '../features/ai/BotHierarchyPage';
 import { PendingApprovalsPage } from '../features/ai/PendingApprovalsPage';
@@ -260,6 +263,11 @@ function WorkspaceApp({
   const pursuit =
     pursuitState.pursuits.find((p) => p.id === location.item) ||
     (location.item === 'empty' ? pursuitState.pursuits[0] : undefined);
+  const selectedPursuitId =
+    location.section === 'pursuits'
+      ? pursuit?.id || (location.item !== 'empty' ? location.item : undefined)
+      : undefined;
+  const pursuitDetail = usePursuitDetail(selectedPursuitId);
   const bot = ai.bots.find((a) => a.id === location.item) || ai.bots[0];
   const ownedChats = botChats.conversations.filter((chat) => chat.ownerBotId === bot?.id);
   let rememberedChat = '';
@@ -302,6 +310,25 @@ function WorkspaceApp({
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (existing) select({ section: 'bots', item: botId, conversationId: existing.id });
     else await createBotConversation(botId);
+  }
+  async function openNotificationSource(source: NotificationSource) {
+    if (source.pursuitId && source.runId) {
+      select({ section: 'pursuits', item: source.pursuitId, runId: source.runId });
+      return;
+    }
+    const conversation = await conversationService.get(source.conversationId);
+    if (conversation.workspaceId !== ai.workspaceId)
+      throw new Error('The source conversation belongs to another workspace.');
+    if (conversation.kind === 'private' && conversation.ownerBotId) {
+      includePrivateChat(conversation);
+      select({ section: 'bots', item: conversation.ownerBotId, conversationId: conversation.id });
+    } else if (conversation.kind === 'bot') {
+      includeBotPair(conversation);
+      select({ section: 'bots', item: 'bot-conversations', conversationId: conversation.id });
+    } else if (conversation.kind === 'space') {
+      includeSpace(conversation);
+      select({ section: 'spaces', item: conversation.id });
+    } else throw new Error('The source conversation is unavailable.');
   }
   const openDialog = (kind: DialogKind) => {
     if (kind === 'create-bot') setEditingBot('new');
@@ -421,6 +448,7 @@ function WorkspaceApp({
                 }
                 spaces={spaceState.spaces}
                 pursuits={pursuitState.pursuits}
+                pursuitDetail={pursuitDetail.detail}
                 pursuitsLoading={pursuitState.loading}
                 pursuitsError={pursuitState.error}
                 onSelect={select}
@@ -545,6 +573,7 @@ function WorkspaceApp({
                 onProviders={() => openSettings('providers')}
                 onBotChanged={ai.updateBot}
                 onOpenBot={openBotConversation}
+                onOpenSource={openNotificationSource}
                 onViewComputer={() => setComputerOpen(true)}
               />
             ) : (
@@ -596,6 +625,7 @@ function WorkspaceApp({
                 onProviders={() => openSettings('providers')}
                 onBotChanged={ai.updateBot}
                 onOpenBot={openBotConversation}
+                onOpenSource={openNotificationSource}
                 onViewComputer={() => setComputerOpen(true)}
               />
             ) : (
@@ -684,12 +714,22 @@ function WorkspaceApp({
                 Try again
               </button>
             </main>
-          ) : pursuit || (location.section === 'pursuits' && location.item !== 'empty') ? (
+          ) : selectedPursuitId ? (
             <PursuitPage
-              key={`${pursuit?.id || location.item}:${location.runId || ''}`}
-              id={pursuit?.id || location.item}
+              key={selectedPursuitId}
+              id={selectedPursuitId}
               runId={location.runId}
               bots={ai.bots}
+              providers={ai.providers}
+              detail={pursuitDetail.detail}
+              detailError={pursuitDetail.error}
+              refresh={pursuitDetail.refresh}
+              onRun={(runId) => select({ section: 'pursuits', item: selectedPursuitId, runId })}
+              onProviders={() => openSettings('providers')}
+              onBotChanged={ai.updateBot}
+              onOpenBot={openBotConversation}
+              onOpenSource={openNotificationSource}
+              onViewComputer={() => setComputerOpen(true)}
               onOwner={(id) => select({ section: 'bots', item: id })}
               onDeleted={() => {
                 select({ section: 'pursuits', item: 'empty' });

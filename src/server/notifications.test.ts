@@ -144,6 +144,11 @@ describe('Autonomous updates and conversation history', () => {
       role: 'assistant',
       content: input.message,
       status: 'complete',
+      notificationSource: {
+        conversationId: 'bot-scout',
+        messageId: source,
+        kind: 'private',
+      },
     });
     expect((await request<NotificationInbox>('/notifications')).data.unread).toBe(0);
     expect((await request(`/notifications/${notification.id}/dismiss`, 'POST')).status).toBe(200);

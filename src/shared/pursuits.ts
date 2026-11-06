@@ -34,6 +34,10 @@ export interface PursuitRun {
 export interface PursuitDetail {
   pursuit: Pursuit;
   runs: PursuitRun[];
+  runCount: number;
+}
+export function isPursuitKickoff(text: string) {
+  return /^Pursuit: [\s\S]*? · Run \d+\nRun this pursuit autonomously\./.test(text);
 }
 export const workpadEntryTypes = ['work_item', 'decision', 'blocker', 'reference', 'note'] as const;
 export type WorkpadEntryType = (typeof workpadEntryTypes)[number];
