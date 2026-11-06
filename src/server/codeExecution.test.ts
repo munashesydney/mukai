@@ -10,6 +10,7 @@ import { GuestDispatcher } from './computer/guestDispatcher';
 import type { QemuComputer } from './computer/qemuComputer';
 import type { ApprovalState } from '../shared/approvals';
 import type { ChatActivity } from '../shared/ai';
+import type { TrajectoryRecord } from '../shared/trajectory';
 import { WebSearchService } from './services/webSearchService';
 import type { ModelMessage } from 'ai';
 
@@ -190,6 +191,32 @@ describe.each(['local', 'qemu'] as const)('%s code execution chat', (computer) =
       ]),
     );
     expect(JSON.stringify(seen[0].messages)).toContain('Prefer execute_code');
+    const path = '/conversations/bot-scout/trajectory';
+    const { value } = await request(path);
+    const [first, script, subcall, second] = value as TrajectoryRecord[];
+    expect(first).toMatchObject({
+      kind: 'model',
+      status: 'complete',
+      firstTokenAt: expect.any(Number),
+    });
+    expect(script).toMatchObject({ title: 'execute_code', stepId: first.id, status: 'complete' });
+    expect(subcall).toMatchObject({
+      title: 'file_operations',
+      parentCallId: script.callId,
+      stepId: first.id,
+      status: 'complete',
+    });
+    expect(second).toMatchObject({
+      kind: 'model',
+      preview: 'Finished.',
+      partIds: [expect.any(String)],
+    });
+    const scriptDetail = (await request(`${path}?record=${script.id}`)).value;
+    expect(scriptDetail.input).toContain('tools.file_operations');
+    expect(scriptDetail.output).toContain('toolCalls');
+    expect(JSON.parse(scriptDetail.schema.parameters)).toMatchObject({
+      properties: { code: expect.any(Object) },
+    });
   });
 
   it('deduplicates retained model reads while repeated execute_code reads still return full data', async () => {

@@ -8,6 +8,7 @@ import { BotRepository } from './repositories/botRepository';
 import { ProviderRepository } from './repositories/providerRepository';
 import { AttachmentRepository } from './repositories/attachmentRepository';
 import { MessageRepository } from './repositories/messageRepository';
+import { TrajectoryRepository } from './repositories/trajectoryRepository';
 import { ChatJobRepository } from './repositories/chatJobRepository';
 import { ChatFollowupRepository } from './repositories/chatFollowupRepository';
 import { BotService } from './services/botService';
@@ -207,6 +208,7 @@ export function createApiServer(options: ApiOptions = {}) {
       tools,
       jobs,
       diagnostics,
+      new TrajectoryRepository(store),
       memory,
       approvals,
       new ChatFollowupRepository(store),

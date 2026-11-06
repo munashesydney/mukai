@@ -64,27 +64,31 @@ export class DiagnosticService {
   }
   private text(value: unknown, limit = 2048): string | undefined {
     if (typeof value !== 'string') return undefined;
-    let text = value.slice(0, 8192);
-    for (const secret of this.secrets) {
-      text = text.split(secret).join('[redacted]');
-      text = text.split(encodeURIComponent(secret)).join('[redacted]');
-    }
-    text = text
-      .replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]')
-      .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
-      .replace(/\bsk-[a-z0-9_-]+/gi, '[redacted]')
-      .replace(
-        /((?:api[_-]?key|authorization|password|secret|access[_-]?token)["']?\s*[:=]\s*)["']?[^\s,"'}]+/gi,
-        '$1[redacted]',
-      )
-      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
-      .replace(/([?&](?:key|token|api[_-]?key|secret|signature)=)[^\s&#"']*/gi, '$1[redacted]')
+    return this.redactSensitiveText(value.slice(0, 8192))
       .replace(
         /\b(?:request body|requestBodyValues|prompt|tool arguments|tool input)\s*[:=][\s\S]*/gi,
         '[request content omitted]',
       )
-      .replace(/\{[\s\S]*|\[\s*(?:[{"'\d]|$)[\s\S]*/, '[structured payload omitted]');
-    return text.slice(0, limit);
+      .replace(/\{[\s\S]*|\[\s*(?:[{"'\d]|$)[\s\S]*/, '[structured payload omitted]')
+      .slice(0, limit);
+  }
+  redactSensitiveText(text: string) {
+    for (const secret of this.secrets) {
+      text = text.split(secret).join('[redacted]');
+      text = text
+        .split(encodeURIComponent(Buffer.from(secret).toString('utf8')))
+        .join('[redacted]');
+    }
+    return text
+      .replace(/mukai_routes_[A-Za-z0-9_-]{43}/g, '[redacted]')
+      .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [redacted]')
+      .replace(/\bsk-[a-z0-9_-]+/gi, '[redacted]')
+      .replace(
+        /((?:api[_-]?key|authorization|password|secret|access[_-]?token)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,"'}]+)/gi,
+        '$1[redacted]',
+      )
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
+      .replace(/([?&](?:key|token|api[_-]?key|secret|signature)=)[^\s&#"']*/gi, '$1[redacted]');
   }
   private details(error: unknown, seen = new Set<unknown>(), depth = 0): Record<string, unknown> {
     if (seen.has(error) || depth >= 4) return { name: 'CauseOmitted' };

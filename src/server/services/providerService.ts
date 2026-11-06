@@ -3,7 +3,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { generateText, wrapLanguageModel } from 'ai';
+import { generateText, wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 import { AIConcurrency } from './aiConcurrency';
 import { isProviderMemoryError, MemoryRecoveryExhaustedError } from './memoryRecovery';
 import {
@@ -505,6 +505,7 @@ export class ProviderService {
   }
   resolve(bot: BotRecord) {
     let onRuntimeClock: ((source: string, stamped: string) => void) | undefined;
+    let onModelStream: LanguageModelMiddleware['wrapStream'];
     const config = this.configuration(bot);
     if (!config) throw new ApiError(400, 'Configure a provider in Settings before chatting.');
     const { provider, modelId, reasoningEffort: effort } = config;
@@ -519,6 +520,9 @@ export class ProviderService {
       ...config,
       onRuntimeClock: (handler: (source: string, stamped: string) => void) => {
         onRuntimeClock = handler;
+      },
+      onModelStream: (handler: NonNullable<LanguageModelMiddleware['wrapStream']>) => {
+        onModelStream = handler;
       },
       ai: this.ai,
       aiContext: { workspaceId: bot.workspaceId, botId: bot.id, ...this.ai.provider(provider) },
@@ -537,6 +541,10 @@ export class ProviderService {
             undefined,
             (source, stamped) => onRuntimeClock?.(source, stamped),
           ),
+          {
+            specificationVersion: 'v4',
+            wrapStream: (options) => onModelStream?.(options) ?? options.doStream(),
+          },
         ],
       }),
       reasoningEffort: effort,

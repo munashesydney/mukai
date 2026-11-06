@@ -520,6 +520,12 @@ export const migrations = [
        WHERE s.expires_at>unixepoch()*1000 AND (SELECT count(*) FROM mobile_push_outbox)<10000;
      END;`,
   `ALTER TABLE workspaces ADD COLUMN time_zone TEXT;`,
+  `CREATE TABLE chat_trajectory (
+     id INTEGER PRIMARY KEY,
+     message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+     summary_json TEXT NOT NULL,
+     detail_json TEXT NOT NULL);
+   CREATE INDEX chat_trajectory_message ON chat_trajectory(message_id,id);`,
 ];
 
 // SQLite table rebuilds must disable FK actions before BEGIN, then validate before COMMIT.

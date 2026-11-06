@@ -3,7 +3,7 @@ import { RetryResponseButton } from './RetryResponseButton';
 import { AIQueueNotice } from './AIQueueNotice';
 import { MainBotBadge } from '../../components/ui/MainBotBadge';
 import { TelegramSourceBadge } from '../../components/ui/TelegramSourceBadge';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   FileText,
   Info,
@@ -36,6 +36,7 @@ import { ChatActivityDrawer } from './ChatActivityDrawer';
 import { BotChatComposer } from './BotChatComposer';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
+import { TrajectoryView } from './TrajectoryView';
 
 export function BotChat({
   bot,
@@ -108,6 +109,8 @@ export function BotChat({
   }
   const [filesOpen, setFilesOpen] = useState(false),
     [detailsOpen, setDetailsOpen] = useState(false);
+  const [trajectoryOpen, setTrajectoryOpen] = useState(false);
+  const viewId = useId();
   const [review, setReview] = useState<{ changes: FileChangeSummary[]; selectedId: string } | null>(
     null,
   );
@@ -124,7 +127,7 @@ export function BotChat({
     .find((message) => message.role === 'assistant');
   useEffect(() => {
     if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight;
-  }, [state.messages, state.loading, bot.id]);
+  }, [state.messages, state.loading, bot.id, trajectoryOpen, filesOpen]);
   function send() {
     follow.current = true;
     void chatStore.send(chatId);
@@ -147,7 +150,7 @@ export function BotChat({
     >
       <div className="conversation-panels">
         <main className="conversation">
-          <header className="conversation-header conversation-header--minimal">
+          <header className="conversation-header">
             <div className="conversation-heading">
               <div className="heading-identity">
                 {isBotConversation ? (
@@ -181,7 +184,10 @@ export function BotChat({
                 <IconButton
                   label={filesOpen ? 'Back to chat' : 'Artifacts'}
                   className={filesOpen ? 'is-on' : ''}
-                  onClick={() => setFilesOpen(!filesOpen)}
+                  onClick={() => {
+                    setTrajectoryOpen(false);
+                    setFilesOpen(!filesOpen);
+                  }}
                 >
                   <FileText size={18} />
                 </IconButton>
@@ -218,6 +224,28 @@ export function BotChat({
                 )}
               </div>
             </div>
+            <div className="conversation-tabs" role="tablist" aria-label="Conversation views">
+              {['Chat', 'Trajectory'].map((name) => {
+                const active = !filesOpen && trajectoryOpen === (name === 'Trajectory');
+                return (
+                  <button
+                    key={name}
+                    id={`${viewId}-${name}-tab`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={`${viewId}-${name}-panel`}
+                    className={active ? 'is-active' : ''}
+                    onClick={() => {
+                      setFilesOpen(false);
+                      setTrajectoryOpen(name === 'Trajectory');
+                    }}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
           </header>
           {filesOpen ? (
             <ArtifactsView
@@ -227,72 +255,98 @@ export function BotChat({
             />
           ) : (
             <>
-              <div
-                ref={feed}
-                className={`ai-message-feed${state.loading ? ' is-loading' : ''}`}
-                role="log"
-                aria-label={`${title} chat`}
-                aria-busy={state.loading || state.busy}
-                onScroll={() => {
-                  if (feed.current)
-                    follow.current =
-                      feed.current.scrollHeight -
-                        feed.current.scrollTop -
-                        feed.current.clientHeight <
-                      120;
-                }}
-              >
-                {state.loading ? (
-                  <div className="ai-chat-empty ai-chat-loading" role="status">
-                    <LoaderCircle className="is-spinning" size={24} />
-                    <p>Loading your chat…</p>
-                  </div>
-                ) : (
-                  !state.messages.length && (
-                    <div className="ai-chat-empty">
-                      <Avatar person={bot.avatar} size="lg" />
-                      <h2>A good place to start.</h2>
-                      <p>
-                        {isBotConversation
-                          ? 'Messages between these bots will appear here.'
-                          : provider
-                            ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
-                            : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
-                      </p>
-                      {!isBotConversation && !provider && (
-                        <button className="button button--primary" onClick={onProviders}>
-                          Configure a provider
-                        </button>
-                      )}
-                    </div>
-                  )
-                )}
-                {!composerVisible && state.error && (
-                  <p className="ai-alert" role="alert">
-                    {state.error}
-                  </p>
-                )}
-                {state.messages.map((message) => (
-                  <MessageRow
-                    key={message.id}
-                    message={message}
-                    bot={bot}
-                    author={
-                      isBotConversation ? bots.find((item) => item.id === message.botId) : undefined
-                    }
-                    isBotConversation={isBotConversation}
+              {trajectoryOpen && (
+                <div
+                  id={`${viewId}-Trajectory-panel`}
+                  role="tabpanel"
+                  aria-labelledby={`${viewId}-Trajectory-tab`}
+                  className="bot-chat-transcript"
+                >
+                  <TrajectoryView
+                    key={conversation.id}
+                    conversationId={conversation.id}
+                    messages={state.messages}
+                    loading={state.loading}
                     busy={state.busy}
-                    canRetry={
-                      message.id === latestAssistant?.id &&
-                      message.requestId ===
-                        [...state.messages].reverse().find((turn) => turn.role === 'user')
-                          ?.requestId
-                    }
-                    onReview={openReview}
-                    onRetry={retryResponse}
                   />
-                ))}
-                <AIQueueNotice conversationId={conversation.id} />
+                </div>
+              )}
+              <div
+                id={`${viewId}-Chat-panel`}
+                role="tabpanel"
+                aria-labelledby={`${viewId}-Chat-tab`}
+                className="bot-chat-transcript"
+                hidden={trajectoryOpen}
+              >
+                <div
+                  ref={feed}
+                  className={`ai-message-feed${state.loading ? ' is-loading' : ''}`}
+                  role="log"
+                  aria-label={`${title} chat`}
+                  aria-busy={state.loading || state.busy}
+                  onScroll={() => {
+                    if (feed.current)
+                      follow.current =
+                        feed.current.scrollHeight -
+                          feed.current.scrollTop -
+                          feed.current.clientHeight <
+                        120;
+                  }}
+                >
+                  {state.loading ? (
+                    <div className="ai-chat-empty ai-chat-loading" role="status">
+                      <LoaderCircle className="is-spinning" size={24} />
+                      <p>Loading your chat…</p>
+                    </div>
+                  ) : (
+                    !state.messages.length && (
+                      <div className="ai-chat-empty">
+                        <Avatar person={bot.avatar} size="lg" />
+                        <h2>A good place to start.</h2>
+                        <p>
+                          {isBotConversation
+                            ? 'Messages between these bots will appear here.'
+                            : provider
+                              ? `Talk to ${bot.name}. Bring a question, an idea, or something you’re working on.`
+                              : `Connect an AI provider to start talking with ${bot.name}. Your bot is ready; it just needs a model.`}
+                        </p>
+                        {!isBotConversation && !provider && (
+                          <button className="button button--primary" onClick={onProviders}>
+                            Configure a provider
+                          </button>
+                        )}
+                      </div>
+                    )
+                  )}
+                  {!composerVisible && state.error && (
+                    <p className="ai-alert" role="alert">
+                      {state.error}
+                    </p>
+                  )}
+                  {state.messages.map((message) => (
+                    <MessageRow
+                      key={message.id}
+                      message={message}
+                      bot={bot}
+                      author={
+                        isBotConversation
+                          ? bots.find((item) => item.id === message.botId)
+                          : undefined
+                      }
+                      isBotConversation={isBotConversation}
+                      busy={state.busy}
+                      canRetry={
+                        message.id === latestAssistant?.id &&
+                        message.requestId ===
+                          [...state.messages].reverse().find((turn) => turn.role === 'user')
+                            ?.requestId
+                      }
+                      onReview={openReview}
+                      onRetry={retryResponse}
+                    />
+                  ))}
+                  <AIQueueNotice conversationId={conversation.id} />
+                </div>
               </div>
               {!composerVisible && hasRequests && (
                 <div className="bot-conversation-requests">

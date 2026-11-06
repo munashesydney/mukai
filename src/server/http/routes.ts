@@ -845,6 +845,21 @@ export function createRoutes({
         }
         if (action === 'messages' && method === 'GET')
           return sendRead(request, response, conversations.history(id));
+        if (action === 'trajectory' && method === 'GET') {
+          const record = url.searchParams.get('record');
+          if (record !== null) {
+            const recordId = z.coerce.number().int().positive().parse(record);
+            response.setHeader('Cache-Control', 'no-store');
+            return send(response, chats.trajectoryDetail(id, recordId));
+          }
+          const from = z
+            .string()
+            .min(1)
+            .max(200)
+            .optional()
+            .parse(url.searchParams.get('from') ?? undefined);
+          return sendRead(request, response, chats.trajectoryHistory(id, from));
+        }
         if (action === 'chat' && method === 'POST') {
           if (conversation.kind === 'bot')
             return conversations.sendToBot(

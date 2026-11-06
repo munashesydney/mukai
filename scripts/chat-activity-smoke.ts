@@ -1017,6 +1017,97 @@ async function main() {
       await new Promise((done) => setTimeout(done, 150));
       assert.equal(await evaluate('document.querySelector(".chat-activity-drawer")'), null);
       const streamedResponse = await waitForFinalResponse();
+      const openView = (label: string) =>
+        evaluate(
+          `Array.from(document.querySelectorAll('.conversation-tabs [role="tab"]')).find(tab => tab.textContent.trim() === ${JSON.stringify(label)}).click()`,
+        );
+      await openView('Trajectory');
+      await wait(
+        'Boolean(document.querySelector(".trajectory-row .trajectory-tag.trajectory-system"))',
+      );
+      await wait(
+        'Boolean(document.querySelector(".trajectory-row .trajectory-status.is-running"))',
+      );
+      await wait(
+        'Boolean(document.querySelector(".trajectory-row .trajectory-tag.trajectory-tool"))',
+      );
+      const placeholderStyles = await evaluate<string[][]>(`(() => {
+        const input = document.querySelector('input[aria-label="Search trajectory"]');
+        const composer = document.querySelector('.ai-composer-area textarea');
+        const root = document.documentElement;
+        const mode = root.dataset.mode;
+        const theme = root.dataset.theme;
+        const themeText = root.style.getPropertyValue('--theme-text');
+        try {
+          root.dataset.theme = 'rose';
+          root.style.setProperty('--theme-text', '#e4aec6');
+          return ['light', 'dark'].map(value => {
+            root.dataset.mode = value;
+            const style = getComputedStyle(input, '::placeholder');
+            return [style.color, style.webkitTextFillColor, getComputedStyle(composer, '::placeholder').color];
+          });
+        } finally {
+          root.dataset.mode = mode;
+          root.dataset.theme = theme;
+          root.style.setProperty('--theme-text', themeText);
+        }
+      })()`);
+      for (const [color, fill, composerColor] of placeholderStyles) {
+        assert.equal(color, composerColor);
+        assert.equal(fill, composerColor);
+        assert.notEqual(color, 'rgb(228, 174, 198)');
+      }
+      assert(
+        await evaluate(
+          'document.querySelector(".trajectory-ledger").clientHeight > 0 && document.querySelector(".ai-composer-area").clientHeight > 0',
+        ),
+      );
+      await click('.trajectory-toolbar button[title="Collapse turns"]');
+      await wait('!document.querySelector(".trajectory-row")');
+      await click('.trajectory-toolbar button[title="Expand turns"]');
+      await click('.trajectory-toolbar button[title="Use recorded durations within each turn"]');
+      await wait(
+        'Boolean(document.querySelector(\'.trajectory-overview[aria-label="Recorded durations"]\'))',
+      );
+      await click('.trajectory-row:has(.trajectory-tag.trajectory-system) .trajectory-row-content');
+      await wait(
+        'document.querySelector(".trajectory-inspector pre")?.textContent.includes("Mukai")',
+      );
+      await click('button[aria-label="Close record details"]');
+      await evaluate(
+        `Array.from(document.querySelectorAll('.trajectory-row-label')).find(label => label.textContent === 'file_operations').closest('button').click()`,
+      );
+      assert.deepEqual(
+        await evaluate(
+          `Array.from(document.querySelectorAll('.trajectory-inspector [role="tab"]'), tab => tab.textContent.trim())`,
+        ),
+        ['Summary', 'Payload', 'Result', 'Schema', 'Timing'],
+      );
+      await wait(
+        `document.querySelector('.trajectory-tool-preview--payload pre')?.textContent.includes('"path": "live-draft.md"')`,
+      );
+      for (const tab of ['Payload', 'Result', 'Schema', 'Timing']) {
+        await click(`.trajectory-inspector button[aria-label="Open ${tab} tab"]`);
+        await wait(
+          `document.querySelector('.trajectory-inspector [role="tab"][aria-selected="true"]')?.textContent.trim() === ${JSON.stringify(tab)}`,
+        );
+        if (tab === 'Schema')
+          await wait(
+            `document.querySelector('.trajectory-inspector [role="tabpanel"] pre')?.textContent.includes('"properties"')`,
+          );
+        await click('.trajectory-inspector [role="tab"]:first-child');
+      }
+      assert(
+        await evaluate(
+          `document.querySelector('.trajectory-tool-preview--result').clientHeight <= 84`,
+        ),
+      );
+      await capture('trajectory-tool-summary');
+      await click('button[aria-label="Close record details"]');
+      await openView('Chat');
+      await wait(
+        '!document.querySelector(".trajectory-view") && !document.querySelector(".bot-chat-transcript").hidden',
+      );
       streamedResponse.write(
         'data: ' +
           JSON.stringify({

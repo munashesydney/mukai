@@ -32,7 +32,12 @@ export function limitResultText(text: string, bytes: number, notice = RESULT_TRU
 
 // A bounded JSON preview avoids JSON.stringify allocating the entire result first.
 // Limits also cover circular values, nesting and huge collections of tiny values.
-export function resultPreview(value: unknown, bytes: number, notice = RESULT_TRUNCATED) {
+export function resultPreview(
+  value: unknown,
+  bytes: number,
+  notice = RESULT_TRUNCATED,
+  sanitize?: { redactKey: (key: string) => boolean; text: (value: string) => string },
+) {
   const marker = '\n\n' + notice;
   const allowance = Math.max(0, bytes);
   const chunks: string[] = [];
@@ -54,7 +59,7 @@ export function resultPreview(value: unknown, bytes: number, notice = RESULT_TRU
     if (item === null || typeof item !== 'object') {
       if (typeof item === 'string') {
         const prefix = item.slice(0, remaining);
-        write(JSON.stringify(prefix));
+        write(JSON.stringify(sanitize ? sanitize.text(prefix) : prefix));
         clipped ||= prefix !== item;
       } else
         write(
@@ -62,6 +67,10 @@ export function resultPreview(value: unknown, bytes: number, notice = RESULT_TRU
             ? JSON.stringify(String(item))
             : (JSON.stringify(item) ?? 'null'),
         );
+      return;
+    }
+    if (sanitize && (ArrayBuffer.isView(item) || item instanceof ArrayBuffer)) {
+      write('"[Binary data omitted]"');
       return;
     }
     if (depth >= 24 || seen.has(item)) {
@@ -82,11 +91,15 @@ export function resultPreview(value: unknown, bytes: number, notice = RESULT_TRU
       if (!first) write(',');
       first = false;
       if (!array) {
-        write(JSON.stringify(key.slice(0, remaining)));
+        const prefix = key.slice(0, remaining);
+        write(JSON.stringify(sanitize ? sanitize.text(prefix) : prefix));
         write(':');
       }
       try {
-        visit((item as Record<string, unknown>)[key], depth + 1);
+        visit(
+          sanitize?.redactKey(key) ? '[redacted]' : (item as Record<string, unknown>)[key],
+          depth + 1,
+        );
       } catch {
         write('"[Unreadable value omitted]"');
         clipped = true;

@@ -71,6 +71,8 @@ import {
   cachedToolSchema,
 } from './contextPolicy';
 import { ProgressGuard } from './progressGuard';
+import { ChatTrajectory } from './chatTrajectory';
+import type { TrajectoryRepository } from '../repositories/trajectoryRepository';
 import { contextSummarizer } from './contextSummary';
 import {
   isProviderMemoryError,
@@ -189,6 +191,7 @@ export class ChatService {
     private tools: ToolService,
     private jobs: ChatJobRepository,
     private diagnostics: DiagnosticService,
+    private trajectory: TrajectoryRepository,
     private memory?: MemoryService,
     private approvals?: ApprovalService,
     private followups?: ChatFollowupRepository,
@@ -197,7 +200,16 @@ export class ChatService {
     this.messages.interruptStreaming(
       'The server restarted before this response finished. You can retry.',
     );
+    this.trajectory.interruptRunning();
     this.followups?.recover();
+  }
+  trajectoryHistory(conversationId: string, fromMessageId?: string) {
+    return this.trajectory.list(conversationId, fromMessageId);
+  }
+  trajectoryDetail(conversationId: string, recordId: number) {
+    const detail = this.trajectory.detail(conversationId, recordId);
+    if (!detail) throw new ApiError(404, 'Trajectory record not found in this conversation.');
+    return detail;
   }
   attachFollowups(requireBot: (id: string) => BotRecord) {
     this.requireFollowupBot = requireBot;
@@ -907,6 +919,13 @@ export class ChatService {
         source: value.source,
       });
     }
+    const trace = new ChatTrajectory(
+      this.trajectory,
+      this.diagnostics,
+      assistantId,
+      conversationId,
+    );
+    config.onModelStream((options) => trace.stream(options));
     // Recover sender context for responses restored after an approval or server restart, too.
     const messageSender = this.messages.botSender(conversationId, value.requestId);
     const botThread = this.messages.botConversation(conversationId);
@@ -1764,6 +1783,7 @@ export class ChatService {
             const limited = limitToolOutput(output, allowance, estimateTokens);
             this.jobs.approvalResult(assistantId, params.toolCallId, limited);
             reportTruncation(params.toolCallId, limited);
+            trace.toolOutput(params.toolCallId, limited);
             return limited;
           },
           execute: async (input, options) => {
@@ -1970,8 +1990,18 @@ export class ChatService {
             }
           },
         };
+        const guardedExecute = guarded.execute!;
+        guarded.execute = (input, options) =>
+          trace.runTool(
+            name,
+            options.toolCallId,
+            input,
+            options.abortSignal ?? stepSignal,
+            () => guardedExecute(input, options),
+            codeActivityParents.get(options.toolCallId),
+          );
         if (internal) {
-          internalExecutors.set(name, guarded.execute!);
+          internalExecutors.set(name, guarded.execute);
           return;
         }
         tools[name] = guarded;
@@ -2664,6 +2694,7 @@ export class ChatService {
               save();
             } else if (chunk.type === 'text-delta') {
               textPartId ||= randomUUID();
+              trace.linkPart(textPartId);
               finalTextParts.add(textPartId);
               generation.content += chunk.text;
               generation.parts = appendResponseText(
@@ -2681,6 +2712,7 @@ export class ChatService {
               generation.reasoning += text;
               reasoningPartId ||= randomUUID();
               if (text) {
+                trace.linkPart(reasoningPartId);
                 generation.parts = appendResponseText(
                   generation.parts,
                   reasoningPartId,
@@ -2709,6 +2741,7 @@ export class ChatService {
                   { ...diagnosticContext(), phase: 'tool-execution', tool: chunk.toolName },
                 );
             } else if (chunk.type === 'tool-error') {
+              trace.toolError(chunk.toolName, chunk.toolCallId);
               const invalidInput =
                 InvalidToolInputError.isInstance(chunk.error) ||
                 (typeof chunk.error === 'string' &&
@@ -2939,10 +2972,12 @@ export class ChatService {
           throw caught;
         } finally {
           generation.interruptProvider = undefined;
+          trace.flushParts();
           scheduling?.endProvider();
           timeout.dispose();
           // A failed provider stream must also cancel any pending human decisions.
           stepController.abort();
+          trace.interrupt();
         }
         if (steeredGeneration && !signal.aborted) {
           usage.runTokens +=
@@ -3222,6 +3257,7 @@ export class ChatService {
       generation.finalizing = true;
       generation.interruptProvider = undefined;
       await Promise.allSettled([...pendingTools]);
+      trace.interrupt();
       if (generation.controller.signal.aborted) status = generation.reason;
       try {
         if (status === 'complete' && !generation.controller.signal.aborted)
