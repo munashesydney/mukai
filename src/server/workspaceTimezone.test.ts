@@ -77,7 +77,11 @@ it('persists independent zones, initializes legacy workspaces once, and preserve
     await stop();
     let database = new Database(dataDir);
     database.db.exec('ALTER TABLE workspaces DROP COLUMN time_zone');
-    database.run('DELETE FROM schema_migrations WHERE version=?', migrations.length);
+    database.run(
+      'DELETE FROM schema_migrations WHERE version=?',
+      migrations.findIndex((sql) => sql.includes('ALTER TABLE workspaces ADD COLUMN time_zone')) +
+        1,
+    );
     database.db.close();
     api = await startApiServer(0, { dataDir });
     expect((await request('/workspaces')).data[0].timeZone).toBeUndefined();
