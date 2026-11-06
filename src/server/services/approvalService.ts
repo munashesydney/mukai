@@ -184,15 +184,15 @@ export class ApprovalService {
     force = false,
   ): Promise<ApprovalDecision> {
     signal.throwIfAborted();
-    // These reserved built-ins record an outcome or end a response; neither performs an external action.
+    // These built-in actions stay inside Mukai's current runs.
     if (
       !force &&
       (details.toolName === 'report_pursuit' ||
-        (details.toolName === 'system' &&
-          details.input &&
+        (details.input &&
           typeof details.input === 'object' &&
           'action' in details.input &&
-          details.input.action === 'stop_generation'))
+          ((details.toolName === 'system' && details.input.action === 'stop_generation') ||
+            (details.toolName === 'manage_bot' && details.input.action === 'steer'))))
     ) {
       const restored = this.restored(details);
       if (restored) {

@@ -408,6 +408,7 @@ export class PursuitService {
         output,
         run.conversationId,
         {
+          kind: 'pursuit',
           system: workpadGuidance,
           resumeSavedProgress: true,
           completionNotice: () => {

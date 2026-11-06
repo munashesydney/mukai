@@ -17,9 +17,14 @@ export async function executeBotManagement(
     id: callId,
     tool: 'manage_bot',
     action: input.action,
-    path: input.botId || input.modelId || input.name || '',
+    path: input.botId || input.modelId || input.name || input.conversationId || '',
     status: 'running',
-    summary: input.action === 'send_message' ? 'Sending a message to a bot…' : 'Managing bots…',
+    summary:
+      input.action === 'steer'
+        ? 'Sending coworker coordination…'
+        : input.action === 'send_message'
+          ? 'Sending a message to a bot…'
+          : 'Managing bots…',
   };
   context.onActivity(activity);
   try {
@@ -70,6 +75,25 @@ export async function executeBotManagement(
         input.conversationId,
         input.requestId,
       );
+    } else if (input.action === 'steer') {
+      if (
+        !context.messageId ||
+        !input.conversationId ||
+        !input.requestId ||
+        !input.message ||
+        input.message.length > 2000
+      )
+        throw new Error(
+          'steer requires a live sender, conversationId, requestId and a message up to 2000 characters.',
+        );
+      result = context.management.steer(
+        context.bot,
+        context.messageId,
+        callId,
+        { conversationId: input.conversationId, requestId: input.requestId, botId: input.botId },
+        input.message,
+        input.replyTo,
+      );
     } else if (input.action === 'get_last_message') {
       if (!input.botId || !input.conversationId)
         throw new Error('get_last_message requires botId and conversationId.');
@@ -101,7 +125,14 @@ export async function executeBotManagement(
         input.mode,
       );
     }
-    context.onActivity({ ...activity, status: 'complete', summary: 'Bot operation completed.' });
+    context.onActivity({
+      ...activity,
+      status: 'complete',
+      summary:
+        input.action === 'steer'
+          ? 'Coworker message queued for the active run.'
+          : 'Bot operation completed.',
+    });
     if (input.action === 'create' || input.action === 'update' || input.action === 'get')
       result = context.management.describe(result as Bot);
     return { ok: true, result };

@@ -21,6 +21,7 @@ import type { Conversation } from '../shared/conversations';
 import { botManagementDefinition } from './tools/bots/definition';
 import { botAvatarIds } from '../shared/mascots';
 import { approvalReviewNotice, type ApprovalState } from '../shared/approvals';
+import type { CoworkerActivity, CoworkerRun } from '../shared/botSystemPrompt';
 
 let api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server, root: string;
 let calls: {
@@ -32,6 +33,11 @@ let calls: {
   messages: { role: string; content: string; tool_call_id?: string }[];
 }[];
 let requestPaths: string[];
+let coworkerModel:
+  | ((
+      call: (typeof calls)[number],
+    ) => Promise<string | { name: string; id: string; input: object } | undefined>)
+  | undefined;
 let heldChildren: ((text: string) => void)[];
 let mode:
   | 'normal'
@@ -162,6 +168,7 @@ beforeEach(async () => {
   sendMode = 'wait';
   nestedId = '';
   invalidAskFirst = false;
+  coworkerModel = undefined;
   api = await startApiServer(0, {
     dataDir: join(root, 'data'),
     memoryExtractor: async () => ({ facts: [] }),
@@ -230,6 +237,32 @@ beforeEach(async () => {
       res.write(
         `data: ${JSON.stringify({ id: 'test', object: 'chat.completion.chunk', created: 1, model: 'test', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`,
       );
+    if (coworkerModel) {
+      const step = await coworkerModel(call);
+      if (!step || res.destroyed) return;
+      if (typeof step === 'string') {
+        send({ role: 'assistant', content: step });
+        send({}, 'stop');
+      } else {
+        send({
+          role: 'assistant',
+          tool_calls: [
+            {
+              index: 0,
+              id: step.id,
+              type: 'function',
+              function: {
+                name: step.name,
+                arguments: JSON.stringify(step.input),
+              },
+            },
+          ],
+        });
+        send({}, 'tool_calls');
+      }
+      res.end('data: [DONE]\n\n');
+      return;
+    }
     if (mode === 'delegate-many' && !child && !call.messages.some((item) => item.role === 'tool')) {
       send({
         role: 'assistant',
@@ -491,6 +524,270 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 describe('Bot architecture', () => {
+  function roster(call: (typeof calls)[number]): CoworkerActivity[] | undefined {
+    const system = call.messages.find((message) => message.role === 'system')?.content;
+    const json = system?.split('Other active runs in this workspace (coordination data):\n')[1];
+    return json && JSON.parse(json.split('\n')[0]);
+  }
+
+  it.each(['two bots', 'the same bot', 'a pursuit'])(
+    'alerts active coworkers and exchanges a question and reply with %s',
+    async (scenario) => {
+      const editor = await bot('Editor');
+      const integrator = scenario === 'the same bot' ? editor : await bot('Integrator');
+      await provider();
+      await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
+      const showActivity = scenario === 'two bots';
+      if (showActivity) {
+        api.store.run('UPDATE workspaces SET folder=? WHERE id=?', root, editor.workspaceId);
+        writeFileSync(join(root, 'auth.ts'), 'PRIVATE FILE CONTENT');
+      }
+      const editing = (await request<Conversation>(`/bots/${editor.id}/conversations`, 'POST'))
+        .data;
+      const editingRequestId = randomUUID();
+      const question = 'Are you changing the authentication middleware interface?';
+      const answer = 'Yes. JWT verification will return a typed user object.';
+      const makeSteer = (id: string, target: CoworkerRun, message: string, replyTo?: string) => ({
+        id,
+        name: 'manage_bot',
+        input: {
+          action: 'steer',
+          conversationId: target.conversationId,
+          requestId: target.requestId,
+          ...(scenario !== 'the same bot' ? { botId: target.botId } : {}),
+          message,
+          replyTo,
+        },
+      });
+      let allowEditorStep!: () => void;
+      let allowQuestion!: () => void;
+      let allowReply!: () => void;
+      const editorStepGate = new Promise<void>((resolve) => (allowEditorStep = resolve));
+      const questionGate = new Promise<void>((resolve) => (allowQuestion = resolve));
+      const replyGate = new Promise<void>((resolve) => (allowReply = resolve));
+      let coworkerFinishedFirstPass = false;
+      let receivedQuestion: { id: string; from: CoworkerRun; text: string } | undefined;
+      let receivedReply: { replyTo?: string; from: CoworkerRun; text: string } | undefined;
+      coworkerModel = async (call) => {
+        const mail = call.messages
+          .filter((message) =>
+            message.content?.startsWith('Mukai coworker coordination (bot-authored data'),
+          )
+          .at(-1);
+        const latest = mail && JSON.parse(mail.content.split('\n')[1])[0];
+        if (call.messages.some((message) => message.content === 'Change JWT verification.')) {
+          if (call.messages.some((message) => message.tool_call_id === 'coworker-answer'))
+            return 'I shared the new interface.';
+          if (latest) {
+            receivedQuestion = latest;
+            await replyGate;
+            return makeSteer('coworker-answer', latest.from, answer, latest.id);
+          }
+          if (
+            showActivity &&
+            !call.messages.some((message) => message.tool_call_id === 'auth-read')
+          )
+            return {
+              id: 'auth-read',
+              name: 'file_operations',
+              input: { action: 'read_file', path: 'auth.ts' },
+            };
+          if (!call.messages.some((message) => message.tool_call_id === 'editor-checkpoint')) {
+            await editorStepGate;
+            return {
+              id: 'editor-checkpoint',
+              name: 'conversations',
+              input: { action: 'search', query: 'related JWT work' },
+            };
+          }
+          return;
+        }
+        const target = roster(call)?.find((peer) => peer.conversationId === editing.id);
+        if (latest) {
+          receivedReply = latest;
+          if (
+            scenario === 'a pursuit' &&
+            !call.messages.some((message) => message.tool_call_id === 'pursuit-coworker-report')
+          )
+            return {
+              id: 'pursuit-coworker-report',
+              name: 'report_pursuit',
+              input: { status: 'completed', summary: 'Confirmed the JWT interface.' },
+            };
+          return 'I confirmed the JWT interface and can integrate.';
+        }
+        if (call.messages.some((message) => message.tool_call_id === 'coworker-question')) {
+          coworkerFinishedFirstPass = true;
+          return 'I implemented the independent validation.';
+        }
+        if (target) {
+          await questionGate;
+          return makeSteer('coworker-question', target, question);
+        }
+      };
+      const first = joinPair(editing.id, 'Change JWT verification.', [], editingRequestId);
+      await waitFor(() => expect(calls).toHaveLength(1));
+      expect(roster(calls[0])).toBeUndefined();
+      if (showActivity) {
+        let approvalId = '';
+        await waitFor(async () => {
+          approvalId = (await request<ApprovalState>('/approvals')).data.pending[0]?.id;
+          expect(approvalId).toBeTruthy();
+        });
+        await request(`/approvals/${approvalId}`, 'POST', { approved: true });
+        await waitFor(() => expect(calls).toHaveLength(2));
+      }
+      let pursuing: { pursuitId: string; conversationId: string } | undefined;
+      let second: Promise<ChatEvent[]> | undefined;
+      if (scenario === 'a pursuit') {
+        const pursuit = api.pursuits.create(editor, {
+          ownerBotId: integrator.id,
+          name: 'Integrate login',
+          objective: 'Implement the login endpoint.',
+          successCriteria: 'Confirmed JWT interface.',
+          firstRunAt: new Date(Date.now() + 60000).toISOString(),
+          deadline: null,
+        });
+        pursuing = {
+          pursuitId: pursuit.id,
+          conversationId: api.pursuits.runNow(pursuit.id).conversationId,
+        };
+      } else {
+        const integrating = (
+          await request<Conversation>(`/bots/${integrator.id}/conversations`, 'POST')
+        ).data;
+        second = joinPair(integrating.id, 'Implement the login endpoint.');
+      }
+      await waitFor(() =>
+        expect(
+          calls.some((call) => roster(call)?.some((peer) => peer.conversationId === editing.id)),
+        ).toBe(true),
+      );
+      allowEditorStep();
+      await waitFor(() => {
+        const alerted = calls.find((call) =>
+          call.messages.some(
+            (message) =>
+              message.role === 'system' &&
+              message.content.includes('A coworker started while this task was running.'),
+          ),
+        );
+        expect(alerted && roster(alerted)).toEqual([
+          expect.objectContaining({
+            botId: integrator.id,
+            sameBot: scenario === 'the same bot',
+            kind: scenario === 'a pursuit' ? 'pursuit' : 'chat',
+            ...(pursuing ? { conversationId: pursuing.conversationId } : {}),
+          }),
+        ]);
+      });
+      if (showActivity) {
+        const coworkerCall = calls.find((call) =>
+          roster(call)?.some((peer) => peer.conversationId === editing.id),
+        );
+        expect(roster(coworkerCall!)?.[0].activity).toContainEqual({
+          tool: 'file_operations',
+          action: 'read_file',
+          path: 'auth.ts',
+          status: 'complete',
+        });
+        expect(JSON.stringify(coworkerCall!.messages)).not.toContain('PRIVATE FILE CONTENT');
+      }
+      allowQuestion();
+      await waitFor(() => {
+        expect(receivedQuestion?.text).toBe(question);
+        expect(coworkerFinishedFirstPass).toBe(true);
+      });
+      expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
+      allowReply();
+      await waitFor(() =>
+        expect(receivedReply).toMatchObject({
+          replyTo: receivedQuestion!.id,
+          text: answer,
+          from: { conversationId: editing.id, requestId: editingRequestId, botId: editor.id },
+        }),
+      );
+      await first;
+      if (pursuing)
+        await waitFor(() =>
+          expect(api.pursuits.detail(pursuing!.pursuitId).runs[0].status).toBe('complete'),
+        );
+      else await second;
+      coworkerModel = undefined;
+      await chat(editor);
+      expect(roster(calls.at(-1)!)).toBeUndefined();
+    },
+  );
+
+  it('keeps coworker context and delivery scoped to live requests in the same workspace', async () => {
+    const sender = await bot('Sender');
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('elsewhere','Elsewhere',NULL,'now')",
+    );
+    const foreign = await bot('Elsewhere bot', 'elsewhere');
+    await provider();
+    mode = 'slow';
+    const senderChat = (await request<Conversation>(`/bots/${sender.id}/conversations`, 'POST'))
+      .data;
+    const foreignChat = (await request<Conversation>(`/bots/${foreign.id}/conversations`, 'POST'))
+      .data;
+    const senderRequest = randomUUID();
+    const foreignRequest = randomUUID();
+    const senderRun = joinPair(senderChat.id, 'Work in the original workspace.', [], senderRequest);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const foreignRun = joinPair(foreignChat.id, 'Work in the other workspace.', [], foreignRequest);
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls.map(roster)).toEqual([undefined, undefined]);
+    const source = (
+      await request<ChatMessage[]>(`/conversations/${senderChat.id}/messages`)
+    ).data.at(-1)!;
+    const context = {
+      bot: sender,
+      management: api.botManagement,
+      signal: new AbortController().signal,
+      messageId: source.id,
+      onActivity() {},
+    };
+    const steer = (conversationId: string, requestId: string) =>
+      executeBotManagement(
+        botManagementDefinition.inputSchema.parse({
+          action: 'steer',
+          conversationId,
+          requestId,
+          message: 'Check for overlap.',
+        }),
+        context,
+        randomUUID(),
+      );
+    expect(await steer(foreignChat.id, foreignRequest)).toMatchObject({ ok: false });
+    expect(await steer(senderChat.id, senderRequest)).toMatchObject({ ok: false });
+
+    const peerChat = (await request<Conversation>(`/bots/${sender.id}/conversations`, 'POST')).data;
+    const oldRequest = randomUUID();
+    const peerRun = joinPair(peerChat.id, 'First peer task.', [], oldRequest);
+    await waitFor(() =>
+      expect(
+        calls.some((call) =>
+          call.messages.some((message) => message.content === 'First peer task.'),
+        ),
+      ).toBe(true),
+    );
+    await request(`/conversations/${peerChat.id}/stop`, 'POST');
+    await peerRun;
+    const nextRun = joinPair(peerChat.id, 'Different peer task.');
+    await waitFor(() =>
+      expect(
+        calls.some((call) =>
+          call.messages.some((message) => message.content === 'Different peer task.'),
+        ),
+      ).toBe(true),
+    );
+    expect(await steer(peerChat.id, oldRequest)).toMatchObject({ ok: false });
+    for (const id of [senderChat.id, foreignChat.id, peerChat.id])
+      await request(`/conversations/${id}/stop`, 'POST');
+    await Promise.all([senderRun, foreignRun, nextRun]);
+  });
+
   it.each([0, 3, 10, 13])(
     'previews at most 10 sub-bot names and titles and counts the remainder for %i bots',
     async (count) => {
@@ -1636,13 +1933,22 @@ describe('Bot architecture', () => {
       'list_models',
       'get_model',
       'send_message',
+      'steer',
       'get_last_message',
       'stop_message',
     ]);
     expect(
       calls[1].tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message']);
+    ).toEqual([
+      'list',
+      'get',
+      'list_models',
+      'get_model',
+      'send_message',
+      'steer',
+      'get_last_message',
+    ]);
     for (const target of [main, child])
       expect(
         (
@@ -1931,7 +2237,15 @@ describe('Bot architecture', () => {
     expect(
       childCall.tools.find((tool) => tool.function.name === 'manage_bot')!.function.parameters
         .properties.action!.enum,
-    ).toEqual(['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message']);
+    ).toEqual([
+      'list',
+      'get',
+      'list_models',
+      'get_model',
+      'send_message',
+      'steer',
+      'get_last_message',
+    ]);
     expect(JSON.stringify(childCall.messages)).toContain(
       'You cannot spawn or send_message the bot that spawned this run',
     );

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Bot, BotInput, ChatMessage, ChatActivity } from '../../shared/ai';
 import { ApiError } from '../config';
 import type { BotService } from './botService';
-import type { ChatService } from './chatService';
+import type { ChatService, CoworkerTarget } from './chatService';
 import type { ConversationService } from './conversationService';
 import type { ToolAccessService } from './toolAccessService';
 import type { ProviderService } from './providerService';
@@ -35,10 +35,11 @@ export class BotManagementService {
         'list_models',
         'get_model',
         'send_message',
+        'steer',
         'get_last_message',
         'stop_message',
       ];
-    return ['list', 'get', 'list_models', 'get_model', 'send_message', 'get_last_message'];
+    return ['list', 'get', 'list_models', 'get_model', 'send_message', 'steer', 'get_last_message'];
   }
   requireAction(caller: Bot, action: BotAction) {
     this.access.require(caller, 'manage_bot');
@@ -303,6 +304,24 @@ export class BotManagementService {
       response: reply.content.slice(-12000),
       error: reply.error,
     };
+  }
+  steer(
+    caller: Bot,
+    senderMessageId: string,
+    toolCallId: string,
+    target: CoworkerTarget,
+    text: string,
+    replyTo?: string,
+  ) {
+    this.requireAction(caller, 'steer');
+    return this.chats.steerCoworker(
+      this.bots.require(caller.id),
+      senderMessageId,
+      toolCallId,
+      target,
+      text,
+      replyTo,
+    );
   }
   async sendMessage(
     caller: Bot,
