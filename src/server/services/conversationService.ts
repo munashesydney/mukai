@@ -4,7 +4,11 @@ import { ConversationRepository } from '../repositories/conversationRepository';
 import { MessageRepository } from '../repositories/messageRepository';
 import { BotService } from './botService';
 import { ChatService, type ChatOutput } from './chatService';
-import type { SpaceInput, SpaceChatInput } from '../../shared/conversations';
+import type {
+  SpaceInput,
+  SpaceChatInput,
+  ConversationHistoryPage,
+} from '../../shared/conversations';
 import type { Bot, ChatInput } from '../../shared/ai';
 
 export class ConversationService {
@@ -26,6 +30,37 @@ export class ConversationService {
   list(workspaceId: string) {
     this.bots.list(workspaceId);
     return this.conversations.list(workspaceId);
+  }
+  historyPage(workspaceId: string, limit: number, cursor?: string): ConversationHistoryPage {
+    let before: { updatedAt: string; id: string } | undefined;
+    if (cursor) {
+      try {
+        const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (
+          value.workspaceId !== workspaceId ||
+          typeof value.updatedAt !== 'string' ||
+          !Number.isFinite(Date.parse(value.updatedAt)) ||
+          typeof value.id !== 'string' ||
+          !value.id
+        )
+          throw new Error('Invalid cursor');
+        before = { updatedAt: value.updatedAt, id: value.id };
+      } catch {
+        throw new ApiError(400, 'Invalid conversation history cursor.');
+      }
+    }
+    this.bots.list(workspaceId);
+    const page = this.conversations.historyPage(workspaceId, limit, before);
+    const last = page.conversations.at(-1);
+    return {
+      conversations: page.conversations,
+      nextCursor:
+        page.hasMore && last
+          ? Buffer.from(
+              JSON.stringify({ workspaceId, updatedAt: last.updatedAt, id: last.id }),
+            ).toString('base64url')
+          : null,
+    };
   }
   privateChats(workspaceId: string) {
     this.bots.list(workspaceId);

@@ -727,6 +727,21 @@ export function createRoutes({
     } else if (resource === 'conversations') {
       if (!id && method === 'GET') {
         const workspaceId = url.searchParams.get('workspaceId') || 'default';
+        if (url.searchParams.get('kind') === 'history') {
+          const limit = z.coerce
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .default(12)
+            .parse(url.searchParams.get('limit') ?? undefined);
+          const cursor = z
+            .string()
+            .max(2048)
+            .optional()
+            .parse(url.searchParams.get('cursor') ?? undefined);
+          return send(response, conversations.historyPage(workspaceId, limit, cursor));
+        }
         return send(
           response,
           url.searchParams.get('kind') === 'private'

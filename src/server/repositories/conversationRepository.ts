@@ -49,6 +49,25 @@ export class ConversationRepository {
       )
       .map((row) => this.project(row));
   }
+  historyPage(workspaceId: string, limit: number, before?: { updatedAt: string; id: string }) {
+    const params: (string | number)[] = [workspaceId];
+    let boundary = '';
+    if (before) {
+      boundary = ' AND (c.updated_at < ? OR (c.updated_at = ? AND c.id < ?))';
+      params.push(before.updatedAt, before.updatedAt, before.id);
+    }
+    const rows = this.database.all(
+      `SELECT c.*, EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.status='streaming') AS is_working
+       FROM conversations c WHERE c.workspace_id=? AND c.kind IN ('private','bot')${boundary}
+       ORDER BY c.updated_at DESC,c.id DESC LIMIT ?`,
+      ...params,
+      limit + 1,
+    );
+    return {
+      conversations: rows.slice(0, limit).map((row) => this.project(row)),
+      hasMore: rows.length > limit,
+    };
+  }
   privateChats(workspaceId: string) {
     return this.database
       .all(

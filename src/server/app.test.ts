@@ -1747,24 +1747,39 @@ describe('Mukai bots and AI API', () => {
       enabled: false,
     });
   });
-  it('delivers an autonomous update in the SDK loop and follows up in its seeded conversation', async () => {
+  it('delivers an autonomous update in the SDK loop and follows up in its original private conversation', async () => {
     await configure();
     await request('/approvals', 'PUT', { mode: 'ask-for-approval' });
     mode = 'autonomous-update';
-    await chat('Send an update when the result is verified');
+    const originalPrompt = 'Send an update when the result is verified';
+    await chat(originalPrompt);
     const inbox = api.notifications.list('default');
     expect(inbox.total).toBe(1);
+    expect(inbox.items[0]).toMatchObject({
+      sourceKind: 'private',
+      sourceConversationId: 'bot-scout',
+      message: 'I verified the result and it is ready for review.',
+    });
     expect((await request<ApprovalState>('/approvals')).data.pending).toEqual([]);
     const thread = api.notifications.continue('default', inbox.items[0].id);
+    expect(thread.id).toBe(inbox.items[0].sourceConversationId);
+    const original = (await request<ChatMessage[]>(`/conversations/${thread.id}/messages`)).data;
+    expect(original).toHaveLength(2);
+    expect(original[0]).toMatchObject({ role: 'user', content: originalPrompt });
+    expect(original[1]).toMatchObject({ role: 'assistant', status: 'complete' });
     const previousCalls = calls.length;
     mode = 'normal';
     await privateChat(thread.id, 'What did you verify?');
     const history = (await request<ChatMessage[]>(`/conversations/${thread.id}/messages`)).data;
-    expect(history).toHaveLength(3);
-    expect(history[0]).toMatchObject({ role: 'assistant', content: inbox.items[0].message });
-    expect(history[1]).toMatchObject({ role: 'user', content: 'What did you verify?' });
-    expect(history[2].status).toBe('complete');
-    expect(JSON.stringify(calls[previousCalls].messages)).toContain(inbox.items[0].message);
+    expect(history).toHaveLength(original.length + 2);
+    expect(history.slice(0, original.length)).toEqual(original);
+    expect(history[original.length]).toMatchObject({
+      role: 'user',
+      content: 'What did you verify?',
+    });
+    expect(history.at(-1)).toMatchObject({ role: 'assistant', status: 'complete' });
+    expect(JSON.stringify(calls[previousCalls].messages)).toContain(originalPrompt);
+    expect(JSON.stringify(calls[previousCalls].messages)).toContain('What did you verify?');
   });
 
   it.each([

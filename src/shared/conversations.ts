@@ -22,3 +22,9 @@ export interface SpaceChatInput {
   text: string;
   botId: string | null;
 }
+
+/** Opt-in cursor page; legacy conversation list responses remain arrays. */
+export interface ConversationHistoryPage {
+  conversations: Conversation[];
+  nextCursor: string | null;
+}
