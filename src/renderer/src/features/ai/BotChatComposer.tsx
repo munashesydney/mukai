@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { ArrowUp, Paperclip, Square } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowUp, MessageSquareQuote, Paperclip, Square, X } from 'lucide-react';
 import type { Bot, ProviderSettings } from '../../../../shared/ai';
 import type { TrajectoryMessageStats } from '../../../../shared/trajectory';
 import type { ChatState } from '../../models/chat';
@@ -44,6 +44,10 @@ export function BotChatComposer({
   newChatError?: string;
   autoFocus?: boolean;
 }) {
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (state.reference && !state.loading) textarea.current?.focus();
+  }, [state.reference, state.loading]);
   const fileInput = useRef<HTMLInputElement>(null);
   const [changingModel, setChangingModel] = useState(false);
   const provider = providers.find((provider) =>
@@ -109,6 +113,21 @@ export function BotChatComposer({
           className={`composer${attachmentInput.dragging ? ' is-dragging-files' : ''}`}
           {...attachmentInput.dragProps}
         >
+          {state.reference && (
+            <div className="chat-quote-reference" title={state.reference.label}>
+              <p>{state.reference.text}</p>
+              <span className="chat-quote-reference-label">
+                <MessageSquareQuote size={13} aria-hidden="true" /> Selection
+              </span>
+              <button
+                type="button"
+                aria-label="Remove reference"
+                onClick={() => chatStore.reference(chatId, undefined)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
           {!!state.files.length && (
             <div className="ai-attachments ai-pending-attachments">
               {state.files.map((file) => (
@@ -125,6 +144,7 @@ export function BotChatComposer({
             </div>
           )}
           <textarea
+            ref={textarea}
             autoFocus={autoFocus}
             rows={2}
             aria-label={`Message ${bot.name}`}

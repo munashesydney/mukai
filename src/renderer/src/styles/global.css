@@ -1412,8 +1412,8 @@ p {
   background: var(--surface);
 }
 .composer:focus-within {
-  border-color: var(--theme-border);
-  box-shadow: 0 0 0 3px #eef5ea;
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 5px #213c2903;
 }
 .composer textarea {
   display: block;

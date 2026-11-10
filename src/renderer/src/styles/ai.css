@@ -3008,7 +3008,7 @@ video.artifact-media-preview {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.followup-copy span {
+.followup-copy > span {
   display: block;
   margin-top: 5px;
   font-size: 11px;
@@ -3073,7 +3073,7 @@ video.artifact-media-preview {
   margin: 12px 0;
   color: var(--ink);
 }
-.response-steering span {
+.response-steering > span {
   font-size: 11px;
   opacity: 0.6;
 }

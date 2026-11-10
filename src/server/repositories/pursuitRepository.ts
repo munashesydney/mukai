@@ -126,11 +126,13 @@ export class PursuitRepository {
       snapshot: JSON.parse(String(row.snapshot_json)) as Pursuit,
     };
   }
-  runs(id: string) {
+  runs(id: string, limit = 100, offset = 0) {
     return this.database
       .all(
-        'SELECT * FROM pursuit_runs WHERE pursuit_id=? ORDER BY started_at DESC,rowid DESC LIMIT 100',
+        'SELECT * FROM pursuit_runs WHERE pursuit_id=? ORDER BY started_at DESC,rowid DESC LIMIT ? OFFSET ?',
         id,
+        limit,
+        offset,
       )
       .map((row) => this.run(row));
   }

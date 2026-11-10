@@ -106,6 +106,16 @@ export class NotificationRepository {
     return this.database.transaction(() => {
       const notification = this.require(workspaceId, id);
       const conversations = new ConversationRepository(this.database);
+      // Private chats, including chats originally opened from a run update, stay in place.
+      if (notification.sourceKind === 'private') {
+        this.database.run(
+          'UPDATE bot_notifications SET conversation_id=?,read_at=COALESCE(read_at,?) WHERE id=?',
+          notification.sourceConversationId,
+          new Date().toISOString(),
+          id,
+        );
+        return conversations.find(notification.sourceConversationId)!;
+      }
       if (notification.conversationId) return conversations.find(notification.conversationId)!;
       const now = new Date().toISOString();
       const conversationId = randomUUID();

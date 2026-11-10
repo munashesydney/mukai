@@ -46,6 +46,7 @@ import { useApprovals } from './approvalStore';
 import { approvalBlocksConversation } from '../../../../shared/approvals';
 import { useChatActivity } from './useChatActivity';
 import { ChatActivityDrawer } from './ChatActivityDrawer';
+import { TextSelectionReference } from './TextSelectionReference';
 import { BotChatComposer } from './BotChatComposer';
 import { SteeringMessages } from './SteeringMessages';
 import { useWorkDisclosure } from './useWorkDisclosure';
@@ -101,14 +102,14 @@ export function BotChat({
     }
   });
   const composerVisible = Boolean(bot && (!requiresJoin || joined));
-  function joinChat() {
+  const joinChat = useCallback(() => {
     setJoined(true);
     try {
       localStorage.setItem(joinKey, '1');
     } catch {
       /* Keep the composer open for this visit. */
     }
-  }
+  }, [joinKey]);
   const chatId = (isBotConversation ? 'space:' : 'private:') + conversation.id;
   const chat = useChat(chatId, isBotConversation || Boolean(run?.active));
   const state = run?.active && !chat.busy ? { ...chat, busy: true } : chat;
@@ -190,6 +191,14 @@ export function BotChat({
     if (run?.active) void chatStore.queue(chatId);
     else void chatStore.send(chatId);
   }
+  const askReference = useCallback(
+    (text: string, label: string) => {
+      joinChat();
+      setView('Chat');
+      chatStore.reference(chatId, { text, label });
+    },
+    [chatId, joinChat],
+  );
   const openReview = useCallback(
     (changes: FileChangeSummary[], selectedId: string) => setReview({ changes, selectedId }),
     [],
@@ -439,6 +448,7 @@ export function BotChat({
                             [...state.messages].reverse().find((turn) => turn.role === 'user')
                               ?.requestId
                         }
+                        onAsk={askReference}
                         onReview={openReview}
                         onRetry={retryResponse}
                         onSave={run ? saveMessage : undefined}
@@ -562,6 +572,7 @@ const MessageRow = memo(function MessageRow({
   stats,
   latestTurn,
   canRetry,
+  onAsk,
   onReview,
   onRetry,
   onSave,
@@ -575,6 +586,7 @@ const MessageRow = memo(function MessageRow({
   stats?: TrajectoryMessageStats;
   latestTurn: boolean;
   canRetry: boolean;
+  onAsk: (text: string, label: string) => void;
   onReview: (changes: FileChangeSummary[], selectedId: string) => void;
   onRetry: (requestId: string) => void;
   onSave?: (message: ChatMessage) => void;
@@ -604,7 +616,16 @@ const MessageRow = memo(function MessageRow({
             )}
             <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
           </div>
-          {message.role === 'assistant' && <ResponseActivity message={message} {...disclosure} />}
+          {message.role === 'assistant' && (
+            <TextSelectionReference
+              botName={author?.name || message.authorName || bot?.name || 'Bot'}
+              onAsk={(text) =>
+                onAsk(text, author?.name || message.authorName || bot?.name || 'Bot')
+              }
+            >
+              <ResponseActivity message={message} {...disclosure} />
+            </TextSelectionReference>
+          )}
           {message.notificationSource && onOpenSource && (
             <NotificationSourceLink source={message.notificationSource} open={onOpenSource} />
           )}

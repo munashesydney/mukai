@@ -2,7 +2,7 @@ import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 import { CornerDownRight } from 'lucide-react';
 import type { ChatMessage } from '../../../../shared/ai';
 import { Avatar } from '../../components/ui/Avatar';
-import { MessageMarkdown } from './MessageMarkdown';
+import { ReferencedMessage } from './ReferencedMessage';
 import { AttachmentCard } from './AttachmentCard';
 
 export function SteeringMessages({
@@ -36,7 +36,7 @@ export function SteeringMessages({
                     <title>Steered this task</title>
                   </CornerDownRight>
                 </div>
-                <MessageMarkdown text={part.text} />
+                <ReferencedMessage text={part.text} />
                 {!!part.attachments?.length && (
                   <div className="ai-attachments">
                     {part.attachments.map((file) => (

@@ -6,6 +6,7 @@ export interface ChatState {
   loading: boolean;
   busy: boolean;
   error: string;
+  reference?: { text: string; label: string };
   text: string;
   files: Attachment[];
   uploading: boolean;
@@ -14,6 +15,7 @@ export interface ChatState {
   submittingFollowup: boolean;
 }
 export interface ChatDraft {
+  reference?: { text: string; label: string };
   text: string;
   requestId: string;
 }

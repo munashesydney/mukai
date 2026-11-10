@@ -673,8 +673,20 @@ export function createRoutes({
           response,
           pursuits.list(url.searchParams.get('workspaceId') || 'default'),
         );
-      if (id && !action && method === 'GET')
-        return sendRead(request, response, pursuits.detail(id));
+      if (id && !action && method === 'GET') {
+        const runLimit = z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .parse(url.searchParams.get('runLimit') ?? 100);
+        const runOffset = z.coerce
+          .number()
+          .int()
+          .nonnegative()
+          .parse(url.searchParams.get('runOffset') ?? 0);
+        return sendRead(request, response, pursuits.detail(id, runLimit, runOffset));
+      }
       if (id && action === 'workpad' && method === 'GET') {
         if (url.searchParams.has('entryId'))
           return send(

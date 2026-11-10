@@ -1169,11 +1169,22 @@ async function main() {
       await wait(
         `document.querySelector('.conversation-stats')?.textContent.includes('2 steps') && document.querySelector('.conversation-stats')?.textContent.includes('tok/s') && document.querySelector('.conversation-stats')?.textContent.includes('Cache hit 75%')`,
       );
-      await click('.turn-footer.is-latest .chat-stats-pill');
-      await wait(
-        `document.querySelector('.tooltip-bubble:popover-open')?.textContent.includes('Generation speed')`,
-      );
-      await click('.turn-footer.is-latest .chat-stats-pill');
+      for (const selector of [
+        '.turn-footer.is-latest .chat-stats-pill',
+        '.conversation-stats .chat-stats-pill',
+      ]) {
+        await click(selector);
+        const rows = await evaluate<Record<string, string>>(`Object.fromEntries(
+          Array.from(document.querySelectorAll('.tooltip-bubble:popover-open .chat-stats-details > div'),
+            row => [row.querySelector('dt').textContent, row.querySelector('dd').textContent])
+        )`);
+        assert.equal(rows['Cache hit (reported input)'], '75%');
+        assert.equal(rows['Uncached input'], '25');
+        assert.equal(rows['Cached input'], '75');
+        assert.equal(rows['Model output'], '40');
+        if (selector.startsWith('.turn-footer')) assert(rows['Generation speed']);
+        await click(selector);
+      }
       await click('.conversation-stats .context-meter');
       await wait(
         `document.querySelector('.tooltip-bubble:popover-open .context-meter-details')?.textContent.includes('Last input: 100 tokens')`,

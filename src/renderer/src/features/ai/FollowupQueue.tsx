@@ -4,6 +4,7 @@ import type { ChatState } from '../../models/chat';
 import { chatStore } from './chatStore';
 import { AttachmentCard } from './AttachmentCard';
 import { FollowupEditor } from './FollowupEditor';
+import { ReferencedMessage } from './ReferencedMessage';
 import type { InputCapabilities } from '../../../../shared/modelCapabilities';
 
 export function FollowupQueue({
@@ -44,7 +45,7 @@ export function FollowupQueue({
           ) : (
             <>
               <div className="followup-copy">
-                <p>{item.text}</p>
+                <ReferencedMessage text={item.text} />
                 {!!item.attachments?.length && (
                   <div className="ai-attachments">
                     {item.attachments.map((file) => (

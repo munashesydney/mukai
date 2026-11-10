@@ -10,6 +10,11 @@ import { conversationService } from '../../services/conversationService';
 import { chatConversationId } from '../../services/chatTarget';
 import { startPoll } from '../../services/poll';
 import { approvalStore } from './approvalStore';
+import { formatReference } from './messageReference';
+
+function referencedText(state: ChatState) {
+  return formatReference(state.text, state.reference);
+}
 
 const states = new Map<string, ChatState>();
 const listeners = new Set<() => void>();
@@ -20,6 +25,7 @@ const followupWatching = new Set<string>();
 const followupVersions = new Map<string, number>();
 function get(id: string) {
   if (!states.has(id)) {
+    let reference: ChatState['reference'];
     let text = '',
       requestId = crypto.randomUUID();
     try {
@@ -37,6 +43,8 @@ function get(id: string) {
         /^[a-f0-9-]{36}$/i.test(saved.requestId)
       ) {
         text = saved.text;
+        if (typeof saved.reference?.text === 'string' && typeof saved.reference.label === 'string')
+          reference = saved.reference;
         requestId = saved.requestId as typeof requestId;
       }
     } catch {
@@ -48,6 +56,7 @@ function get(id: string) {
       busy: false,
       error: '',
       text,
+      reference,
       files: [],
       uploading: false,
       requestId,
@@ -60,12 +69,16 @@ function get(id: string) {
 function update(id: string, value: Partial<ChatState>) {
   if (forgotten.has(id)) return;
   states.set(id, { ...get(id), ...value });
-  if (value.text !== undefined || value.requestId !== undefined) {
+  if ('reference' in value || value.text !== undefined || value.requestId !== undefined) {
     try {
       const state = get(id);
       localStorage.setItem(
         `mukai.draft.${id}`,
-        JSON.stringify({ text: state.text, requestId: state.requestId }),
+        JSON.stringify({
+          text: state.text,
+          reference: state.reference,
+          requestId: state.requestId,
+        }),
       );
     } catch {
       /* An unavailable draft cache never prevents sending to the durable backend. */
@@ -136,12 +149,19 @@ export const chatStore = {
         ...(accepted || acceptedFollowup || appliedFollowup
           ? {
               text:
-                get(id).text.trim() ===
+                referencedText(get(id)).trim() ===
                 (accepted?.content ||
                   acceptedFollowup?.text ||
                   (appliedFollowup?.type === 'steering' ? appliedFollowup.text : ''))
                   ? ''
                   : get(id).text,
+              reference:
+                referencedText(get(id)).trim() ===
+                (accepted?.content ||
+                  acceptedFollowup?.text ||
+                  (appliedFollowup?.type === 'steering' ? appliedFollowup.text : ''))
+                  ? undefined
+                  : get(id).reference,
               requestId: crypto.randomUUID(),
             }
           : {}),
@@ -153,6 +173,9 @@ export const chatStore = {
     } finally {
       loading.delete(id);
     }
+  },
+  reference(id: string, reference: ChatState['reference']) {
+    update(id, { reference });
   },
   draft(id: string, text: string) {
     update(id, { text });
@@ -167,7 +190,7 @@ export const chatStore = {
     try {
       const followups = await chatService.queue(id, {
         id: state.requestId,
-        text: state.text.trim(),
+        text: referencedText(state).trim(),
         attachmentIds: state.files.map((file) => file.id),
         ...(botId ? { botId } : {}),
       });
@@ -176,6 +199,7 @@ export const chatStore = {
         ...(get(id).requestId === state.requestId
           ? {
               text: get(id).text === state.text ? '' : get(id).text,
+              reference: get(id).reference === state.reference ? undefined : get(id).reference,
               files: get(id).files.filter(
                 (file) => !state.files.some((sent) => sent.id === file.id),
               ),
@@ -246,7 +270,12 @@ export const chatStore = {
     if (state.busy || state.uploading || (!retryId && !state.text.trim() && !state.files.length))
       return;
     const requestId = retryId || state.requestId;
-    const draft = { text: state.text, files: state.files, requestId: state.requestId };
+    const draft = {
+      text: state.text,
+      reference: state.reference,
+      files: state.files,
+      requestId: state.requestId,
+    };
     const optimisticId = crypto.randomUUID();
     active.add(id);
     // The composer belongs to the next message, not the one being sent: clear it and show the
@@ -257,6 +286,7 @@ export const chatStore = {
         busy: true,
         error: '',
         text: '',
+        reference: undefined,
         files: [],
         requestId: crypto.randomUUID(),
         messages: [
@@ -266,7 +296,7 @@ export const chatStore = {
             requestId,
             botId: '',
             role: 'user',
-            content: draft.text,
+            content: referencedText(state),
             status: 'complete',
             error: null,
             createdAt: new Date().toISOString(),
@@ -286,6 +316,7 @@ export const chatStore = {
         // The composer was already cleared when the send began; it only needs clearing again if a
         // stall handed the prompt back. Anything the user typed since then stays untouched.
         text: current.text.trim() === draft.text.trim() ? '' : current.text,
+        reference: current.reference === draft.reference ? undefined : current.reference,
         files: current.files.filter((file) => !draft.files.some((sent) => sent.id === file.id)),
         requestId: crypto.randomUUID(),
       });
@@ -299,6 +330,7 @@ export const chatStore = {
       const typed = Boolean(current.text.trim());
       update(id, {
         text: typed ? current.text : draft.text,
+        reference: typed || current.reference ? current.reference : draft.reference,
         files: current.files.length ? current.files : draft.files,
         requestId: typed ? current.requestId : draft.requestId,
         messages: current.messages.filter((message) => message.id !== optimisticId),
@@ -407,7 +439,7 @@ export const chatStore = {
         id,
         {
           requestId,
-          text: retryId ? '' : state.text,
+          text: retryId ? '' : referencedText(state),
           ...(retryId && (id.startsWith('private:') || id.startsWith('space:'))
             ? {
                 retryMessageId: state.messages.find(

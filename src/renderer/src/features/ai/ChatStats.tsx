@@ -13,6 +13,7 @@ const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumF
 
 type Reading = {
   total?: number;
+  output?: number;
   estimated?: boolean;
   steps: number;
   cacheInput: number;
@@ -29,6 +30,7 @@ function turnReading(usage?: ContextUsage, stats?: TrajectoryMessageStats): Read
       (stats?.input !== undefined && stats.output !== undefined
         ? stats.input + stats.output
         : undefined),
+    output: stats?.output,
     estimated: usage?.runEstimated,
     steps: stats?.steps ?? 0,
     cacheInput: stats?.cacheInput ?? 0,
@@ -82,14 +84,22 @@ function UsagePill({
         : `${reading.estimated ? '≈ ' : ''}${reading.total.toLocaleString()}`,
     ],
     [
+      'Cache hit (reported input)',
+      hit ?? (reading.steps || reading.total ? 'Unavailable' : undefined),
+    ],
+    [
+      'Uncached input',
+      hit === undefined ? undefined : (reading.cacheInput - reading.cached).toLocaleString(),
+    ],
+    ['Cached input', hit === undefined ? undefined : reading.cached.toLocaleString()],
+    [
       stats?.input === undefined ? 'Last model input' : 'Model input',
       (stats?.input ?? usage?.inputTokens)?.toLocaleString(),
     ],
     [
-      stats?.output === undefined ? 'Last model output' : 'Model output',
-      (stats?.output ?? usage?.outputTokens)?.toLocaleString(),
+      reading.output === undefined ? 'Last model output' : 'Model output',
+      (reading.output ?? usage?.outputTokens)?.toLocaleString(),
     ],
-    ['Cache hit (reported input)', hit],
     ['Generation speed', rate],
     ['Recorded steps', reading.steps ? String(reading.steps) : undefined],
     ['Context used', context],
@@ -150,6 +160,7 @@ export function ConversationStats({
       if (message.role !== 'assistant') continue;
       const turn = turnReading(message.contextUsage, stats.get(message.id));
       if (turn.total !== undefined) total.total = (total.total ?? 0) + turn.total;
+      if (turn.output !== undefined) total.output = (total.output ?? 0) + turn.output;
       total.estimated ||= turn.estimated;
       total.steps += turn.steps;
       total.cacheInput += turn.cacheInput;

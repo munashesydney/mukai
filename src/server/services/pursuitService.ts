@@ -127,10 +127,10 @@ export class PursuitService {
     this.bots.list(workspaceId);
     return this.repository.list(workspaceId);
   }
-  detail(id: string) {
+  detail(id: string, runLimit = 100, runOffset = 0) {
     return {
       pursuit: this.require(id),
-      runs: this.repository.runs(id),
+      runs: this.repository.runs(id, runLimit, runOffset),
       runCount: this.repository.runCount(id),
     };
   }

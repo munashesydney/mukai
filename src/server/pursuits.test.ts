@@ -301,6 +301,28 @@ afterEach(async () => {
   }
 });
 describe('AI-owned pursuits and scheduled runs', () => {
+  it('pages run history beyond the default recent runs and validates page bounds', async () => {
+    const repository = new PursuitRepository(api.store);
+    const p = repository.create('default', 'scout', input, Date.now());
+    const ids: string[] = [];
+    for (let index = 0; index < 105; index++) {
+      repository.setStatus(p.id, 'active', '', Date.now());
+      const run = repository.claim(p.id, 'manual', Date.now())!;
+      ids.unshift(run.id);
+      repository.finish(run.id, 'complete', 'Recorded.', null, 'waiting_for_you', Date.now());
+    }
+    const defaults = (await request<PursuitDetail>(`/pursuits/${p.id}`)).data;
+    expect(defaults.runs).toHaveLength(100);
+    expect(defaults.runCount).toBe(105);
+    const first = (await request<PursuitDetail>(`/pursuits/${p.id}?runLimit=6`)).data;
+    expect(first.runs.map((run) => run.id)).toEqual(ids.slice(0, 6));
+    const last = (await request<PursuitDetail>(`/pursuits/${p.id}?runLimit=6&runOffset=100`)).data;
+    expect(last.runs.map((run) => run.id)).toEqual(ids.slice(100));
+    expect(last.runCount).toBe(105);
+    for (const query of ['runLimit=0', 'runLimit=101', 'runOffset=-1', 'runOffset=1.5']) {
+      expect((await request(`/pursuits/${p.id}?${query}`)).response.status).toBe(400);
+    }
+  });
   it('queues a reply in the original run and links a notification follow-up back to it', async () => {
     const pursuit = await createWithAI();
     mode = 'completed';

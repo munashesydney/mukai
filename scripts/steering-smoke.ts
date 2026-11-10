@@ -11,6 +11,7 @@ import { seedTestBot } from '../src/server/testFixtures';
 import { ConversationRepository } from '../src/server/repositories/conversationRepository';
 import { wavFixture, mp4Fixture } from '../src/server/testMediaFixtures';
 import sharp from 'sharp';
+import { formatReference } from '../src/renderer/src/features/ai/messageReference';
 
 async function close(server: Server) {
   server.closeAllConnections();
@@ -234,13 +235,33 @@ async function main() {
     await page.getByRole('button', { name: 'Download guidance.txt', exact: true }).click();
     assert.equal((await downloaded).suggestedFilename(), 'guidance.txt');
     assert.equal(await page.getByRole('dialog').count(), 0);
-    await composer.fill('Focus on the mobile layout.');
+    const reference = {
+      label: 'Layout review',
+      text: 'The mobile layout needs a compact header.\n\nKeep the navigation easy to reach. '.repeat(
+        30,
+      ),
+    };
+    await composer.fill(formatReference('Focus on the mobile layout.', reference));
     await page.getByRole('button', { name: 'Queue follow-up', exact: true }).click();
     await page.getByRole('button', { name: 'Steer', exact: true }).waitFor();
+    assert.equal(await page.locator('.followup-copy .message-reference').count(), 1);
+    assert.equal(
+      await page.locator('.followup-copy .message-reference').getAttribute('open'),
+      null,
+    );
+    assert.equal(
+      await page.locator('.followup-copy .ai-markdown').innerText(),
+      'Focus on the mobile layout.',
+    );
     assert.equal(await page.locator('.followup-row .ai-attachment').count(), 4);
     await checkAttachmentPreviews(page.locator('.followup-row').first(), previewNames);
     assert.equal(await page.locator('.ai-pending-attachments .ai-attachment').count(), 0);
     await page.getByRole('button', { name: 'Edit queued message', exact: true }).click();
+    assert.equal(
+      await page.getByRole('textbox', { name: 'Edit queued message' }).inputValue(),
+      'Focus on the mobile layout.',
+    );
+    assert.equal(await page.locator('.followup-edit .message-reference').count(), 1);
     await page
       .getByRole('textbox', { name: 'Edit queued message' })
       .fill('Use the mobile layout and keep the API stable.');
@@ -333,6 +354,7 @@ async function main() {
     await page.getByRole('button', { name: 'Send message', exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('.followup-queue'));
     assert(inputs.at(-1)!.includes('Use the mobile layout and keep the API stable.'));
+    assert(inputs.at(-1)!.includes('The mobile layout needs a compact header.'));
     assert(!inputs.at(-1)!.includes('Then summarize the changes.'));
     assert(inputs.at(-1)!.includes('Revised reference document'));
     assert(inputs.at(-1)!.includes('image_url'));
@@ -342,6 +364,7 @@ async function main() {
     assert.equal(inputs.length, 2);
     const userSteer = page.locator('.ai-message--steering');
     await userSteer.waitFor();
+    assert.equal(await userSteer.locator('.message-reference').count(), 1);
     assert.equal(await userSteer.locator('.ai-attachment').count(), 4);
     await checkAttachmentPreviews(userSteer, [
       'revised.txt',
@@ -366,6 +389,11 @@ async function main() {
     assert.match(await worked.innerText(), /^Worked for /);
     await worked.click();
     await page.locator('.response-steering').waitFor();
+    const selection = page.locator('.response-steering .message-reference');
+    assert.equal(await selection.getAttribute('open'), null);
+    await selection.locator('summary').click();
+    assert.equal(await selection.locator('.message-reference-full').innerText(), reference.text);
+    await selection.locator('summary').click();
     assert.equal(await page.locator('.response-steering .ai-attachment').count(), 4);
     await checkAttachmentPreviews(page.locator('.response-steering'), [
       'revised.txt',

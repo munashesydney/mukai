@@ -36,6 +36,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('Durable chat drafts and transport recovery', () => {
+  it('sends references as quoted context, restores them on failure, and clears accepted references', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json([])),
+    );
+    const { chatStore, useChat } = await import('./chatStore');
+    const { chatService } = await import('../../services/chatService');
+    const id = 'private:quote-chat';
+    await chatStore.load(id);
+    const reference = { text: 'First line\nSecond line', label: 'Scout' };
+    chatStore.reference(id, reference);
+    chatStore.draft(id, 'Explain this');
+    let state!: ChatState;
+    const inspect = () => {
+      renderToStaticMarkup(
+        createElement(() => {
+          state = useChat(id);
+          return null;
+        }),
+      );
+      return state;
+    };
+    const stream = vi.spyOn(chatService, 'stream').mockRejectedValueOnce(new Error('Offline'));
+    await chatStore.send(id);
+    expect(stream.mock.calls[0][1].text).toBe(
+      'Regarding Scout:\n> First line\n> Second line\n\nExplain this',
+    );
+    expect(inspect().reference).toEqual(reference);
+    expect(inspect().text).toBe('Explain this');
+    stream.mockImplementationOnce(async (_id, input, emit) => {
+      emit({ type: 'start', user: user(input.requestId), assistant: assistant(input.requestId) });
+    });
+    await chatStore.send(id);
+    expect(inspect().reference).toBeUndefined();
+    expect(inspect().text).toBe('');
+
+    chatStore.reference(id, reference);
+    chatStore.draft(id, 'Follow up');
+    const queue = vi.spyOn(chatService, 'queue').mockResolvedValueOnce([]);
+    await chatStore.queue(id);
+    expect(queue.mock.calls[0][1].text).toContain('> Second line\n\nFollow up');
+    expect(inspect().reference).toBeUndefined();
+  });
+
   it('uploads while working, retains files on queue failure, and clears only an accepted attachment draft', async () => {
     vi.stubGlobal(
       'fetch',

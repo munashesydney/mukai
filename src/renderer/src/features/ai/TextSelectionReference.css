@@ -1,0 +1,74 @@
+.ask-selection {
+  position: fixed;
+  z-index: 1000;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 180px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface, #fff);
+  color: var(--ink);
+  box-shadow: 0 4px 18px #0002;
+  cursor: pointer;
+}
+.chat-quote-reference {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  width: 160px;
+  max-width: calc(100% - 32px);
+  min-height: 130px;
+  gap: 16px;
+  margin: 14px 16px 0;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-muted);
+  border-radius: 14px;
+  font-size: 12px;
+}
+.chat-quote-reference p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 0;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.chat-quote-reference-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.chat-quote-reference button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--surface);
+  cursor: pointer;
+}
+.chat-quote-reference button svg {
+  width: 11px;
+  height: 11px;
+}
+.chat-quote-reference button:hover {
+  opacity: 0.8;
+}
+.chat-quote-reference button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}

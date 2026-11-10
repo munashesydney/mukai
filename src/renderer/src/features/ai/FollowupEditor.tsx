@@ -10,6 +10,8 @@ import { errorText } from '../../utils/errors';
 import { AttachmentCard } from './AttachmentCard';
 import { chatStore } from './chatStore';
 import { useAttachmentInput } from './useAttachmentInput';
+import { formatReference, splitReference } from './messageReference';
+import { ReferencePreview } from './ReferencedMessage';
 
 export function FollowupEditor({
   chatId,
@@ -26,7 +28,8 @@ export function FollowupEditor({
   submitting: boolean;
   onDone: () => void;
 }) {
-  const [text, setText] = useState(item.text);
+  const [original] = useState(() => splitReference(item.text));
+  const [text, setText] = useState(original.text);
   const [files, setFiles] = useState(item.attachments || []);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +90,7 @@ export function FollowupEditor({
       className={`followup-edit${attachmentInput.dragging ? ' is-dragging-files' : ''}`}
       {...attachmentInput.dragProps}
     >
+      {original.reference && <ReferencePreview reference={original.reference} />}
       <textarea
         aria-label="Edit queued message"
         autoFocus
@@ -141,7 +145,7 @@ export function FollowupEditor({
               await chatStore.followup(chatId, {
                 action: 'edit',
                 id: item.id,
-                text: text.trim(),
+                text: formatReference(text.trim(), original.reference),
                 attachmentIds: files.map((file) => file.id),
               })
             ) {

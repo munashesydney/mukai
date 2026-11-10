@@ -104,6 +104,7 @@ describe('Autonomous updates and conversation history', () => {
     );
   });
   it('notifies without waiting, deduplicates retries, and continues as the bot’s first message', async () => {
+    api.store.run("UPDATE conversations SET kind='pursuit_run' WHERE id='bot-scout'");
     const source = message('bot-scout');
     const ask = vi.fn();
     const tools = communicateTools({
@@ -147,7 +148,7 @@ describe('Autonomous updates and conversation history', () => {
       notificationSource: {
         conversationId: 'bot-scout',
         messageId: source,
-        kind: 'private',
+        kind: 'pursuit_run',
       },
     });
     expect((await request<NotificationInbox>('/notifications')).data.unread).toBe(0);
@@ -156,6 +157,34 @@ describe('Autonomous updates and conversation history', () => {
     expect(
       (await request<ChatMessage[]>(`/conversations/${first.data.id}/messages`)).data,
     ).toHaveLength(1);
+  });
+
+  it('returns normal chat updates to their source, including a chat created from a run', async () => {
+    const source = message('bot-scout');
+    const update = (messageId: string, call: string) =>
+      api.notifications.notify(scoutBot(), messageId, call, {
+        title: 'Update',
+        message: 'New finding',
+      }).notificationId;
+    const normal = update(source, 'normal');
+    const first = await request<Conversation>(`/notifications/${normal}/continue`, 'POST');
+    expect(first.data.id).toBe('bot-scout');
+    expect((await request<ChatMessage[]>('/conversations/bot-scout/messages')).data).toHaveLength(
+      1,
+    );
+    expect((await request<NotificationInbox>('/notifications')).data.unread).toBe(0);
+
+    api.store.run("UPDATE conversations SET kind='pursuit_run' WHERE id='bot-scout'");
+    const run = update(source, 'run');
+    const opened = await request<Conversation>(`/notifications/${run}/continue`, 'POST');
+    expect(opened.data.kind).toBe('private');
+    expect(opened.data.id).not.toBe('bot-scout');
+    const next = update(message(opened.data.id), 'next');
+    const returned = await request<Conversation>(`/notifications/${next}/continue`, 'POST');
+    expect(returned.data.id).toBe(opened.data.id);
+    expect((await request<Conversation>(`/notifications/${next}/continue`, 'POST')).data.id).toBe(
+      opened.data.id,
+    );
   });
 
   it('persists notifications across restart and refuses workspace/source spoofing', async () => {

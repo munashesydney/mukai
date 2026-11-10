@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { Conversation } from '../../../../shared/conversations';
 import type { useNotifications } from './useNotifications';
+import { chatStore } from '../ai/chatStore';
 import { notificationService } from '../../services/notificationService';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
 import { errorText } from '../../utils/errors';
@@ -61,8 +62,16 @@ export function NotificationsPage({
     setPending(id);
     setError('');
     try {
-      if (action === 'continue') onOpen(await notificationService.continue(workspaceId, id));
-      else await notificationService.mark(workspaceId, id, action);
+      if (action === 'continue') {
+        const conversation = await notificationService.continue(workspaceId, id);
+        const notification = inbox.items.find((item) => item.id === id);
+        if (notification)
+          chatStore.reference(`private:${conversation.id}`, {
+            text: notification.message,
+            label: notification.title,
+          });
+        onOpen(conversation);
+      } else await notificationService.mark(workspaceId, id, action);
       inbox.refresh();
     } catch (caught) {
       setError(errorText(caught));
@@ -174,7 +183,7 @@ export function NotificationsPage({
                         onClick={() => void act(item.id, 'continue')}
                       >
                         <MessageSquarePlus size={15} />
-                        {item.conversationId ? 'Open conversation' : 'Continue in chat'}
+                        Continue in chat
                         <ArrowUpRight size={14} />
                       </button>
                       <div>

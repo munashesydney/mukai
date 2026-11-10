@@ -22,6 +22,7 @@ import {
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
 import { MessageMarkdown } from './MessageMarkdown';
+import { ReferencedMessage } from './ReferencedMessage';
 import { AttachmentCard } from './AttachmentCard';
 import { ToolImagePreview } from './ToolImagePreview';
 import { ResponseReferenceContext } from './responseReferenceContext';
@@ -449,7 +450,7 @@ function ProcessTranscript({
           return (
             <div key={part.id} className="response-steering">
               <span>You steered this task</span>
-              <p>{part.text}</p>
+              <ReferencedMessage text={part.text} />
               {!!part.attachments?.length && (
                 <div className="ai-attachments">
                   {part.attachments.map((file) => (

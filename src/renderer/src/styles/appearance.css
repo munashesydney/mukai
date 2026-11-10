@@ -379,8 +379,8 @@
   box-shadow: 0 2px 8px #12232e04;
 }
 .composer:focus-within {
-  border-color: var(--theme-accent);
-  box-shadow: 0 0 0 3px var(--theme-soft);
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 8px #12232e04;
 }
 .composer textarea {
   padding: 16px 17px 8px;
