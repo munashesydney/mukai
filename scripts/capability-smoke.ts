@@ -158,12 +158,28 @@ async function main() {
       'variable save',
     );
     assert(!(await evaluate<boolean>('document.body.innerText.includes("ui-private-value")')));
-    await click('.capability-panel button', 'Import .env');
+    await click('button[aria-label="Environment actions"]');
+    await click('.popup-menu button', 'Import .env');
     await fill('.capability-import textarea', 'SECOND_KEY=another-private-value');
     await checkSheet('import');
     await click('.capability-import button', 'Preview import');
     await click('.capability-import button', 'Save 1 variables');
     await wait('document.body.innerText.includes("SECOND_KEY")', 'env import');
+    await fill('input[aria-label="Search environment variables"]', 'second_key');
+    await wait(
+      'document.querySelectorAll(".capability-panel .provider-card").length===1 && document.querySelector(".provider-card").textContent.includes("SECOND_KEY")',
+      'filtered variables',
+    );
+    await fill('input[aria-label="Search environment variables"]', 'no-such-variable');
+    await wait(
+      'document.querySelector(".provider-empty")?.textContent.includes("No matching variables")',
+      'empty search',
+    );
+    await click('button[aria-label="Clear variable search"]');
+    await wait(
+      'document.querySelectorAll(".capability-panel .provider-card").length===2',
+      'cleared search',
+    );
     await click('.rail-link', 'Tools');
     await click('.sidebar-row', 'Custom tools');
     await wait(

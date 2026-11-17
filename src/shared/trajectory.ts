@@ -1,3 +1,57 @@
+export type TrajectoryContextKind = 'retrieved-memory' | 'working-memory' | 'runtime';
+
+export const retrievedMemoryPrefix = 'Retrieved memory reference data.';
+export const workingMemoryPrefix = 'Working memory from earlier activity';
+
+export function trajectoryContextKind(text: string): TrajectoryContextKind {
+  if (text.startsWith(retrievedMemoryPrefix)) return 'retrieved-memory';
+  if (text.startsWith(workingMemoryPrefix)) return 'working-memory';
+  return 'runtime';
+}
+
+const contextPreviewLimit = 240;
+
+export function trajectoryContextPreview(
+  text: string,
+  kind: TrajectoryContextKind,
+  redact: (value: string) => string,
+): string {
+  if (kind === 'retrieved-memory') {
+    const facts = text
+      .split('\n')
+      .slice(1)
+      .flatMap((line) => {
+        if (!line.startsWith('{')) return [];
+        try {
+          const { fact } = JSON.parse(line);
+          return typeof fact === 'string' && fact.trim()
+            ? [redact(fact).replace(/\s+/g, ' ').trim()]
+            : [];
+        } catch {
+          return [];
+        }
+      });
+    if (!facts.length) return 'Open to see the retrieved memory sent to the model.';
+    const label = facts.length === 1 ? '1 fact' : `${facts.length} facts`;
+    const excerpts = facts
+      .slice(0, 3)
+      .map((fact) => (fact.length > 70 ? fact.slice(0, 69) + '…' : fact));
+    return `${label} · ${excerpts.join(' · ')}`;
+  }
+  if (kind === 'working-memory') {
+    const marker = '<working-memory>';
+    const start = text.indexOf(marker);
+    if (start >= 0)
+      return text
+        .slice(start + marker.length)
+        .split('</working-memory>')[0]
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, contextPreviewLimit);
+  }
+  return text.slice(0, contextPreviewLimit);
+}
+
 export interface TrajectoryRecord {
   id: number;
   messageId: string;
@@ -17,6 +71,7 @@ export interface TrajectoryRecord {
   systemKey?: string;
   systemPreview?: string;
   contextPreviews?: string[];
+  contextKinds?: TrajectoryContextKind[];
   usage?: { input?: number; output?: number; cached?: number; reasoning?: number };
 }
 

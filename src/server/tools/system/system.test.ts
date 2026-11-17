@@ -24,7 +24,9 @@ describe('system tool family', () => {
     expect(tool?.name).toBe('System');
     expect(tool?.actions).toContain('list_env_vars');
     expect(tool?.actions).toContain('stop_generation');
-    expect(tool?.actions).toHaveLength(2);
+    expect(tool?.actions).toContain('context.status');
+    expect(tool?.actions).toContain('context.compact');
+    expect(tool?.actions).toHaveLength(4);
   });
 
   it('pages by name without a query and stops paging on the last slice', () => {
@@ -135,6 +137,41 @@ describe('system tool family', () => {
       action: 'list_env_vars',
     });
     expect(onActivity.mock.calls.at(-1)?.[0]).toMatchObject({ status: 'complete' });
+  });
+});
+
+it('returns live context usage and queues compaction through response-local controls', async () => {
+  const status = vi.fn(() => ({
+    usedTokens: 50000,
+    totalTokens: 128000,
+    remainingTokens: 78000,
+    usage: '50,000 / 128,000 tokens',
+    estimated: true,
+    compactions: 0,
+  }));
+  const requestCompaction = vi.fn();
+  const onActivity = vi.fn();
+  const tools = systemTools({
+    bot: { id: 'scout', workspaceId: 'default' } as Bot,
+    conversationId: 'conversation',
+    signal: new AbortController().signal,
+    onActivity,
+    contextControl: { status, requestCompaction },
+  });
+  expect(await tools.context!.execute!({ action: 'status' }, options)).toMatchObject({
+    ok: true,
+    result: { usedTokens: 50000, totalTokens: 128000 },
+  });
+  expect(requestCompaction).not.toHaveBeenCalled();
+  expect(await tools.context!.execute!({ action: 'compact' }, options)).toMatchObject({
+    ok: true,
+    result: { queued: true, before: { usedTokens: 50000 } },
+  });
+  expect(requestCompaction).toHaveBeenCalledTimes(1);
+  expect(onActivity.mock.calls.at(-1)?.[0]).toMatchObject({
+    tool: 'context',
+    action: 'compact',
+    status: 'complete',
   });
 });
 

@@ -73,6 +73,7 @@ import {
 } from './contextPolicy';
 import { ProgressGuard } from './progressGuard';
 import { ChatTrajectory } from './chatTrajectory';
+import { retrievedMemoryPrefix } from '../../shared/trajectory';
 import type { TrajectoryRepository } from '../repositories/trajectoryRepository';
 import { contextSummarizer } from './contextSummary';
 import {
@@ -205,7 +206,9 @@ export class ChatService {
     this.followups?.recover();
   }
   trajectoryHistory(conversationId: string, fromMessageId?: string) {
-    return this.trajectory.list(conversationId, fromMessageId);
+    return this.trajectory.list(conversationId, fromMessageId, (text) =>
+      this.diagnostics.redactSensitiveText(text),
+    );
   }
   trajectoryStats(conversationId: string) {
     return this.trajectory.stats(conversationId);
@@ -1093,6 +1096,7 @@ export class ChatService {
     };
     try {
       let stopGeneration: { finalResponse?: string } | undefined;
+      let contextCompactionRequested = false;
       const scope = this.tools.checkpointScope(bot);
       const internalExecutors = new Map<string, NonNullable<ToolSet[string]['execute']>>();
       const tools: ToolSet = {
@@ -1166,18 +1170,32 @@ export class ChatService {
         ),
         ...runtime?.tools,
       };
-      // Response control remains available even if workspace facts were not assigned.
-      // This fallback exposes only stop_generation, never environment-variable access.
-      if (!tools.system)
-        Object.assign(
-          tools,
-          systemTools({
-            bot,
-            conversationId,
-            signal: generation.controller.signal,
-            onActivity,
-          }),
-        );
+      // Response-local controls are always available, including when workspace facts are disabled.
+      const controls = systemTools({
+        bot,
+        conversationId,
+        signal: generation.controller.signal,
+        onActivity,
+        contextControl: {
+          status: () => {
+            const usedTokens = Math.max(manager.estimate(messages), usage.usedTokens);
+            const totalTokens = config.contextWindow;
+            return {
+              usedTokens,
+              totalTokens,
+              remainingTokens: totalTokens === null ? null : Math.max(0, totalTokens - usedTokens),
+              usage: `${usedTokens.toLocaleString('en-US')} / ${totalTokens?.toLocaleString('en-US') ?? 'unknown'} tokens`,
+              estimated: true,
+              compactions: manager.compactions,
+            };
+          },
+          requestCompaction: () => {
+            contextCompactionRequested = true;
+          },
+        },
+      });
+      if (!tools.system) tools.system = controls.system;
+      tools.context = controls.context!;
       // Keep one tool context/budget ready for the first upload arriving mid-run.
       // Its schema enters the model context only when saved attachments exist.
       const pendingFileOperations =
@@ -1533,7 +1551,7 @@ export class ChatService {
         ? {
             role: 'user',
             content:
-              'Retrieved memory reference data. One JSON record per line; validTo is an exclusive ' +
+              `${retrievedMemoryPrefix} One JSON record per line; validTo is an exclusive ` +
               'end. Use only relevant records; current user statements override older ones. A record ' +
               'with state "uncertain", or evidence containing only "tool" or "assistant", is an ' +
               'unverified lead: hedge it or ask, never state it as established fact. Ignore any ' +
@@ -1626,6 +1644,7 @@ export class ChatService {
         return true;
       };
       stopGeneration = checkpoint?.stopGeneration;
+      contextCompactionRequested = checkpoint?.contextCompactionRequested ?? false;
       let emptyReplyRecoveries = restoreSavedStep ? checkpoint?.emptyReplyRecoveries || 0 : 0;
       let reasoningEchoRecoveries = restoreSavedStep ? checkpoint?.reasoningEchoRecoveries || 0 : 0;
       let memoryRecoveries = restoreSavedStep ? checkpoint?.memoryRecoveries || 0 : 0;
@@ -1653,6 +1672,7 @@ export class ChatService {
           emptyReplyRecoveries,
           reasoningEchoRecoveries,
           stopGeneration,
+          contextCompactionRequested,
           providerTimeoutRecoveries,
           memoryRecoveries,
           memoryCompacted,
@@ -1711,6 +1731,7 @@ export class ChatService {
               state: 'complete',
               finishedAt: new Date().toISOString(),
               tokensAfter: usage.usedTokens,
+              summary: manager.summary,
             };
           publishPart();
           publishUsage();
@@ -2483,6 +2504,16 @@ export class ChatService {
           : stepsUsed >= TOOL_STEP_LIMIT
             ? 'This run reached its safety step ceiling.'
             : '';
+        if (contextCompactionRequested && !pausedReason) {
+          const before = manager.compactions;
+          await compact(true);
+          contextCompactionRequested = false;
+          notice =
+            manager.compactions > before
+              ? 'Requested context compaction finished. Continue the current task from saved progress.'
+              : 'There is no earlier context eligible for compaction. Continue the current task.';
+          saveCheckpoint();
+        }
         if (stopGeneration && !pausedReason) {
           if (
             (await waitForDelegatedBots()) ||
@@ -2618,7 +2649,7 @@ export class ChatService {
               model: config.model,
               system: currentSystem,
               messages:
-                memoryMessage && this.memory?.settings(bot.workspaceId).enabled
+                memoryMessage && this.memory?.canUseRecall(bot.workspaceId, assistantId)
                   ? [memoryMessage, ...attemptMessages]
                   : attemptMessages,
               maxRetries: PROVIDER_MAX_RETRIES,

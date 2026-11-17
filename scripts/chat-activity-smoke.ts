@@ -179,6 +179,37 @@ async function main() {
     'scout',
     activity,
   );
+  api.store.run(
+    'UPDATE messages SET parts_json=? WHERE id=?',
+    JSON.stringify([
+      ...activity.map((item) => ({ id: `tool-${item.id}`, type: 'tool', activityId: item.id })),
+      {
+        id: 'compaction-brief',
+        type: 'compaction',
+        state: 'complete',
+        startedAt: new Date().toISOString(),
+        tokensBefore: 24000,
+        tokensAfter: 5000,
+        summary: JSON.stringify({
+          version: 1,
+          entries: [
+            {
+              origin: 'user_message',
+              note: 'Keep the project preview ready for review.',
+              quote:
+                'Build a project preview and ask Nova to review it before showing it to the team.',
+            },
+          ],
+        }),
+      },
+      {
+        id: 'answer',
+        type: 'text',
+        text: 'The project preview is ready. Nova reviewed the layout, and Atlas is available to help with the next step.',
+      },
+    ]),
+    messageId,
+  );
   addMessage(
     randomUUID(),
     conversation.id,
@@ -393,6 +424,18 @@ async function main() {
     );
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
+    await evaluate(`document.querySelector('.response-compaction summary').click()`);
+    await wait('Boolean(document.querySelector(".response-compaction[open]"))');
+    assert(
+      await evaluate(
+        'document.querySelector(".response-compaction-detail").textContent.includes("Keep the project preview ready for review.")',
+      ),
+    );
+    await evaluate(`document.querySelector('.response-compaction summary').click()`);
+    assert.equal(
+      await evaluate('document.querySelectorAll(".response-compaction[open]").length'),
+      0,
+    );
     await wait(
       `document.querySelector('.bot-chat-heading h1')?.textContent === ${JSON.stringify(savedTitle.trimEnd() + '…')}`,
     );

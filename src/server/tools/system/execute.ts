@@ -5,7 +5,20 @@ import type { EnvironmentVariable } from '../../../shared/customCapabilities';
 import type { CapabilityEnvironment } from '../../capabilities/environment';
 import { RUNTIME_TOOL_CALL_LIMIT } from '../../services/responsePolicy';
 import { executeRuntime } from '../runtimeContext';
-import { systemDefinition, type SystemInput } from './definition';
+import { contextDefinition, systemDefinition, type SystemInput } from './definition';
+
+export interface ContextStatus {
+  usedTokens: number;
+  totalTokens: number | null;
+  remainingTokens: number | null;
+  usage: string;
+  estimated: boolean;
+  compactions: number;
+}
+export interface ContextControl {
+  status(): ContextStatus;
+  requestCompaction(): void;
+}
 
 export const ENV_VAR_PAGE_DEFAULT = 25;
 export const ENV_VAR_PAGE_MAX = 100;
@@ -55,6 +68,7 @@ export function systemTools(context: {
   environment?: CapabilityEnvironment;
   signal: AbortSignal;
   onActivity: (activity: ChatActivity) => void;
+  contextControl?: ContextControl;
 }) {
   const actions: SystemInput['action'][] = context.environment
     ? ['list_env_vars', 'stop_generation']
@@ -69,6 +83,33 @@ export function systemTools(context: {
     budget: { remaining: RUNTIME_TOOL_CALL_LIMIT },
   };
   return {
+    ...(context.contextControl
+      ? {
+          [contextDefinition.name]: tool({
+            description: contextDefinition.description,
+            inputSchema: contextDefinition.inputSchema,
+            execute: (input, options) =>
+              executeRuntime(
+                runtime,
+                options.toolCallId,
+                'context',
+                input.action,
+                'current response',
+                () => {
+                  const status = context.contextControl!.status();
+                  if (input.action === 'status') return status;
+                  context.contextControl!.requestCompaction();
+                  return {
+                    queued: true,
+                    before: status,
+                    message:
+                      'Compaction will run after this tool batch is saved, before the next model call.',
+                  };
+                },
+              ),
+          }),
+        }
+      : {}),
     [systemDefinition.name]: tool({
       description: context.environment
         ? systemDefinition.description

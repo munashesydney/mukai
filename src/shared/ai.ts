@@ -192,6 +192,7 @@ export type ResponsePart =
       finishedAt?: string;
       tokensBefore: number;
       tokensAfter?: number;
+      summary?: string;
     }
   | { id: string; type: 'tool'; activityId: string };
 export interface ChatMessage {

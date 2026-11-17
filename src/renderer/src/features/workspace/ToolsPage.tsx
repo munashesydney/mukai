@@ -54,7 +54,8 @@ function toolScopeNote(tool: ToolInfo, folder: string | null, vm = false) {
   if (tool.id === 'manage_pursuit') return 'Manages its own pursuits';
   if (tool.id === 'manage_bot')
     return 'Required for all bots · Actions depend on bot and conversation';
-  if (tool.id === 'system') return 'Workspace environment variables · Names and status only';
+  if (tool.id === 'system')
+    return 'Context usage and compaction · Workspace variables · Response control';
   if (tool.id === 'execute_code')
     return 'JavaScript tool workflows · Only selected output enters chat context';
   if (tool.id === 'browser') return 'Mukai and Google Chrome';

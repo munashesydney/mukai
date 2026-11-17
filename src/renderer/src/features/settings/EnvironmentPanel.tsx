@@ -1,6 +1,8 @@
 import { Dropdown } from '../../components/ui/Dropdown';
 import { SettingsHeading } from './SettingsHeading';
-import { KeyRound, Plus, Trash2, Download } from 'lucide-react';
+import { KeyRound, Plus, Trash2, Download, Upload, MoreHorizontal, Search, X } from 'lucide-react';
+import { PopupMenu } from '../../components/ui/PopupMenu';
+import { IconButton } from '../../components/ui/IconButton';
 import { Sheet } from '../../components/ui/Sheet';
 import { useCallback, useEffect, useState } from 'react';
 import { capabilityService } from '../../services/capabilityService';
@@ -9,7 +11,7 @@ import { parseDotEnv } from '../../../../shared/dotEnv';
 import { errorText } from '../../utils/errors';
 
 export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
-  const [developerView, setDeveloperView] = useState(false);
+  const [query, setQuery] = useState('');
   const [editor, setEditor] = useState<'variable' | 'import' | null>(null);
   const [variables, setVariables] = useState<EnvironmentVariable[]>([]);
   const [secret, setSecret] = useState(true);
@@ -33,7 +35,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
     setValue('');
     setBlock('');
     setPreview([]);
-    setDeveloperView(false);
+    setQuery('');
     setVariables([]);
     setError('');
     setNotice('');
@@ -75,6 +77,18 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
       setBusy(false);
     }
   }
+  const search = query.trim().toLowerCase();
+  const visible = variables.filter((variable) =>
+    [
+      variable.name,
+      ...variable.usedBy,
+      variable.secret === false ? 'configuration' : 'secret',
+      variable.configured ? 'configured' : 'needs configuration',
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(search),
+  );
   return (
     <section className="provider-panel capability-panel">
       <SettingsHeading
@@ -85,6 +99,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           <>
             <button
               className="button button--primary"
+              disabled={busy}
               onClick={() => {
                 setName('');
                 setOriginalName(undefined);
@@ -97,39 +112,45 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
               <Plus size={15} />
               Add variable
             </button>
-            <button
-              className="button"
-              onClick={() => {
-                setError('');
-                setEditor('import');
-              }}
+            <PopupMenu
+              label="Environment actions"
+              title="Environment actions"
+              trigger={<MoreHorizontal size={20} />}
+              buttonClassName="icon-button"
+              disabled={busy}
+              width={260}
+              footer="Exports include saved secret values in plaintext."
             >
-              Import .env
-            </button>
+              {(close) => (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      close();
+                      setError('');
+                      setEditor('import');
+                    }}
+                  >
+                    <Upload size={15} /> Import .env
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!variables.some((variable) => variable.configured)}
+                    onClick={() => {
+                      close();
+                      void exportEnvironment();
+                    }}
+                  >
+                    <Download size={15} /> Export .env
+                  </button>
+                </>
+              )}
+            </PopupMenu>
           </>
         }
       />
-      <details
-        className="environment-developer-view"
-        open={developerView}
-        onToggle={(event) => setDeveloperView(event.currentTarget.open)}
-      >
-        <summary>Developer view</summary>
-        <div className="ai-form">
-          <p className="ai-caption">
-            Export the saved variables for this workspace. The downloaded file contains plaintext
-            secrets; keep it private. Missing required values are omitted.
-          </p>
-          <button
-            type="button"
-            className="button"
-            disabled={busy || !variables.length}
-            onClick={() => void exportEnvironment()}
-          >
-            <Download size={15} aria-hidden="true" /> {busy ? 'Exporting…' : 'Export .env'}
-          </button>
-        </div>
-      </details>
       {error && (
         <div className="ai-alert" role="alert">
           {error}
@@ -140,6 +161,27 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
           {notice}
         </p>
       )}
+      <div className="environment-toolbar">
+        <div className="environment-search">
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label="Search environment variables"
+            placeholder="Search names, tools, or routes…"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {query && (
+            <IconButton label="Clear variable search" onClick={() => setQuery('')}>
+              <X size={15} />
+            </IconButton>
+          )}
+        </div>
+        <span className="ai-caption" role="status">
+          {search ? `${visible.length} of ${variables.length}` : variables.length}{' '}
+          {variables.length === 1 ? 'variable' : 'variables'}
+        </span>
+      </div>
       {editor === 'variable' && (
         <Sheet title="Environment variable" onClose={() => setEditor(null)}>
           <div className="bot-editor-body capability-sheet-body">
@@ -276,7 +318,7 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
         </Sheet>
       )}
       <div className="provider-list">
-        {variables.map((variable) => (
+        {visible.map((variable) => (
           <article key={variable.name} className="provider-card">
             <div className="provider-card-heading">
               <span className="provider-symbol">
@@ -344,6 +386,9 @@ export function EnvironmentPanel({ workspaceId }: { workspaceId: string }) {
         <p className="provider-empty">
           No variables yet. A module’s requiredEnv names will appear here too.
         </p>
+      )}
+      {variables.length > 0 && !visible.length && (
+        <p className="provider-empty">No matching variables. Try another name, tool, or route.</p>
       )}
     </section>
   );

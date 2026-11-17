@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TrajectoryDetail, TrajectoryRecord } from '../shared/trajectory';
+import {
+  retrievedMemoryPrefix,
+  type TrajectoryDetail,
+  type TrajectoryRecord,
+} from '../shared/trajectory';
 import { startApiServer } from './app';
 import { ConversationRepository } from './repositories/conversationRepository';
 import { TrajectoryRepository } from './repositories/trajectoryRepository';
@@ -173,4 +177,97 @@ it('keeps failed provider attempts and redacted request detail after the chat ch
     ...records,
     expect.objectContaining({ id: abandoned, status: 'interrupted' }),
   ]);
+});
+
+it('previews retrieved facts from each turn and reconstructs older previews from saved context', async () => {
+  directory = mkdtempSync(join(tmpdir(), 'mukai-trajectory-'));
+  provider = createServer(async (req, res) => {
+    for await (const chunk of req) void chunk;
+    const chunk = {
+      id: 'fixture',
+      model: 'trace-model',
+      object: 'chat.completion.chunk',
+      created: 1,
+    };
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(
+      `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] })}\n\n` +
+        `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+    );
+  });
+  await new Promise<void>((resolve) => provider!.listen(0, '127.0.0.1', resolve));
+  api = await startApiServer(0, { dataDir: directory });
+  seedTestBot(api.store);
+  api.memory.saveSettings('default', {
+    ...api.memory.settings('default'),
+    automaticCapture: false,
+  });
+  expect(
+    (
+      await request('/providers', {
+        name: 'Trajectory fixture',
+        kind: 'compatible',
+        defaultModel: 'trace-model',
+        apiKey: 'test-key',
+        supportsImages: false,
+        baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`,
+        isDefault: true,
+      })
+    ).status,
+  ).toBe(201);
+  const a = 'Quasar runs on SQLite.';
+  const b = 'Orchard uses Redis.';
+  api.memory.import('default', [
+    {
+      subject: 'Quasar',
+      relation: 'uses',
+      object: 'SQLite',
+      text: a,
+      validFrom: '2020-01-01T00:00:00Z',
+      validTo: null,
+      state: 'confirmed',
+    },
+    {
+      subject: 'Orchard',
+      relation: 'uses',
+      object: 'Redis',
+      text: b,
+      validFrom: '2020-01-01T00:00:00Z',
+      validTo: null,
+      state: 'confirmed',
+    },
+  ]);
+  for (const text of ['Quasar SQLite', 'Orchard Redis']) {
+    const response = await request('/bots/scout/chat', {
+      requestId: randomUUID(),
+      text,
+      attachmentIds: [],
+    });
+    expect(JSON.parse((await response.text()).trim().split('\n').at(-1)!).type).toBe('done');
+  }
+  const path = '/conversations/bot-scout/trajectory';
+  const records: TrajectoryRecord[] = await (await request(path)).json();
+  expect(records).toHaveLength(2);
+  const previews = records.map((record) => {
+    const index = record.contextKinds!.indexOf('retrieved-memory');
+    return record.contextPreviews![index];
+  });
+  expect(previews[0]).toBe(`1 fact · ${a}`);
+  expect(previews[1]).toContain(b);
+  expect(previews[1]).not.toBe(previews[0]);
+
+  const record = records[0];
+  const detail: TrajectoryDetail = await (await request(`${path}?record=${record.id}`)).json();
+  const memory = detail.context!.find((text) => text.startsWith(retrievedMemoryPrefix))!;
+  expect(memory).toContain(a);
+  expect(memory.slice(0, 240)).not.toContain(a);
+  api.store.run(
+    `UPDATE chat_trajectory
+     SET summary_json=json_remove(json_set(summary_json, '$.contextPreviews',json(?)), '$.contextKinds')
+     WHERE id=?`,
+    JSON.stringify(detail.context!.map((text) => text.slice(0, 240))),
+    record.id,
+  );
+  expect(await (await request(path)).json()).toEqual(records);
+  expect(await (await request(`${path}?record=${record.id}`)).json()).toEqual(detail);
 });

@@ -358,7 +358,10 @@ export function TrajectoryView({
                 : rowNames[row.kind]}
             </span>
             <span className="trajectory-row-label">{row.label}</span>
-            <span className="trajectory-preview">
+            <span
+              className="trajectory-preview"
+              title={row.kind === 'context' ? row.text : undefined}
+            >
               {row.text ||
                 (row.attachments?.length
                   ? `${row.attachments.length} attachment${row.attachments.length === 1 ? '' : 's'}`

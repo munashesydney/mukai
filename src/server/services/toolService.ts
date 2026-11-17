@@ -191,7 +191,15 @@ export class ToolService {
         .filter((item) => item.kind === 'tool')
         .map((item) => [item.definition.name, 'custom:' + item.id]),
     );
-    return this.assigned(bot, this.capabilities?.forBot(bot, signal, onActivity) || {}, ids);
+    return this.assigned(
+      bot,
+      Object.fromEntries(
+        Object.entries(this.capabilities?.forBot(bot, signal, onActivity) || {}).filter(
+          ([name]) => name !== 'context',
+        ),
+      ),
+      ids,
+    );
   }
   private pursuits?: PursuitService;
   attachPursuits(service: PursuitService) {
@@ -261,37 +269,45 @@ export class ToolService {
               ? Boolean(this.management)
               : tool.id === 'manage_pursuit'
                 ? Boolean(this.pursuits)
-                : tool.id === 'system' || tool.id.startsWith('register_custom_')
-                  ? Boolean(this.capabilities)
-                  : [
-                        'browser',
-                        'computer_use',
-                        'media',
-                        'web_search',
-                        'execute_code',
-                        'communicate',
-                        'conversations',
-                        ...(canCopyAttachments ? ['file_operations'] : []),
-                      ].includes(tool.id)
-                    ? true
-                    : workspace.computer === 'qemu' || Boolean(workspace.folder),
+                : tool.id === 'system'
+                  ? true
+                  : tool.id.startsWith('register_custom_')
+                    ? Boolean(this.capabilities)
+                    : [
+                          'browser',
+                          'computer_use',
+                          'media',
+                          'web_search',
+                          'execute_code',
+                          'communicate',
+                          'conversations',
+                          ...(canCopyAttachments ? ['file_operations'] : []),
+                        ].includes(tool.id)
+                      ? true
+                      : workspace.computer === 'qemu' || Boolean(workspace.folder),
       counts:
-        tool.id === 'memory'
-          ? memoryCounts
-          : tool.id === 'communicate'
-            ? Object.fromEntries(
-                tool.actions.map((action) => [
-                  action,
-                  (counts.communicate?.[action] || 0) + (counts.ask?.[action] || 0),
-                ]),
-              )
-            : tool.id === 'media'
-              ? {
-                  ...counts.media,
-                  read_image: (counts.media?.read_image || 0) + (counts.image?.read || 0),
-                  view_image: (counts.media?.view_image || 0) + (counts.image?.view || 0),
-                }
-              : counts[tool.id] || {},
+        tool.id === 'system'
+          ? {
+              ...counts.system,
+              'context.status': counts.context?.status || 0,
+              'context.compact': counts.context?.compact || 0,
+            }
+          : tool.id === 'memory'
+            ? memoryCounts
+            : tool.id === 'communicate'
+              ? Object.fromEntries(
+                  tool.actions.map((action) => [
+                    action,
+                    (counts.communicate?.[action] || 0) + (counts.ask?.[action] || 0),
+                  ]),
+                )
+              : tool.id === 'media'
+                ? {
+                    ...counts.media,
+                    read_image: (counts.media?.read_image || 0) + (counts.image?.read || 0),
+                    view_image: (counts.media?.view_image || 0) + (counts.image?.view || 0),
+                  }
+                : counts[tool.id] || {},
     }));
   }
   checkpointScope(bot: Bot) {

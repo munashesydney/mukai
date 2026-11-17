@@ -1,7 +1,11 @@
-import type {
-  TrajectoryDetail,
-  TrajectoryMessageStats,
-  TrajectoryRecord,
+import {
+  retrievedMemoryPrefix,
+  trajectoryContextKind,
+  trajectoryContextPreview,
+  workingMemoryPrefix,
+  type TrajectoryDetail,
+  type TrajectoryMessageStats,
+  type TrajectoryRecord,
 } from '../../shared/trajectory';
 import type { Database } from '../db/database';
 
@@ -30,23 +34,49 @@ export class TrajectoryRepository {
     );
   }
 
-  list(conversationId: string, fromMessageId?: string): TrajectoryRecord[] {
+  list(
+    conversationId: string,
+    fromMessageId: string | undefined,
+    redact: (text: string) => string,
+  ): TrajectoryRecord[] {
     return this.database
       .all(
-        `SELECT t.id,t.message_id,t.summary_json FROM messages m
+        `SELECT t.id,t.message_id,t.summary_json,
+         CASE WHEN json_type(t.summary_json,'$.contextKinds') IS NULL AND EXISTS (
+           SELECT 1 FROM json_each(t.summary_json,'$.contextPreviews') p
+           WHERE instr(p.value,?)=1 OR instr(p.value,?)=1
+         ) THEN json_extract(t.detail_json,'$.context') END AS legacy_context
+         FROM messages m
          JOIN chat_trajectory t ON t.message_id=m.id WHERE m.conversation_id=?
          AND (? IS NULL OR m.sequence >= (SELECT sequence FROM messages WHERE id=? AND conversation_id=?))
          ORDER BY t.id`,
+        retrievedMemoryPrefix,
+        workingMemoryPrefix,
         conversationId,
         fromMessageId ?? null,
         fromMessageId ?? null,
         conversationId,
       )
-      .map((row) => ({
-        ...(JSON.parse(String(row.summary_json)) as Summary),
-        id: Number(row.id),
-        messageId: String(row.message_id),
-      }));
+      .map((row) => {
+        const summary = JSON.parse(String(row.summary_json)) as Summary;
+        // Existing records already have the redacted full context. Regenerate only
+        // their display previews so opening an older conversation works immediately.
+        if (
+          !summary.contextKinds &&
+          summary.contextPreviews &&
+          typeof row.legacy_context === 'string'
+        ) {
+          const detail = JSON.parse(row.legacy_context) as NonNullable<TrajectoryDetail['context']>;
+          const kinds = summary.contextPreviews.map(trajectoryContextKind);
+          summary.contextKinds = kinds;
+          summary.contextPreviews = summary.contextPreviews.map((preview, index) =>
+            typeof detail[index] === 'string'
+              ? trajectoryContextPreview(detail[index], kinds[index], redact)
+              : preview,
+          );
+        }
+        return { ...summary, id: Number(row.id), messageId: String(row.message_id) };
+      });
   }
 
   detail(conversationId: string, id: number): TrajectoryDetail | undefined {

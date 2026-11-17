@@ -350,6 +350,48 @@ function ReasoningPart({
   );
 }
 
+function CompactionBrief({ text }: { text: string }) {
+  let entries: { note: string; quote: string; origin: string }[] | undefined;
+  try {
+    const notebook = JSON.parse(text);
+    if (
+      notebook.version === 1 &&
+      Array.isArray(notebook.entries) &&
+      notebook.entries.every(
+        (entry: { note?: unknown; quote?: unknown; origin?: unknown }) =>
+          entry &&
+          typeof entry.note === 'string' &&
+          typeof entry.quote === 'string' &&
+          typeof entry.origin === 'string',
+      )
+    )
+      entries = notebook.entries;
+  } catch {
+    // Older summaries may contain prose.
+  }
+  if (!entries) return <MessageMarkdown text={text} />;
+  return (
+    <div className="response-compaction-notes">
+      {entries.map((entry, index) => (
+        <div key={index}>
+          <small>
+            {{
+              user_message: 'User statement',
+              assistant_report: 'Assistant note',
+              tool_output: 'Tool result',
+              legacy_memory: 'Earlier memory',
+            }[entry.origin] || 'Saved note'}
+          </small>
+          <MessageMarkdown text={entry.note} />
+          <blockquote>
+            <MessageMarkdown text={entry.quote} />
+          </blockquote>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CompactionPart({
   part,
   streaming,
@@ -370,25 +412,43 @@ function CompactionPart({
   const detail =
     state === 'complete' && part.tokensAfter !== undefined
       ? `${part.tokensBefore.toLocaleString()} → ${part.tokensAfter.toLocaleString()} estimated context tokens. Original messages are kept.`
-      : state === 'compacting'
-        ? 'Preserving working memory before continuing. Original messages are kept.'
-        : 'Original messages are kept. Retry to resume.';
+      : state === 'complete'
+        ? 'Working context summarized. Original messages are kept.'
+        : state === 'compacting'
+          ? 'Preserving working memory before continuing. Original messages are kept.'
+          : 'Original messages are kept. Retry to resume.';
   return (
-    <div
-      className={`response-compaction response-compaction--${state}`}
-      role="status"
-      title={detail}
-    >
-      <span>
-        <Minimize2 size={13} aria-hidden="true" />
-        <span>{label}</span>
-        <Icon
-          size={13}
-          aria-hidden="true"
-          className={state === 'compacting' ? 'is-spinning' : undefined}
-        />
-      </span>
-    </div>
+    <details className={`response-compaction response-compaction--${state}`}>
+      <summary title={detail}>
+        <span role="status">
+          <Minimize2 size={13} aria-hidden="true" />
+          <span>{label}</span>
+          <Icon
+            size={13}
+            aria-hidden="true"
+            className={state === 'compacting' ? 'is-spinning' : undefined}
+          />
+        </span>
+        <ChevronDown size={13} className="response-chevron" aria-hidden="true" />
+      </summary>
+      <div className="response-compaction-detail">
+        <p className="response-compaction-meta">{detail}</p>
+        {state === 'complete' && part.summary ? (
+          <>
+            <h4>Compaction brief</h4>
+            <CompactionBrief text={part.summary} />
+          </>
+        ) : (
+          <p>
+            {state === 'complete'
+              ? 'A brief was not saved for this older compaction.'
+              : state === 'compacting'
+                ? 'The brief will appear when compaction finishes.'
+                : 'This compaction did not produce a saved brief.'}
+          </p>
+        )}
+      </div>
+    </details>
   );
 }
 

@@ -1,6 +1,6 @@
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
 import { responsePresentation } from '../../../../shared/responseParts';
-import type { TrajectoryRecord } from '../../../../shared/trajectory';
+import { trajectoryContextKind, type TrajectoryRecord } from '../../../../shared/trajectory';
 
 export interface TrajectoryRow {
   id: string;
@@ -214,16 +214,23 @@ export function trajectoryRows(turns: ChatMessage[][], records: TrajectoryRecord
               start: record.startedAt,
             });
           lastSystem = record.systemKey;
-          for (const [contextIndex, text] of (record.contextPreviews || []).entries())
+          for (const [contextIndex, text] of (record.contextPreviews || []).entries()) {
+            const kind = record.contextKinds?.[contextIndex] ?? trajectoryContextKind(text);
             top.push({
               id: `${row.id}-context-${contextIndex}`,
               kind: 'context',
-              label: 'Injected context',
+              label:
+                kind === 'retrieved-memory'
+                  ? 'Retrieved memory'
+                  : kind === 'working-memory'
+                    ? 'Working memory'
+                    : 'Injected context',
               text,
               record,
               contextIndex,
               start: record.startedAt,
             });
+          }
         }
         const parent = record.parentCallId
           ? calls.get(`${record.stepId}/${record.parentCallId}`)

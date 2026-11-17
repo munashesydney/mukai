@@ -139,17 +139,48 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.environment-developer-view {
-  margin: 20px 0;
-  padding: 16px;
+
+.environment-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 20px;
+}
+.environment-search {
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--surface);
 }
-.environment-developer-view summary {
-  cursor: pointer;
-  font-weight: 600;
+.environment-search:focus-within {
+  border-color: var(--theme-accent);
 }
-.environment-developer-view .ai-form {
-  margin-top: 12px;
-  justify-items: start;
+.environment-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+.environment-search input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+.environment-search input::-webkit-search-cancel-button {
+  display: none;
+}
+.environment-search > svg,
+.environment-search button {
+  flex-shrink: 0;
 }

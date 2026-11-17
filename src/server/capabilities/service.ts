@@ -64,6 +64,8 @@ function validateResponse(value: unknown) {
 
 const reserved = new Set([
   'execute_code',
+  'context',
+  'system',
   'file_operations',
   'terminal',
   'process',

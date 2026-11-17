@@ -31,14 +31,19 @@ async function main() {
         stdio: 'inherit',
         windowsHide: true,
       });
-      const timer = setTimeout(() => child.kill(), 60000);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        console.error('Memory smoke test timed out.');
+        child.kill();
+      }, 60000);
       child.once('error', (error) => {
         clearTimeout(timer);
         reject(error);
       });
       child.once('close', (code) => {
         clearTimeout(timer);
-        resolve(code ?? 1);
+        resolve(timedOut ? 1 : (code ?? 1));
       });
     });
   } finally {

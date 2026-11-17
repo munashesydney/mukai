@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { captureEpisodeTime } from '../../shared/memoryTime';
 import { detectTimeZone } from '../../shared/timeZone';
 import type {
@@ -7,10 +7,19 @@ import type {
   MemoryScope,
   SearchHit,
 } from '../../../mukai_memory/src';
-import { captureRetryAt, redactCredentials } from '../../../mukai_memory/src';
+import {
+  captureRetryAt,
+  MemoryEpisodeInvalidatedError,
+  redactCredentials,
+} from '../../../mukai_memory/src';
 import type { BotRepository } from '../repositories/botRepository';
 import type { MemoryReviewRun } from '../../shared/memory';
 import { ApiError } from '../config';
+
+const reviewableMessage = `NOT EXISTS (
+  SELECT 1 FROM memory_episode_messages em JOIN memory_episodes e ON e.id=em.episode_id
+  WHERE em.message_id=m.id AND em.context_only=0 AND e.status='forgotten'
+)`;
 
 /** Durable, conversation-scoped review queue. No bot account or general-purpose tools. */
 export class MemoryReviewService {
@@ -51,6 +60,23 @@ export class MemoryReviewService {
     );
   }
   recover() {
+    this.store.run(`INSERT OR IGNORE INTO memory_episode_messages
+      SELECT r.episode_id, CAST(m.value AS TEXT), 0
+      FROM memory_review_runs r JOIN memory_episodes e ON e.id=r.episode_id, json_each(r.message_ids) m`);
+    // Previous versions could delete the run for a forgotten episode. Its original
+    // review key still describes the contiguous message range it read.
+    this.store.run(`WITH legacy AS (
+        SELECT e.id,e.conversation_id,substr(e.source_key,length('review:'||e.conversation_id||':')+1) AS span
+        FROM memory_episodes e WHERE e.status='forgotten' AND e.source_key LIKE 'review:%'
+          AND NOT EXISTS (SELECT 1 FROM memory_episode_messages saved WHERE saved.episode_id=e.id)
+      ), bounds AS (
+        SELECT id,conversation_id,span,instr(span,':') AS separator FROM legacy
+      )
+      INSERT OR IGNORE INTO memory_episode_messages
+      SELECT b.id,m.id,0 FROM bounds b JOIN messages m ON m.conversation_id=b.conversation_id
+      WHERE b.span GLOB '[0-9]*:[0-9]*' AND instr(substr(b.span,b.separator+1),':')=0
+        AND m.sequence>CAST(substr(b.span,1,b.separator-1) AS INTEGER)
+        AND m.sequence<=CAST(substr(b.span,b.separator+1) AS INTEGER)`);
     this.store.run(
       "UPDATE memory_review_runs SET status='failed',error='Mukai stopped during this review. Retry to continue.',finished_at=? WHERE status='running'",
       new Date().toISOString(),
@@ -82,12 +108,37 @@ export class MemoryReviewService {
       workspaceId,
     );
     this.store.run(
-      "DELETE FROM memory_review_runs WHERE workspace_id=? AND episode_id IN (SELECT id FROM memory_episodes WHERE status='forgotten')",
+      `DELETE FROM memory_review_runs AS r WHERE r.workspace_id=? AND EXISTS (
+        SELECT 1 FROM memory_episode_messages input JOIN memory_episode_messages removed
+          ON removed.message_id=input.message_id AND removed.context_only=0
+        JOIN memory_episodes source ON source.id=removed.episode_id AND source.status='forgotten'
+        WHERE input.episode_id=r.episode_id AND source.workspace_id=r.workspace_id
+      )`,
       workspaceId,
     );
     return this.store
       .all(
-        'SELECT * FROM memory_review_runs WHERE workspace_id=? ORDER BY started_at DESC,rowid DESC LIMIT 100',
+        `WITH recent AS (
+           SELECT rowid FROM memory_review_runs WHERE workspace_id=? ORDER BY started_at DESC,rowid DESC LIMIT 100
+         ), latest AS (
+           SELECT conversation_id, MAX(rowid) AS entry FROM memory_review_runs
+           WHERE workspace_id=? GROUP BY conversation_id
+         )
+         SELECT r.*, (r.rowid=latest.entry) AS latest,
+         j.blocked,j.due_at,
+         (SELECT COUNT(*) FROM memory_review_runs prior
+          WHERE prior.conversation_id=r.conversation_id AND prior.rowid<r.rowid
+            AND prior.status='failed' AND prior.rowid>COALESCE(
+              (SELECT MAX(previous.rowid) FROM memory_review_runs previous
+               WHERE previous.conversation_id=r.conversation_id AND previous.rowid<r.rowid
+                 AND previous.status='complete'),0)) AS prior_failures
+         FROM memory_review_runs r JOIN latest ON latest.conversation_id=r.conversation_id
+         LEFT JOIN memory_review_jobs j ON j.conversation_id=r.conversation_id
+         WHERE r.workspace_id=? AND (
+           r.rowid IN (SELECT rowid FROM recent) OR (r.rowid=latest.entry AND r.status IN ('failed','running'))
+         ) ORDER BY r.started_at DESC,r.rowid DESC`,
+        workspaceId,
+        workspaceId,
         workspaceId,
       )
       .map((row) => ({
@@ -104,6 +155,10 @@ export class MemoryReviewService {
         episodeId: String(row.episode_id),
         messageIds: JSON.parse(String(row.message_ids)),
         activity: JSON.parse(String(row.activity_json)),
+        retryAt:
+          row.status === 'failed' && row.latest && row.blocked === 0 ? Number(row.due_at) : null,
+        retrying: row.status === 'running' && Number(row.prior_failures) > 0,
+        canRetry: row.status === 'failed' && Boolean(row.latest),
       }));
   }
   describe(episodeId: string, summary: string) {
@@ -115,7 +170,10 @@ export class MemoryReviewService {
   }
   retry(workspaceId: string, id: string) {
     const row = this.store.get(
-      "SELECT * FROM memory_review_runs WHERE workspace_id=? AND id=? AND status='failed'",
+      `SELECT r.* FROM memory_review_runs r
+       WHERE workspace_id=? AND id=? AND status='failed' AND rowid=(
+         SELECT MAX(latest.rowid) FROM memory_review_runs latest WHERE latest.conversation_id=r.conversation_id
+       )`,
       workspaceId,
       id,
     );
@@ -181,11 +239,20 @@ export class MemoryReviewService {
       const bot = this.bots.find(String(job.actor_id));
       if (!conversation || !bot || bot.workspaceId !== w) continue;
       const pending = this.store.all(
-        'SELECT * FROM messages WHERE conversation_id=? AND sequence>? ORDER BY sequence LIMIT 40',
+        `SELECT m.* FROM messages m
+         WHERE m.conversation_id=? AND m.sequence>? AND ${reviewableMessage}
+         ORDER BY m.sequence LIMIT 40`,
         c,
         Number(job.checkpoint),
       );
-      if (!pending.length) continue;
+      if (!pending.length) {
+        this.store.run(
+          'UPDATE memory_review_jobs SET checkpoint=COALESCE((SELECT MAX(sequence) FROM messages WHERE conversation_id=?),checkpoint) WHERE conversation_id=?',
+          c,
+          c,
+        );
+        continue;
+      }
       const selected: typeof pending = [],
         transcript: unknown[] = [];
       let size = 0;
@@ -222,45 +289,57 @@ export class MemoryReviewService {
       }
       const last = selected.at(-1)!;
       const owner = null;
-      const episode = this.engine.enqueue({
-        workspaceId: w,
-        ownerId: owner,
-        actorId: bot.id,
-        sourceKey: `review:${c}:${job.checkpoint}:${last.sequence}`,
-        sourceType: 'user',
-        content: JSON.stringify({
-          messages: transcript,
-          note: 'Long messages and evidence may be truncated. Save only supported facts; do not infer omitted content.',
-        }),
-        referenceTime: String(last.created_at),
-        conversationId: c,
-        messageId: String(last.id),
-        context: captureEpisodeTime(
-          this.store
-            .all(
-              'SELECT role,content FROM messages WHERE conversation_id=? AND sequence<=? ORDER BY sequence DESC LIMIT 4',
-              c,
-              Number(job.checkpoint),
-            )
-            .reverse()
-            .map((row) => `${row.role}: ${row.content}`)
-            .join('\n')
-            .slice(-5000),
-          String(last.created_at),
-          this.timeZone(w),
-        ),
+      const context = this.store
+        .all(
+          `SELECT m.id,m.role,m.content FROM messages m
+         WHERE m.conversation_id=? AND m.sequence<=? AND ${reviewableMessage}
+         ORDER BY m.sequence DESC LIMIT 4`,
+          c,
+          Number(job.checkpoint),
+        )
+        .reverse();
+      const messageIds = selected.map((row) => String(row.id));
+      const batch = `review:${c}:${job.checkpoint}:`;
+      const fingerprint = createHash('sha256')
+        .update(JSON.stringify([messageIds, context.map((row) => row.id)]))
+        .digest('hex');
+      const episode = this.store.transaction(() => {
+        const episode = this.engine.enqueue({
+          workspaceId: w,
+          ownerId: owner,
+          actorId: bot.id,
+          sourceKey: `${batch}${last.sequence}:${fingerprint}`,
+          sourceType: 'user',
+          content: JSON.stringify({
+            messages: transcript,
+            note: 'Long messages and evidence may be truncated. Save only supported facts; do not infer omitted content.',
+          }),
+          referenceTime: String(last.created_at),
+          conversationId: c,
+          messageId: String(last.id),
+          context: captureEpisodeTime(
+            context
+              .map((row) => `${row.role}: ${row.content}`)
+              .join('\n')
+              .slice(-5000),
+            String(last.created_at),
+            this.timeZone(w),
+          ),
+        });
+        for (const messageId of messageIds)
+          this.store.run(
+            'INSERT OR IGNORE INTO memory_episode_messages VALUES(?,?,0)',
+            episode.id,
+            messageId,
+          );
+        for (const message of context)
+          this.store.run(
+            'INSERT OR IGNORE INTO memory_episode_messages VALUES(?,?,1)',
+            episode.id,
+            String(message.id),
+          );
+        return episode;
       });
-      // This pass reads everything after the saved checkpoint, so it also covers any review attempt
-      // that a previous failure left in the queue. Close those instead of letting "pending" follow a
-      // conversation around for good.
-      this.store.run(
-        `UPDATE memory_episodes SET status='complete',content='',context='',error=NULL,retry_at=NULL
-         WHERE workspace_id=? AND conversation_id=? AND id<>? AND status IN ('pending','failed')
-         AND source_key LIKE 'review:%'`,
-        w,
-        c,
-        episode.id,
-      );
       const id = randomUUID(),
         started = new Date().toISOString();
       const activity = [
@@ -284,7 +363,7 @@ export class MemoryReviewService {
         owner,
         started,
         episode.id,
-        JSON.stringify(selected.map((row) => row.id)),
+        JSON.stringify(messageIds),
         JSON.stringify(activity),
       );
       try {
@@ -316,6 +395,7 @@ export class MemoryReviewService {
           id,
         );
         await this.engine.processEpisode(episode.id, signal);
+        if (this.store.hasForgottenInputs(episode.id)) throw new MemoryEpisodeInvalidatedError();
         const facts = this.engine.episodeFacts(
           { workspaceId: w, includePrivate: true },
           episode.id,
@@ -337,22 +417,48 @@ export class MemoryReviewService {
               })),
             }),
           });
-        this.store.run(
-          "UPDATE memory_review_runs SET status='complete',finished_at=?,summary=CASE WHEN summary='' THEN ? ELSE summary END,activity_json=? WHERE id=?",
-          new Date().toISOString(),
-          facts.length
-            ? `Retained ${facts.length} facts from this exchange.`
-            : 'No durable information needed saving.',
-          JSON.stringify(activity),
-          id,
-        );
-        this.store.run(
-          'UPDATE memory_review_jobs SET checkpoint=MAX(checkpoint,?) WHERE conversation_id=?',
-          Number(last.sequence),
-          c,
-        );
+        this.store.transaction(() => {
+          this.store.run(
+            "UPDATE memory_review_runs SET status='complete',finished_at=?,summary=CASE WHEN summary='' THEN ? ELSE summary END,activity_json=? WHERE id=?",
+            new Date().toISOString(),
+            facts.length
+              ? `Retained ${facts.length} facts from this exchange.`
+              : 'No durable information needed saving.',
+            JSON.stringify(activity),
+            id,
+          );
+          this.store.run(
+            'UPDATE memory_review_jobs SET checkpoint=MAX(checkpoint,?) WHERE conversation_id=?',
+            Number(last.sequence),
+            c,
+          );
+          // Close older attempts only after the replacement batch has committed and covered their range.
+          this.store.run(
+            `UPDATE memory_episodes SET status='complete',content='',context='',error=NULL,retry_at=NULL
+           WHERE workspace_id=? AND conversation_id=? AND id<>? AND status IN ('pending','failed')
+               AND source_key LIKE 'review:%' AND (
+                 EXISTS (SELECT 1 FROM messages m WHERE m.id=memory_episodes.message_id
+                         AND m.conversation_id=? AND m.sequence<=?)
+                 OR (substr(source_key,1,length(?))=? AND CAST(substr(source_key,length(?)+1) AS INTEGER)<=?)
+               )`,
+            w,
+            c,
+            episode.id,
+            c,
+            Number(last.sequence),
+            batch,
+            batch,
+            batch,
+            Number(last.sequence),
+          );
+        });
         updated.add(w);
-      } catch {
+      } catch (error) {
+        if (error instanceof MemoryEpisodeInvalidatedError) {
+          this.store.run('DELETE FROM memory_review_runs WHERE id=?', id);
+          this.store.run("UPDATE memory_episodes SET content='',context='' WHERE id=?", episode.id);
+          continue;
+        }
         activity[0].status = 'failed';
         activity[0].summary = 'Review failed. No checkpoint was advanced.';
         this.store.run(
@@ -370,8 +476,8 @@ export class MemoryReviewService {
         const failures = Number(
           this.store.get(
             `SELECT COUNT(*) AS n FROM memory_review_runs WHERE conversation_id=? AND status='failed'
-             AND started_at>COALESCE((SELECT MAX(started_at) FROM memory_review_runs
-               WHERE conversation_id=? AND status='complete'),'')`,
+             AND rowid>COALESCE((SELECT MAX(rowid) FROM memory_review_runs
+               WHERE conversation_id=? AND status='complete'),0)`,
             c,
             c,
           )?.n ?? 1,

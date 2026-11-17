@@ -16,11 +16,12 @@ import type {
   SearchOptions,
 } from '../types';
 
-const date = (value: string) => {
+export const normalizeMemoryDate = (value: string) => {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) throw new Error('Invalid memory date.');
   return parsed.toISOString();
 };
+const date = normalizeMemoryDate;
 /**
  * Dates a model invents when a statement has no stated beginning: the Unix epoch day itself, or a
  * year-zero placeholder. Genuine historical dates carry a month and day, so they are left alone.
@@ -42,6 +43,12 @@ export const captureRetryAt = (attempts: number, now = Date.now()) =>
     : now + CAPTURE_RETRY_DELAYS[Math.min(Math.max(attempts, 1), CAPTURE_RETRY_DELAYS.length) - 1];
 const activeAt = (fact: MemoryFact, at: string) =>
   fact.validFrom <= at && (!fact.validTo || fact.validTo > at);
+
+export class MemoryEpisodeInvalidatedError extends Error {
+  constructor() {
+    super('A message used by this review was forgotten.');
+  }
+}
 const tokens = (text: string) =>
   [...new Set(normalize(text).match(/[\p{L}\p{N}_-]{2,}/gu) || [])].filter(
     (word) =>
@@ -137,6 +144,7 @@ export class MemoryEngine {
       id,
     );
     try {
+      if (this.store.hasForgottenInputs(id)) throw new MemoryEpisodeInvalidatedError();
       const candidates = this.store
         .facts({ workspaceId: episode.workspaceId, privateOwner: episode.ownerId || undefined })
         .filter((fact) => fact.ownerId === (episode.ownerId || null));
@@ -165,6 +173,7 @@ export class MemoryEngine {
           'processing'
         )
           return;
+        if (this.store.hasForgottenInputs(id)) throw new MemoryEpisodeInvalidatedError();
         for (const fact of result.facts)
           this.commit(
             episode.workspaceId,
@@ -179,6 +188,13 @@ export class MemoryEngine {
           this.store.run("UPDATE memory_episodes SET content='',context='' WHERE id=?", id);
       });
     } catch (error) {
+      if (error instanceof MemoryEpisodeInvalidatedError) {
+        this.store.run(
+          "UPDATE memory_episodes SET status='complete',content='',context='',error=NULL,retry_at=NULL WHERE id=? AND status='processing'",
+          id,
+        );
+        throw error;
+      }
       const attempts = Number(
         this.store.get('SELECT attempts FROM memory_episodes WHERE id=?', id)?.attempts ?? 1,
       );
@@ -610,13 +626,12 @@ export class MemoryEngine {
   ): Promise<SearchHit[]> {
     const limit = Math.max(1, Math.min(100, options.limit || 12));
     const at = date(options.asOf || new Date().toISOString());
-    const rows = this.store
-      .rows(scope)
-      .filter(
-        (row) =>
-          (!options.asOf && options.includeHistory) ||
-          (String(row.valid_from) <= at && (!row.valid_to || String(row.valid_to) > at)),
-      );
+    const where = this.store.scope(scope);
+    if (options.asOf || !options.includeHistory) {
+      where.sql += ' AND f.valid_from<=? AND (f.valid_to IS NULL OR f.valid_to>?)';
+      where.params.push(at, at);
+    }
+    const rows = this.store.factRows(where);
     // Uncertain records sit in a second tier: they stay out of normal recall, but a workspace whose
     // only record of something is uncertain must still answer, hedged, instead of answering nothing.
     const uncertain = options.includeUncertain
@@ -630,7 +645,6 @@ export class MemoryEngine {
     // only widen the keyword match when the query carries no words.
     const lexical = words.filter((word) => !/^\p{N}+$/u.test(word));
     const terms = lexical.length ? lexical : words;
-    const ranks = terms.length ? await this.keywordRanks(scope, terms) : new Map<string, number>();
     let embedded: Promise<{ vector: number[]; norm: number } | null> | undefined;
     const embedQuery = () =>
       (embedded ??= (async () => {
@@ -650,14 +664,24 @@ export class MemoryEngine {
         ? this.store.vectorsIn(scope, this.embedder.model)
         : new Map<string, { model: string; values: number[]; norm: number }>();
     for (const tier of tiers) {
-      const results = new Map<string, SearchHit>();
+      const ranks = terms.length
+        ? this.keywordRanks(
+            where,
+            terms,
+            tiers.length === 1 ? null : tier === uncertain ? 'uncertain' : 'confirmed',
+          )
+        : new Map<string, number>();
+      const results = new Map<
+        string,
+        Pick<SearchHit, 'score' | 'reasons'> & { row: (typeof rows)[number] }
+      >();
       const add = (row: Record<string, string | number | null>, score: number, reason: string) => {
         const id = String(row.id);
         const hit = results.get(id);
         if (hit) {
           hit.score += score;
           hit.reasons.push(reason);
-        } else results.set(id, { fact: this.store.fact(row), score, reasons: [reason] });
+        } else results.set(id, { row, score, reasons: [reason] });
       };
       for (const row of tier) {
         const position = ranks.get(String(row.id));
@@ -696,7 +720,9 @@ export class MemoryEngine {
         }
       }
       const seeds = [...results.values()].sort((a, b) => b.score - a.score).slice(0, 4);
-      const entities = new Set(seeds.flatMap((hit) => [hit.fact.subjectId, hit.fact.objectId]));
+      const entities = new Set(
+        seeds.flatMap(({ row }) => [String(row.subject_id), String(row.object_id)]),
+      );
       // A single bounded hop avoids unrelated graph neighborhoods overwhelming recall.
       for (const row of tier
         .filter(
@@ -705,20 +731,46 @@ export class MemoryEngine {
         .slice(0, 24))
         if (!results.has(String(row.id))) add(row, 0.006, 'related entity');
       if (!query.trim()) tier.slice(0, limit).forEach((row) => add(row, 0.001, 'recent'));
-      if (results.size)
-        return [...results.values()]
-          .sort((a, b) => b.score - a.score || b.fact.createdAt.localeCompare(a.fact.createdAt))
-          .slice(0, limit);
+      if (results.size) {
+        // Embedding awaits the worker. Facts removed or changed during that wait must not
+        // be emitted from the earlier keyword or vector snapshot.
+        const ranked = [...results.values()].sort(
+          (a, b) =>
+            b.score - a.score || String(b.row.created_at).localeCompare(String(a.row.created_at)),
+        );
+        const current: typeof ranked = [];
+        for (const hit of ranked) {
+          const row = embedded
+            ? this.store.factRows({
+                sql: `${where.sql} AND f.id=? AND f.state=?`,
+                params: [...where.params, hit.row.id, hit.row.state],
+              })[0]
+            : hit.row;
+          if (row) current.push({ ...hit, row });
+          if (current.length >= limit) break;
+        }
+        const hits = this.store.hydrateFacts(current.map(({ row }) => row));
+        if (hits.length)
+          return hits.map((fact, index) => ({
+            fact,
+            score: current[index].score,
+            reasons: current[index].reasons,
+          }));
+      }
     }
     return [];
   }
-  private async keywordRanks(scope: MemoryScope, words: string[]) {
+  private keywordRanks(
+    where: ReturnType<SQLiteMemoryStore['scope']>,
+    words: string[],
+    state: 'confirmed' | 'uncertain' | null,
+  ) {
     // FTS terms are quoted, never interpolated into SQL or parsed as operators.
-    const where = this.store.scope(scope);
     const matches = this.store.all(
-      `SELECT memory_fts.fact_id,bm25(memory_fts) AS rank FROM memory_fts JOIN memory_facts f ON f.id=memory_fts.fact_id WHERE memory_fts MATCH ? AND ${where.sql} ORDER BY rank LIMIT 300`,
+      `SELECT memory_fts.fact_id,bm25(memory_fts) AS rank FROM memory_fts JOIN memory_facts f ON f.id=memory_fts.fact_id WHERE memory_fts MATCH ? AND ${where.sql}${state ? ' AND f.state=?' : ''} ORDER BY rank,f.id LIMIT 300`,
       words.map((word) => `"${word.replace(/"/g, '""')}"`).join(' OR '),
       ...where.params,
+      ...(state ? [state] : []),
     );
     return new Map<string, number>(matches.map((row, index) => [String(row.fact_id), index]));
   }
@@ -748,7 +800,7 @@ export class MemoryEngine {
     scope: MemoryScope,
     options: { focus?: string; includeHistory?: boolean; limit?: number; asOf?: string } = {},
   ): MemoryGraph {
-    const at = options.asOf || new Date().toISOString();
+    const at = options.asOf ? date(options.asOf) : new Date().toISOString();
     let edges = this.store
       .facts(scope)
       .filter((fact) =>
@@ -761,10 +813,18 @@ export class MemoryEngine {
     const limit = Math.max(1, Math.min(300, options.limit || 100));
     const truncated = edges.length > limit;
     edges = edges.slice(0, limit);
-    const ids = new Set(edges.flatMap((fact) => [fact.subjectId, fact.objectId]));
+    return this.graphFromFacts(scope, edges, truncated);
+  }
+
+  graphFromFacts(scope: MemoryScope, edges: MemoryFact[], truncated: boolean): MemoryGraph {
+    const ids = [...new Set(edges.flatMap((fact) => [fact.subjectId, fact.objectId]))];
+    if (!ids.length) return { nodes: [], edges, truncated };
     const nodes = this.store
-      .all('SELECT * FROM memory_entities WHERE workspace_id=?', scope.workspaceId)
-      .filter((row) => ids.has(String(row.id)))
+      .all(
+        `SELECT * FROM memory_entities WHERE workspace_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+        scope.workspaceId,
+        ...ids,
+      )
       .map((row) => ({
         id: String(row.id),
         name: String(row.name),
@@ -863,8 +923,15 @@ export class MemoryEngine {
           content: fact.text,
           referenceTime: fact.validFrom,
         });
-        let revived = false;
-        if (episode.status === 'forgotten') {
+        const hasFact =
+          episode.status === 'complete' &&
+          this.store.get(
+            'SELECT 1 FROM memory_fact_sources WHERE episode_id=? LIMIT 1',
+            episode.id,
+          );
+        const revived =
+          episode.status === 'forgotten' || (episode.status === 'complete' && !hasFact);
+        if (revived) {
           // A forget has to block automatic replay, but it must not veto a deliberate restore:
           // re-arm this same import source so repeating the import still changes nothing.
           this.store.run(
@@ -872,9 +939,8 @@ export class MemoryEngine {
             redactCredentials(fact.text),
             episode.id,
           );
-          revived = true;
         }
-        if (!revived && episode.status === 'complete') {
+        if (hasFact) {
           counts.deduplicated++;
           continue;
         }
@@ -903,9 +969,10 @@ export class MemoryEngine {
   }
   forgetEpisodes(scope: MemoryScope, ids: string[]) {
     const where = this.store.scope(scope, 'e');
+    const sources = new Set<string>();
     let forgotten = 0;
     this.store.transaction(() => {
-      for (const id of ids) {
+      for (const id of new Set(ids)) {
         if (
           !this.store.get(
             `SELECT id FROM memory_episodes e WHERE ${where.sql} AND id=?`,
@@ -915,6 +982,22 @@ export class MemoryEngine {
         )
           continue;
         forgotten++;
+        sources.add(id);
+        const overlaps = this.store.all(
+          `SELECT DISTINCT related.episode_id FROM memory_episode_messages input
+           JOIN memory_episode_messages related ON related.message_id=input.message_id
+           JOIN memory_episodes e ON e.id=related.episode_id
+           WHERE input.episode_id=? AND input.context_only=0 AND ${where.sql}`,
+          id,
+          ...where.params,
+        );
+        for (const overlap of overlaps) sources.add(String(overlap.episode_id));
+        this.store.run(
+          "UPDATE memory_episodes SET content='',context='',error=NULL,retry_at=NULL,status='forgotten' WHERE id=?",
+          id,
+        );
+      }
+      for (const id of sources) {
         const factIds = this.store
           .all('SELECT fact_id FROM memory_fact_sources WHERE episode_id=?', id)
           .map((row) => String(row.fact_id));
@@ -927,8 +1010,9 @@ export class MemoryEngine {
             factId,
           );
         }
+        // Overlapping batches are invalidated without making their unrelated messages tombstones.
         this.store.run(
-          "UPDATE memory_episodes SET content='',context='',error=NULL,status='forgotten' WHERE id=?",
+          "UPDATE memory_episodes SET content='',context='',error=NULL,retry_at=NULL,status='complete' WHERE id=? AND status!='forgotten'",
           id,
         );
       }

@@ -12,9 +12,19 @@ async function main() {
   if (!dir) throw new Error('Disposable memory smoke directory required.');
   app.setPath('userData', dir);
   await app.whenReady();
+  let releaseRetry!: () => void;
+  const retryGate = new Promise<void>((resolve) => {
+    releaseRetry = resolve;
+  });
   const api = await startApiServer(0, {
     dataDir: join(dir, 'api'),
-    memoryExtractor: async () => ({ facts: [] }),
+    memoryExtractor: async ({ episode }) => {
+      if (episode.sourceKey === 'smoke:retry') {
+        if (episode.attempts === 0) throw new Error('Simulated temporary provider failure.');
+        await retryGate;
+      }
+      return { facts: [] };
+    },
     memoryReviewIdleMs: 0,
   });
   seedTestBot(api.store);
@@ -93,12 +103,7 @@ async function main() {
     await evaluate(
       `document.querySelector('.memory-graph-edge').dispatchEvent(new MouseEvent('click',{bubbles:true}))`,
     );
-    await wait('Boolean(document.querySelector(".memory-detail"))');
-    assert(
-      (await evaluate<string>('document.querySelector(".memory-detail").textContent')).includes(
-        'Source evidence',
-      ),
-    );
+    await wait('document.querySelector(".memory-detail")?.textContent.includes("Source evidence")');
     await evaluate(
       `Array.from(document.querySelectorAll('[role=tab]')).find(tab=>tab.textContent.includes('Memories')).click()`,
     );
@@ -160,12 +165,17 @@ async function main() {
     assert.equal(await evaluate('document.activeElement.id'), 'memory-tab-list');
     await evaluate(`document.querySelector('#memory-tab-activity').click()`);
     await wait('Boolean(document.querySelector(".memory-processing"))');
-    assert(
-      await evaluate(
-        'document.querySelector(".memory-recalls").textContent.includes("Recall records")',
-      ),
-    );
+    assert.equal(await evaluate('document.querySelectorAll(".memory-recalls").length'), 0);
     await capture('memory-activity.png');
+    await evaluate(`document.querySelector('#memory-tab-recall').click()`);
+    await wait('Boolean(document.querySelector(".memory-recalls"))');
+    assert(await evaluate('document.querySelector(".memory-view h2").textContent === "Recall"'));
+    await capture('memory-recall.png');
+    await evaluate(`document.querySelector('#memory-tab-preferences').click()`);
+    await wait('Boolean(document.querySelector(".memory-data"))');
+    assert.equal(await evaluate('document.querySelectorAll(".memory-preferences").length'), 1);
+    assert.equal(await evaluate('document.querySelectorAll("#memory-tab-data").length'), 0);
+    await capture('memory-data.png');
     api.store.run(
       "INSERT INTO conversations(id,workspace_id,kind,name,description,owner_bot_id,created_at,updated_at) VALUES('memory-smoke-review','default','private','Project review','','scout','now','now')",
     );
@@ -226,6 +236,74 @@ async function main() {
         'document.querySelector(".memory-panel").scrollWidth <= document.querySelector(".memory-panel").clientWidth + 1',
       ),
     );
+    api.memory.import('default', [
+      {
+        subject: 'Legacy Project',
+        relation: 'uses',
+        object: 'Old database',
+        text: 'Legacy Project used the old database.',
+        validFrom: '2023-06-01T00:00:00Z',
+        validTo: '2023-07-01T00:00:00Z',
+        state: 'confirmed',
+      },
+    ]);
+    await evaluate(`document.querySelector('#memory-tab-graph').click()`);
+    await wait('document.querySelectorAll(".memory-graph-edge").length===3');
+    await evaluate(`document.querySelector('.memory-filter-row input[type="checkbox"]').click()`);
+    await wait(
+      'document.querySelectorAll(".memory-graph-edge").length===4 && document.querySelector(".memory-graph-edge.is-historical")?.textContent.includes("Legacy Project")',
+    );
+    await evaluate(`document.querySelector('.memory-filter-row input[type="checkbox"]').click()`);
+    await wait('document.querySelectorAll(".memory-graph-edge").length===3');
+    api.memory.import(
+      'default',
+      Array.from({ length: 24 }, (_, index) => ({
+        subject: `Pagination sample ${index}`,
+        relation: 'uses',
+        object: 'SQLite',
+        text: `Pagination sample ${index} uses SQLite.`,
+        validFrom: '2026-01-01T00:00:00Z',
+        validTo: null,
+        state: 'confirmed',
+      })),
+    );
+    await evaluate(`document.querySelector('#memory-tab-list').click()`);
+    await evaluate(`document.querySelector('button[aria-label="Refresh memories"]').click()`);
+    await wait('document.querySelectorAll(".memory-fact").length===24');
+    await evaluate(`document.querySelector('button[aria-label="Next page of memories"]').click()`);
+    await wait(
+      'document.querySelectorAll(".memory-fact").length===3 && document.querySelector(".memory-pagination").textContent.includes("25–27 of 27")',
+    );
+    await evaluate(`document.querySelector('.memory-fact').click()`);
+    await wait(
+      'document.querySelector(".memory-detail")?.textContent.includes("Source evidence (1)")',
+    );
+    await capture('memory-pagination-narrow.png');
+
+    const retry = api.memory.engine.enqueue({
+      workspaceId: 'default',
+      sourceKey: 'smoke:retry',
+      sourceType: 'tool',
+      content: 'Capture to retry',
+      referenceTime: '2026-01-01T00:00:00Z',
+    });
+    await assert.rejects(api.memory.engine.processEpisode(retry.id));
+    await evaluate(`document.querySelector('#memory-tab-activity').click()`);
+    await wait(
+      'document.querySelector(".memory-processing")?.textContent.includes("Retry scheduled")',
+    );
+    try {
+      await evaluate(
+        `Array.from(document.querySelectorAll('.memory-row-actions button')).find(button => button.textContent.trim() === 'Retry now').click()`,
+      );
+      await wait('document.querySelector(".memory-processing").textContent.includes("Retrying")');
+      await capture('memory-capture-retrying.png');
+    } finally {
+      releaseRetry();
+    }
+    await wait(
+      'Array.from(document.querySelectorAll(".memory-capture-row")).some(row => row.textContent.includes("2 attempts") && row.textContent.includes("Complete"))',
+    );
     assert.deepEqual(errors, []);
     console.log(
       'Memory graph, inspector, list, controls, and renderer passed. Screenshot: ' + path,
@@ -241,6 +319,7 @@ async function main() {
       await embeddings.dispose();
     }
   } finally {
+    releaseRetry();
     window.destroy();
     await new Promise<void>((resolve) => api.server.close(() => resolve()));
     app.quit();

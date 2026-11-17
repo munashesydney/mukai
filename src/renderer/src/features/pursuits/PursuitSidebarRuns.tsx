@@ -3,7 +3,7 @@ import type { PursuitRun } from '../../../../shared/pursuits';
 import { WorkingIndicator } from '../../components/ui/WorkingIndicator';
 import { useWorkspaceTime } from '../timezone/WorkspaceTimeContext';
 
-const pageSize = 6;
+const pageSize = 3;
 
 export function PursuitSidebarRuns({
   runs,
@@ -19,10 +19,13 @@ export function PursuitSidebarRuns({
   const [count, setCount] = useState(pageSize);
   const { date, dateTime } = useWorkspaceTime();
   if (!runs.length) return null;
+  const visible = runs
+    .map((run, index) => ({ run, index }))
+    .filter(({ run, index }) => index < count || run.id === selectedId || run.status === 'running');
+  const remaining = runs.length - visible.length;
   return (
     <div className="bot-conversation-list pursuit-sidebar-runs" aria-label="Pursuit runs">
-      {runs.map((run, index) => {
-        if (index >= count && run.id !== selectedId && run.status !== 'running') return null;
+      {visible.map(({ run, index }) => {
         const selected = run.id === selectedId;
         return (
           <button
@@ -42,13 +45,13 @@ export function PursuitSidebarRuns({
           </button>
         );
       })}
-      {runs.length > count && (
+      {remaining > 0 && (
         <button
           type="button"
           className="bot-conversations-load-more"
-          onClick={() => setCount(count + pageSize)}
+          onClick={() => setCount((previous) => previous + pageSize)}
         >
-          Load {Math.min(pageSize, runs.length - count)} more
+          Load {Math.min(pageSize, remaining)} more
         </button>
       )}
     </div>

@@ -3,6 +3,12 @@ import { useState } from 'react';
 import { ArrowLeft, ArrowUpRight, ChevronRight } from 'lucide-react';
 import type { MemoryReviewRun } from '../../../../shared/memory';
 import { MessageMarkdown } from '../ai/MessageMarkdown';
+import { MemoryTabHeading } from './MemoryTabHeading';
+import { MemoryPagination } from './MemoryPagination';
+import { MemoryStatus } from './MemoryStatus';
+import { reviewStatus } from './memoryWorkStatus';
+
+const pageSize = 10;
 
 export function MemoryRuns({
   runs,
@@ -15,47 +21,71 @@ export function MemoryRuns({
 }) {
   const { dateTime: time } = useWorkspaceTime();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = runs.find((run) => run.id === selectedId);
+  const [followRetry, setFollowRetry] = useState(false);
+  const [filter, setFilter] = useState('all');
+  const [requestedPage, setPage] = useState(1);
+  const opened = runs.find((run) => run.id === selectedId);
+  const latest = opened && runs.find((run) => run.conversationId === opened.conversationId);
+  const selected = followRetry ? latest : opened;
+  const selectedStatus = selected && reviewStatus(selected);
+  const needsAttention = runs.filter((run) => reviewStatus(run) === 'failed').length;
+  const visible = runs.filter((run) => {
+    const status = reviewStatus(run);
+    if (filter === 'attention') return status === 'failed';
+    if (filter === 'active')
+      return ['running', 'retrying', 'scheduled', 'retryQueued'].includes(status);
+    return true;
+  });
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(visible.length / pageSize)));
 
   const kind = (value: string) =>
     ({ private: 'Chat', space: 'Space', pursuit_run: 'Pursuit run' })[value] ||
     value.replaceAll('_', ' ');
-  if (selected)
+  if (selected && selectedStatus)
     return (
       <section className="memory-run-detail">
-        <button className="text-button" onClick={() => setSelectedId(null)}>
+        <button
+          className="text-button"
+          onClick={() => {
+            setSelectedId(null);
+            setFollowRetry(false);
+          }}
+        >
           <ArrowLeft size={16} /> All runs
         </button>
-        <div className="pursuit-section-heading">
-          <h2>{selected.conversationName || 'Conversation review'}</h2>
-          <span className="status-label">{selected.status}</span>
-        </div>
-        <p className="memory-run-meta">
-          {time(selected.startedAt)} · {selected.ownerId ? 'Private' : 'Workspace'} ·{' '}
-          {kind(selected.kind)} · {selected.messageIds.length}{' '}
-          {selected.messageIds.length === 1 ? 'message' : 'messages'}
-        </p>
-        {selected.error && (
-          <div className="ai-alert" role="alert">
-            {selected.error}
-          </div>
+        <MemoryTabHeading
+          title={selected.conversationName || 'Conversation review'}
+          description={`${time(selected.startedAt)} · ${kind(selected.kind)} · ${selected.messageIds.length} messages`}
+          actions={<MemoryStatus status={selectedStatus} />}
+        />
+        {selectedStatus === 'scheduled' && selected.retryAt != null && (
+          <p className="memory-run-meta">
+            Next attempt {time(new Date(selected.retryAt).toISOString())}
+          </p>
         )}
-        {selected.status === 'failed' && (
+        {selected.error && <p className="memory-run-meta">{selected.error}</p>}
+        {latest && latest.id !== selected.id && (
+          <button className="text-button" onClick={() => setSelectedId(latest.id)}>
+            View latest attempt <ArrowUpRight size={14} />
+          </button>
+        )}
+        {selected.canRetry && selectedStatus !== 'retryQueued' && (
           <button
             className="button button--small"
             disabled={disabled}
-            onClick={() => onRetry(selected.id)}
+            onClick={() => {
+              setFollowRetry(true);
+              onRetry(selected.id);
+            }}
           >
-            Retry review
+            Retry now
           </button>
         )}
         <div className="memory-run-summary">
           <h4>Decision summary</h4>
-          <MessageMarkdown text={selected.summary || 'Reviewing this exchange…'} />
-          <small>
-            A concise explanation of the review decision. Operations below are performed by the
-            internal memory worker.
-          </small>
+          <MessageMarkdown
+            text={selected.summary || selected.error || 'Reviewing this exchange…'}
+          />
         </div>
         <div className="memory-run-operations">
           <h4>Operations</h4>
@@ -80,32 +110,63 @@ export function MemoryRuns({
       </section>
     );
   return (
-    <section className="pursuit-runs">
-      <div className="pursuit-section-heading">
-        <h2>Memory runs</h2>
-        <span>{runs.length} recent</span>
+    <section className="memory-reviews">
+      <MemoryTabHeading
+        title="Reviews"
+        description="Conversation reviews begin after one minute of inactivity, once replies finish."
+        actions={
+          <label className="memory-filter-control">
+            <span>Show</span>
+            <select
+              value={filter}
+              onChange={(event) => {
+                setFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="all">Recent runs</option>
+              <option value="active">In progress</option>
+              <option value="attention">Needs attention ({needsAttention})</option>
+            </select>
+          </label>
+        }
+      />
+      <div className="memory-record-list">
+        {visible.length ? (
+          visible.slice((page - 1) * pageSize, page * pageSize).map((run) => (
+            <button
+              className="memory-record-row pursuit-run-row"
+              key={run.id}
+              onClick={() => setSelectedId(run.id)}
+            >
+              <div>
+                <strong>{run.conversationName || 'Conversation review'}</strong>
+                <small>
+                  {time(run.startedAt)} · {kind(run.kind)}
+                </small>
+                <p>{run.summary || run.error || 'Reviewing this exchange…'}</p>
+              </div>
+              <MemoryStatus status={reviewStatus(run)} />
+              <ArrowUpRight size={16} />
+            </button>
+          ))
+        ) : (
+          <p className="memory-empty">
+            {filter === 'attention'
+              ? 'No reviews need attention.'
+              : filter === 'active'
+                ? 'No reviews in progress.'
+                : 'Conversation reviews will appear here after a chat has been idle.'}
+          </p>
+        )}
       </div>
-      <p className="memory-run-meta">
-        Conversations are reviewed after one minute of inactivity, once bot responses finish.
-      </p>
-      {runs.length ? (
-        runs.map((run) => (
-          <button className="pursuit-run-row" key={run.id} onClick={() => setSelectedId(run.id)}>
-            <span className={`pursuit-run-dot ${run.status === 'running' ? 'is-running' : ''}`} />
-            <div>
-              <strong>{run.conversationName || 'Conversation review'}</strong>
-              <small>
-                {time(run.startedAt)} · {run.ownerId ? 'Private' : 'Workspace'} · {kind(run.kind)}
-              </small>
-              <p>{run.summary || run.error || 'Reviewing this exchange…'}</p>
-            </div>
-            <span className="pursuit-run-status">{run.status}</span>
-            <ArrowUpRight size={16} />
-          </button>
-        ))
-      ) : (
-        <p className="ai-caption">No runs yet.</p>
-      )}
+      <MemoryPagination
+        page={page}
+        size={pageSize}
+        total={visible.length}
+        label="Reviews"
+        onPage={setPage}
+      />
     </section>
   );
 }

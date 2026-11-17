@@ -375,6 +375,41 @@ describe('Response activity disclosures', () => {
     expect(html).toContain('Context compaction interrupted');
     expect(html).not.toContain('Compacting context…');
   });
+  it('makes the saved compaction brief readable inside a collapsed disclosure', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          parts: [
+            {
+              id: 'brief',
+              type: 'compaction',
+              state: 'complete',
+              startedAt: message.createdAt,
+              tokensBefore: 24000,
+              tokensAfter: 5000,
+              summary: JSON.stringify({
+                version: 1,
+                entries: [
+                  {
+                    origin: 'user_message',
+                    note: '**Continue reviewing the draft.**\n\n- Check the headings',
+                    quote: 'Please review `draft.md`.',
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+      }),
+    );
+    expect(html).toMatch(/<details class="response-compaction response-compaction--complete">/);
+    expect(html).toContain('Compaction brief');
+    expect(html).toContain('<strong>Continue reviewing the draft.</strong>');
+    expect(html).toContain('<li>Check the headings</li>');
+    expect(html).toContain('<code>draft.md</code>');
+    expect(html).not.toContain('&quot;version&quot;');
+  });
   it('expands active reasoning and collapses it at reasoning-end while the response continues', () => {
     const thinking: ChatMessage = {
       ...message,

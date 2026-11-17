@@ -44,6 +44,11 @@ export class SQLiteMemoryStore {
         fact_id TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
         episode_id TEXT NOT NULL REFERENCES memory_episodes(id) ON DELETE CASCADE,
         PRIMARY KEY(fact_id,episode_id));
+      CREATE TABLE IF NOT EXISTS memory_episode_messages(
+        episode_id TEXT NOT NULL REFERENCES memory_episodes(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL, context_only INTEGER NOT NULL,
+        PRIMARY KEY(episode_id,message_id));
+      CREATE INDEX IF NOT EXISTS memory_episode_message ON memory_episode_messages(message_id,context_only);
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(fact_id UNINDEXED, text);
       CREATE TABLE IF NOT EXISTS memory_settings(workspace_id TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS memory_recalls(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
@@ -56,8 +61,9 @@ export class SQLiteMemoryStore {
     if (!this.all('PRAGMA table_info(memory_episodes)').some((row) => row.name === 'retry_at'))
       this.run('ALTER TABLE memory_episodes ADD COLUMN retry_at INTEGER');
     this.run('INSERT OR IGNORE INTO memory_schema VALUES(2)');
+    this.run('INSERT OR IGNORE INTO memory_schema VALUES(3)');
     const version = this.get('SELECT MAX(version) AS version FROM memory_schema')?.version;
-    if (version !== 2) throw new Error('Memory storage needs a newer module version.');
+    if (version !== 3) throw new Error('Memory storage needs a newer module version.');
     this.run("UPDATE memory_episodes SET status='pending' WHERE status='processing'");
   }
   get(sql: string, ...params: (string | number | null)[]) {
@@ -81,7 +87,7 @@ export class SQLiteMemoryStore {
       throw error;
     }
   }
-  scope(scope: MemoryScope, alias = 'f') {
+  scope(scope: MemoryScope, alias = 'f'): { sql: string; params: (string | number | null)[] } {
     return {
       sql: `${alias}.workspace_id=?${scope.includePrivate ? '' : ` AND (${alias}.owner_id IS NULL${scope.privateOwner ? ` OR ${alias}.owner_id=?` : ''})`}`,
       params: [
@@ -161,20 +167,36 @@ export class SQLiteMemoryStore {
   forgetVector(id: string) {
     this.vectors.delete(id);
   }
+  /** A review may have selected these inputs before another batch containing them was forgotten. */
+  hasForgottenInputs(episodeId: string) {
+    return Boolean(
+      this.get(
+        `SELECT 1 FROM memory_episode_messages input
+       JOIN memory_episodes e ON e.id=input.episode_id
+       JOIN memory_episode_messages forgotten ON forgotten.message_id=input.message_id AND forgotten.context_only=0
+       JOIN memory_episodes source ON source.id=forgotten.episode_id AND source.workspace_id=e.workspace_id
+       WHERE e.id=? AND source.status='forgotten' LIMIT 1`,
+        episodeId,
+      ),
+    );
+  }
   clearVectors() {
     this.vectors.clear();
   }
-  rows(scope: MemoryScope) {
-    const where = this.scope(scope);
+  factRows(where: { sql: string; params: (string | number | null)[] }, limit?: number, offset = 0) {
     // Vector payloads are deliberately excluded: recall reads every row, and a 384-float vector per
     // row dwarfs the fact itself. vectorsIn() fetches them separately and keeps them cached.
     return this.all(
       `SELECT f.id,f.workspace_id,f.owner_id,f.subject_id,f.relation,f.object_id,f.text,f.valid_from,
        f.valid_to,f.created_at,f.superseded_by,f.state,s.name AS subject,o.name AS object
        FROM memory_facts f JOIN memory_entities s ON s.id=f.subject_id JOIN memory_entities o ON o.id=f.object_id
-       WHERE ${where.sql} ORDER BY f.created_at DESC,f.id`,
+       WHERE ${where.sql} ORDER BY f.created_at DESC,f.id${limit === undefined ? '' : ' LIMIT ? OFFSET ?'}`,
       ...where.params,
+      ...(limit === undefined ? [] : [limit, offset]),
     );
+  }
+  rows(scope: MemoryScope) {
+    return this.factRows(this.scope(scope));
   }
   /** Fact ids in scope carrying a vector for this model; values come from the cache when possible. */
   vectorsIn(scope: MemoryScope, model: string) {
@@ -217,7 +239,9 @@ export class SQLiteMemoryStore {
     );
   }
   facts(scope: MemoryScope) {
-    const rows = this.rows(scope);
+    return this.hydrateFacts(this.rows(scope));
+  }
+  hydrateFacts(rows: Row[]) {
     const ids = rows.map((row) => String(row.id));
     const sources = new Map<string, Episode[]>();
     // Sources are loaded in chunks for the whole page: joining them per fact made the inspector
@@ -277,7 +301,16 @@ export class SQLiteMemoryStore {
   }
   recentEpisodes(workspaceId: string) {
     return this.all(
-      "SELECT * FROM memory_episodes WHERE workspace_id=? AND status!='forgotten' ORDER BY created_at DESC LIMIT 50",
+      `WITH recent AS (
+         SELECT id FROM memory_episodes WHERE workspace_id=? AND status!='forgotten'
+         ORDER BY created_at DESC,id LIMIT 50
+       )
+       SELECT * FROM memory_episodes WHERE workspace_id=? AND (
+         id IN (SELECT id FROM recent) OR (
+           status IN ('failed','pending','processing') AND source_key NOT LIKE 'review:%'
+         )
+       ) ORDER BY created_at DESC,id`,
+      workspaceId,
       workspaceId,
     ).map((row) => this.episode(row));
   }

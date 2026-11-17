@@ -9,6 +9,7 @@ import {
   SQLiteMemoryStore,
   extractionInstructions,
   extractionSchema,
+  normalizeMemoryDate,
   redactCredentials,
   type EpisodeInput,
   type Extractor,
@@ -16,7 +17,13 @@ import {
   type SearchOptions,
   type SQLiteConnection,
 } from '../../../mukai_memory/src';
-import type { MemorySettings, MemorySnapshot } from '../../shared/memory';
+import {
+  MEMORY_BACKUP_MAX_BYTES,
+  type MemoryBackup,
+  type MemoryFactDetails,
+  type MemorySettings,
+  type MemorySnapshot,
+} from '../../shared/memory';
 import type { Bot } from '../../shared/ai';
 import type { BotRepository } from '../repositories/botRepository';
 import type { MessageRepository } from '../repositories/messageRepository';
@@ -111,7 +118,8 @@ function parseMemoryExtraction(
     fail(`the response was not valid JSON (${(error as Error).message})`);
   }
   const object = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const facts = Array.isArray(object.facts) ? object.facts : Array.isArray(raw) ? raw : [];
+  if (!Array.isArray(object.facts)) fail('facts must be an array, including when it is empty');
+  const facts = object.facts as unknown[];
   const dispositions = new Set(['assert', 'replace', 'correct', 'uncertain']);
   const normalized = {
     reviewSummary:
@@ -740,7 +748,20 @@ export class MemoryService {
       query,
       Math.min(maxBytes, settings.contextTokens * 3),
     );
-    if (!this.settings(bot.workspaceId).enabled) return '';
+    const currentSettings = this.settings(bot.workspaceId);
+    if (!currentSettings.enabled || !currentSettings.automaticRecall) return '';
+    // A forget can also land between search finishing and this host continuation.
+    if (
+      context.hits.some(
+        ({ fact }) =>
+          !this.store.get(
+            'SELECT 1 FROM memory_facts WHERE workspace_id=? AND id=?',
+            scope.workspaceId,
+            fact.id,
+          ),
+      )
+    )
+      return '';
     this.store.recordRecall(scope, {
       id: assistantId,
       conversationId,
@@ -756,27 +777,67 @@ export class MemoryService {
     });
     return context.content;
   }
-  snapshot(workspaceId: string, query = '', history = false, asOf?: string): MemorySnapshot {
-    const scope = this.admin(workspaceId);
-    const all = this.store.facts(scope);
-    const at = asOf || new Date().toISOString();
-    const facts = all
-      .filter(
-        (fact) =>
-          (asOf
-            ? fact.validFrom <= at && (!fact.validTo || fact.validTo > at)
-            : history || (fact.validFrom <= at && (!fact.validTo || fact.validTo > at))) &&
-          (!query ||
-            `${fact.text} ${fact.subject} ${fact.object}`
-              .toLowerCase()
-              .includes(query.toLowerCase())),
+  canUseRecall(workspaceId: string, id: string) {
+    const settings = this.settings(workspaceId);
+    return (
+      settings.enabled &&
+      settings.automaticRecall &&
+      Boolean(
+        this.store.get(
+          'SELECT 1 FROM memory_recalls WHERE workspace_id=? AND id=?',
+          workspaceId,
+          id,
+        ),
       )
-      .slice(0, 200);
-    const ids = new Set(facts.map((fact) => fact.id));
-    const graph = this.engine.getGraph(scope, { includeHistory: history, limit: 300, asOf });
-    graph.edges = graph.edges.filter((edge) => ids.has(edge.id));
-    const nodeIds = new Set(graph.edges.flatMap((edge) => [edge.subjectId, edge.objectId]));
-    graph.nodes = graph.nodes.filter((node) => nodeIds.has(node.id));
+    );
+  }
+  snapshot(
+    workspaceId: string,
+    query = '',
+    history = false,
+    asOf?: string,
+    pagination?: { page: number; size: number },
+  ): MemorySnapshot {
+    const scope = this.admin(workspaceId);
+    const where = this.store.scope(scope);
+    const totalFacts = Number(
+      this.store.get(
+        `SELECT COUNT(*) AS count FROM memory_facts f WHERE ${where.sql}`,
+        ...where.params,
+      )?.count ?? 0,
+    );
+    const at = asOf ? normalizeMemoryDate(asOf) : new Date().toISOString();
+    const needle = query.trim().toLowerCase();
+    if (asOf || !history) {
+      where.sql += ' AND f.valid_from<=? AND (f.valid_to IS NULL OR f.valid_to>?)';
+      where.params.push(at, at);
+    }
+    const matching = needle
+      ? this.store
+          .factRows(where)
+          .filter((fact) =>
+            `${fact.text} ${fact.subject} ${fact.relation} ${fact.object}`
+              .toLowerCase()
+              .includes(needle),
+          )
+      : null;
+    const total =
+      matching?.length ??
+      Number(
+        this.store.get(
+          `SELECT COUNT(*) AS count FROM memory_facts f WHERE ${where.sql}`,
+          ...where.params,
+        )?.count ?? 0,
+      );
+    const size = pagination?.size ?? 200;
+    const page = Math.min(pagination?.page ?? 1, Math.max(1, Math.ceil(total / size)));
+    const offset = (page - 1) * size;
+    const visible =
+      matching?.slice(offset, offset + size) ?? this.store.factRows(where, size, offset);
+    const facts = pagination
+      ? visible.map((row) => this.store.fact(row, []))
+      : this.store.hydrateFacts(visible);
+    const graph = this.engine.graphFromFacts(scope, facts, total > size);
     return {
       settings: this.settings(workspaceId),
       facts,
@@ -784,13 +845,23 @@ export class MemoryService {
       graph,
       recalls: this.store.recalls(scope),
       runs: this.reviews.list(workspaceId),
-      totalFacts: all.length,
+      totalFacts,
+      factsPage: { page, size, total },
       embedding: {
         status: this.modelTask ? 'loading' : this.embedding.ready ? 'ready' : 'unavailable',
         model: this.embedding.model,
         error: this.modelError,
       },
     };
+  }
+  factDetails(workspaceId: string, id: string): MemoryFactDetails {
+    const scope = this.admin(workspaceId);
+    this.requireFact(workspaceId, id);
+    const fact = this.store.requireFact(scope, id);
+    const where = this.store.scope(scope);
+    where.sql += ' AND f.subject_id=? AND f.relation=? AND f.owner_id IS ?';
+    where.params.push(fact.subjectId, fact.relation, fact.ownerId);
+    return { fact, history: this.store.factRows(where).map((row) => this.store.fact(row, [])) };
   }
   correct(
     workspaceId: string,
@@ -866,6 +937,8 @@ export class MemoryService {
   retryRun(workspaceId: string, id: string) {
     this.admin(workspaceId);
     this.requireEnabled(workspaceId);
+    if (!this.settings(workspaceId).automaticCapture)
+      throw new ApiError(409, 'Enable automatic conversation reviews before retrying this review.');
     this.reviews.retry(workspaceId, id);
     this.kick();
   }
@@ -877,8 +950,21 @@ export class MemoryService {
   consolidate(workspaceId: string, apply = false, limit?: number) {
     return this.engine.consolidateClaims(this.admin(workspaceId), apply, limit);
   }
-  export(workspaceId: string) {
-    return { version: 1, facts: this.store.facts(this.admin(workspaceId)) };
+  export(workspaceId: string): MemoryBackup {
+    const facts = this.store.rows(this.admin(workspaceId)).map((row) => {
+      const { subject, relation, object, text, validFrom, validTo, state } = this.store.fact(
+        row,
+        [],
+      );
+      return { subject, relation, object, text, validFrom, validTo, state, ownerId: null };
+    });
+    const backup = { version: 1, facts } as const;
+    if (Buffer.byteLength(JSON.stringify(backup)) > MEMORY_BACKUP_MAX_BYTES)
+      throw new ApiError(
+        413,
+        'This workspace exceeds the memory export limit. Use a database backup.',
+      );
+    return backup;
   }
   import(
     workspaceId: string,
@@ -908,7 +994,7 @@ export class MemoryService {
       facts.map((fact) => ({ ...fact, ownerId: null })),
     );
     // Restored rows have no vectors, so let the background pass embed them.
-    if (counts.imported) this.kick();
+    if (counts.imported || counts.revived) this.kick();
     return counts;
   }
   async stopWorkspace(id: string) {

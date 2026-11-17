@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { LanguageModelMiddleware } from 'ai';
 import { isBotRuntimeContext } from '../../shared/botSystemPrompt';
-import type { TrajectoryDetail, TrajectoryRecord } from '../../shared/trajectory';
+import {
+  trajectoryContextKind,
+  trajectoryContextPreview,
+  type TrajectoryDetail,
+  type TrajectoryRecord,
+} from '../../shared/trajectory';
 import type { TrajectoryRepository } from '../repositories/trajectoryRepository';
 import type { DiagnosticService } from './diagnosticService';
 import { unsuccessfulToolResult } from './toolFeedback';
@@ -203,14 +208,10 @@ export class ChatTrajectory {
         : [],
     );
     const runtime = contexts.filter(isBotRuntimeContext).at(-1);
-    const memory = contexts
-      .filter(
-        (text) =>
-          text.startsWith('Retrieved memory reference data.') ||
-          text.startsWith('Working memory from earlier activity'),
-      )
-      .slice(-2);
-    const context = [...memory, ...(runtime ? [runtime] : [])].map((text) => this.text(text));
+    const memory = contexts.filter((text) => trajectoryContextKind(text) !== 'runtime').slice(-2);
+    const contextInputs = [...memory, ...(runtime ? [runtime] : [])];
+    const contextKinds = contextInputs.map(trajectoryContextKind);
+    const context = contextInputs.map((text) => this.text(text));
     const entry = this.start(
       {
         kind: 'model',
@@ -220,7 +221,10 @@ export class ChatTrajectory {
         startedAt: Date.now(),
         systemKey: system ? createHash('sha256').update(system).digest('hex') : undefined,
         systemPreview: system.slice(0, 240) || undefined,
-        contextPreviews: context.map((text) => text.slice(0, 240)),
+        contextPreviews: context.map((text, index) =>
+          trajectoryContextPreview(text, contextKinds[index], (fact) => this.text(fact)),
+        ),
+        contextKinds,
       },
       {
         system: system || undefined,

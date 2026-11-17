@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { startApiServer } from './app';
 import { seedTestBot } from './testFixtures';
 import type { Bot, ChatEvent } from '../shared/ai';
-import type { MemorySnapshot } from '../shared/memory';
+import type { MemoryBackup, MemoryFactDetails, MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
 import { CAPTURE_ATTEMPT_LIMIT, MemoryEngine } from '../../mukai_memory/src';
 import { memoryTools } from './tools/memory/execute';
@@ -1024,6 +1024,44 @@ describe('Mukai memory integration', () => {
       1,
     );
   });
+  it('round-trips large backups and pages facts with point-in-time graph and on-demand evidence', async () => {
+    const values: MemoryBackup['facts'] = Array.from({ length: 1001 }, (_, index) => ({
+      subject: 'Sample ' + index,
+      object: 'SQLite',
+      relation: 'uses_database',
+      text: `Sample ${index} uses SQLite.`,
+      ownerId: null,
+      state: 'confirmed',
+      validFrom: '2025-01-01T08:00:00Z',
+      validTo: null,
+    }));
+    api.memory.import('default', values);
+    const backup = (await request<MemoryBackup>('/memory/export')).data;
+    expect(backup.facts).toHaveLength(1001);
+    expect(backup.facts[0]).not.toHaveProperty('sources');
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('restore','Restore',NULL,'now')",
+    );
+    const restored = await request('/memory/import?workspaceId=restore', 'POST', backup);
+    expect(restored.response.status).toBe(200);
+    expect(restored.data).toEqual({ imported: 1001, revived: 0, deduplicated: 0 });
+    const page = (
+      await request<MemorySnapshot>(
+        '/memory?workspaceId=restore&page=42&limit=24&asOf=' +
+          encodeURIComponent('2025-01-01T00:00:00-08:00'),
+      )
+    ).data;
+    expect(page.factsPage).toEqual({ page: 42, size: 24, total: 1001 });
+    expect(page.facts).toHaveLength(17);
+    expect(page.graph.edges).toHaveLength(17);
+    expect(page.facts[0].sources).toHaveLength(0);
+    const detail = (
+      await request<MemoryFactDetails>(`/memory/${page.facts[0].id}?workspaceId=restore`)
+    ).data;
+    expect(detail.fact.id).toBe(page.facts[0].id);
+    expect(detail.fact.sources).toHaveLength(1);
+    expect(detail.history.map(({ id }) => id)).toEqual([detail.fact.id]);
+  });
   it('recalls the only uncertain record instead of nothing and marks it unverified', async () => {
     expect(
       (
@@ -1449,6 +1487,99 @@ describe('Mukai memory integration', () => {
       'complete',
     );
   });
+  it('keeps forgotten review inputs out of a changed batch, including an in-flight retry', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('I prefer espresso. This is the forgotten statement.');
+    let attempts = 0;
+    let start!: () => void;
+    let release!: () => void;
+    const retryStarted = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const retryGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const contents: string[] = [];
+    const engine = new MemoryEngine(api.memory.store, async ({ episode }) => {
+      contents.push(episode.content + episode.context);
+      if (++attempts === 1) throw new Error('provider unavailable');
+      if (attempts === 2) {
+        start();
+        await retryGate;
+      }
+      return { facts: episode.content.includes('forgotten statement') ? [coffee] : [] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    const signal = new AbortController().signal;
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(signal);
+    const failed = worker.list('default')[0];
+    expect(failed).toMatchObject({ status: 'failed', canRetry: true });
+    expect(failed.retryAt).toBeGreaterThan(Date.now());
+
+    await chat('Keep reviewing new statements.');
+    worker.schedule('default', 'bot-scout', 'scout');
+    const retried = worker.drain(signal);
+    await retryStarted;
+    try {
+      expect(worker.list('default')[0]).toMatchObject({ status: 'running', retrying: true });
+      expect(api.memory.forgetEpisode('default', failed.episodeId)).toBe(1);
+    } finally {
+      release();
+      await retried;
+    }
+    await worker.drain(signal);
+    expect(contents).toHaveLength(3);
+    expect(contents[2]).toContain('Keep reviewing new statements');
+    expect(contents[2]).not.toContain('forgotten statement');
+    expect(api.memory.snapshot('default').facts).toHaveLength(0);
+  });
+  it('recovers forgotten review inputs from older episodes whose run was already removed', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('Older forgotten message.');
+    const sequence = Number(
+      api.store.get("SELECT MAX(sequence) AS last FROM messages WHERE conversation_id='bot-scout'")
+        ?.last,
+    );
+    api.memory.engine.enqueue({
+      workspaceId: 'default',
+      conversationId: 'bot-scout',
+      sourceType: 'user',
+      sourceKey: `review:bot-scout:0:${sequence}`,
+      content: 'Legacy source',
+      referenceTime: '2026-01-01T00:00:00Z',
+    });
+    api.store.run(
+      "UPDATE memory_episodes SET status='forgotten',content='' WHERE source_key LIKE 'review:%'",
+    );
+    await chat('New message to review.');
+    const extract = vi.fn<Extractor>(async () => ({ facts: [] }));
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      new MemoryEngine(api.memory.store, extract),
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.recover();
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(new AbortController().signal);
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(extract.mock.calls[0][0].episode.content).toContain('New message to review.');
+    expect(extract.mock.calls[0][0].episode.content).not.toContain('Older forgotten message.');
+  });
   it('folds duplicate claims written before the overlap guard, and only when asked', async () => {
     const learned: ExtractedFact[] = [cache('2026-01-06T00:00:00Z')];
     const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
@@ -1704,6 +1835,14 @@ describe('Mukai memory integration', () => {
     expect(log).toContain('memory.extraction_retry');
     expect(log).not.toContain('PRIVATE INVALID FACT');
     expect(log).not.toContain('memory.extraction_failed');
+  });
+  it('repairs a null facts array before a review can discard its transcript', async () => {
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 0 });
+    extractionResponses.push({ content: '{"facts":null}', finishReason: 'stop' });
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    expect(calls.filter((call) => !call.stream)).toHaveLength(2);
   });
   it('recovers an empty token-limited response with a larger bounded budget and logs metadata', async () => {
     await close(api.server);

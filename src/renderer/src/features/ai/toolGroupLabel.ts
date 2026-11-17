@@ -42,6 +42,10 @@ function liveLabel(activity: ChatActivity): string {
     return activity.action === 'clarification' ? 'Waiting for your answer' : 'Waiting for approval';
   if (activity.tool === 'web_search') return 'Searching the web';
   if (activity.tool === 'execute_code') return 'Running JavaScript';
+  if (activity.tool === 'context')
+    return activity.action === 'compact'
+      ? 'Requesting context compaction'
+      : 'Checking context usage';
   if (activity.tool === 'browser') return 'Using the browser';
   if (activity.tool === 'computer_use') return 'Using the computer';
   if (activity.tool === 'system') return 'Checking saved variables';
@@ -52,6 +56,8 @@ function liveLabel(activity: ChatActivity): string {
 }
 
 function completedLabel(activity: ChatActivity): string {
+  if (activity.tool === 'context')
+    return activity.action === 'compact' ? 'Requested context compaction' : 'Checked context usage';
   if (activity.action === 'wait_for_bots') return 'Waited for bots';
   if (activity.action === 'receive_message') return 'Read bot replies';
   if (activity.tool === 'terminal' || activity.tool === 'process') return 'Ran commands';

@@ -109,13 +109,13 @@ async function main() {
     });
     assert.deepEqual(clear, { body: { port: 993 }, count: null });
     assert.equal(
-      await page.getByRole('button', { name: 'Export .env', exact: true }).isVisible(),
+      await page.getByRole('menuitem', { name: 'Export .env', exact: true }).isVisible(),
       false,
     );
-    await page.getByText('Developer view', { exact: true }).click();
+    await page.getByRole('button', { name: 'Environment actions', exact: true }).click();
     assert(!(await page.locator('body').innerText()).includes('dummy-ui-only'));
     const downloaded = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Export .env', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Export .env', exact: true }).click();
     const download = await downloaded;
     assert.equal(download.suggestedFilename(), 'mukai-environment.env');
     const downloadPath = await download.path();

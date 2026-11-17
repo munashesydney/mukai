@@ -418,6 +418,87 @@ describe('Temporal graph memory', () => {
     expect(result[0].fact.object).toBe('espresso');
     expect(result[0].reasons).toContain('semantic');
   });
+  it('ranks within the requested validity window before limiting keyword candidates', async () => {
+    const scope = { workspaceId: 'one' };
+    const expired = Array.from({ length: 300 }, (_, index) => ({
+      subject: `Old gateway ${index}`,
+      relation: 'uses',
+      object: 'Cache',
+      text: 'Redis Redis Redis Redis',
+      validFrom: '2020-01-01T00:00:00Z',
+      validTo: '2024-01-01T00:00:00Z',
+      state: 'confirmed' as const,
+    }));
+    engine.importFacts('one', [
+      ...expired,
+      {
+        ...expired[0],
+        subject: 'Gateway',
+        object: 'Database',
+        text: 'Redis supports the gateway and its associated project infrastructure over an isolated internal network.',
+        validFrom: '2025-01-01T08:00:00Z',
+        validTo: null,
+      },
+    ]);
+    const instant = '2025-01-01T00:00:00-08:00';
+    const hits = await engine.searchMemory(scope, 'Redis', { asOf: instant });
+    expect(hits.map(({ fact }) => fact.subject)).toEqual(['Gateway']);
+    expect(engine.getGraph(scope, { asOf: instant }).edges.map(({ subject }) => subject)).toEqual([
+      'Gateway',
+    ]);
+  });
+  it('discards a recalled fact forgotten while embeddings are running', async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const startedQuery = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const query = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine = new MemoryEngine(store, async () => ({ facts: next }), {
+      model: 'test',
+      async embed(texts, kind) {
+        if (kind === 'query') {
+          started();
+          await query;
+        }
+        return texts.map(() => [1, 0]);
+      },
+    });
+    const scope = { workspaceId: 'one' };
+    const [saved] = await add('source', [fact('SQLite')]);
+    await engine.indexEmbeddings(scope);
+    const recall = engine.getContext(scope, 'SQLite');
+    await startedQuery;
+    engine.forgetMemory(scope, saved.id);
+    release();
+    expect(await recall).toEqual({ content: '', hits: [] });
+  });
+  it('restores an import whose fact was removed through another source', async () => {
+    const value = {
+      subject: 'Mukai',
+      relation: 'uses_database',
+      object: 'SQLite',
+      text: 'Mukai uses SQLite.',
+      validFrom: '2026-01-01T00:00:00Z',
+      validTo: null,
+      state: 'confirmed' as const,
+    };
+    engine.importFacts('one', [value]);
+    const captured = await add('shared source', [fact('SQLite'), fact('Redis')]);
+    engine.forgetMemory(
+      { workspaceId: 'one' },
+      captured.find(({ object }) => object === 'Redis')!.id,
+    );
+    expect(store.facts({ workspaceId: 'one' })).toHaveLength(0);
+    expect(engine.importFacts('one', [value])).toEqual({
+      imported: 0,
+      revived: 1,
+      deduplicated: 0,
+    });
+    expect(store.facts({ workspaceId: 'one' }).map(({ object }) => object)).toEqual(['SQLite']);
+  });
   it('imports facts transactionally without calling an LLM and preserves private ownership', () => {
     const extraction = vi.fn<Extractor>();
     engine = new MemoryEngine(store, extraction);

@@ -5,9 +5,11 @@ import { layoutMemoryGraph, memoryEdgePath } from './memoryGraphLayout';
 export function MemoryGraph({
   graph,
   onSelect,
+  hasQuery = false,
 }: {
   graph: Graph;
   onSelect: (fact: MemoryFact) => void;
+  hasQuery?: boolean;
 }) {
   const [focus, setFocus] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -24,7 +26,7 @@ export function MemoryGraph({
     <div className="memory-graph">
       <div className="memory-graph-toolbar">
         <span>
-          {focus ? 'Selected neighborhood' : 'Recent relationships'} · {visible.nodes.length}{' '}
+          {focus ? 'Selected neighborhood' : 'Relationships on this page'} · {visible.nodes.length}{' '}
           entities
         </span>
         <div>
@@ -56,7 +58,9 @@ export function MemoryGraph({
       </div>
       {!visible.nodes.length ? (
         <div className="memory-empty">
-          Your relationships will appear here as memories are added.
+          {hasQuery
+            ? 'No matching relationships. Try a different search.'
+            : 'Relationships will appear here as memories are added.'}
         </div>
       ) : (
         <div
@@ -189,12 +193,12 @@ export function MemoryGraph({
           </svg>
         </div>
       )}
-      <p className="memory-caption">
-        Select a connection for evidence and history. Select an entity to focus. Dashed connections
-        are historical. Drag to pan and use + or − to zoom. Hover a connection to see its
-        relationship.{' '}
-        {visible.truncated ? 'Showing a bounded view; search to narrow the graph.' : ''}
-      </p>
+      {visible.nodes.length > 0 && (
+        <p className="memory-caption">
+          Select a connection to see its evidence. Select a node to focus. Drag to pan. Dashed
+          connections are historical.
+        </p>
+      )}
     </div>
   );
 }

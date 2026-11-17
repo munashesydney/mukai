@@ -10,6 +10,7 @@ export interface ChatCheckpoint {
   emptyReplyRecoveries?: number;
   reasoningEchoRecoveries?: number;
   stopGeneration?: { finalResponse?: string };
+  contextCompactionRequested?: boolean;
   providerTimeoutRecoveries?: number;
   memoryRecoveries?: number;
   memoryCompacted?: boolean;

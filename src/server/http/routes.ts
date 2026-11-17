@@ -43,6 +43,7 @@ import { browserDefinition } from '../tools/browser/definition';
 import type { CapabilityService } from '../capabilities/service';
 import { registrationInput } from '../capabilities/service';
 import { memorySettingsSchema, type MemoryService } from '../services/memoryService';
+import { MEMORY_BACKUP_MAX_BYTES } from '../../shared/memory';
 import type { FailureService } from '../services/failureService';
 import type { NotificationService } from '../services/notificationService';
 import { vmResourcesSchema } from '../../shared/computer';
@@ -500,6 +501,23 @@ export function createRoutes({
             (url.searchParams.get('q') || '').slice(0, 2000),
             url.searchParams.get('history') === 'true',
             asOf,
+            url.searchParams.has('page') || url.searchParams.has('limit')
+              ? {
+                  page: z.coerce
+                    .number()
+                    .int()
+                    .min(1)
+                    .default(1)
+                    .parse(url.searchParams.get('page') ?? undefined),
+                  size: z.coerce
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(100)
+                    .default(25)
+                    .parse(url.searchParams.get('limit') ?? undefined),
+                }
+              : undefined,
           ),
         );
       // Recall diagnostics: the ranked hits and the exact payload a turn would receive.
@@ -550,22 +568,20 @@ export function createRoutes({
         const input = z
           .object({
             version: z.literal(1),
-            facts: z
-              .array(
-                z.object({
-                  subject: z.string().min(1).max(180),
-                  relation: z.string().min(1).max(80),
-                  object: z.string().min(1).max(180),
-                  text: z.string().min(1).max(1200),
-                  validFrom: z.string().datetime({ offset: true }),
-                  validTo: z.string().datetime({ offset: true }).nullable(),
-                  state: z.enum(['confirmed', 'uncertain']),
-                  ownerId: z.string().nullable().optional(),
-                }),
-              )
-              .max(1000),
+            facts: z.array(
+              z.object({
+                subject: z.string().min(1).max(180),
+                relation: z.string().min(1).max(80),
+                object: z.string().min(1).max(180),
+                text: z.string().min(1).max(1200),
+                validFrom: z.string().datetime({ offset: true }),
+                validTo: z.string().datetime({ offset: true }).nullable(),
+                state: z.enum(['confirmed', 'uncertain']),
+                ownerId: z.string().nullable().optional(),
+              }),
+            ),
           })
-          .parse(await jsonBody(request, 4 * 1024 * 1024));
+          .parse(await jsonBody(request, MEMORY_BACKUP_MAX_BYTES));
         // Exports emit retractions where an end equals its start; anything earlier is a bad payload.
         const broken = input.facts.findIndex(
           (fact) => fact.validTo && Date.parse(fact.validTo) < Date.parse(fact.validFrom),
@@ -603,6 +619,8 @@ export function createRoutes({
           forgotten: true,
           sourcesRemoved: memory.forgetEpisode(workspaceId, id),
         });
+      if (id && !action && method === 'GET')
+        return sendRead(request, response, memory.factDetails(workspaceId, id));
       if (id && !action && method === 'DELETE')
         return send(response, {
           forgotten: true,

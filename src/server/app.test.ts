@@ -82,6 +82,7 @@ let mode:
   | 'reasoning-echo-answer'
   | 'reasoning-echo-observation'
   | 'system-stop'
+  | 'context-tools'
   | 'system-stop-empty'
   | 'system-stop-parallel'
   | 'system-stop-slow'
@@ -930,6 +931,31 @@ beforeEach(async () => {
         `data: ${JSON.stringify({ id: 'bounded', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason: actions.length ? 'tool_calls' : 'stop' }] })}\n\n`,
       );
       res.end('data: [DONE]\n\n');
+      return;
+    }
+    if (mode === 'context-tools') {
+      const step = calls.filter((call) => call.stream).length - 1;
+      const action = step === 1 ? 'compact' : 'status';
+      const delta =
+        step < 3
+          ? {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: `context-${step}`,
+                  type: 'function',
+                  function: { name: 'context', arguments: JSON.stringify({ action }) },
+                },
+              ],
+            }
+          : { content: 'Continued after compacting context.' };
+      res.end(
+        `data: ${JSON.stringify({
+          id: 'context-fixture',
+          model: body.model,
+          choices: [{ index: 0, delta, finish_reason: step < 3 ? 'tool_calls' : 'stop' }],
+        })}\n\ndata: [DONE]\n\n`,
+      );
       return;
     }
     if (mode.startsWith('reasoning-echo-') || mode.startsWith('system-stop')) {
@@ -2951,6 +2977,44 @@ describe('Mukai bots and AI API', () => {
     const reply = (await request<ChatMessage[]>('/bots/scout/messages')).data[1];
     expect(reply).toMatchObject({ status: 'complete', content: 'Generation stopped.' });
   });
+  it('lets a response inspect context, compact safely, and continue with lower usage', async () => {
+    await configure(false, { contextWindowTokens: 128000, maxOutputTokens: 4096 });
+    await chat('Earlier work to keep in the brief.');
+    api.store.run(
+      "UPDATE messages SET content=?,parts_json='[]' WHERE conversation_id='bot-scout' AND role='assistant'",
+      'Verified earlier findings. '.repeat(3500),
+    );
+    calls = [];
+    mode = 'context-tools';
+    const sent = await chat('Check your context, compact it, and continue.');
+    const history = (await request<ChatMessage[]>('/bots/scout/messages')).data;
+    const reply = history.at(-1)!;
+    expect(reply).toMatchObject({
+      status: 'complete',
+      content: 'Continued after compacting context.',
+    });
+    const observations = reply.activity!.filter((item) => item.tool === 'context');
+    expect(observations.map(({ action }) => action)).toEqual(['status', 'compact', 'status']);
+    const before = JSON.parse(observations[0].summary);
+    const compacted = JSON.parse(observations[1].summary);
+    const after = JSON.parse(observations[2].summary);
+    expect(before).toMatchObject({ totalTokens: 128000, estimated: true, compactions: 0 });
+    expect(compacted.queued).toBe(true);
+    expect(after.compactions).toBe(1);
+    expect(after.usedTokens).toBeLessThan(before.usedTokens);
+    expect(reply.parts?.filter((part) => part.type === 'compaction')).toHaveLength(1);
+    expect(
+      sent.events.some(
+        (event) =>
+          event.type === 'part' &&
+          event.part.type === 'compaction' &&
+          event.part.state === 'complete',
+      ),
+    ).toBe(true);
+    const finalCall = calls.filter((call) => call.stream).at(-1)!;
+    expect(JSON.stringify(finalCall.messages)).toContain('Earlier conversation notes');
+    expect(calls.filter((call) => call.stream)).toHaveLength(4);
+  });
 
   it('settles and saves operations already in flight before honoring stop_generation', async () => {
     await configure();
@@ -3232,12 +3296,23 @@ describe('Mukai bots and AI API', () => {
         state: 'complete',
         tokensAfter: expect.any(Number),
         finishedAt: expect.any(String),
+        summary: expect.any(String),
       });
+      const savedBrief = api.store.get(
+        'SELECT summary FROM conversation_contexts WHERE conversation_id=?',
+        'bot-scout',
+      )?.summary;
+      expect(boundary?.type === 'compaction' && boundary.summary).toBe(savedBrief);
       expect(reply.parts?.at(-1)?.type).toBe('text');
       const states = sent.events.flatMap((event) =>
         event.type === 'part' && event.part.type === 'compaction' ? [event.part.state] : [],
       );
       expect(states).toEqual(['compacting', 'complete']);
+      expect(
+        [...sent.events]
+          .reverse()
+          .find((event) => event.type === 'part' && event.part.type === 'compaction'),
+      ).toMatchObject({ part: { summary: savedBrief } });
     },
   );
   it.each(['compaction-fail', 'compaction-invalid', 'compaction-filter'] as const)(
