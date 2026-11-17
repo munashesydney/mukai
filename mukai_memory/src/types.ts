@@ -22,6 +22,8 @@ export interface Episode extends EpisodeInput {
   status: 'pending' | 'processing' | 'complete' | 'failed' | 'forgotten';
   attempts: number;
   error: string | null;
+  /** Millisecond epoch when a failed capture may run again; null on a fresh or manually retried row. */
+  retryAt?: number | null;
 }
 export interface MemoryFact {
   id: string;
@@ -91,4 +93,18 @@ export interface RecallTrace {
   query: string;
   facts: { id: string; text: string; reasons: string[] }[];
   characters: number;
+}
+/** One served claim folded into another by `consolidateClaims`. */
+export interface ConsolidatedClaim {
+  kept: string;
+  removed: string[];
+  text: string;
+  sourcesMoved: number;
+}
+export interface ConsolidationReport {
+  applied: boolean;
+  groups: number;
+  removed: number;
+  sourcesMoved: number;
+  claims: ConsolidatedClaim[];
 }

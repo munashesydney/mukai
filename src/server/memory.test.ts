@@ -9,7 +9,7 @@ import { seedTestBot } from './testFixtures';
 import type { Bot, ChatEvent } from '../shared/ai';
 import type { MemorySnapshot } from '../shared/memory';
 import type { ExtractedFact, Extractor } from '../../mukai_memory/src';
-import { MemoryEngine } from '../../mukai_memory/src';
+import { CAPTURE_ATTEMPT_LIMIT, MemoryEngine } from '../../mukai_memory/src';
 import { memoryTools } from './tools/memory/execute';
 import { memoryDefinition } from './tools/memory/definition';
 import { MemoryReviewService } from './services/memoryReviewService';
@@ -34,6 +34,77 @@ const coffee: ExtractedFact = {
 const extractor: Extractor = async ({ episode }) => ({
   facts: episode.content.includes('espresso') ? [coffee] : [],
 });
+/** One claim about one triple, so a test can vary only the part it is about. */
+const cache = (
+  validFrom: string,
+  disposition: ExtractedFact['disposition'] = 'assert',
+  supersedes: string[] = [],
+  over: Partial<ExtractedFact> = {},
+): ExtractedFact => ({
+  subject: 'Gateway',
+  subjectId: null,
+  subjectType: 'system',
+  subjectAliases: [],
+  relation: 'runs_cache',
+  object: 'redis',
+  objectId: null,
+  objectType: 'thing',
+  objectAliases: [],
+  text: 'The gateway runs on Redis.',
+  validFrom,
+  validTo: null,
+  disposition,
+  supersedes,
+  ...over,
+});
+/**
+ * The shape the write path used to allow: one more served row for a claim the workspace already had,
+ * reached through its own source. The guard stops new ones, so a test plants the legacy rows directly.
+ */
+const plantTwin = (
+  id: string,
+  over: { validFrom?: string; validTo?: string | null; state?: string } = {},
+) => {
+  const original = api.memory.store.get('SELECT * FROM memory_facts WHERE id=?', id)!;
+  const episode = api.memory.store.get(
+    'SELECT * FROM memory_episodes WHERE id=(SELECT episode_id FROM memory_fact_sources WHERE fact_id=? LIMIT 1)',
+    id,
+  )!;
+  const source = randomUUID();
+  api.memory.store.run(
+    `INSERT INTO memory_episodes(id,workspace_id,source_key,source_type,content,reference_time,context,
+      created_at,status,attempts)
+     VALUES(?,?,?,?,?,?,?,?,'complete',1)`,
+    source,
+    String(episode.workspace_id),
+    `legacy-${source}`,
+    String(episode.source_type),
+    'Checked the gateway deployment.',
+    String(episode.reference_time),
+    '',
+    new Date().toISOString(),
+  );
+  const twin = randomUUID();
+  api.memory.store.run(
+    `INSERT INTO memory_facts(id,workspace_id,owner_id,subject_id,relation,object_id,text,valid_from,
+      valid_to,created_at,superseded_by,state,vector_json,vector_model)
+     SELECT ?,workspace_id,owner_id,subject_id,relation,object_id,text,?,?,?,NULL,?,NULL,NULL
+     FROM memory_facts WHERE id=?`,
+    twin,
+    over.validFrom ?? String(original.valid_from),
+    over.validTo === undefined ? null : over.validTo,
+    new Date().toISOString(),
+    over.state ?? String(original.state),
+    id,
+  );
+  api.memory.store.run('INSERT INTO memory_fact_sources VALUES(?,?)', twin, source);
+  api.memory.store.run(
+    'INSERT INTO memory_fts(fact_id,text) VALUES(?,?)',
+    twin,
+    String(original.text),
+  );
+  return { twin, source };
+};
 let dir: string, api: Awaited<ReturnType<typeof startApiServer>>, fixture: Server;
 let calls: {
   messages: { role: string; content: unknown }[];
@@ -557,7 +628,7 @@ describe('Mukai memory integration', () => {
     const add = vi
       .spyOn(api.memory, 'add')
       .mockResolvedValue({ queued: true, episodeId: 'queued-episode', status: 'pending' });
-    const forget = vi.spyOn(api.memory.engine, 'forgetMemory').mockImplementation(() => {});
+    const forget = vi.spyOn(api.memory.engine, 'forgetMemory').mockImplementation(() => 1);
     const activities: { tool: string; action: string; status: string }[] = [];
     const tools = memoryTools({
       bot,
@@ -845,6 +916,692 @@ describe('Mukai memory integration', () => {
     expect(api.memory.snapshot('default').facts).toHaveLength(0);
     expect((await fetch(api.url + '/memory')).status).toBe(401);
     expect((await request('/memory?workspaceId=missing')).response.status).toBe(404);
+  });
+  it('answers missing and foreign memory ids with 404, never a server fault', async () => {
+    const missing = randomUUID();
+    expect((await request('/memory/' + missing, 'DELETE')).response.status).toBe(404);
+    expect((await request('/memory/' + missing + '/episode', 'DELETE')).response.status).toBe(404);
+    expect(
+      (
+        await request('/memory/' + missing + '/correct', 'POST', {
+          text: 'Nothing to correct.',
+          object: 'nothing',
+        })
+      ).response.status,
+    ).toBe(404);
+    expect((await request('/memory/' + missing + '/retry', 'POST')).response.status).toBe(404);
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const [fact] = api.memory.snapshot('default').facts;
+    // A fact id is not an episode id: the call must not report a forgotten source.
+    expect((await request('/memory/' + fact.id + '/episode', 'DELETE')).response.status).toBe(404);
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect((await request('/memory/' + fact.id, 'DELETE')).data).toMatchObject({
+      forgotten: true,
+      sourcesRemoved: 1,
+    });
+  });
+  it('reports what an import changed and refuses intervals that end before they start', async () => {
+    const fact = {
+      subject: 'User',
+      relation: 'prefers_editor',
+      object: 'Neovim',
+      text: 'User edits in Neovim.',
+      validFrom: '2026-01-01T00:00:00Z',
+      validTo: null,
+      state: 'confirmed' as const,
+    };
+    expect((await request('/memory/import', 'POST', { version: 1, facts: [fact] })).data).toEqual({
+      imported: 1,
+      deduplicated: 0,
+      revived: 0,
+    });
+    expect((await request('/memory/import', 'POST', { version: 1, facts: [fact] })).data).toEqual({
+      imported: 0,
+      deduplicated: 1,
+      revived: 0,
+    });
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    // An end equal to its start is a retraction, so an export of corrected history re-imports.
+    expect(
+      (
+        await request('/memory/import', 'POST', {
+          version: 1,
+          facts: [{ ...fact, validTo: fact.validFrom }],
+        })
+      ).response.status,
+    ).toBe(200);
+    const invalid = await request<{ error: string }>('/memory/import', 'POST', {
+      version: 1,
+      facts: [
+        {
+          ...fact,
+          object: 'Cursor',
+          text: 'User edits in Cursor.',
+          validTo: '2025-12-31T00:00:00Z',
+        },
+      ],
+    });
+    expect(invalid.response.status).toBe(400);
+    expect(invalid.data.error).toContain('ends before it begins');
+    expect((await request<MemorySnapshot>('/memory?history=true')).data.facts).toHaveLength(2);
+  });
+  it('round-trips corrected history through export and import', async () => {
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+    const original = api.memory.snapshot('default').facts[0];
+    expect(
+      (
+        await request('/memory/' + original.id + '/correct', 'POST', {
+          text: 'User prefers tea.',
+          object: 'tea',
+        })
+      ).response.ok,
+    ).toBe(true);
+    const exported = (
+      await request<{ version: 1; facts: MemorySnapshot['facts'] }>('/memory/export')
+    ).data;
+    expect(exported.facts).toHaveLength(2);
+    expect(exported.facts.some((fact) => fact.validTo === fact.validFrom)).toBe(true);
+    api.store.run(
+      "INSERT INTO workspaces(id,name,folder,created_at) VALUES('restore','Restore',NULL,'now')",
+    );
+    const restored = await request<{ imported: number; deduplicated: number }>(
+      '/memory/import?workspaceId=restore',
+      'POST',
+      { version: 1, facts: exported.facts },
+    );
+    expect(restored.response.status).toBe(200);
+    expect(restored.data).toEqual({
+      imported: 2,
+      deduplicated: 0,
+      revived: 0,
+    });
+    const history = (await request<MemorySnapshot>('/memory?workspaceId=restore&history=true'))
+      .data;
+    expect(history.facts).toHaveLength(2);
+    expect((await request<MemorySnapshot>('/memory?workspaceId=restore')).data.facts).toHaveLength(
+      1,
+    );
+  });
+  it('recalls the only uncertain record instead of nothing and marks it unverified', async () => {
+    expect(
+      (
+        await request('/memory/import', 'POST', {
+          version: 1,
+          facts: [
+            {
+              subject: 'Billing service',
+              relation: 'uses_database',
+              object: 'PostgreSQL',
+              text: 'The billing service uses PostgreSQL.',
+              validFrom: '2020-01-01T00:00:00Z',
+              validTo: '2024-01-01T00:00:00Z',
+              state: 'confirmed' as const,
+            },
+            {
+              subject: 'Billing service',
+              relation: 'uses_database',
+              object: 'SQLite',
+              text: 'The billing service uses SQLite.',
+              validFrom: '2024-01-01T00:00:00Z',
+              validTo: null,
+              state: 'uncertain' as const,
+            },
+          ],
+        })
+      ).response.ok,
+    ).toBe(true);
+    // The confirmed record has ended, so the uncertain one is the workspace's only answer.
+    const hits = await api.memory.searchWorkspace('default', 'billing service database', {});
+    expect(hits.map((hit) => hit.fact.object)).toEqual(['SQLite']);
+    const payload = await api.memory.contextWorkspace('default', 'billing service database', 4000);
+    expect(payload.content).toContain('"state":"uncertain"');
+    expect(payload.content).toContain('"evidence":["import"]');
+    // A confirmed current record still wins over the uncertain one.
+    expect(
+      (
+        await request('/memory/import', 'POST', {
+          version: 1,
+          facts: [
+            {
+              subject: 'Billing service',
+              relation: 'uses_database',
+              object: 'MySQL',
+              text: 'The billing service uses MySQL.',
+              validFrom: '2025-01-01T00:00:00Z',
+              validTo: null,
+              state: 'confirmed' as const,
+            },
+          ],
+        })
+      ).response.ok,
+    ).toBe(true);
+    expect(
+      (await api.memory.searchWorkspace('default', 'billing service database', {}))[0].fact.object,
+    ).toBe('MySQL');
+  });
+  it('restores forgotten facts on an explicit import without reviving background replay', async () => {
+    const fact = {
+      subject: 'User',
+      relation: 'prefers_editor',
+      object: 'Neovim',
+      text: 'User edits in Neovim.',
+      validFrom: '2026-01-01T00:00:00Z',
+      validTo: null,
+      state: 'confirmed' as const,
+    };
+    await request('/memory/import', 'POST', { version: 1, facts: [fact] });
+    const [forgotten] = api.memory.snapshot('default').facts;
+    expect((await request('/memory/' + forgotten.id, 'DELETE')).response.ok).toBe(true);
+    expect(api.memory.snapshot('default').facts).toHaveLength(0);
+    // A forget stops automatic replay; restoring a backup is an explicit write and must apply.
+    expect((await request('/memory/import', 'POST', { version: 1, facts: [fact] })).data).toEqual({
+      imported: 0,
+      deduplicated: 0,
+      revived: 1,
+    });
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect((await request('/memory/import', 'POST', { version: 1, facts: [fact] })).data).toEqual({
+      imported: 0,
+      deduplicated: 1,
+      revived: 0,
+    });
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    // Clearing the workspace then restoring a backup must not silently write nothing.
+    expect((await request('/memory', 'DELETE')).response.ok).toBe(true);
+    expect((await request('/memory/import', 'POST', { version: 1, facts: [fact] })).data).toEqual({
+      imported: 0,
+      deduplicated: 0,
+      revived: 1,
+    });
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+  });
+  it('treats an epoch validFrom as no stated beginning and keeps a real historical date', async () => {
+    await close(api.server);
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryReviewIdleMs: 0,
+      memoryExtractor: async () => ({
+        facts: [
+          { ...coffee, validFrom: '1970-01-01T00:00:00Z' },
+          {
+            ...coffee,
+            relation: 'born_in',
+            object: '1968',
+            text: 'User was born in May 1968.',
+            validFrom: '1968-05-04T00:00:00Z',
+          },
+        ],
+      }),
+    });
+    await chat('I prefer espresso every morning.');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(2));
+    const facts = api.memory.snapshot('default').facts;
+    const preference = facts.find((fact) => fact.relation === 'prefers_coffee')!;
+    const birth = facts.find((fact) => fact.relation === 'born_in')!;
+    expect(Number(preference.validFrom.slice(0, 4))).toBeGreaterThan(2000);
+    expect(birth.validFrom).toBe('1968-05-04T00:00:00.000Z');
+  });
+  it('merges a claim re-learned through another channel instead of serving it twice', async () => {
+    let learned: ExtractedFact[] = [];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    const learn = async (fact: ExtractedFact, sourceKey: string) => {
+      learned = [fact];
+      await engine.addMemory({
+        workspaceId: 'default',
+        sourceKey,
+        sourceType: 'tool',
+        content: 'Checked the gateway deployment.',
+        referenceTime: '2026-01-06T00:00:00Z',
+      });
+    };
+    // The same sentence reaches memory twice: once as a tool finding, once from the review of the
+    // message. The second copy stated an earlier beginning, which used to write a second row.
+    await learn(cache('2026-01-06T00:00:00Z'), 'tool-1');
+    await learn(cache('2026-01-04T00:00:00Z'), 'review-1');
+    const facts = api.memory.snapshot('default').facts;
+    expect(facts).toHaveLength(1);
+    expect(facts[0].validFrom).toBe('2026-01-04T00:00:00.000Z');
+    expect(facts[0].sources.map((source) => source.sourceKey).sort()).toEqual([
+      'review-1',
+      'tool-1',
+    ]);
+  });
+  it('keeps one row when the same sentence arrives hedged and plain', async () => {
+    let learned: ExtractedFact[] = [];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    const learn = async (fact: ExtractedFact, sourceKey: string) => {
+      learned = [fact];
+      await engine.addMemory({
+        workspaceId: 'default',
+        sourceKey,
+        sourceType: 'tool',
+        content: 'Checked the gateway deployment.',
+        referenceTime: '2026-01-06T00:00:00Z',
+      });
+    };
+    await learn(cache('2026-01-06T00:00:00Z', 'uncertain'), 'review-1');
+    expect(api.memory.snapshot('default').facts.map((fact) => fact.state)).toEqual(['uncertain']);
+    // A plain statement of the same sentence settles the hedge instead of adding a second answer.
+    await learn(cache('2026-01-06T00:00:00Z'), 'tool-1');
+    const merged = api.memory.snapshot('default').facts;
+    expect(merged).toHaveLength(1);
+    expect(merged[0].state).toBe('confirmed');
+    expect(merged[0].sources).toHaveLength(2);
+    // A later hedge must not demote what a plain statement already settled.
+    await learn(cache('2026-01-06T00:00:00Z', 'uncertain'), 'review-2');
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect(api.memory.snapshot('default').facts[0].state).toBe('confirmed');
+  });
+  it('does not duplicate a claim when a replacement cannot see the fact it replaces', async () => {
+    let learned: ExtractedFact[] = [];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    const learn = async (
+      fact: ExtractedFact,
+      sourceKey: string,
+      content = 'Checked the gateway.',
+    ) => {
+      learned = [fact];
+      await engine.addMemory({
+        workspaceId: 'default',
+        sourceKey,
+        sourceType: 'tool',
+        content,
+        referenceTime: '2026-01-06T00:00:00Z',
+      });
+    };
+    await learn(cache('2026-01-06T00:00:00Z'), 'tool-1');
+    // A replacement that names a fact the extractor was never shown used to be stored as a second
+    // copy of the claim it meant to replace, hedged as uncertain.
+    await learn(cache('2026-01-06T00:00:00Z', 'replace', ['deleted-before-extraction']), 'tool-2');
+    const facts = api.memory.snapshot('default').facts;
+    expect(facts).toHaveLength(1);
+    expect(facts[0].state).toBe('confirmed');
+    expect(facts[0].supersededBy).toBeNull();
+    expect(facts[0].sources).toHaveLength(2);
+  });
+  it('replaces a fact the model names even when it was outside the candidate window', async () => {
+    const filler = (index: number): ExtractedFact => ({
+      ...coffee,
+      subject: `Alpha service ${index}`,
+      relation: 'alpha_role',
+      object: `alpha-role-${index}`,
+      text: `Alpha service ${index} handles alpha traffic.`,
+      validFrom: '2026-01-01T00:00:00Z',
+    });
+    let learned: ExtractedFact[] = Array.from({ length: 24 }, (_, index) => filler(index));
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    // An extraction can carry at most 24 facts, so crowd the workspace out in three passes.
+    for (const batch of [0, 1, 2]) {
+      const offset = batch * 24;
+      learned = Array.from({ length: 24 }, (_, index) => filler(offset + index));
+      await engine.addMemory({
+        workspaceId: 'default',
+        sourceKey: `bulk-${batch}`,
+        sourceType: 'tool',
+        content: 'Alpha inventory sweep.',
+        referenceTime: '2026-01-01T00:00:00Z',
+      });
+    }
+    learned = [cache('2026-01-06T00:00:00Z')];
+    await engine.addMemory({
+      workspaceId: 'default',
+      sourceKey: 'tool-1',
+      sourceType: 'tool',
+      content: 'Checked the gateway deployment.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    const [original] = api.memory
+      .snapshot('default')
+      .facts.filter((fact) => fact.relation === 'runs_cache');
+    expect(original).toBeDefined();
+    // The correction cites the stored fact from the recall trace. Only the 60 best-matching facts are
+    // handed to the extractor, and these Alpha records crowd it out of that window.
+    learned = [
+      cache('2026-02-01T00:00:00Z', 'replace', [original.id], {
+        object: 'valkey',
+        text: 'The gateway runs on Valkey.',
+      }),
+    ];
+    await engine.addMemory({
+      workspaceId: 'default',
+      sourceKey: 'tool-2',
+      sourceType: 'tool',
+      content: 'Alpha sweep across the workspace.',
+      referenceTime: '2026-02-01T00:00:00Z',
+    });
+    const history = (await request<MemorySnapshot>('/memory?history=true')).data.facts;
+    const replacement = history.find((fact) => fact.object === 'valkey')!;
+    expect(replacement.state).toBe('confirmed');
+    const replaced = history.find((fact) => fact.id === original.id)!;
+    expect(replaced.validTo).toBe('2026-02-01T00:00:00.000Z');
+    expect(replaced.supersededBy).toBe(replacement.id);
+    expect(
+      api.memory
+        .snapshot('default')
+        .facts.filter((fact) => fact.subject === 'Gateway')
+        .map((fact) => fact.object),
+    ).toEqual(['valkey']);
+  });
+  it('retries a capture the model dropped instead of losing the exchange', async () => {
+    // One unavailable model used to discard the exchange for good; 38 of them were waiting that way.
+    await close(api.server);
+    api = await startApiServer(0, {
+      dataDir: dir,
+      memoryReviewIdleMs: 600000,
+      memoryExtractor: async () => {
+        throw new Error('provider unavailable');
+      },
+    });
+    const episode = api.memory.engine.enqueue({
+      workspaceId: 'default',
+      sourceKey: 'dropped-1',
+      sourceType: 'tool',
+      content: 'I prefer espresso every morning.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    await api.memory.engine.processEpisode(episode.id).catch(() => {});
+    const failed = api.store.get("SELECT * FROM memory_episodes WHERE source_key='dropped-1'");
+    expect(failed?.status).toBe('failed');
+    expect(Number(failed?.attempts)).toBe(1);
+    expect(Number(failed?.retry_at)).toBeGreaterThan(Date.now());
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryReviewIdleMs: 600000 });
+    // The backoff has elapsed, so the queue takes the dropped exchange back on its own.
+    api.store.run(
+      "UPDATE memory_episodes SET retry_at=? WHERE source_key='dropped-1'",
+      Date.now() - 1,
+    );
+    await chat('Anything on the garden beds?');
+    await vi.waitFor(
+      () =>
+        expect(api.memory.snapshot('default').facts.map((fact) => fact.text)).toContain(
+          'User prefers espresso every morning.',
+        ),
+      { timeout: 8000 },
+    );
+    expect(
+      api.store.get("SELECT status FROM memory_episodes WHERE source_key='dropped-1'")?.status,
+    ).toBe('complete');
+  });
+  it('stops retrying a capture once the bounded attempts run out', async () => {
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      throw new Error('provider unavailable');
+    });
+    const episode = engine.enqueue({
+      workspaceId: 'default',
+      sourceKey: 'dropped-2',
+      sourceType: 'tool',
+      content: 'The gateway uses Redis.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    for (let attempt = 0; attempt < CAPTURE_ATTEMPT_LIMIT + 1; attempt++)
+      await engine.processEpisode(episode.id).catch(() => {});
+    const row = api.store.get("SELECT * FROM memory_episodes WHERE source_key='dropped-2'");
+    expect(row?.status).toBe('failed');
+    expect(Number(row?.attempts)).toBeGreaterThanOrEqual(CAPTURE_ATTEMPT_LIMIT);
+    expect(row?.retry_at).toBeNull();
+    // A spent source waits for the user rather than queueing forever.
+    expect(
+      api.store.get(
+        "SELECT id FROM memory_episodes WHERE status='failed' AND attempts>0 AND attempts<? AND (retry_at IS NULL OR retry_at<=?) AND source_key='dropped-2'",
+        CAPTURE_ATTEMPT_LIMIT,
+        Date.now() + 86400000,
+      ),
+    ).toBeUndefined();
+    expect(api.memory.snapshot('default').facts).toHaveLength(0);
+  });
+  it('retries a failed review on a backoff instead of blocking the conversation', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('A project finding worth remembering.');
+    let failing = true;
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      if (failing) throw new Error('provider unavailable');
+      return { facts: [coffee] };
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')[0].status).toBe('failed');
+    const queued = api.store.get(
+      "SELECT * FROM memory_review_jobs WHERE conversation_id='bot-scout'",
+    );
+    // It used to be blocked until the user noticed it in Settings.
+    expect(Number(queued?.blocked)).toBe(0);
+    expect(Number(queued?.due_at)).toBeGreaterThan(Date.now());
+    failing = false;
+    api.store.run(
+      "UPDATE memory_review_jobs SET due_at=? WHERE conversation_id='bot-scout'",
+      Date.now() - 1,
+    );
+    await worker.drain(new AbortController().signal);
+    expect(worker.list('default')[0].status).toBe('complete');
+    await vi.waitFor(() => expect(api.memory.snapshot('default').facts).toHaveLength(1));
+  });
+  it('blocks a conversation whose reviews keep failing', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('A project finding worth remembering.');
+    const engine = new MemoryEngine(api.memory.store, async () => {
+      throw new Error('provider unavailable');
+    });
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    for (let attempt = 0; attempt < CAPTURE_ATTEMPT_LIMIT; attempt++) {
+      api.store.run(
+        "UPDATE memory_review_jobs SET due_at=? WHERE conversation_id='bot-scout'",
+        Date.now() - 1,
+      );
+      await worker.drain(new AbortController().signal);
+    }
+    expect(
+      Number(
+        api.store.get("SELECT blocked FROM memory_review_jobs WHERE conversation_id='bot-scout'")
+          ?.blocked,
+      ),
+    ).toBe(1);
+    // The user can still see it and retry deliberately.
+    expect(worker.list('default').filter((run) => run.status === 'failed')).toHaveLength(
+      CAPTURE_ATTEMPT_LIMIT,
+    );
+  });
+  it('closes a review attempt that a later review already covers', async () => {
+    api.memory.saveSettings('default', {
+      ...api.memory.settings('default'),
+      automaticCapture: false,
+    });
+    await chat('A project finding worth remembering.');
+    api.store.run(
+      `INSERT INTO memory_episodes(id,workspace_id,source_key,source_type,content,reference_time,
+        conversation_id,context,created_at,status,attempts)
+       VALUES('orphan-1','default','review:bot-scout:0:1','user','stuck attempt','2026-01-01T00:00:00Z',
+        'bot-scout','','2026-01-01T00:00:00Z','pending',1)`,
+    );
+    const worker = new MemoryReviewService(
+      api.memory.store,
+      api.memory.engine,
+      new BotRepository(api.store),
+      () => true,
+      0,
+    );
+    worker.schedule('default', 'bot-scout', 'scout');
+    await worker.drain(new AbortController().signal);
+    // The new pass read everything from the same checkpoint, so the abandoned one is finished with.
+    expect(api.store.get("SELECT status FROM memory_episodes WHERE id='orphan-1'")?.status).toBe(
+      'complete',
+    );
+  });
+  it('folds duplicate claims written before the overlap guard, and only when asked', async () => {
+    const learned: ExtractedFact[] = [cache('2026-01-06T00:00:00Z')];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    await engine.addMemory({
+      workspaceId: 'default',
+      sourceKey: 'tool-1',
+      sourceType: 'tool',
+      content: 'Checked the gateway deployment.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    const [original] = api.memory.snapshot('default').facts;
+    const originalSource = String(
+      api.memory.store.get(
+        'SELECT episode_id FROM memory_fact_sources WHERE fact_id=? LIMIT 1',
+        original.id,
+      )?.episode_id,
+    );
+    const { twin, source } = plantTwin(original.id, {
+      validFrom: '2026-01-04T00:00:00.000Z',
+      state: 'uncertain',
+    });
+    // A legacy chain that names the copy about to go: the older era says the twin replaced it.
+    const era = randomUUID();
+    api.memory.store.run(
+      `INSERT INTO memory_facts(id,workspace_id,owner_id,subject_id,relation,object_id,text,valid_from,
+        valid_to,created_at,superseded_by,state,vector_json,vector_model)
+       SELECT ?,workspace_id,owner_id,subject_id,relation,object_id,text,'2025-01-01T00:00:00.000Z',
+        '2026-01-04T00:00:00.000Z',?,?,'confirmed',NULL,NULL FROM memory_facts WHERE id=?`,
+      era,
+      new Date().toISOString(),
+      twin,
+      original.id,
+    );
+    const served = () =>
+      api.memory.snapshot('default').facts.filter((f) => f.text === original.text);
+    const history = () =>
+      api.memory
+        .snapshot('default', '', true)
+        .facts.filter((fact) => fact.subject === original.subject);
+    expect(served()).toHaveLength(2);
+
+    // Reporting must not be allowed to remove anything: this is the one memory write that deletes rows.
+    const preview = engine.consolidateClaims({ workspaceId: 'default', includePrivate: true });
+    expect(preview).toMatchObject({ applied: false, groups: 1, removed: 1, sourcesMoved: 1 });
+    expect(served()).toHaveLength(2);
+
+    const report = engine.consolidateClaims({ workspaceId: 'default', includePrivate: true }, true);
+    expect(report).toMatchObject({ applied: true, groups: 1, removed: 1, sourcesMoved: 1 });
+    const [kept] = served();
+    expect(kept.id).toBe(original.id);
+    // The earliest start and the stronger of the two states survive, with both sources.
+    expect(kept.validFrom).toBe('2026-01-04T00:00:00.000Z');
+    expect(kept.state).toBe('confirmed');
+    expect(kept.sources).toHaveLength(2);
+    // Lineage follows the survivor instead of dangling at a removed id, and its index entry goes.
+    expect(history().find((fact) => fact.id === era)?.supersededBy).toBe(original.id);
+    expect(
+      api.memory.store.get('SELECT fact_id FROM memory_fts WHERE fact_id=?', twin),
+    ).toBeUndefined();
+    expect(history()).toHaveLength(2);
+    // Nothing was forgotten: the retired row's own source keeps its content and is now cited.
+    expect(kept.sources.map((entry) => entry.id).sort()).toEqual([originalSource, source].sort());
+    expect(api.store.get('SELECT content FROM memory_episodes WHERE id=?', source)?.content).toBe(
+      'Checked the gateway deployment.',
+    );
+    expect(
+      engine.consolidateClaims({ workspaceId: 'default', includePrivate: true }, true),
+    ).toMatchObject({ groups: 0, removed: 0 });
+  });
+  it('leaves an ended era out of the consolidation', async () => {
+    const learned: ExtractedFact[] = [cache('2026-01-06T00:00:00Z')];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    await engine.addMemory({
+      workspaceId: 'default',
+      sourceKey: 'tool-1',
+      sourceType: 'tool',
+      content: 'Checked the gateway deployment.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    const [original] = api.memory.snapshot('default').facts;
+    plantTwin(original.id, { validTo: '2026-01-05T00:00:00.000Z' });
+    // Same sentence, one span closed and one open: two eras of one claim, not a duplicate.
+    expect(
+      engine.consolidateClaims({ workspaceId: 'default', includePrivate: true }, true),
+    ).toMatchObject({ groups: 0, removed: 0 });
+    expect(api.memory.snapshot('default', '', true).facts).toHaveLength(2);
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+  });
+  it('exposes the consolidation as a maintenance endpoint that reports before it applies', async () => {
+    const learned: ExtractedFact[] = [cache('2026-01-06T00:00:00Z')];
+    const engine = new MemoryEngine(api.memory.store, async () => ({ facts: learned }));
+    await engine.addMemory({
+      workspaceId: 'default',
+      sourceKey: 'tool-1',
+      sourceType: 'tool',
+      content: 'Checked the gateway deployment.',
+      referenceTime: '2026-01-06T00:00:00Z',
+    });
+    plantTwin(api.memory.snapshot('default').facts[0]!.id);
+    // A call with no body is refused rather than treated as "apply", so a stray request cannot cut rows.
+    expect((await request('/memory/consolidate', 'POST')).response.status).toBe(400);
+    const preview = await request<{ applied: boolean; groups: number; removed: number }>(
+      '/memory/consolidate',
+      'POST',
+      {},
+    );
+    expect(preview.data).toMatchObject({ applied: false, groups: 1, removed: 1 });
+    expect(api.memory.snapshot('default').facts).toHaveLength(2);
+    const applied = await request<{ applied: boolean; groups: number; removed: number }>(
+      '/memory/consolidate',
+      'POST',
+      { apply: true },
+    );
+    expect(applied.data).toMatchObject({ applied: true, groups: 1, removed: 1 });
+    expect(api.memory.snapshot('default').facts).toHaveLength(1);
+    expect(
+      (
+        await request<{ groups: number; removed: number }>('/memory/consolidate', 'POST', {
+          apply: true,
+        })
+      ).data,
+    ).toMatchObject({ groups: 0, removed: 0 });
+  });
+  it('embeds imported facts in the background so restored memory stays semantic', async () => {
+    api.memory.embedding.ready = true;
+    const embed = vi
+      .spyOn(api.memory.embedding, 'embed')
+      .mockImplementation(async (texts) => texts.map(() => [1, ...Array<number>(383).fill(0)]));
+    api.memory.saveSettings('default', { ...api.memory.settings('default'), semanticSearch: true });
+    expect(
+      (
+        await request('/memory/import', 'POST', {
+          version: 1,
+          facts: [
+            {
+              subject: 'User',
+              relation: 'prefers_editor',
+              object: 'Neovim',
+              text: 'User edits in Neovim.',
+              validFrom: '2026-01-01T00:00:00Z',
+              validTo: null,
+              state: 'confirmed' as const,
+            },
+          ],
+        })
+      ).response.ok,
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(
+        api.memory.store.get('SELECT vector_json FROM memory_facts LIMIT 1')?.vector_json,
+      ).toBeTruthy(),
+    );
+    expect(embed.mock.calls.some((call) => call[1] === 'document')).toBe(true);
   });
   it('rejects invalid settings and private import owners, and imports without model calls', async () => {
     expect(

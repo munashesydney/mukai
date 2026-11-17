@@ -56,14 +56,15 @@ export function memoryTools(context: {
                   asOf: input.asOf,
                   includeHistory: input.includeHistory,
                 });
-              case 'forget':
+              case 'forget': {
                 if (!input.memoryId)
                   throw new Error('Memory forget requires memoryId from search.');
-                context.memory.engine.forgetMemory(
+                const sourcesRemoved = context.memory.engine.forgetMemory(
                   context.memory.scope(context.bot),
                   input.memoryId,
                 );
-                return { forgotten: true };
+                return { forgotten: sourcesRemoved > 0, sourcesRemoved };
+              }
             }
           },
         ),

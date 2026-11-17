@@ -478,6 +478,19 @@ export function createRoutes({
       }
       const workspaceId = url.searchParams.get('workspaceId') || 'default';
       workspaces.require(workspaceId);
+      const asOf = url.searchParams.get('asOf') || undefined;
+      if (asOf) z.string().datetime({ offset: true }).parse(asOf);
+      // Maintenance: fold duplicate claims written before the write path compared overlapping
+      // intervals. It reports unless the body asks to apply, so a stray call removes nothing.
+      if (id === 'consolidate' && method === 'POST') {
+        const input = z
+          .object({
+            apply: z.boolean().default(false),
+            limit: z.number().int().min(1).max(1000).optional(),
+          })
+          .parse(await jsonBody(request));
+        return send(response, memory.consolidate(workspaceId, input.apply, input.limit));
+      }
       if (!id && method === 'GET')
         return sendRead(
           request,
@@ -486,6 +499,43 @@ export function createRoutes({
             workspaceId,
             (url.searchParams.get('q') || '').slice(0, 2000),
             url.searchParams.get('history') === 'true',
+            asOf,
+          ),
+        );
+      // Recall diagnostics: the ranked hits and the exact payload a turn would receive.
+      if (id === 'search' && method === 'GET')
+        return send(
+          response,
+          await memory.searchWorkspace(
+            workspaceId,
+            (url.searchParams.get('q') || '').slice(0, 2000),
+            {
+              asOf,
+              includeHistory: url.searchParams.get('history') === 'true',
+              includeUncertain: url.searchParams.get('uncertain') === 'true',
+              limit: z.coerce
+                .number()
+                .int()
+                .min(1)
+                .max(100)
+                .default(12)
+                .parse(url.searchParams.get('limit') ?? undefined),
+            },
+          ),
+        );
+      if (id === 'context' && method === 'GET')
+        return send(
+          response,
+          await memory.contextWorkspace(
+            workspaceId,
+            (url.searchParams.get('q') || '').slice(0, 2000),
+            z.coerce
+              .number()
+              .int()
+              .min(256)
+              .max(65536)
+              .default(5000)
+              .parse(url.searchParams.get('maxBytes') ?? undefined),
           ),
         );
       if (id === 'settings' && method === 'PUT')
@@ -516,8 +566,16 @@ export function createRoutes({
               .max(1000),
           })
           .parse(await jsonBody(request, 4 * 1024 * 1024));
-        memory.import(workspaceId, input.facts);
-        return send(response, { imported: input.facts.length });
+        // Exports emit retractions where an end equals its start; anything earlier is a bad payload.
+        const broken = input.facts.findIndex(
+          (fact) => fact.validTo && Date.parse(fact.validTo) < Date.parse(fact.validFrom),
+        );
+        if (broken >= 0)
+          throw new ApiError(
+            400,
+            `Memory ${broken + 1} ends before it begins. An end equal to its start is allowed as a retraction.`,
+          );
+        return send(response, memory.import(workspaceId, input.facts));
       }
       if (!id && method === 'DELETE') {
         memory.clear(workspaceId);
@@ -533,18 +591,23 @@ export function createRoutes({
           .parse(await jsonBody(request));
         return send(response, memory.correct(workspaceId, id, input));
       }
-      if (id && action === 'retry' && method === 'POST') {
-        memory.retry(workspaceId, id);
-        return send(response, { queued: true });
-      }
-      if (id && action === 'episode' && method === 'DELETE') {
-        memory.forgetEpisode(workspaceId, id);
-        return send(response, { forgotten: true });
-      }
-      if (id && !action && method === 'DELETE') {
-        memory.forget(workspaceId, id);
-        return send(response, { forgotten: true });
-      }
+      if (id && action === 'retry' && method === 'POST')
+        return send(
+          response,
+          memory.retry(workspaceId, id) === 'run'
+            ? { unblocked: true }
+            : { queued: true, retrying: 'episode' },
+        );
+      if (id && action === 'episode' && method === 'DELETE')
+        return send(response, {
+          forgotten: true,
+          sourcesRemoved: memory.forgetEpisode(workspaceId, id),
+        });
+      if (id && !action && method === 'DELETE')
+        return send(response, {
+          forgotten: true,
+          sourcesRemoved: memory.forget(workspaceId, id),
+        });
       throw new ApiError(404, 'Memory operation not found.');
     }
     if (resource === 'capabilities' || resource === 'environment') {

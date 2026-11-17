@@ -3,6 +3,7 @@ import { captureEpisodeTime, episodeClock } from '../../shared/memoryTime';
 import { asSchema, generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import {
+  CAPTURE_ATTEMPT_LIMIT,
   BgeEmbedder,
   MemoryEngine,
   SQLiteMemoryStore,
@@ -234,7 +235,7 @@ export class MemoryService {
                   '\nThe previous attempt did not produce a valid result. Return only a JSON object matching the required schema, including facts and reviewSummary. Include every required field; use null for unknown IDs/dates and [] for empty arrays. Do not include reasoning or markdown.';
                 const system =
                   extractionInstructions +
-                  '\nResolve relative dates in referenceClock.timeZone using the historical message timestamp, not the current clock. For multi-message reviews, resolve each statement against its own timestamp in that timezone. Use the timezone offset at the event date. Persist event dates as ISO timestamps with explicit offsets; do not invent dates.' +
+                  "\nResolve relative dates in referenceClock.timeZone using the historical message timestamp, not the current clock. For multi-message reviews, resolve each statement against its own timestamp in that timezone. referenceClock.offset applies to referenceTime only: a zone's offset shifts with daylight saving, so use the offset in effect on the event date — Vancouver is -07:00 in July and -08:00 in November. When a date has no stated time, use 00:00 at that date's own offset. Persist event dates as ISO timestamps with explicit offsets; do not invent dates, and leave validFrom null when the statement has no beginning." +
                   '\nFor conversation reviews, use role, status, timestamps and completed tool evidence to distinguish human facts and verified outcomes from suggestions, plans, failures, and external payloads. Never treat scheduled prompts as human claims. Respect explicit human requests not to remember information. Include a concise reviewSummary explaining what is worth retaining or why nothing qualifies; do not include hidden reasoning.' +
                   (compatible
                     ? '\nRequired output JSON schema (include every required field, using null or empty arrays where appropriate):\n' +
@@ -593,6 +594,67 @@ export class MemoryService {
         }
       }
     }
+    await this.retryFailures(allowed);
+    await this.backfillEmbeddings();
+  }
+  /**
+   * One unavailable model used to discard an exchange for good. Failed captures come back on a
+   * bounded backoff, in a pass of their own so a backlog of old failures cannot starve fresh ones.
+   * Reviews retry through the review queue, which also owns their run records.
+   */
+  private async retryFailures(allowed: string[]) {
+    if (this.controller.signal.aborted) return;
+    const scope = allowed.length ? ` OR workspace_id IN (${allowed.map(() => '?').join(',')})` : '';
+    const rows = this.store
+      .all(
+        `SELECT * FROM memory_episodes
+         WHERE status='failed' AND attempts>0 AND attempts<? AND (retry_at IS NULL OR retry_at<=?)
+           AND source_key NOT LIKE 'review:%'
+           AND workspace_id IN (SELECT id FROM workspaces WHERE memory_enabled=1 AND deleting=0)
+           AND (source_type!='user'${scope})
+         ORDER BY COALESCE(retry_at,created_at),created_at LIMIT 4`,
+        CAPTURE_ATTEMPT_LIMIT,
+        Date.now(),
+        ...allowed,
+      )
+      .map((row) => this.store.episode(row));
+    for (const row of rows) {
+      if (this.controller.signal.aborted) return;
+      if (
+        !this.workspaces
+          .list()
+          .some((workspace) => workspace.id === row.workspaceId && !workspace.deleting)
+      )
+        continue;
+      if (!this.settings(row.workspaceId).enabled) continue;
+      try {
+        await this.engine.processEpisode(row.id, this.controller.signal);
+      } catch {
+        /* The next scheduled attempt, or the user, will try again. */
+      }
+    }
+  }
+  /**
+   * Imports, restores, and interrupted sessions leave facts without vectors while Settings still
+   * advertises semantic search. Each pass embeds a bounded slice so recall is not starved.
+   */
+  private async backfillEmbeddings() {
+    if (!this.embedding.ready || this.controller.signal.aborted) return;
+    for (const workspace of this.workspaces.list()) {
+      if (workspace.deleting || this.controller.signal.aborted) continue;
+      const settings = this.settings(workspace.id);
+      if (!settings.enabled || !settings.semanticSearch) continue;
+      const scope = this.admin(workspace.id);
+      if (!this.engine.pendingEmbeddings(scope)) continue;
+      try {
+        await this.providers.ai.withContext({ kind: 'memory', workspaceId: workspace.id }, () =>
+          this.engine.indexEmbeddings(scope, this.controller.signal, 1024),
+        );
+      } catch {
+        this.modelError = 'Some memories could not be embedded. Keyword search remains available.';
+        return;
+      }
+    }
   }
   async add(
     bot: Bot,
@@ -631,17 +693,26 @@ export class MemoryService {
   async search(bot: Bot, query: string, options: SearchOptions) {
     return this.searchScope(this.scope(bot), query, options);
   }
-  private async searchScope(scope: MemoryScope, query: string, options: SearchOptions) {
+  /** Selects the engine a scope recalls through, honouring a workspace's semantic-search opt-out. */
+  private scoped<T>(scope: MemoryScope, operation: (engine: MemoryEngine) => Promise<T>) {
     // Workspace opt-out applies even if another workspace initialized the shared model worker.
     if (!this.settings(scope.workspaceId).semanticSearch)
-      return new MemoryEngine(this.store, async () => ({ facts: [] })).searchMemory(
-        scope,
-        query,
-        options,
-      );
+      return operation(new MemoryEngine(this.store, async () => ({ facts: [] })));
     return this.providers.ai.withContext({ kind: 'memory', workspaceId: scope.workspaceId }, () =>
-      this.engine.searchMemory(scope, query, options),
+      operation(this.engine),
     );
+  }
+  private async searchScope(scope: MemoryScope, query: string, options: SearchOptions) {
+    return this.scoped(scope, (engine) => engine.searchMemory(scope, query, options));
+  }
+  /* Inspector surface: real recall, including point-in-time and uncertain facts. */
+  searchWorkspace(workspaceId: string, query: string, options: SearchOptions = {}) {
+    const scope = this.admin(workspaceId);
+    return this.scoped(scope, (engine) => engine.searchMemory(scope, query, options));
+  }
+  contextWorkspace(workspaceId: string, query: string, maxBytes: number) {
+    const scope = this.admin(workspaceId);
+    return this.scoped(scope, (engine) => engine.getContext(scope, query, maxBytes));
   }
   async recall(
     bot: Bot,
@@ -685,14 +756,16 @@ export class MemoryService {
     });
     return context.content;
   }
-  snapshot(workspaceId: string, query = '', history = false): MemorySnapshot {
+  snapshot(workspaceId: string, query = '', history = false, asOf?: string): MemorySnapshot {
     const scope = this.admin(workspaceId);
     const all = this.store.facts(scope);
-    const now = new Date().toISOString();
+    const at = asOf || new Date().toISOString();
     const facts = all
       .filter(
         (fact) =>
-          (history || (fact.validFrom <= now && (!fact.validTo || fact.validTo > now))) &&
+          (asOf
+            ? fact.validFrom <= at && (!fact.validTo || fact.validTo > at)
+            : history || (fact.validFrom <= at && (!fact.validTo || fact.validTo > at))) &&
           (!query ||
             `${fact.text} ${fact.subject} ${fact.object}`
               .toLowerCase()
@@ -700,7 +773,7 @@ export class MemoryService {
       )
       .slice(0, 200);
     const ids = new Set(facts.map((fact) => fact.id));
-    const graph = this.engine.getGraph(scope, { includeHistory: history, limit: 300 });
+    const graph = this.engine.getGraph(scope, { includeHistory: history, limit: 300, asOf });
     graph.edges = graph.edges.filter((edge) => ids.has(edge.id));
     const nodeIds = new Set(graph.edges.flatMap((edge) => [edge.subjectId, edge.objectId]));
     graph.nodes = graph.nodes.filter((node) => nodeIds.has(node.id));
@@ -724,13 +797,37 @@ export class MemoryService {
     id: string,
     input: { text: string; object: string; validFrom?: string },
   ) {
+    this.admin(workspaceId);
+    this.requireFact(workspaceId, id);
     return this.engine.correctMemory(this.admin(workspaceId), id, input);
   }
-  forget(workspaceId: string, id: string) {
-    this.engine.forgetMemory(this.admin(workspaceId), id);
+  /** A missing id, or one from another workspace, is a 404 rather than a server fault. */
+  private requireFact(workspaceId: string, id: string) {
+    if (
+      !this.store.get('SELECT id FROM memory_facts WHERE workspace_id=? AND id=?', workspaceId, id)
+    )
+      throw new ApiError(404, 'Memory not found in this workspace.');
   }
+  private requireEpisode(workspaceId: string, id: string) {
+    if (
+      !this.store.get(
+        'SELECT id FROM memory_episodes WHERE workspace_id=? AND id=?',
+        workspaceId,
+        id,
+      )
+    )
+      throw new ApiError(404, 'Memory source not found in this workspace.');
+  }
+  forget(workspaceId: string, id: string) {
+    this.admin(workspaceId);
+    this.requireFact(workspaceId, id);
+    return this.engine.forgetMemory(this.admin(workspaceId), id);
+  }
+  /** Takes an episode id; a fact id must not report success for work that never happened. */
   forgetEpisode(workspaceId: string, id: string) {
-    this.engine.forgetEpisodes(this.admin(workspaceId), [id]);
+    this.admin(workspaceId);
+    this.requireEpisode(workspaceId, id);
+    return this.engine.forgetEpisodes(this.admin(workspaceId), [id]);
   }
   clear(workspaceId: string) {
     this.admin(workspaceId);
@@ -751,16 +848,34 @@ export class MemoryService {
     );
     if (run) {
       this.retryRun(workspaceId, String(run.id));
-      return;
+      return 'run' as const;
     }
+    this.requireEpisode(workspaceId, id);
+    if (
+      !this.store.get(
+        "SELECT id FROM memory_episodes WHERE workspace_id=? AND id=? AND status='failed'",
+        workspaceId,
+        id,
+      )
+    )
+      throw new ApiError(409, 'That memory source did not fail, so there is nothing to retry.');
     this.store.retryEpisode(workspaceId, id);
     this.kick();
+    return 'episode' as const;
   }
   retryRun(workspaceId: string, id: string) {
     this.admin(workspaceId);
     this.requireEnabled(workspaceId);
     this.reviews.retry(workspaceId, id);
     this.kick();
+  }
+  /**
+   * Folds duplicate claims written before the write path compared overlapping intervals. Reports by
+   * default; rows only move when the caller asks, because this is the one memory operation that
+   * removes them. No model is involved, so it works even with memory turned off.
+   */
+  consolidate(workspaceId: string, apply = false, limit?: number) {
+    return this.engine.consolidateClaims(this.admin(workspaceId), apply, limit);
   }
   export(workspaceId: string) {
     return { version: 1, facts: this.store.facts(this.admin(workspaceId)) };
@@ -786,12 +901,15 @@ export class MemoryService {
     )
       throw new ApiError(
         400,
-        'The original memory owner does not exist in this workspace. Import into the original workspace or remove ownerId from the import.',
+        'This export names a bot that is not in this workspace. Mukai stores memories workspace-wide, so remove ownerId to import these facts as workspace memory.',
       );
-    return this.engine.importFacts(
+    const counts = this.engine.importFacts(
       workspaceId,
       facts.map((fact) => ({ ...fact, ownerId: null })),
     );
+    // Restored rows have no vectors, so let the background pass embed them.
+    if (counts.imported) this.kick();
+    return counts;
   }
   async stopWorkspace(id: string) {
     this.workspaceControllers.get(id)?.abort();

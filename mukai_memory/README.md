@@ -13,12 +13,14 @@ A separate TypeScript module inside the Mukai repository. It imports no Mukai co
 
 ## Boundaries and behavior
 
-- Workspace facts are shared; private facts belong to a bot and are never recalled in shared spaces. The host authorizes access; this module also scopes every query.
+- Workspace facts are shared with every bot in the workspace. Scopes still carry optional `includePrivate`/`privateOwner` fields for per-bot records, but the Mukai host does not use them: it stores every fact with `owner_id = NULL` and recalls the whole workspace, so nothing is private to one bot. The host authorizes access; this module also scopes every query.
 - `createdAt` is when a fact was recorded. `validFrom`/`validTo` describe event time, with an exclusive end. A mistaken claim is retracted with a zero-length interval and linked to its correction; it remains visible in audit history, not point-in-time recall. Unresolved conflicts are excluded from automatic recall.
 - An explicit `asOf` always filters by validity, including when `includeHistory` is true. Use `includeHistory` without `asOf` for all recorded versions.
 - Exact normalized names, explicit aliases, and authorized candidate entity IDs resolve identities. Extraction preserves name qualifiers and project codes; semantic similarity alone never merges people. Existing split entities are not silently merged.
-- The model may nominate supersession only from supplied candidates, within the same owner, subject, and relationship. Different concurrent values can coexist. Explicit corrections use a transactional API.
-- Persistent episodes track pending, processing, complete, failed, and forgotten states. A source key makes retries idempotent. Forgetting removes source content, derived facts, vectors, and recall traces; a source-key tombstone prevents replay from reintroducing it. Original Mukai chat history is managed by Mukai separately.
+- The model may nominate supersession by fact id, within the same owner, subject, and relationship. Ids are resolved from storage rather than only the window handed to the extractor, so a correction citing a fact it saw in the recall trace still lands; a replacement that resolves no target is stored hedged and never as a second copy of the claim it meant to replace. Different concurrent values can coexist. Explicit corrections use a transactional API.
+- Identical wording for one subject, relationship, object, and interval shape is stored once and gains the new source, whichever channel wrote it first. A plain statement settles a hedged copy of the same sentence; a later hedge never demotes a confirmed record, and an interval that has already ended stays history rather than being treated as a duplicate.
+- The same sentence under a different subject or relationship is two claims, not a duplicate, and is served twice: "Zoho CPaaS has a payment failure" and "the support Zoho account has a payment failure" are different facts that happen to share wording. Nothing merges those silently. `consolidateClaims` folds rows written before the rule above existed - one row per duplicated claim, keeping the earliest start, every source, and the stronger state - reports by default, and never touches a row with an end date.
+- Persistent episodes track pending, processing, complete, failed, and forgotten states. A source key makes retries idempotent. A capture that fails because the model was busy or restarting is retried on a bounded backoff, then left failed for the user; a source-key tombstone prevents replay from reintroducing it. Forgetting removes source content, derived facts, vectors, and recall traces. Original Mukai chat history is managed by Mukai separately.
 - BGE uses CLS pooling, normalized 384-dimensional vectors, and a retrieval query prefix. First setup downloads the quantized model to a host-supplied cache. Offline operation works once cached; keyword/graph retrieval remains available if embeddings are unavailable.
 - Changing embedding configuration requires rebuilding vectors. The model/version is saved with each vector.
 - Automatic capture processes user-authored statements, not assistant guesses, credentials, or complete document dumps. The configured LLM may be remote; local embeddings do not make model extraction local.
@@ -27,7 +29,7 @@ A separate TypeScript module inside the Mukai repository. It imports no Mukai co
 
 ## Public API
 
-`MemoryEngine` exposes episode ingestion/processing, `addMemory`, `searchMemory`, `getContext`, `getGraph`, `correctMemory`, and `forgetMemory`. SQLite drivers, extraction models, and embeddings are supplied through interfaces. Settings and UI routes remain in Mukai.
+`MemoryEngine` exposes episode ingestion/processing, `addMemory`, `searchMemory`, `getContext`, `getGraph`, `correctMemory`, `forgetMemory`, and `consolidateClaims` (report or fold duplicate claims left by older writes). SQLite drivers, extraction models, and embeddings are supplied through interfaces. Settings and UI routes remain in Mukai.
 
 ## Limits
 
@@ -35,9 +37,11 @@ This is a focused temporal memory system, not a Graphiti compatibility implement
 
 ## Mukai setup and verification
 
-Automatic capture and recall are on for new workspaces. Open **Settings → Memory → Download & enable** to install the quantized BGE model and build vectors. Without it, keyword and relationship retrieval work immediately. Failed extraction is visible under Capture activity and can be retried after fixing the model configuration. Memories are captured from new user messages; existing conversations are not backfilled automatically.
+Automatic capture and recall are on for new workspaces. Open **Settings → Memory → Download & enable** to install the quantized BGE model and build vectors. Without it, keyword and relationship retrieval work immediately. A capture or review that fails because the model was busy or restarting is retried on a bounded backoff; once those attempts run out it stays visible under Capture activity for you to retry after fixing the model configuration. Memories are captured from new user messages; existing conversations are not backfilled automatically.
 
-The inspector can search and visualize a bounded graph, inspect source evidence and relationship history, apply corrections, forget source-derived facts, and display the facts supplied for each reply. JSON export/import preserves fact validity intervals and private ownership; imports create new import provenance rather than restoring original chat links. Private imports require their owning bot to exist in the destination workspace.
+The inspector can search and visualize a bounded graph, inspect source evidence and relationship history, apply corrections, forget source-derived facts, and display the facts supplied for each reply. JSON export/import preserves fact validity intervals, including retracted audit records whose end equals their start; imports create new import provenance rather than restoring original chat links. Mukai imports every fact as workspace-owned and reports what changed: `imported`, `deduplicated` for rows already present, `revived` for rows written again after they had been forgotten, and `forgotten` when even that restore was forgotten. Forgetting stops automatic replay of a source; it never vetoes an explicit import, so a backup restores cleanly after you forget facts or clear a workspace.
+
+`POST /api/memory/consolidate` folds duplicate claims written before the overlap rule existed - one row per claim, earliest start, every source, strongest state - and reports without applying unless the body says `{ "apply": true }`, so an accidental call cannot remove a row. It is idempotent and never touches a row with an end date. `npx tsx scripts/consolidate-memory.ts <database> [report|apply]` runs the same operation offline, which is also how to rehearse it against a copy first.
 
 From the repository root:
 

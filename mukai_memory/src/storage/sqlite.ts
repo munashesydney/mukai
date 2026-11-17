@@ -21,6 +21,7 @@ export class SQLiteMemoryStore {
         source_key TEXT NOT NULL, source_type TEXT NOT NULL, content TEXT NOT NULL,
         reference_time TEXT NOT NULL, conversation_id TEXT, message_id TEXT, context TEXT NOT NULL,
         created_at TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
+        retry_at INTEGER,
         UNIQUE(workspace_id,source_key));
       CREATE INDEX IF NOT EXISTS memory_episode_scope ON memory_episodes(workspace_id,owner_id,status);
       CREATE TABLE IF NOT EXISTS memory_entities(
@@ -50,8 +51,13 @@ export class SQLiteMemoryStore {
         query TEXT NOT NULL, facts_json TEXT NOT NULL, characters INTEGER NOT NULL);
       INSERT OR IGNORE INTO memory_schema VALUES(1);
     `);
+    // Version 2 records when a failed capture may run again, so one model error no longer discards
+    // the exchange. Existing rows keep NULL, which means "eligible now": old failures get retried.
+    if (!this.all('PRAGMA table_info(memory_episodes)').some((row) => row.name === 'retry_at'))
+      this.run('ALTER TABLE memory_episodes ADD COLUMN retry_at INTEGER');
+    this.run('INSERT OR IGNORE INTO memory_schema VALUES(2)');
     const version = this.get('SELECT MAX(version) AS version FROM memory_schema')?.version;
-    if (version !== 1) throw new Error('Memory storage needs a newer module version.');
+    if (version !== 2) throw new Error('Memory storage needs a newer module version.');
     this.run("UPDATE memory_episodes SET status='pending' WHERE status='processing'");
   }
   get(sql: string, ...params: (string | number | null)[]) {
@@ -101,13 +107,16 @@ export class SQLiteMemoryStore {
       status: row.status as Episode['status'],
       attempts: Number(row.attempts),
       error: row.error as string | null,
+      retryAt: (row.retry_at as number | null | undefined) ?? null,
     };
   }
-  fact(row: Row): MemoryFact {
-    const sources = this.all(
-      'SELECT e.* FROM memory_episodes e JOIN memory_fact_sources s ON s.episode_id=e.id WHERE s.fact_id=? ORDER BY e.created_at',
-      String(row.id),
-    ).map((source) => this.episode(source));
+  fact(row: Row, preloaded?: Episode[]): MemoryFact {
+    const sources =
+      preloaded ??
+      this.all(
+        'SELECT e.* FROM memory_episodes e JOIN memory_fact_sources s ON s.episode_id=e.id WHERE s.fact_id=? ORDER BY e.created_at',
+        String(row.id),
+      ).map((source) => this.episode(source));
     return {
       id: String(row.id),
       workspaceId: String(row.workspace_id),
@@ -126,15 +135,106 @@ export class SQLiteMemoryStore {
       sources,
     };
   }
+  /** Recall scans every stored vector per query, so parsed vectors and norms are cached. */
+  private vectors = new Map<string, { model: string; values: number[]; norm: number }>();
+  vector(id: string, encoded: string, model: string) {
+    const cached = this.vectors.get(id);
+    if (cached && cached.model === model) return cached;
+    if (!encoded) return null;
+    let values: number[];
+    try {
+      values = JSON.parse(encoded);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(values) || !values.length || values.some((value) => !Number.isFinite(value)))
+      return null;
+    const entry = {
+      model,
+      values,
+      norm: Math.sqrt(values.reduce((sum, value) => sum + value * value, 0)),
+    };
+    if (this.vectors.size > 60000) this.vectors.clear();
+    this.vectors.set(id, entry);
+    return entry;
+  }
+  forgetVector(id: string) {
+    this.vectors.delete(id);
+  }
+  clearVectors() {
+    this.vectors.clear();
+  }
   rows(scope: MemoryScope) {
     const where = this.scope(scope);
+    // Vector payloads are deliberately excluded: recall reads every row, and a 384-float vector per
+    // row dwarfs the fact itself. vectorsIn() fetches them separately and keeps them cached.
     return this.all(
-      `SELECT f.*,s.name AS subject,o.name AS object FROM memory_facts f JOIN memory_entities s ON s.id=f.subject_id JOIN memory_entities o ON o.id=f.object_id WHERE ${where.sql} ORDER BY f.created_at DESC,f.id`,
+      `SELECT f.id,f.workspace_id,f.owner_id,f.subject_id,f.relation,f.object_id,f.text,f.valid_from,
+       f.valid_to,f.created_at,f.superseded_by,f.state,s.name AS subject,o.name AS object
+       FROM memory_facts f JOIN memory_entities s ON s.id=f.subject_id JOIN memory_entities o ON o.id=f.object_id
+       WHERE ${where.sql} ORDER BY f.created_at DESC,f.id`,
       ...where.params,
     );
   }
+  /** Fact ids in scope carrying a vector for this model; values come from the cache when possible. */
+  vectorsIn(scope: MemoryScope, model: string) {
+    const where = this.scope(scope);
+    const index = new Map<string, { model: string; values: number[]; norm: number }>();
+    const missing: string[] = [];
+    for (const row of this.all(
+      `SELECT f.id FROM memory_facts f WHERE ${where.sql} AND f.vector_model=?`,
+      ...where.params,
+      model,
+    )) {
+      const cached = this.vectors.get(String(row.id));
+      if (cached && cached.model === model) index.set(String(row.id), cached);
+      else missing.push(String(row.id));
+    }
+    for (let start = 0; start < missing.length; start += 200) {
+      const chunk = missing.slice(start, start + 200);
+      for (const row of this.all(
+        `SELECT id,vector_json,vector_model FROM memory_facts WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        ...chunk,
+      )) {
+        const entry = this.vector(
+          String(row.id),
+          String(row.vector_json || ''),
+          String(row.vector_model || ''),
+        );
+        if (entry) index.set(String(row.id), entry);
+      }
+    }
+    return index;
+  }
+  /** Rows the active model has not embedded yet, with only what the embedder needs. */
+  pendingVectors(scope: MemoryScope, model: string) {
+    const where = this.scope(scope);
+    return this.all(
+      `SELECT f.id,f.text FROM memory_facts f WHERE ${where.sql}
+       AND (f.vector_json IS NULL OR f.vector_model IS NULL OR f.vector_model<>?)`,
+      ...where.params,
+      model,
+    );
+  }
   facts(scope: MemoryScope) {
-    return this.rows(scope).map((row) => this.fact(row));
+    const rows = this.rows(scope);
+    const ids = rows.map((row) => String(row.id));
+    const sources = new Map<string, Episode[]>();
+    // Sources are loaded in chunks for the whole page: joining them per fact made the inspector
+    // and every export cost one query per memory.
+    for (let start = 0; start < ids.length; start += 400) {
+      const chunk = ids.slice(start, start + 400);
+      for (const row of this.all(
+        `SELECT e.*,s.fact_id FROM memory_episodes e JOIN memory_fact_sources s ON s.episode_id=e.id
+         WHERE s.fact_id IN (${chunk.map(() => '?').join(',')}) ORDER BY e.created_at`,
+        ...chunk,
+      )) {
+        const list = sources.get(String(row.fact_id)) || [];
+        list.push(this.episode(row));
+        sources.set(String(row.fact_id), list);
+      }
+    }
+    return rows.map((row) => this.fact(row, sources.get(String(row.id)) || []));
   }
   requireFact(scope: MemoryScope, id: string) {
     const where = this.scope(scope);
@@ -183,7 +283,7 @@ export class SQLiteMemoryStore {
   }
   retryEpisode(workspaceId: string, id: string) {
     this.run(
-      "UPDATE memory_episodes SET status='pending',error=NULL WHERE id=? AND workspace_id=? AND status='failed'",
+      "UPDATE memory_episodes SET status='pending',error=NULL,retry_at=NULL WHERE id=? AND workspace_id=? AND status='failed'",
       id,
       workspaceId,
     );

@@ -3,6 +3,8 @@ import { extractionSchema } from '../extraction/schema';
 import { redactCredentials } from '../extraction/redact';
 import { normalize, SQLiteMemoryStore } from '../storage/sqlite';
 import type {
+  ConsolidatedClaim,
+  ConsolidationReport,
   Embedder,
   EpisodeInput,
   ExtractedFact,
@@ -19,6 +21,25 @@ const date = (value: string) => {
   if (!Number.isFinite(parsed.getTime())) throw new Error('Invalid memory date.');
   return parsed.toISOString();
 };
+/**
+ * Dates a model invents when a statement has no stated beginning: the Unix epoch day itself, or a
+ * year-zero placeholder. Genuine historical dates carry a month and day, so they are left alone.
+ */
+const placeholderDate = (value: string) =>
+  value < '1000-01-01T00:00:00.000Z' ||
+  (value >= '1970-01-01T00:00:00.000Z' && value < '1970-01-02T00:00:00.000Z');
+/**
+ * Capture usually fails because the model is busy, restarting, or out of memory — conditions that
+ * pass. Retry on a bounded backoff instead of discarding the exchange at the first error; once the
+ * attempts run out the source stays visible as failed so the user can retry it deliberately.
+ */
+export const CAPTURE_RETRY_DELAYS = [60000, 300000, 1800000] as const;
+export const CAPTURE_ATTEMPT_LIMIT = CAPTURE_RETRY_DELAYS.length + 1;
+/** When an episode that just failed may run again, or null once the bounded retries are spent. */
+export const captureRetryAt = (attempts: number, now = Date.now()) =>
+  attempts >= CAPTURE_ATTEMPT_LIMIT
+    ? null
+    : now + CAPTURE_RETRY_DELAYS[Math.min(Math.max(attempts, 1), CAPTURE_RETRY_DELAYS.length) - 1];
 const activeAt = (fact: MemoryFact, at: string) =>
   fact.validFrom <= at && (!fact.validTo || fact.validTo > at);
 const tokens = (text: string) =>
@@ -112,7 +133,7 @@ export class MemoryEngine {
     if (!row || ['complete', 'forgotten'].includes(String(row.status))) return;
     const episode = this.store.episode(row);
     this.store.run(
-      "UPDATE memory_episodes SET status='processing',attempts=attempts+1,error=NULL WHERE id=?",
+      "UPDATE memory_episodes SET status='processing',attempts=attempts+1,error=NULL,retry_at=NULL WHERE id=?",
       id,
     );
     try {
@@ -158,10 +179,16 @@ export class MemoryEngine {
           this.store.run("UPDATE memory_episodes SET content='',context='' WHERE id=?", id);
       });
     } catch (error) {
+      const attempts = Number(
+        this.store.get('SELECT attempts FROM memory_episodes WHERE id=?', id)?.attempts ?? 1,
+      );
+      // An abort is not a failure and goes straight back to the queue. A real error waits for its
+      // next scheduled attempt; once the bounded retries are spent it stays failed for the user.
       this.store.run(
-        "UPDATE memory_episodes SET status=?,error=? WHERE id=? AND status='processing'",
+        "UPDATE memory_episodes SET status=?,error=?,retry_at=? WHERE id=? AND status='processing'",
         signal?.aborted ? 'pending' : 'failed',
         signal?.aborted ? null : 'Memory extraction failed. Check the configured model and retry.',
+        signal?.aborted ? null : captureRetryAt(attempts),
         id,
       );
       throw error;
@@ -248,10 +275,16 @@ export class MemoryEngine {
     referenceTime: string,
     candidates: MemoryFact[],
     explicitCorrection = false,
+    // Imports are a restore: their intervals are the record, not a model guess to repair.
+    trustedIntervals = false,
   ) {
-    const from = date(fact.validFrom || referenceTime);
+    let from = date(fact.validFrom || referenceTime);
+    // Models emit epoch zero when a statement has no stated beginning; that is not a 1970 claim.
+    if (!trustedIntervals && placeholderDate(from)) from = date(referenceTime);
     let to = fact.validTo ? date(fact.validTo) : null;
-    if (to && to <= from) throw new Error('A memory end must follow its start.');
+    if (!trustedIntervals && to && placeholderDate(to)) to = null;
+    // An end equal to its start is a retraction, which is how corrections keep their audit trail.
+    if (to && to < from) throw new Error('A memory end must follow its start.');
     const subjectId = this.entity(
       workspaceId,
       ownerId,
@@ -274,36 +307,33 @@ export class MemoryEngine {
       .replace(/[^\p{L}\p{N}]+/gu, '_')
       .replace(/^_|_$/g, '');
     if (!relation) throw new Error('A relationship is required.');
-    const duplicate = this.store
-      .all(
-        'SELECT * FROM memory_facts WHERE workspace_id=? AND owner_id IS ? AND subject_id=? AND relation=? AND object_id=?',
-        workspaceId,
-        ownerId,
-        subjectId,
-        relation,
-        objectId,
-      )
-      .find(
-        (row) =>
-          normalize(String(row.text)) === normalize(fact.text) &&
-          (!row.valid_to || String(row.valid_to) > from) &&
-          String(row.valid_from) <= from &&
-          row.state === (fact.disposition === 'uncertain' ? 'uncertain' : 'confirmed') &&
-          (row.valid_to || null) === to,
-      );
+    const siblings = this.store.all(
+      'SELECT * FROM memory_facts WHERE workspace_id=? AND owner_id IS ? AND subject_id=? AND relation=? AND object_id=?',
+      workspaceId,
+      ownerId,
+      subjectId,
+      relation,
+      objectId,
+    );
     const replaces = fact.disposition === 'replace' || fact.disposition === 'correct';
-    if (duplicate && !replaces) {
-      this.store.run(
-        'INSERT OR IGNORE INTO memory_fact_sources VALUES(?,?)',
-        String(duplicate.id),
-        episodeId,
-      );
-      return String(duplicate.id);
-    }
+    const state = fact.disposition === 'uncertain' ? 'uncertain' : 'confirmed';
+    // One claim, possibly re-learned: identical wording whose spans overlap. The test used to demand
+    // the stored row start no earlier than the new one, so the same sentence learned twice within
+    // minutes - once from a tool finding, once from the review of that message - was written twice.
+    const sameClaim = (row: Record<string, string | number | null>) =>
+      normalize(String(row.text)) === normalize(fact.text) &&
+      (row.valid_to || null) === to &&
+      (!row.valid_to || String(row.valid_to) > from) &&
+      (!to || String(row.valid_from) < to);
+    const duplicate = siblings.find((row) => sameClaim(row) && row.state === state);
+    // The same sentence stored once hedged and once confirmed used to be served twice, once each way.
+    const hedged = siblings.find((row) => sameClaim(row) && row.state !== state);
+    if (duplicate && !replaces) return this.mergeFact(duplicate, episodeId, from, false);
+    if (hedged && !replaces) return this.mergeFact(hedged, episodeId, from, state === 'confirmed');
     const allowed = new Map(candidates.map((candidate) => [candidate.id, candidate]));
     const targets = replaces
       ? fact.supersedes
-          .map((id) => allowed.get(id))
+          .map((id) => allowed.get(id) || this.storedFact(workspaceId, id))
           .filter((target): target is MemoryFact =>
             Boolean(
               target &&
@@ -311,7 +341,8 @@ export class MemoryEngine {
               target.ownerId === ownerId &&
               target.subjectId === subjectId &&
               target.relation === relation &&
-              (explicitCorrection || target.state === 'confirmed'),
+              (explicitCorrection || target.state === 'confirmed') &&
+              !target.supersededBy,
             ),
           )
           .filter((target) => {
@@ -327,7 +358,11 @@ export class MemoryEngine {
             );
           })
       : [];
-    const state =
+    // A correction that could not resolve a target is a hedge, not a replacement, and must not leave
+    // a second copy of the claim it meant to replace.
+    if (replaces && !targets.length && (duplicate || hedged))
+      return this.mergeFact(duplicate || hedged!, episodeId, from, false);
+    const currentState =
       fact.disposition === 'uncertain' || (replaces && !targets.length) ? 'uncertain' : 'confirmed';
     let supersededBy: string | null = null;
     for (const target of targets) {
@@ -354,7 +389,7 @@ export class MemoryEngine {
       to,
       new Date().toISOString(),
       supersededBy,
-      state,
+      currentState,
     );
     this.store.run('INSERT INTO memory_fact_sources VALUES(?,?)', id, episodeId);
     this.store.run(
@@ -393,16 +428,144 @@ export class MemoryEngine {
     }
     return id;
   }
+  /**
+   * The engine met a claim it already holds. Keep one row: attach the new provenance, take the
+   * earlier start, and let a plain statement settle a hedged copy of the same sentence. A confirmed
+   * record is never weakened, and an interval that has already ended keeps its end - history is not
+   * a duplicate.
+   */
+  private mergeFact(
+    existing: Record<string, string | number | null>,
+    episodeId: string,
+    from: string,
+    strengthen: boolean,
+  ) {
+    const id = String(existing.id);
+    this.store.run('INSERT OR IGNORE INTO memory_fact_sources VALUES(?,?)', id, episodeId);
+    if (strengthen && existing.state !== 'confirmed')
+      this.store.run("UPDATE memory_facts SET state='confirmed' WHERE id=?", id);
+    if (from < String(existing.valid_from))
+      this.store.run('UPDATE memory_facts SET valid_from=? WHERE id=?', from, id);
+    return id;
+  }
+  /**
+   * A correction may name a fact it saw in the recall trace rather than in the candidate window
+   * handed to the extractor, so those ids are looked up instead of silently dropped - otherwise the
+   * "correction" is stored as a second copy of the claim it meant to replace.
+   */
+  private storedFact(workspaceId: string, id: string) {
+    if (!id) return undefined;
+    const row = this.store.get(
+      `SELECT f.*,s.name AS subject,o.name AS object FROM memory_facts f
+       JOIN memory_entities s ON s.id=f.subject_id JOIN memory_entities o ON o.id=f.object_id
+       WHERE f.id=? AND f.workspace_id=?`,
+      id,
+      workspaceId,
+    );
+    // Provenance is irrelevant for a supersede target, so skip loading it.
+    return row ? this.store.fact(row, []) : undefined;
+  }
   episodeFacts(scope: MemoryScope, episodeId: string) {
     return this.store
       .facts(scope)
       .filter((fact) => fact.sources.some((source) => source.id === episodeId));
   }
-  async indexEmbeddings(scope: MemoryScope, signal?: AbortSignal) {
+  /**
+   * Claims written before the write path compared overlapping intervals are served twice in some
+   * workspaces: one sentence, same subject, relationship and object, both open-ended. This folds each
+   * of those into a single row - earliest start, every source, the stronger of hedge and plain - and
+   * reattaches lineage that pointed at a folded copy. Nothing else moves: a row with an end date is
+   * another era rather than a duplicate, so history is never rewritten. Dry run unless asked to
+   * apply, because this is the one memory operation that removes rows.
+   */
+  consolidateClaims(scope: MemoryScope, apply = false, limit = 100): ConsolidationReport {
+    const where = this.store.scope(scope, 'f');
+    const groups = new Map<string, Record<string, string | number | null>[]>();
+    for (const row of this.store.all(
+      `SELECT f.id,f.owner_id,f.subject_id,f.relation,f.object_id,f.text,f.valid_from,f.created_at,f.state
+       FROM memory_facts f
+       WHERE ${where.sql} AND f.valid_to IS NULL AND f.superseded_by IS NULL
+       ORDER BY f.valid_from,f.created_at,f.id`,
+      ...where.params,
+    )) {
+      const key = [
+        row.owner_id,
+        row.subject_id,
+        row.relation,
+        row.object_id,
+        normalize(String(row.text)),
+      ].join('\u0000');
+      groups.set(key, [...(groups.get(key) || []), row]);
+    }
+    const claims: ConsolidatedClaim[] = [];
+    let removed = 0;
+    let sourcesMoved = 0;
+    this.store.transaction(() => {
+      for (const rows of groups.values()) {
+        if (rows.length < 2 || claims.length >= Math.max(1, limit)) continue;
+        // Keep the row that already says the most, started earliest, and has been known longest. Every
+        // source ends up on it either way, so its id is the only real choice being made.
+        const [kept, ...folded] = [...rows].sort(
+          (a, b) =>
+            Number(b.state === 'confirmed') - Number(a.state === 'confirmed') ||
+            String(a.valid_from).localeCompare(String(b.valid_from)) ||
+            String(a.created_at).localeCompare(String(b.created_at)) ||
+            String(a.id).localeCompare(String(b.id)),
+        );
+        const survivor = String(kept.id);
+        const episodes = new Set(
+          this.store
+            .all('SELECT episode_id FROM memory_fact_sources WHERE fact_id=?', survivor)
+            .map((row) => String(row.episode_id)),
+        );
+        let moved = 0;
+        for (const row of folded) {
+          const sources = this.store
+            .all('SELECT episode_id FROM memory_fact_sources WHERE fact_id=?', String(row.id))
+            .map((source) => String(source.episode_id));
+          moved += sources.filter((episode) => !episodes.has(episode)).length;
+          for (const episode of sources) episodes.add(episode);
+          if (!apply) continue;
+          this.store.run(
+            'INSERT OR IGNORE INTO memory_fact_sources SELECT ?,episode_id FROM memory_fact_sources WHERE fact_id=?',
+            survivor,
+            String(row.id),
+          );
+          // Lineage stays meaningful: the claim that replaced a folded copy replaced the same claim.
+          this.store.run(
+            'UPDATE memory_facts SET superseded_by=? WHERE superseded_by=?',
+            survivor,
+            String(row.id),
+          );
+          this.store.run('DELETE FROM memory_fts WHERE fact_id=?', String(row.id));
+          this.store.run('DELETE FROM memory_facts WHERE id=?', String(row.id));
+        }
+        const from = rows.map((row) => String(row.valid_from)).sort()[0];
+        const state = rows.some((row) => row.state === 'confirmed') ? 'confirmed' : 'uncertain';
+        if (apply && (from !== String(kept.valid_from) || state !== String(kept.state)))
+          this.store.run(
+            'UPDATE memory_facts SET valid_from=?,state=? WHERE id=?',
+            from,
+            state,
+            survivor,
+          );
+        claims.push({
+          kept: survivor,
+          removed: folded.map((row) => String(row.id)),
+          text: String(kept.text),
+          sourcesMoved: moved,
+        });
+        removed += folded.length;
+        sourcesMoved += moved;
+      }
+    });
+    return { applied: apply, groups: claims.length, removed, sourcesMoved, claims };
+  }
+  async indexEmbeddings(scope: MemoryScope, signal?: AbortSignal, limit?: number) {
     if (!this.embedder) return 0;
     const rows = this.store
-      .rows(scope)
-      .filter((row) => row.vector_model !== this.embedder!.model || !row.vector_json);
+      .pendingVectors(scope, this.embedder.model)
+      .slice(0, Math.max(0, limit ?? Number.MAX_SAFE_INTEGER));
     let count = 0;
     for (let start = 0; start < rows.length; start += 16) {
       signal?.throwIfAborted();
@@ -422,10 +585,23 @@ export class MemoryEngine {
           this.embedder!.model,
           String(row.id),
         );
+        this.store.forgetVector(String(row.id));
         count++;
       });
     }
     return count;
+  }
+  /** Cheap check for rows the active embedding model has not covered yet. */
+  pendingEmbeddings(scope: MemoryScope) {
+    if (!this.embedder) return 0;
+    const where = this.store.scope(scope);
+    const row = this.store.get(
+      `SELECT COUNT(*) AS count FROM memory_facts f WHERE ${where.sql}
+       AND (vector_json IS NULL OR vector_model IS NULL OR vector_model<>?)`,
+      ...where.params,
+      this.embedder.model,
+    );
+    return Number(row?.count || 0);
   }
   async searchMemory(
     scope: MemoryScope,
@@ -438,83 +614,113 @@ export class MemoryEngine {
       .rows(scope)
       .filter(
         (row) =>
-          (options.includeUncertain || row.state === 'confirmed') &&
-          ((!options.asOf && options.includeHistory) ||
-            (String(row.valid_from) <= at && (!row.valid_to || String(row.valid_to) > at))),
+          (!options.asOf && options.includeHistory) ||
+          (String(row.valid_from) <= at && (!row.valid_to || String(row.valid_to) > at)),
       );
+    // Uncertain records sit in a second tier: they stay out of normal recall, but a workspace whose
+    // only record of something is uncertain must still answer, hedged, instead of answering nothing.
+    const uncertain = options.includeUncertain
+      ? []
+      : rows.filter((row) => row.state !== 'confirmed');
+    const tiers = uncertain.length
+      ? [rows.filter((row) => row.state === 'confirmed'), uncertain]
+      : [rows];
     const words = tokens(query).slice(0, 40);
-    const results = new Map<string, SearchHit>();
-    const rank = new Map<string, number>();
-    if (words.length) {
-      // FTS terms are quoted, never interpolated into SQL or parsed as operators.
-      const where = this.store.scope(scope);
-      const matches = this.store.all(
-        `SELECT memory_fts.fact_id,bm25(memory_fts) AS rank FROM memory_fts JOIN memory_facts f ON f.id=memory_fts.fact_id WHERE memory_fts MATCH ? AND ${where.sql} ORDER BY rank LIMIT 300`,
-        words.map((word) => `"${word.replace(/"/g, '""')}"`).join(' OR '),
-        ...where.params,
-      );
-      matches.forEach((row, index) => rank.set(String(row.fact_id), index));
-    }
-    const add = (row: Record<string, string | number | null>, score: number, reason: string) => {
-      const id = String(row.id);
-      const hit = results.get(id);
-      if (hit) {
-        hit.score += score;
-        hit.reasons.push(reason);
-      } else results.set(id, { fact: this.store.fact(row), score, reasons: [reason] });
-    };
-    for (const row of rows) {
-      const position = rank.get(String(row.id));
-      if (position !== undefined) add(row, 1 / (30 + position), 'keyword');
-      if (
-        words.some((word) =>
-          [normalize(String(row.subject)), normalize(String(row.object))].includes(word),
+    // A bare number matches unrelated counters — “31 August” recalling “number 31” — so numeric terms
+    // only widen the keyword match when the query carries no words.
+    const lexical = words.filter((word) => !/^\p{N}+$/u.test(word));
+    const terms = lexical.length ? lexical : words;
+    const ranks = terms.length ? await this.keywordRanks(scope, terms) : new Map<string, number>();
+    let embedded: Promise<{ vector: number[]; norm: number } | null> | undefined;
+    const embedQuery = () =>
+      (embedded ??= (async () => {
+        if (!this.embedder) return null;
+        try {
+          const [vector] = await this.embedder.embed([query.slice(0, 2000)], 'query');
+          if (!vector || !vector.length) return null;
+          return { vector, norm: Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) };
+        } catch {
+          return null;
+        }
+      })());
+    // Vector payloads are read once per query for the whole scope, and reused across queries:
+    // a 384-float vector per fact is far more data than the facts themselves.
+    const vectors =
+      this.embedder && query.trim()
+        ? this.store.vectorsIn(scope, this.embedder.model)
+        : new Map<string, { model: string; values: number[]; norm: number }>();
+    for (const tier of tiers) {
+      const results = new Map<string, SearchHit>();
+      const add = (row: Record<string, string | number | null>, score: number, reason: string) => {
+        const id = String(row.id);
+        const hit = results.get(id);
+        if (hit) {
+          hit.score += score;
+          hit.reasons.push(reason);
+        } else results.set(id, { fact: this.store.fact(row), score, reasons: [reason] });
+      };
+      for (const row of tier) {
+        const position = ranks.get(String(row.id));
+        if (position !== undefined) add(row, 1 / (30 + position), 'keyword');
+        if (
+          words.some((word) =>
+            [normalize(String(row.subject)), normalize(String(row.object))].includes(word),
+          )
         )
-      )
-        add(row, 0.025, 'entity');
-    }
-    if (
-      query.trim() &&
-      this.embedder &&
-      rows.some((row) => row.vector_model === this.embedder!.model && row.vector_json)
-    ) {
-      try {
-        const [vector] = await this.embedder.embed([query.slice(0, 2000)], 'query');
-        const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-        const semantic = rows
-          .filter((row) => row.vector_model === this.embedder!.model && row.vector_json)
-          .map((row) => {
-            const stored: number[] = JSON.parse(String(row.vector_json));
-            const denominator =
-              norm * Math.sqrt(stored.reduce((sum, value) => sum + value * value, 0));
-            return {
-              row,
-              similarity:
-                stored.length === vector.length && denominator
-                  ? stored.reduce((sum, value, index) => sum + value * vector[index], 0) /
-                    denominator
-                  : 0,
-            };
-          })
-          .filter((item) => item.similarity >= 0.65)
-          .sort((a, b) => b.similarity - a.similarity)
-          .slice(0, 60);
-        semantic.forEach(({ row }, index) => add(row, 1 / (30 + index), 'semantic'));
-      } catch {
-        /* Keyword and graph retrieval remain usable offline. */
+          add(row, 0.025, 'entity');
       }
+      if (this.embedder && query.trim() && vectors.size) {
+        const question = await embedQuery();
+        if (question && question.norm) {
+          const semantic = tier
+            .map((row) => ({ row, stored: vectors.get(String(row.id)) }))
+            .filter((item) => item.stored)
+            .map(({ row, stored }) => {
+              const values = stored!.values;
+              const denominator = stored!.norm * question.norm;
+              return {
+                row,
+                similarity:
+                  denominator && values.length === question.vector.length
+                    ? values.reduce(
+                        (sum, value, index) => sum + value * question.vector[index],
+                        0,
+                      ) / denominator
+                    : 0,
+              };
+            })
+            .filter((item) => item.similarity >= 0.65)
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 60);
+          semantic.forEach(({ row }, index) => add(row, 1 / (30 + index), 'semantic'));
+        }
+      }
+      const seeds = [...results.values()].sort((a, b) => b.score - a.score).slice(0, 4);
+      const entities = new Set(seeds.flatMap((hit) => [hit.fact.subjectId, hit.fact.objectId]));
+      // A single bounded hop avoids unrelated graph neighborhoods overwhelming recall.
+      for (const row of tier
+        .filter(
+          (row) => entities.has(String(row.subject_id)) || entities.has(String(row.object_id)),
+        )
+        .slice(0, 24))
+        if (!results.has(String(row.id))) add(row, 0.006, 'related entity');
+      if (!query.trim()) tier.slice(0, limit).forEach((row) => add(row, 0.001, 'recent'));
+      if (results.size)
+        return [...results.values()]
+          .sort((a, b) => b.score - a.score || b.fact.createdAt.localeCompare(a.fact.createdAt))
+          .slice(0, limit);
     }
-    const seeds = [...results.values()].sort((a, b) => b.score - a.score).slice(0, 4);
-    const entities = new Set(seeds.flatMap((hit) => [hit.fact.subjectId, hit.fact.objectId]));
-    // A single bounded hop avoids unrelated graph neighborhoods overwhelming recall.
-    for (const row of rows
-      .filter((row) => entities.has(String(row.subject_id)) || entities.has(String(row.object_id)))
-      .slice(0, 24))
-      if (!results.has(String(row.id))) add(row, 0.006, 'related entity');
-    if (!query.trim()) rows.slice(0, limit).forEach((row) => add(row, 0.001, 'recent'));
-    return [...results.values()]
-      .sort((a, b) => b.score - a.score || b.fact.createdAt.localeCompare(a.fact.createdAt))
-      .slice(0, limit);
+    return [];
+  }
+  private async keywordRanks(scope: MemoryScope, words: string[]) {
+    // FTS terms are quoted, never interpolated into SQL or parsed as operators.
+    const where = this.store.scope(scope);
+    const matches = this.store.all(
+      `SELECT memory_fts.fact_id,bm25(memory_fts) AS rank FROM memory_fts JOIN memory_facts f ON f.id=memory_fts.fact_id WHERE memory_fts MATCH ? AND ${where.sql} ORDER BY rank LIMIT 300`,
+      words.map((word) => `"${word.replace(/"/g, '""')}"`).join(' OR '),
+      ...where.params,
+    );
+    return new Map<string, number>(matches.map((row, index) => [String(row.fact_id), index]));
   }
   async getContext(scope: MemoryScope, query: string, maxBytes = 5000) {
     const hits = await this.searchMemory(scope, query, { limit: 12 });
@@ -527,6 +733,9 @@ export class MemoryEngine {
           fact: hit.fact.text,
           validFrom: hit.fact.validFrom,
           validTo: hit.fact.validTo,
+          // Uncertain records and assistant-authored ones are leads to verify, not established truth.
+          state: hit.fact.state,
+          evidence: [...new Set(hit.fact.sources.map((source) => source.sourceType))],
           sourceIds: hit.fact.sources.map((source) => source.id),
         }) + '\n';
       if (Buffer.byteLength(content + line, 'utf8') > maxBytes) continue;
@@ -537,12 +746,14 @@ export class MemoryEngine {
   }
   getGraph(
     scope: MemoryScope,
-    options: { focus?: string; includeHistory?: boolean; limit?: number } = {},
+    options: { focus?: string; includeHistory?: boolean; limit?: number; asOf?: string } = {},
   ): MemoryGraph {
-    const now = new Date().toISOString();
+    const at = options.asOf || new Date().toISOString();
     let edges = this.store
       .facts(scope)
-      .filter((fact) => options.includeHistory || activeAt(fact, now));
+      .filter((fact) =>
+        options.asOf ? activeAt(fact, at) : options.includeHistory || activeAt(fact, at),
+      );
     if (options.focus)
       edges = edges.filter(
         (fact) => fact.subjectId === options.focus || fact.objectId === options.focus,
@@ -623,8 +834,11 @@ export class MemoryEngine {
       ownerId?: string | null;
     }[],
   ) {
-    return this.store.transaction(() =>
-      facts.map((fact) => {
+    // Reports what actually changed: enqueue() returns the earlier episode for a repeated import,
+    // and a forgotten import source is re-armed rather than silently skipped.
+    const counts = { imported: 0, deduplicated: 0, revived: 0 };
+    return this.store.transaction(() => {
+      for (const fact of facts) {
         const parsed = extractionSchema.parse({
           facts: [
             {
@@ -649,30 +863,47 @@ export class MemoryEngine {
           content: fact.text,
           referenceTime: fact.validFrom,
         });
-        if (episode.status !== 'complete' && episode.status !== 'forgotten') {
-          this.commit(
-            workspaceId,
-            fact.ownerId || null,
+        let revived = false;
+        if (episode.status === 'forgotten') {
+          // A forget has to block automatic replay, but it must not veto a deliberate restore:
+          // re-arm this same import source so repeating the import still changes nothing.
+          this.store.run(
+            "UPDATE memory_episodes SET status='pending',error=NULL,content=? WHERE id=?",
+            redactCredentials(fact.text),
             episode.id,
-            parsed,
-            episode.referenceTime,
-            [],
           );
-          this.store.run("UPDATE memory_episodes SET status='complete' WHERE id=?", episode.id);
+          revived = true;
         }
-        return episode.id;
-      }),
-    );
+        if (!revived && episode.status === 'complete') {
+          counts.deduplicated++;
+          continue;
+        }
+        this.commit(
+          workspaceId,
+          fact.ownerId || null,
+          episode.id,
+          parsed,
+          episode.referenceTime,
+          [],
+          false,
+          true,
+        );
+        this.store.run("UPDATE memory_episodes SET status='complete' WHERE id=?", episode.id);
+        counts[revived ? 'revived' : 'imported']++;
+      }
+      return counts;
+    });
   }
   forgetMemory(scope: MemoryScope, id: string) {
     const fact = this.store.requireFact(scope, id);
-    this.forgetEpisodes(
+    return this.forgetEpisodes(
       scope,
       fact.sources.map((source) => source.id),
     );
   }
   forgetEpisodes(scope: MemoryScope, ids: string[]) {
     const where = this.store.scope(scope, 'e');
+    let forgotten = 0;
     this.store.transaction(() => {
       for (const id of ids) {
         if (
@@ -683,6 +914,7 @@ export class MemoryEngine {
           )
         )
           continue;
+        forgotten++;
         const factIds = this.store
           .all('SELECT fact_id FROM memory_fact_sources WHERE episode_id=?', id)
           .map((row) => String(row.fact_id));
@@ -700,9 +932,13 @@ export class MemoryEngine {
           id,
         );
       }
-      this.store.run('DELETE FROM memory_recalls WHERE workspace_id=?', scope.workspaceId);
-      this.store.pruneEntities();
+      if (forgotten) {
+        this.store.run('DELETE FROM memory_recalls WHERE workspace_id=?', scope.workspaceId);
+        this.store.pruneEntities();
+        this.store.clearVectors();
+      }
     });
+    return forgotten;
   }
   clear(scope: MemoryScope) {
     const where = this.store.scope(scope, 'e');

@@ -7,7 +7,7 @@ import type {
   MemoryScope,
   SearchHit,
 } from '../../../mukai_memory/src';
-import { redactCredentials } from '../../../mukai_memory/src';
+import { captureRetryAt, redactCredentials } from '../../../mukai_memory/src';
 import type { BotRepository } from '../repositories/botRepository';
 import type { MemoryReviewRun } from '../../shared/memory';
 import { ApiError } from '../config';
@@ -250,6 +250,17 @@ export class MemoryReviewService {
           this.timeZone(w),
         ),
       });
+      // This pass reads everything after the saved checkpoint, so it also covers any review attempt
+      // that a previous failure left in the queue. Close those instead of letting "pending" follow a
+      // conversation around for good.
+      this.store.run(
+        `UPDATE memory_episodes SET status='complete',content='',context='',error=NULL,retry_at=NULL
+         WHERE workspace_id=? AND conversation_id=? AND id<>? AND status IN ('pending','failed')
+         AND source_key LIKE 'review:%'`,
+        w,
+        c,
+        episode.id,
+      );
       const id = randomUUID(),
         started = new Date().toISOString();
       const activity = [
@@ -353,7 +364,27 @@ export class MemoryReviewService {
           JSON.stringify(activity),
           id,
         );
-        this.store.run('UPDATE memory_review_jobs SET blocked=1 WHERE conversation_id=?', c);
+        // A model that was restarting or out of memory deserves another go on the same bounded
+        // backoff capture uses. A conversation that keeps failing stops asking and the failed run
+        // waits in Settings for the user, instead of holding the backlog hostage.
+        const failures = Number(
+          this.store.get(
+            `SELECT COUNT(*) AS n FROM memory_review_runs WHERE conversation_id=? AND status='failed'
+             AND started_at>COALESCE((SELECT MAX(started_at) FROM memory_review_runs
+               WHERE conversation_id=? AND status='complete'),'')`,
+            c,
+            c,
+          )?.n ?? 1,
+        );
+        const again = captureRetryAt(failures);
+        if (again === null)
+          this.store.run('UPDATE memory_review_jobs SET blocked=1 WHERE conversation_id=?', c);
+        else
+          this.store.run(
+            'UPDATE memory_review_jobs SET blocked=0,due_at=? WHERE conversation_id=?',
+            again,
+            c,
+          );
       }
     }
     return [...updated];
