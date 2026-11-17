@@ -20,6 +20,7 @@ import {
   Code,
 } from 'lucide-react';
 import type { ChatActivity, ChatMessage, ResponsePart } from '../../../../shared/ai';
+import { compactionNotebookSchema, compactionSections } from '../../../../shared/compaction';
 import { formatWorkDuration, responsePresentation } from '../../../../shared/responseParts';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ReferencedMessage } from './ReferencedMessage';
@@ -351,37 +352,64 @@ function ReasoningPart({
 }
 
 function CompactionBrief({ text }: { text: string }) {
-  let entries: { note: string; quote: string; origin: string }[] | undefined;
+  let saved;
   try {
-    const notebook = JSON.parse(text);
-    if (
-      notebook.version === 1 &&
-      Array.isArray(notebook.entries) &&
-      notebook.entries.every(
-        (entry: { note?: unknown; quote?: unknown; origin?: unknown }) =>
-          entry &&
-          typeof entry.note === 'string' &&
-          typeof entry.quote === 'string' &&
-          typeof entry.origin === 'string',
-      )
-    )
-      entries = notebook.entries;
+    const parsed = compactionNotebookSchema.safeParse(JSON.parse(text));
+    if (parsed.success) saved = parsed.data;
   } catch {
     // Older summaries may contain prose.
   }
-  if (!entries) return <MessageMarkdown text={text} />;
+  if (!saved) return <MessageMarkdown text={text} />;
+  const originLabel = (origin: string) =>
+    ({
+      user_message: 'User statement',
+      assistant_report: 'Assistant note',
+      tool_output: 'Tool result',
+      legacy_memory: 'Earlier memory',
+    })[origin] || 'Saved note';
+  if (saved.version === 2) {
+    const entries = saved.entries;
+    return (
+      <div className="response-compaction-handover">
+        {compactionSections.map(([section, label]) => {
+          const items = entries.filter((item) => item.section === section);
+          if (!items.length) return null;
+          const List = section === 'next' ? 'ol' : 'ul';
+          return (
+            <section key={section}>
+              <h5>{label}</h5>
+              <List className="response-compaction-items">
+                {items.map((item, index) => (
+                  <li key={index}>
+                    <MessageMarkdown text={item.note} />
+                    <details className="response-compaction-sources">
+                      <summary>
+                        <ChevronDown size={12} className="response-chevron" aria-hidden="true" />
+                        Sources ({item.evidence.length})
+                      </summary>
+                      {item.evidence.map((source, sourceIndex) => (
+                        <div key={sourceIndex}>
+                          <small>{originLabel(source.origin)}</small>
+                          <blockquote>
+                            <MessageMarkdown text={source.quote} />
+                          </blockquote>
+                        </div>
+                      ))}
+                    </details>
+                  </li>
+                ))}
+              </List>
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="response-compaction-notes">
-      {entries.map((entry, index) => (
+      {saved.entries.map((entry, index) => (
         <div key={index}>
-          <small>
-            {{
-              user_message: 'User statement',
-              assistant_report: 'Assistant note',
-              tool_output: 'Tool result',
-              legacy_memory: 'Earlier memory',
-            }[entry.origin] || 'Saved note'}
-          </small>
+          <small>{originLabel(entry.origin)}</small>
           <MessageMarkdown text={entry.note} />
           <blockquote>
             <MessageMarkdown text={entry.quote} />
@@ -435,7 +463,7 @@ function CompactionPart({
         <p className="response-compaction-meta">{detail}</p>
         {state === 'complete' && part.summary ? (
           <>
-            <h4>Compaction brief</h4>
+            <h4>Compaction handover</h4>
             <CompactionBrief text={part.summary} />
           </>
         ) : (

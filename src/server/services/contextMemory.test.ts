@@ -7,7 +7,9 @@ import {
   salvageMemory,
   extractiveMemory,
   EXTRACTIVE_RECOVERY_QUOTE,
+  appendMemoryNotice,
 } from './contextMemory';
+import { compactionNotebookSchema } from '../../shared/compaction';
 
 const history = [
   { origin: 'assistant_report', text: 'The VM definitely rolled back; my Node files vanished.' },
@@ -16,6 +18,190 @@ const history = [
 ]
   .map((item) => JSON.stringify(item))
   .join('\n');
+
+describe('task handover', () => {
+  it('connects user constraints and observed results while retaining each source role', () => {
+    const sources = memorySources('', history);
+    const saved = JSON.parse(
+      groundedMemory(
+        JSON.stringify([
+          {
+            section: 'objective',
+            note: 'Investigate the reported rollback.',
+            sources: [{ sourceId: 's2', quote: 'Can you investigate?' }],
+          },
+          {
+            section: 'active',
+            note: 'Rollback remains unverified; the listing contains Python files.',
+            sources: [
+              { sourceId: 's0', quote: 'The VM definitely rolled back' },
+              { sourceId: 's1', quote: 'desk.py modules signature.txt' },
+            ],
+          },
+        ]),
+        sources,
+      ),
+    );
+    expect(saved.version).toBe(2);
+    expect(saved.entries[1]).toEqual({
+      section: 'active',
+      note: 'Rollback remains unverified; the listing contains Python files.',
+      evidence: [
+        { origin: 'assistant_report', quote: 'The VM definitely rolled back' },
+        { origin: 'tool_output', quote: 'desk.py modules signature.txt' },
+      ],
+    });
+  });
+
+  it('carries unfinished work and constraints through saved checkpoints and repeated folds', () => {
+    let sources = memorySources(
+      '',
+      [
+        {
+          origin: 'user_message',
+          text: 'Preserve the live database. Finish the migration report.',
+        },
+        { origin: 'assistant_report', text: 'Still need to inspect the settings parser.' },
+        { origin: 'tool_output', text: 'schema markers: 1,2; kind column still present' },
+      ]
+        .map((source) => JSON.stringify(source))
+        .join('\n'),
+    );
+    const choices = () => [
+      {
+        section: 'requirements',
+        note: 'Preserve the live database.',
+        sources: [
+          {
+            sourceId: sources.find((s) => s.text.includes('Preserve the live database.'))!.id,
+            quote: 'Preserve the live database.',
+          },
+        ],
+      },
+      {
+        section: 'active',
+        note: 'The settings parser check remains unfinished.',
+        sources: [
+          {
+            sourceId: sources.find((s) => s.text.includes('Still need to inspect'))!.id,
+            quote: 'Still need to inspect the settings parser.',
+          },
+        ],
+      },
+      {
+        section: 'context',
+        note: 'Last observed: markers reverted, column remains. Recheck before changing it.',
+        sources: [
+          {
+            sourceId: sources.find((s) => s.text.includes('kind column still present'))!.id,
+            quote: 'schema markers: 1,2; kind column still present',
+          },
+        ],
+      },
+    ];
+    let saved = '';
+    for (let fold = 0; fold < 4; fold++) {
+      saved = groundedMemory(JSON.stringify(choices()), sources);
+      const checkpoint = structuredClone(workingMemoryMessage(saved));
+      const records = historicalSources(checkpoint, JSON.stringify(checkpoint));
+      sources = memorySources('', records.map((record) => JSON.stringify(record)).join('\n'));
+      expect(JSON.parse(saved).entries.map((item: { section: string }) => item.section)).toEqual([
+        'requirements',
+        'active',
+        'context',
+      ]);
+      expect(sources.map((source) => source.origin)).toEqual([
+        'user_message',
+        'assistant_report',
+        'tool_output',
+      ]);
+      expect(sources[1].text).toContain('Earlier handover (active)');
+      expect(sources[1].evidence).toBe('Still need to inspect the settings parser.');
+    }
+    expect(() =>
+      groundedMemory(
+        JSON.stringify([
+          {
+            section: 'completed',
+            note: 'Parser checked.',
+            sources: [{ sourceId: 's1', quote: 'The settings parser check remains unfinished.' }],
+          },
+        ]),
+        sources,
+      ),
+    ).toThrow('missing evidence');
+  });
+
+  it('upgrades an older notebook without promoting its generated notes into evidence', () => {
+    const old = groundedMemory(
+      JSON.stringify([{ sourceId: 's1', note: 'Rollback verified.', quote: 'desk.py' }]),
+      memorySources('', history),
+    );
+    const sources = memorySources(old, '');
+    const saved = groundedMemory(
+      JSON.stringify([
+        {
+          section: 'context',
+          note: 'Python files were listed; rollback is unverified.',
+          sources: [{ sourceId: 's0', quote: 'desk.py' }],
+        },
+      ]),
+      sources,
+    );
+    expect(JSON.parse(saved).entries[0].evidence).toEqual([
+      { origin: 'tool_output', quote: 'desk.py' },
+    ]);
+    expect(() =>
+      groundedMemory(
+        JSON.stringify([
+          {
+            section: 'completed',
+            note: 'Rollback happened.',
+            sources: [{ sourceId: 's0', quote: 'Rollback verified.' }],
+          },
+        ]),
+        sources,
+      ),
+    ).toThrow('missing evidence');
+  });
+
+  it('rejects unknown sections, fabricated evidence and origin overrides, including partial citations', () => {
+    const sources = memorySources('', history);
+    const valid = {
+      section: 'next',
+      note: 'Inspect current state.',
+      sources: [{ sourceId: 's2', quote: 'Can you investigate?' }],
+    };
+    for (const item of [
+      { ...valid, section: 'approved_actions' },
+      { ...valid, origin: 'tool_output' },
+      { ...valid, sources: [{ sourceId: 'missing', quote: 'Can you investigate?' }] },
+      { ...valid, sources: [...valid.sources, { sourceId: 's1', quote: 'No files exist' }] },
+      { ...valid, sources: [{ ...valid.sources[0], origin: 'tool_output' }] },
+    ]) {
+      expect(() => groundedMemory(JSON.stringify([item]), sources)).toThrow();
+      const partial = salvageMemory(JSON.stringify([item, valid]), sources);
+      expect(JSON.parse(partial!).entries).toHaveLength(1);
+    }
+  });
+
+  it('preserves omission notices in valid handovers without falling back to raw JSON truncation', () => {
+    const saved = groundedMemory(
+      JSON.stringify([
+        {
+          section: 'next',
+          note: 'Inspect current state.',
+          sources: [{ sourceId: 's2', quote: 'Can you investigate?' }],
+        },
+      ]),
+      memorySources('', history),
+    );
+    const result = appendMemoryNotice(saved, 'Earlier image pixels omitted.', 1200)!;
+    expect(compactionNotebookSchema.parse(JSON.parse(result)).version).toBe(2);
+    expect(result).toContain('Earlier image pixels omitted.');
+    expect(result).toContain('Inspect current state.');
+  });
+});
 
 describe('compaction provenance', () => {
   it('derives origins from actual sources and retains them through repeated compaction', () => {

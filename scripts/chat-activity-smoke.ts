@@ -191,13 +191,23 @@ async function main() {
         tokensBefore: 24000,
         tokensAfter: 5000,
         summary: JSON.stringify({
-          version: 1,
+          version: 2,
           entries: [
             {
-              origin: 'user_message',
+              section: 'objective',
               note: 'Keep the project preview ready for review.',
-              quote:
-                'Build a project preview and ask Nova to review it before showing it to the team.',
+              evidence: [
+                {
+                  origin: 'user_message',
+                  quote:
+                    'Build a project preview and ask Nova to review it before showing it to the team.',
+                },
+              ],
+            },
+            {
+              section: 'next',
+              note: 'Review **Nova’s feedback** in `preview.md` before sharing.',
+              evidence: [{ origin: 'assistant_report', quote: 'Nova reviewed the layout.' }],
             },
           ],
         }),
@@ -424,8 +434,42 @@ async function main() {
     );
     await window.loadFile(join(process.cwd(), 'out/renderer/index.html'));
     await wait('document.querySelectorAll(".chat-activity-row").length===8');
+    await evaluate(`(() => {
+      const work = document.querySelector('.response-compaction').closest('.response-work');
+      if (work && !work.open) work.querySelector(':scope > summary').click();
+    })()`);
     await evaluate(`document.querySelector('.response-compaction summary').click()`);
     await wait('Boolean(document.querySelector(".response-compaction[open]"))');
+    await wait(
+      'document.querySelector(".response-compaction-handover").getBoundingClientRect().height > 100',
+    );
+    assert.equal(
+      await evaluate('document.querySelector(".response-compaction-handover h5").textContent'),
+      'Objective',
+    );
+    assert.equal(
+      await evaluate('document.querySelectorAll(".response-compaction-sources[open]").length'),
+      0,
+    );
+    await evaluate(
+      `(() => {
+        const feed = document.querySelector('.ai-message-feed');
+        const part = document.querySelector('.response-compaction');
+        feed.scrollTop += part.getBoundingClientRect().top - feed.getBoundingClientRect().top - 16;
+      })()`,
+    );
+    await capture('chat-compaction-handover');
+    await evaluate('document.querySelector(".response-compaction-sources summary").click()');
+    await wait('Boolean(document.querySelector(".response-compaction-sources[open]"))');
+    await capture('chat-compaction-sources');
+    assert.equal(
+      await evaluate('document.querySelector(".response-compaction-handover strong").textContent'),
+      'Nova’s feedback',
+    );
+    assert.equal(
+      await evaluate('document.querySelector(".response-compaction-handover code").textContent'),
+      'preview.md',
+    );
     assert(
       await evaluate(
         'document.querySelector(".response-compaction-detail").textContent.includes("Keep the project preview ready for review.")',

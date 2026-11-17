@@ -8,6 +8,11 @@ vi.mock('ai', async (original) => ({
   generateText: vi.fn(),
 }));
 const generate = vi.mocked(generateText);
+const item = (sourceId: string, note: string, quote: string) => ({
+  section: 'context',
+  note,
+  sources: [{ sourceId, quote }],
+});
 const config = {
   ai: new AIConcurrency(),
   aiContext: {},
@@ -24,22 +29,100 @@ function result(text: string) {
 }
 const input = `<previous-summary>\n\n</previous-summary>\n<historical-data>\n${JSON.stringify({ origin: 'assistant_report', text: 'Possible VM rollback; unverified.' })}\n</historical-data>`;
 afterEach(() => vi.restoreAllMocks());
+it('requests a task handover with connected evidence and keeps it structured for the next compaction', async () => {
+  generate.mockReset();
+  generate.mockResolvedValue(
+    result(
+      JSON.stringify([
+        {
+          section: 'active',
+          note: 'Investigate the possible rollback; it remains unverified.',
+          sources: [{ sourceId: 's0', quote: 'Possible VM rollback; unverified.' }],
+        },
+        {
+          section: 'next',
+          note: 'Inspect current files before claiming a rollback.',
+          sources: [{ sourceId: 's0', quote: 'Possible VM rollback; unverified.' }],
+        },
+      ]),
+    ),
+  );
+  const text = await contextSummarizer(config, new AbortController().signal, () => {})(input, 1024);
+  expect(JSON.parse(text)).toMatchObject({
+    version: 2,
+    entries: [
+      { section: 'active', evidence: [{ origin: 'assistant_report' }] },
+      { section: 'next', evidence: [{ origin: 'assistant_report' }] },
+    ],
+  });
+  const request = generate.mock.calls[0][0];
+  expect(request.tools).toBeUndefined();
+  for (const rule of [
+    'Organize by task state',
+    'Preserve unresolved requests',
+    'Newer explicit corrections',
+    'not user approval',
+    'last observed',
+    'sources:[{sourceId,quote}]',
+  ])
+    expect(request.system).toContain(rule);
+});
+it('keeps handover instructions within the configured generation cap on large windows', async () => {
+  generate.mockReset();
+  generate.mockResolvedValue(
+    result(
+      JSON.stringify([
+        {
+          section: 'active',
+          note: 'Unverified rollback report.',
+          sources: [{ sourceId: 's0', quote: 'Possible VM rollback' }],
+        },
+      ]),
+    ),
+  );
+  await contextSummarizer(
+    { ...config, contextWindow: 256000, maxOutputTokens: 1024 },
+    new AbortController().signal,
+    () => {},
+  )(input, 8192);
+  expect(generate.mock.calls[0][0].system).toContain('under 819 tokens');
+  expect(generate.mock.calls[0][0].maxOutputTokens).toBe(1024);
+});
+it('retries the old notes-only response instead of silently accepting it for a new handover', async () => {
+  generate.mockReset();
+  generate.mockResolvedValueOnce(
+    result(
+      JSON.stringify([
+        { sourceId: 's0', note: 'Unverified rollback.', quote: 'Possible VM rollback' },
+      ]),
+    ),
+  );
+  generate.mockResolvedValueOnce(
+    result(JSON.stringify([item('s0', 'Unverified rollback.', 'Possible VM rollback')])),
+  );
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const text = await contextSummarizer(config, new AbortController().signal, () => {})(input, 1024);
+  expect(JSON.parse(text).version).toBe(2);
+  expect(generate).toHaveBeenCalledTimes(2);
+});
 it('retries invented citations and only returns grounded, origin-labelled memory', async () => {
   generate.mockReset();
   generate.mockResolvedValueOnce(
-    result('[{"sourceId":"invented","note":"Rollback happened","quote":"verified"}]'),
+    result(JSON.stringify([item('invented', 'Rollback happened', 'verified')])),
   );
   generate.mockResolvedValueOnce(
     result(
-      '[{"sourceId":"s0","note":"Possible rollback; unverified assistant report","quote":"Possible VM rollback"}]',
+      JSON.stringify([
+        item('s0', 'Possible rollback; unverified assistant report', 'Possible VM rollback'),
+      ]),
     ),
   );
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   const account = vi.fn();
   const text = await contextSummarizer(config, new AbortController().signal, account)(input, 1024);
   expect(JSON.parse(text).entries[0]).toMatchObject({
-    origin: 'assistant_report',
-    quote: 'Possible VM rollback',
+    section: 'context',
+    evidence: [{ origin: 'assistant_report', quote: 'Possible VM rollback' }],
   });
   expect(generate).toHaveBeenCalledTimes(2);
   expect(account).toHaveBeenCalledTimes(2);
@@ -47,7 +130,7 @@ it('retries invented citations and only returns grounded, origin-labelled memory
 it('recovers from ungrounded summaries after bounded retries and honors cancellation', async () => {
   generate.mockReset();
   generate.mockResolvedValue(
-    result('[{"sourceId":"s0","note":"Rollback verified","quote":"Snapshot restore confirmed"}]'),
+    result(JSON.stringify([item('s0', 'Rollback verified', 'Snapshot restore confirmed')])),
   );
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const recovery = vi.fn();
@@ -89,8 +172,8 @@ it('uses valid sibling entries without retrying unsupported claims', async () =>
   generate.mockResolvedValue(
     result(
       JSON.stringify([
-        { sourceId: 's0', note: 'Unverified assistant report.', quote: 'Possible VM rollback' },
-        { sourceId: 'missing', note: 'Invented.', quote: 'Snapshot restored' },
+        item('s0', 'Unverified assistant report.', 'Possible VM rollback'),
+        item('missing', 'Invented.', 'Snapshot restored'),
       ]),
     ),
   );
@@ -104,9 +187,9 @@ it('uses valid sibling entries without retrying unsupported claims', async () =>
   )(input, 1024);
   expect(JSON.parse(text).entries).toEqual([
     {
-      origin: 'assistant_report',
+      section: 'context',
       note: 'Unverified assistant report.',
-      quote: 'Possible VM rollback',
+      evidence: [{ origin: 'assistant_report', quote: 'Possible VM rollback' }],
     },
   ]);
   expect(generate).toHaveBeenCalledTimes(1);
@@ -117,7 +200,7 @@ it('uses valid sibling entries without retrying unsupported claims', async () =>
 it.each([
   '',
   '```json\nnot JSON\n```',
-  JSON.stringify([{ sourceId: 's0', note: 'Too big '.repeat(100), quote: 'Possible VM rollback' }]),
+  JSON.stringify([item('s0', 'Too big '.repeat(100), 'Possible VM rollback')]),
 ])('falls back within a small budget for unusable output: %s', async (raw) => {
   generate.mockReset();
   generate.mockResolvedValue(result(raw));

@@ -404,11 +404,67 @@ describe('Response activity disclosures', () => {
       }),
     );
     expect(html).toMatch(/<details class="response-compaction response-compaction--complete">/);
-    expect(html).toContain('Compaction brief');
+    expect(html).toContain('Compaction handover');
     expect(html).toContain('<strong>Continue reviewing the draft.</strong>');
     expect(html).toContain('<li>Check the headings</li>');
     expect(html).toContain('<code>draft.md</code>');
     expect(html).not.toContain('&quot;version&quot;');
+  });
+  it('groups handover items by task state with formatted text and collapsed supporting sources', () => {
+    const html = renderToStaticMarkup(
+      createElement(ResponseActivity, {
+        message: {
+          ...message,
+          parts: [
+            {
+              id: 'handover',
+              type: 'compaction',
+              state: 'complete',
+              startedAt: message.createdAt,
+              tokensBefore: 40000,
+              tokensAfter: 12000,
+              summary: JSON.stringify({
+                version: 2,
+                entries: [
+                  {
+                    section: 'next',
+                    note: 'Inspect `settings.ts` before changing the database.',
+                    evidence: [
+                      { origin: 'assistant_report', quote: 'Parser check remains unfinished.' },
+                    ],
+                  },
+                  {
+                    section: 'requirements',
+                    note: '**Preserve the live database.**',
+                    evidence: [{ origin: 'user_message', quote: 'Do not delete existing data.' }],
+                  },
+                  {
+                    section: 'objective',
+                    note: 'Finish the migration report.',
+                    evidence: [
+                      { origin: 'user_message', quote: 'Explain which migrations ran.' },
+                      { origin: 'tool_output', quote: 'schema version: 2' },
+                    ],
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+      }),
+    );
+    expect(html.indexOf('<h5>Objective</h5>')).toBeLessThan(html.indexOf('<h5>Requirements</h5>'));
+    expect(html.indexOf('<h5>Requirements</h5>')).toBeLessThan(html.indexOf('<h5>Next steps</h5>'));
+    expect(html).toContain('<ul class="response-compaction-items">');
+    expect(html).toContain('<ol class="response-compaction-items">');
+    expect(html).toContain('<strong>Preserve the live database.</strong>');
+    expect(html).toContain('<code>settings.ts</code>');
+    expect(html).toContain('<details class="response-compaction-sources">');
+    expect(html).not.toContain('response-compaction-sources" open');
+    expect(html).toContain('Sources (2)');
+    expect(html).toContain('Tool result');
+    expect(html).not.toContain('&quot;version&quot;');
+    expect(html).not.toContain('<h5>Blocked</h5>');
   });
   it('expands active reasoning and collapses it at reasoning-end while the response continues', () => {
     const thinking: ChatMessage = {

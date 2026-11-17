@@ -390,9 +390,9 @@ beforeEach(async () => {
                     : ['compaction-invalid', 'compaction-overflow'].includes(mode)
                       ? JSON.stringify([
                           {
-                            sourceId: 'not-a-source',
+                            section: 'context',
                             note: 'Invented summary',
-                            quote: 'Unobserved result',
+                            sources: [{ sourceId: 'not-a-source', quote: 'Unobserved result' }],
                           },
                         ])
                       : JSON.stringify(body.messages).includes('Summarize working memory')
@@ -409,25 +409,29 @@ beforeEach(async () => {
                                       sources.some((source) => source.text.includes(finding)),
                                   )
                                 : [];
+                            const entries = findings.length
+                              ? findings.map((finding) => ({
+                                  sourceId: sources.find((source) => source.text.includes(finding))!
+                                    .id,
+                                  note: 'Saved work.',
+                                  quote: finding,
+                                }))
+                              : [
+                                  {
+                                    sourceId: sources[0].id,
+                                    note:
+                                      mode === 'oversized-results'
+                                        ? 'Saved work.'
+                                        : 'Earlier conversation notes: retain source provenance.',
+                                    quote: (sources[0].evidence ?? sources[0].text).slice(0, 16),
+                                  },
+                                ];
                             return JSON.stringify(
-                              findings.length
-                                ? findings.map((finding) => ({
-                                    sourceId: sources.find((source) =>
-                                      source.text.includes(finding),
-                                    )!.id,
-                                    note: 'Saved work.',
-                                    quote: finding,
-                                  }))
-                                : [
-                                    {
-                                      sourceId: sources[0].id,
-                                      note:
-                                        mode === 'oversized-results'
-                                          ? 'Saved work.'
-                                          : 'Earlier conversation notes: retain source provenance.',
-                                      quote: (sources[0].evidence ?? sources[0].text).slice(0, 16),
-                                    },
-                                  ],
+                              entries.map(({ sourceId, note, quote }) => ({
+                                section: 'context',
+                                note,
+                                sources: [{ sourceId, quote }],
+                              })),
                             );
                           })()
                         : 'OK',
@@ -3014,6 +3018,21 @@ describe('Mukai bots and AI API', () => {
     const finalCall = calls.filter((call) => call.stream).at(-1)!;
     expect(JSON.stringify(finalCall.messages)).toContain('Earlier conversation notes');
     expect(calls.filter((call) => call.stream)).toHaveLength(4);
+    const boundary = reply.parts!.find((part) => part.type === 'compaction');
+    const saved = boundary?.type === 'compaction' ? boundary.summary! : '';
+    expect(JSON.parse(saved)).toMatchObject({
+      version: 2,
+      entries: [{ section: 'context', evidence: [{ origin: 'user_message' }] }],
+    });
+    await api.shutdown();
+    await close(api.server);
+    api = await startApiServer(0, { dataDir: dir, memoryExtractor: async () => ({ facts: [] }) });
+    mode = 'normal';
+    await chat('Continue from the handover.');
+    const resumed = JSON.stringify(calls.filter((call) => call.stream).at(-1)!.messages);
+    expect(resumed).toContain('Earlier conversation notes');
+    expect(resumed).toContain('evidence');
+    expect(resumed).not.toContain('Verified earlier findings. '.repeat(100));
   });
 
   it('settles and saves operations already in flight before honoring stop_generation', async () => {

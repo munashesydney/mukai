@@ -134,7 +134,9 @@ export function contextLimits(window: number | null, requestedOutput: number, ou
     output,
     input: Math.floor(capacity * 0.9) - output,
     hardInput: Math.floor(capacity * 0.9) - 256,
-    summary: Math.min(2048, Math.floor(capacity / 16)),
+    // A task handover includes unresolved work and supporting excerpts. Scale
+    // its allowance with the window while leaving small-context budgets intact.
+    summary: Math.min(8192, Math.floor(capacity / 16)),
   };
 }
 
@@ -338,7 +340,7 @@ export class ContextManager {
         'The current request leaves insufficient room for compaction. Increase its context-window setting or send a smaller request.',
       );
     // Summarize in bounded chunks so the compaction request itself also fits.
-    const chunkBudget = Math.floor(budget / this.factor - summaryTarget * 1.5 - 1300);
+    const chunkBudget = Math.floor(budget / this.factor - summaryTarget * 1.5 - 1800);
     if (chunkBudget < 256)
       throw new ContextError(
         'This model’s working context leaves insufficient room for safe compaction. Increase its context-window setting.',

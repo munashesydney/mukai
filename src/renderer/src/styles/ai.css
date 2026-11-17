@@ -1584,15 +1584,10 @@ video.artifact-media-preview {
 }
 .response-compaction-detail {
   margin-top: 12px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-muted);
-  max-height: 400px;
-  overflow: auto;
+  padding: 8px 0;
   overflow-wrap: anywhere;
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--ink);
+  font-size: 14px;
   line-height: 1.7;
 }
 .response-compaction-detail h4 {
@@ -1602,6 +1597,7 @@ video.artifact-media-preview {
 }
 .response-compaction-meta {
   margin: 0;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 .response-compaction-notes > div + div {
@@ -1623,6 +1619,69 @@ video.artifact-media-preview {
 .response-compaction-detail .ai-markdown {
   font-size: 12px;
   color: inherit;
+}
+.response-compaction-handover section + section {
+  margin-top: 24px;
+}
+.response-compaction-handover h5 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.response-compaction-handover .ai-markdown {
+  font-size: 14px;
+}
+.response-compaction-items {
+  margin: 0;
+  padding-left: 20px;
+  list-style-type: disc;
+}
+.response-compaction-items > li + li {
+  margin-top: 10px;
+}
+ol.response-compaction-items {
+  list-style-type: decimal;
+}
+.response-compaction-items .ai-markdown > :first-child {
+  margin-top: 0;
+}
+.response-compaction-items .ai-markdown > :last-child {
+  margin-bottom: 0;
+}
+.response-compaction-sources {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.response-compaction-sources > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+.response-compaction-sources > summary::-webkit-details-marker {
+  display: none;
+}
+.response-compaction-sources > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.response-compaction-sources[open] > summary > .response-chevron {
+  transform: rotate(180deg);
+}
+.response-compaction-sources > div {
+  margin: 8px 0;
+}
+.response-compaction-sources .ai-markdown {
+  font-size: 12px;
+}
+.response-compaction-sources blockquote {
+  margin: 4px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
 }
 .response-work {
   margin: 12px 0 18px;
